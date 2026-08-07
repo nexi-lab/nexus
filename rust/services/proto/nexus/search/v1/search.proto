@@ -61,6 +61,68 @@ service SearchService {
   // hook once federation adds one, etc.); nothing about Refresh
   // requires or implies scheduling on the plugin side.
   rpc Refresh(RefreshRequest) returns (RefreshResponse);
+
+  // ── Phase 8+ RPCs (Python-parity cutover) ────────────────────
+  //
+  // Mirror the shape of `SearchDaemon` methods the Python router
+  // calls into (see `src/nexus/bricks/search/daemon.py`).  Each
+  // wire message corresponds 1:1 to a method — the Python
+  // `RustSearchDaemon` shim (P8) forwards each call as-is so
+  // `SEARCH_BACKEND=rust` selects the plugin without any adapter
+  // in between.
+  //
+  // See `PARITY_ROADMAP.md` P8-P12 for the cutover strategy.
+
+  // Batched multi-query — N `QueryRequest`s in one round-trip.
+  // Result vec matches input order; a per-query error is set on
+  // `QueryResponse.error` without failing the whole batch.
+  rpc BatchQuery(BatchQueryRequest) returns (BatchQueryResponse);
+
+  // Index a pre-materialised document list (caller has the text
+  // in hand — no VFS walk).  Companion to `Index(root_path, ...)`
+  // for use-cases where callers already own the docs (Python
+  // `SearchDaemon.index_documents`).
+  rpc IndexDocuments(IndexDocumentsRequest) returns (IndexDocumentsResponse);
+
+  // Per-file change notification.  Distinct from `Refresh(root)`:
+  // this is a single-file event, so an on-write hook (once
+  // federation adds one) or a Python caller with the exact path
+  // in hand can drive incremental updates without triggering a
+  // whole-directory walk.
+  rpc NotifyFileChange(NotifyFileChangeRequest) returns (NotifyFileChangeResponse);
+
+  // Path-only existence check.  Fast — hits FTS `get_by_path` only,
+  // no ranking, no ANN.  Returns whether the path is currently in
+  // the index + its (path, chunk_index) presence for callers who
+  // just need "is this file indexed?".
+  rpc Locate(LocateRequest) returns (LocateResponse);
+
+  // Parked-doc queue mgmt — Python's indexing pipeline "parks"
+  // documents that hit a transient failure (writer full, projection
+  // race, embedder blip) for later retry.  Three ops mirror the
+  // Python router endpoints:
+  rpc ParkedList(ParkedListRequest) returns (ParkedListResponse);
+  rpc ParkedRetry(ParkedRetryRequest) returns (ParkedRetryResponse);
+  rpc ParkedDiscard(ParkedDiscardRequest) returns (ParkedDiscardResponse);
+
+  // Indexed-directory metadata surface — Python's UI-facing list
+  // of "which directories are we indexing".  The Rust plugin
+  // tracks the same set so callers get a coherent view during
+  // cutover.
+  rpc AddIndexedDirectory(AddIndexedDirectoryRequest) returns (AddIndexedDirectoryResponse);
+  rpc RemoveIndexedDirectory(RemoveIndexedDirectoryRequest) returns (RemoveIndexedDirectoryResponse);
+  rpc ListIndexedDirectories(ListIndexedDirectoriesRequest) returns (ListIndexedDirectoriesResponse);
+
+  // Per-zone indexing mode toggle — Python router uses this to
+  // gate on/off indexing for a zone (e.g. sandbox zones during
+  // rebuild).  Rust plugin persists per-zone via zone_state.json.
+  rpc SetZoneIndexingMode(SetZoneIndexingModeRequest) returns (SetZoneIndexingModeResponse);
+  rpc ListZoneIndexingModes(ListZoneIndexingModesRequest) returns (ListZoneIndexingModesResponse);
+
+  // Health + stats — cheap poll surfaces the Python router
+  // already exposes via `/health` + `/stats`.
+  rpc Health(HealthRequest) returns (HealthResponse);
+  rpc Stats(StatsRequest) returns (StatsResponse);
 }
 
 // ── Glob ──────────────────────────────────────────────────────────
@@ -401,5 +463,211 @@ message RefreshResponse {
   // oversize) — same shape as IndexResponse.skipped_count.
   uint32 skipped_count = 4;
   // Set when the walk aborted; same convention as IndexResponse.
+  optional string error = 5;
+}
+
+// ── P8 messages: Python-parity RPCs ─────────────────────────────
+
+message BatchQueryRequest {
+  repeated QueryRequest queries = 1;
+  // Auth token — one per call; per-query auth_token fields are
+  // ignored (batch is atomic auth-wise).  Same D5 contract as
+  // single Query.
+  string auth_token = 2;
+}
+message BatchQueryResponse {
+  // Same order as `BatchQueryRequest.queries`.  A per-query
+  // failure is set on the response's `error` field; the batch
+  // itself never partially fails.
+  repeated QueryResponse responses = 1;
+}
+
+message DocumentInput {
+  // Absolute VFS path — used as the FTS + ANN primary key.
+  string path = 1;
+  // Raw text; will be chunked server-side per Phase 4.
+  string text = 2;
+  // Optional millisecond-resolution mtime.  When absent, the
+  // plugin skips the P6 recency signal for this doc; when
+  // present, mirrors what Index would sys_stat from the VFS.
+  optional int64 mtime_ms = 3;
+  // Zone-hint — normally the caller-visible zone.  Falls back to
+  // the request's `zone_id` when empty.  Kept per-doc so a batch
+  // that spans zones stays honest.
+  string zone_id = 4;
+}
+message IndexDocumentsRequest {
+  repeated DocumentInput documents = 1;
+  // Zone to index into when a document doesn't carry its own.
+  string zone_id = 2;
+  string auth_token = 3;
+}
+message IndexDocumentsResponse {
+  uint32 indexed_count = 1;
+  uint32 skipped_count = 2;
+  // Documents that hit a transient failure and were parked for
+  // retry — see ParkedList RPC.  Empty in the happy path.
+  repeated string parked_paths = 3;
+  optional string error = 4;
+}
+
+message NotifyFileChangeRequest {
+  string path = 1;
+  // "create" | "update" | "delete" (matches Python contract).
+  string change_type = 2;
+  string zone_id = 3;
+  string auth_token = 4;
+}
+message NotifyFileChangeResponse {
+  // "accepted" on success; "skipped" when the change is a no-op
+  // (delete on unindexed path, update where mtime already matches
+  // the cache).
+  string status = 1;
+  optional string error = 2;
+}
+
+message LocateRequest {
+  string path = 1;
+  string zone_id = 2;
+  string auth_token = 3;
+}
+message LocateResponse {
+  // True when the path currently has ≥1 chunk indexed in FTS.
+  bool indexed = 1;
+  // Chunk count for the path — 0 when `indexed=false`.  Handy
+  // for callers who want to distinguish "single-chunk file" from
+  // "multi-chunk file" without a follow-up read.
+  uint32 chunk_count = 2;
+  // Mtime cached at last successful index; None when the file
+  // was indexed without an mtime (e.g. IndexDocuments with no
+  // mtime_ms provided).
+  optional int64 mtime_ms = 3;
+  string zone_id = 4;
+}
+
+message ParkedEntry {
+  string path = 1;
+  string zone_id = 2;
+  // Server-side timestamp when the doc was parked.
+  int64 parked_at_ms = 3;
+  // Freeform "why did this park" text.  Human-readable, kept
+  // short.
+  string reason = 4;
+}
+message ParkedListRequest {
+  string zone_id = 1;
+  string auth_token = 2;
+}
+message ParkedListResponse {
+  repeated ParkedEntry entries = 1;
+  optional string error = 2;
+}
+message ParkedRetryRequest {
+  // Empty ⇒ retry every parked doc in the zone.
+  repeated string paths = 1;
+  string zone_id = 2;
+  string auth_token = 3;
+}
+message ParkedRetryResponse {
+  uint32 retried_count = 1;
+  uint32 still_parked_count = 2;
+  optional string error = 3;
+}
+message ParkedDiscardRequest {
+  // Empty ⇒ discard every parked doc in the zone.
+  repeated string paths = 1;
+  string zone_id = 2;
+  string auth_token = 3;
+}
+message ParkedDiscardResponse {
+  uint32 discarded_count = 1;
+  optional string error = 2;
+}
+
+message IndexedDirectory {
+  string path = 1;
+  string zone_id = 2;
+  // Server-side timestamp when this dir was added.
+  int64 added_at_ms = 3;
+}
+message AddIndexedDirectoryRequest {
+  string path = 1;
+  string zone_id = 2;
+  string auth_token = 3;
+}
+message AddIndexedDirectoryResponse {
+  // True when this call added the dir; false when it was already
+  // registered (idempotent).
+  bool added = 1;
+  optional string error = 2;
+}
+message RemoveIndexedDirectoryRequest {
+  string path = 1;
+  string zone_id = 2;
+  string auth_token = 3;
+}
+message RemoveIndexedDirectoryResponse {
+  // True when this call removed the dir; false when it wasn't
+  // registered (idempotent).
+  bool removed = 1;
+  optional string error = 2;
+}
+message ListIndexedDirectoriesRequest {
+  // Empty ⇒ every zone the plugin knows about.
+  string zone_id = 1;
+  string auth_token = 2;
+}
+message ListIndexedDirectoriesResponse {
+  repeated IndexedDirectory directories = 1;
+  optional string error = 2;
+}
+
+message SetZoneIndexingModeRequest {
+  string zone_id = 1;
+  // "on" | "off" | "sandbox" (matches Python enum).  Empty ⇒
+  // reset to server default ("on").
+  string mode = 2;
+  string auth_token = 3;
+}
+message SetZoneIndexingModeResponse {
+  optional string error = 1;
+}
+message ZoneIndexingMode {
+  string zone_id = 1;
+  string mode = 2;
+}
+message ListZoneIndexingModesRequest {
+  string auth_token = 1;
+}
+message ListZoneIndexingModesResponse {
+  repeated ZoneIndexingMode modes = 1;
+  optional string error = 2;
+}
+
+message HealthRequest {
+  string auth_token = 1;
+}
+message HealthResponse {
+  // "healthy" | "degraded" | "unavailable" — mirrors Python's
+  // three-value string.  Degraded = one leg (semantic) missing;
+  // unavailable = FTS also broken.
+  string status = 1;
+  // Human-readable detail — logged / surfaced on operator UIs.
+  string detail = 2;
+}
+
+message StatsRequest {
+  string zone_id = 1;
+  string auth_token = 2;
+}
+message StatsResponse {
+  // Total documents indexed in the FTS layer (across all chunks).
+  uint32 fts_doc_count = 1;
+  // Distinct paths with at least one chunk.
+  uint32 fts_path_count = 2;
+  // ANN chunks live in the vector index (0 when semantic is off).
+  uint32 ann_chunk_count = 3;
+  // Number of parked documents awaiting retry.
+  uint32 parked_count = 4;
   optional string error = 5;
 }

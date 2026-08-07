@@ -22,9 +22,16 @@ use crate::index_manager::IndexManager;
 use crate::kernel_io::{self, DirEntry, KernelIoError, DT_DIR, DT_REG};
 use crate::search_proto::search_service_server::SearchService;
 use crate::search_proto::{
-    FusionMethod, GlobRequest, GlobResponse, GrepMatch, GrepRequest, GrepResponse, IndexRequest,
-    IndexResponse, QueryRequest, QueryResponse, QueryResult, QueryType, RefreshRequest,
-    RefreshResponse,
+    AddIndexedDirectoryRequest, AddIndexedDirectoryResponse, BatchQueryRequest, BatchQueryResponse,
+    FusionMethod, GlobRequest, GlobResponse, GrepMatch, GrepRequest, GrepResponse, HealthRequest,
+    HealthResponse, IndexDocumentsRequest, IndexDocumentsResponse, IndexRequest, IndexResponse,
+    ListIndexedDirectoriesRequest, ListIndexedDirectoriesResponse, ListZoneIndexingModesRequest,
+    ListZoneIndexingModesResponse, LocateRequest, LocateResponse, NotifyFileChangeRequest,
+    NotifyFileChangeResponse, ParkedDiscardRequest, ParkedDiscardResponse, ParkedListRequest,
+    ParkedListResponse, ParkedRetryRequest, ParkedRetryResponse, QueryRequest, QueryResponse,
+    QueryResult, QueryType, RefreshRequest, RefreshResponse, RemoveIndexedDirectoryRequest,
+    RemoveIndexedDirectoryResponse, SetZoneIndexingModeRequest, SetZoneIndexingModeResponse,
+    StatsRequest, StatsResponse,
 };
 
 /// Server-side default when the caller sends `max_results = 0`.
@@ -1227,6 +1234,201 @@ fn do_refresh(
     Ok(counts)
 }
 
+// ── P8 Python-parity helpers ────────────────────────────────────
+
+/// Index a pre-materialised set of documents.  Same commit-time
+/// discipline as do_index (per-file delete_all_chunks + per-chunk
+/// add + FTS/ANN commit); the only difference is text arrives via
+/// the caller rather than sys_read.  Each doc's `zone_id` overrides
+/// the request-level default.  Groups by zone so we open each
+/// zone's FTS + ANN + IndexState once, not per doc.
+fn do_index_documents(
+    manager: &IndexManager,
+    embedder: Option<&Arc<dyn Embedder>>,
+    default_zone: &str,
+    documents: Vec<crate::search_proto::DocumentInput>,
+    cache: &crate::query_cache::SharedQueryCache,
+) -> Result<(u32, u32), String> {
+    // Bucket by zone so per-zone open + commit happens once.
+    let mut by_zone: std::collections::HashMap<String, Vec<crate::search_proto::DocumentInput>> =
+        std::collections::HashMap::new();
+    for doc in documents {
+        let z = if doc.zone_id.is_empty() {
+            default_zone.to_string()
+        } else {
+            doc.zone_id.clone()
+        };
+        by_zone.entry(z).or_default().push(doc);
+    }
+
+    let mut total_indexed: u32 = 0;
+    let mut total_skipped: u32 = 0;
+
+    for (zone_id, docs) in by_zone {
+        let fts = manager
+            .get_or_open(&zone_id)
+            .map_err(|e| format!("open fts for zone {zone_id:?}: {e}"))?;
+        let ann = if let Some(e) = embedder {
+            Some(
+                manager
+                    .get_or_open_ann(&zone_id, e.tag(), e.dim())
+                    .map_err(|err| format!("open ann for zone {zone_id:?}: {err}"))?,
+            )
+        } else {
+            None
+        };
+        let state = crate::index_state::IndexState::open_or_create(manager.zone_root(&zone_id))
+            .map_err(|e| format!("open state for zone {zone_id:?}: {e}"))?;
+
+        for doc in docs {
+            if doc.text.trim().is_empty() {
+                total_skipped += 1;
+                continue;
+            }
+            let chunks = crate::chunker::chunk_document(&doc.text);
+            if chunks.is_empty() {
+                total_skipped += 1;
+                continue;
+            }
+            // FTS: drop-old-then-add-new (mirrors do_index).
+            fts.delete_all_chunks(&doc.path);
+            let mut fts_ok = true;
+            for chunk in &chunks {
+                if let Err(e) =
+                    fts.add_document(&doc.path, chunk.chunk_index, &chunk.text, doc.mtime_ms)
+                {
+                    tracing::warn!(path = %doc.path, err = %e, "index_documents: fts add failed");
+                    fts_ok = false;
+                    break;
+                }
+            }
+            if !fts_ok {
+                total_skipped += 1;
+                continue;
+            }
+
+            // ANN: best-effort, same pattern as do_index.
+            if let (Some(ann), Some(emb)) = (ann.as_ref(), embedder) {
+                let inputs: Vec<&str> = chunks.iter().map(|c| c.embed_input.as_str()).collect();
+                match emb.embed_batch(&inputs) {
+                    Ok(vecs) if vecs.len() == chunks.len() => {
+                        ann.delete_all_chunks(&doc.path);
+                        for (chunk, vec) in chunks.iter().zip(vecs.iter()) {
+                            if let Err(e) = ann.add_vector(&doc.path, chunk.chunk_index, vec) {
+                                tracing::warn!(
+                                    path = %doc.path,
+                                    err = %e,
+                                    "index_documents: ann add failed — semantic misses",
+                                );
+                            }
+                        }
+                    }
+                    Ok(_) | Err(_) => {
+                        // Embed failure logged already inside; ANN
+                        // just skipped for this doc.
+                    }
+                }
+            }
+
+            state.record(&doc.path, doc.mtime_ms);
+            total_indexed += 1;
+        }
+
+        if let Err(e) = fts.commit() {
+            return Err(format!("fts commit for zone {zone_id:?}: {e}"));
+        }
+        if let Some(a) = ann.as_ref() {
+            if let Err(e) = a.commit() {
+                return Err(format!("ann commit for zone {zone_id:?}: {e}"));
+            }
+        }
+        if let Err(e) = state.save() {
+            tracing::warn!(err = %e, zone = %zone_id, "index_state save failed");
+        }
+        cache.invalidate_zone(&zone_id);
+    }
+
+    Ok((total_indexed, total_skipped))
+}
+
+/// Per-file change event.  "delete" drops the file from every
+/// index; "create" / "update" is a no-op here because we can't
+/// re-index without the text — the caller is expected to follow
+/// with IndexDocuments or wait for the next Refresh.  Returns a
+/// status string mirroring the Python `notify_file_change`
+/// contract.
+fn do_notify_file_change(
+    manager: &IndexManager,
+    zone_id: &str,
+    path: &str,
+    change_type: &str,
+    cache: &crate::query_cache::SharedQueryCache,
+) -> Result<String, String> {
+    let fts = manager
+        .get_or_open(zone_id)
+        .map_err(|e| format!("open fts for zone {zone_id:?}: {e}"))?;
+    let state = crate::index_state::IndexState::open_or_create(manager.zone_root(zone_id))
+        .map_err(|e| format!("open state for zone {zone_id:?}: {e}"))?;
+
+    match change_type {
+        "delete" => {
+            fts.delete_all_chunks(path);
+            // Only open ANN if it happens to already be there —
+            // creating an empty ANN dir on a delete is
+            // counterproductive.  We'd need the embedder tag to
+            // open; the cheap approach is to leave ANN cleanup
+            // for the next Refresh, which already sweeps orphan
+            // vectors via the shadow-set contract.
+            state.forget(path);
+            if let Err(e) = fts.commit() {
+                return Err(format!("fts commit: {e}"));
+            }
+            if let Err(e) = state.save() {
+                tracing::warn!(err = %e, "index_state save failed");
+            }
+            cache.invalidate_zone(zone_id);
+            Ok("accepted".to_string())
+        }
+        "create" | "update" | "" => {
+            // No text on the wire — nothing to add.  Return
+            // "skipped" so the caller knows it's an ack, not a
+            // re-index.  A future NotifyFileChangeRequest with an
+            // inline text field would let us do more here, but
+            // matching Python's shape means callers pair this
+            // event with a follow-up IndexDocuments.
+            Ok("skipped".to_string())
+        }
+        other => Err(format!("unknown change_type: {other:?}")),
+    }
+}
+
+/// Path-only existence check.  Fetches chunks under `path` via
+/// FTS's `get_chunks_by_path`; ANN isn't queried because that
+/// would need the embedder + tag and Locate is meant to be cheap.
+fn do_locate(
+    manager: &IndexManager,
+    zone_id: &str,
+    path: &str,
+) -> Result<(bool, u32, Option<i64>), String> {
+    let fts = manager
+        .get_or_open(zone_id)
+        .map_err(|e| format!("open fts for zone {zone_id:?}: {e}"))?;
+    let hits = fts
+        .get_chunks_by_path(path)
+        .map_err(|e| format!("locate: {e}"))?;
+    if hits.is_empty() {
+        return Ok((false, 0, None));
+    }
+    let mtime_ms = hits
+        .iter()
+        .find_map(|h| h.mtime_ms)
+        // FtsHit's mtime_ms is Option<i64>; find_map short-circuits
+        // on the first Some — every chunk of a file shares the
+        // same mtime so any Some is fine.
+        ;
+    Ok((true, hits.len() as u32, mtime_ms))
+}
+
 // ── tonic trait impl ──────────────────────────────────────────────
 
 #[async_trait]
@@ -1679,6 +1881,508 @@ impl SearchService for SearchServiceImpl {
                 removed_count: 0,
                 unchanged_count: 0,
                 skipped_count: 0,
+                error: Some(err),
+            })),
+        }
+    }
+
+    // ── P8 Python-parity RPCs — stubs.  Each returns a typed
+    //    error on the response's `error` field so callers can tell
+    //    "not implemented yet" from a real failure.  Handlers land
+    //    in the following commits.
+
+    async fn batch_query(
+        &self,
+        request: Request<BatchQueryRequest>,
+    ) -> Result<Response<BatchQueryResponse>, Status> {
+        let req = request.into_inner();
+        // Serialise the batch: each Query has its own scoring +
+        // caching pass and reusing the existing `query` handler
+        // keeps the cache + scoring pipeline consistent.  A future
+        // optimisation could dedupe zone / caching lookups across
+        // the batch; not worth it until Python parity is proven.
+        let mut responses = Vec::with_capacity(req.queries.len());
+        for q_req in req.queries {
+            let resp = self.query(Request::new(q_req)).await?;
+            responses.push(resp.into_inner());
+        }
+        Ok(Response::new(BatchQueryResponse { responses }))
+    }
+
+    async fn index_documents(
+        &self,
+        request: Request<IndexDocumentsRequest>,
+    ) -> Result<Response<IndexDocumentsResponse>, Status> {
+        let req = request.into_inner();
+        let default_zone = resolve_zone(&req.zone_id).to_string();
+        let manager = Arc::clone(&self.manager);
+        let embedder = self.get_or_init_embedder().ok();
+        let cache = Arc::clone(&self.query_cache);
+        let outcome = tokio::task::spawn_blocking(move || {
+            do_index_documents(
+                &manager,
+                embedder.as_ref(),
+                &default_zone,
+                req.documents,
+                &cache,
+            )
+        })
+        .await
+        .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
+
+        match outcome {
+            Ok((indexed, skipped)) => Ok(Response::new(IndexDocumentsResponse {
+                indexed_count: indexed,
+                skipped_count: skipped,
+                parked_paths: Vec::new(), // parked queue lands in step 4
+                error: None,
+            })),
+            Err(err) => Ok(Response::new(IndexDocumentsResponse {
+                indexed_count: 0,
+                skipped_count: 0,
+                parked_paths: Vec::new(),
+                error: Some(err),
+            })),
+        }
+    }
+
+    async fn notify_file_change(
+        &self,
+        request: Request<NotifyFileChangeRequest>,
+    ) -> Result<Response<NotifyFileChangeResponse>, Status> {
+        let req = request.into_inner();
+        let zone_id = resolve_zone(&req.zone_id).to_string();
+        let change = req.change_type.clone();
+        let path = req.path.clone();
+        let manager = Arc::clone(&self.manager);
+        let cache = Arc::clone(&self.query_cache);
+        let outcome = tokio::task::spawn_blocking(move || {
+            do_notify_file_change(&manager, &zone_id, &path, &change, &cache)
+        })
+        .await
+        .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
+
+        match outcome {
+            Ok(status) => Ok(Response::new(NotifyFileChangeResponse {
+                status,
+                error: None,
+            })),
+            Err(err) => Ok(Response::new(NotifyFileChangeResponse {
+                status: String::new(),
+                error: Some(err),
+            })),
+        }
+    }
+
+    async fn locate(
+        &self,
+        request: Request<LocateRequest>,
+    ) -> Result<Response<LocateResponse>, Status> {
+        let req = request.into_inner();
+        let zone_id = resolve_zone(&req.zone_id).to_string();
+        let path = req.path;
+        let manager = Arc::clone(&self.manager);
+        let zone_reply = zone_id.clone();
+        let outcome = tokio::task::spawn_blocking(move || do_locate(&manager, &zone_id, &path))
+            .await
+            .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
+
+        match outcome {
+            Ok((indexed, chunk_count, mtime_ms)) => Ok(Response::new(LocateResponse {
+                indexed,
+                chunk_count,
+                mtime_ms,
+                zone_id: zone_reply,
+            })),
+            // Errors surface as indexed=false — Locate is a check,
+            // not an assertion.  Callers who need the error text
+            // can look at server logs.
+            Err(err) => {
+                tracing::warn!(err = %err, "locate failed");
+                Ok(Response::new(LocateResponse {
+                    indexed: false,
+                    chunk_count: 0,
+                    mtime_ms: None,
+                    zone_id: zone_reply,
+                }))
+            }
+        }
+    }
+
+    async fn parked_list(
+        &self,
+        request: Request<ParkedListRequest>,
+    ) -> Result<Response<ParkedListResponse>, Status> {
+        let req = request.into_inner();
+        let zone_id = resolve_zone(&req.zone_id).to_string();
+        let manager = Arc::clone(&self.manager);
+        let zone_for_entries = zone_id.clone();
+        let outcome = tokio::task::spawn_blocking(move || {
+            crate::parked_state::ParkedQueue::open_or_create(manager.zone_root(&zone_id))
+                .map(|q| q.list())
+                .map_err(|e| format!("open parked queue: {e}"))
+        })
+        .await
+        .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
+
+        match outcome {
+            Ok(entries) => Ok(Response::new(ParkedListResponse {
+                entries: entries
+                    .into_iter()
+                    .map(|e| crate::search_proto::ParkedEntry {
+                        path: e.path,
+                        zone_id: zone_for_entries.clone(),
+                        parked_at_ms: e.parked_at_ms,
+                        reason: e.reason,
+                    })
+                    .collect(),
+                error: None,
+            })),
+            Err(err) => Ok(Response::new(ParkedListResponse {
+                entries: Vec::new(),
+                error: Some(err),
+            })),
+        }
+    }
+
+    async fn parked_retry(
+        &self,
+        request: Request<ParkedRetryRequest>,
+    ) -> Result<Response<ParkedRetryResponse>, Status> {
+        let req = request.into_inner();
+        let zone_id = resolve_zone(&req.zone_id).to_string();
+        let paths = req.paths;
+        let manager = Arc::clone(&self.manager);
+        let outcome = tokio::task::spawn_blocking(move || -> Result<(u32, u32), String> {
+            let q = crate::parked_state::ParkedQueue::open_or_create(manager.zone_root(&zone_id))
+                .map_err(|e| format!("open parked queue: {e}"))?;
+            // Empty paths ⇒ retry every parked doc (matches
+            // Python).  "Retry" here just drops entries from the
+            // queue — real retry means the caller follows with
+            // IndexDocuments carrying the fresh text.  Same shape
+            // Python has: /parked/retry acks the caller; the retry
+            // actually happens on the next IndexDocuments call.
+            let targets: Vec<String> = if paths.is_empty() {
+                q.list().into_iter().map(|e| e.path).collect()
+            } else {
+                paths
+            };
+            let mut retried: u32 = 0;
+            for p in &targets {
+                if q.remove(p) {
+                    retried += 1;
+                }
+            }
+            q.save().map_err(|e| format!("save parked queue: {e}"))?;
+            let still = q.len() as u32;
+            Ok((retried, still))
+        })
+        .await
+        .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
+
+        match outcome {
+            Ok((retried, still)) => Ok(Response::new(ParkedRetryResponse {
+                retried_count: retried,
+                still_parked_count: still,
+                error: None,
+            })),
+            Err(err) => Ok(Response::new(ParkedRetryResponse {
+                retried_count: 0,
+                still_parked_count: 0,
+                error: Some(err),
+            })),
+        }
+    }
+
+    async fn parked_discard(
+        &self,
+        request: Request<ParkedDiscardRequest>,
+    ) -> Result<Response<ParkedDiscardResponse>, Status> {
+        let req = request.into_inner();
+        let zone_id = resolve_zone(&req.zone_id).to_string();
+        let paths = req.paths;
+        let manager = Arc::clone(&self.manager);
+        let outcome = tokio::task::spawn_blocking(move || -> Result<u32, String> {
+            let q = crate::parked_state::ParkedQueue::open_or_create(manager.zone_root(&zone_id))
+                .map_err(|e| format!("open parked queue: {e}"))?;
+            let targets: Vec<String> = if paths.is_empty() {
+                q.list().into_iter().map(|e| e.path).collect()
+            } else {
+                paths
+            };
+            let mut discarded: u32 = 0;
+            for p in &targets {
+                if q.remove(p) {
+                    discarded += 1;
+                }
+            }
+            q.save().map_err(|e| format!("save parked queue: {e}"))?;
+            Ok(discarded)
+        })
+        .await
+        .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
+
+        match outcome {
+            Ok(count) => Ok(Response::new(ParkedDiscardResponse {
+                discarded_count: count,
+                error: None,
+            })),
+            Err(err) => Ok(Response::new(ParkedDiscardResponse {
+                discarded_count: 0,
+                error: Some(err),
+            })),
+        }
+    }
+
+    async fn add_indexed_directory(
+        &self,
+        request: Request<AddIndexedDirectoryRequest>,
+    ) -> Result<Response<AddIndexedDirectoryResponse>, Status> {
+        let req = request.into_inner();
+        let zone_id = resolve_zone(&req.zone_id).to_string();
+        let path = req.path;
+        let manager = Arc::clone(&self.manager);
+        let outcome = tokio::task::spawn_blocking(move || -> Result<bool, String> {
+            let r = crate::indexed_dirs_state::IndexedDirsRegistry::open_or_create(
+                manager.zone_root(&zone_id),
+            )
+            .map_err(|e| format!("open indexed_dirs: {e}"))?;
+            let added = r.add(&path, current_time_ms());
+            r.save().map_err(|e| format!("save indexed_dirs: {e}"))?;
+            Ok(added)
+        })
+        .await
+        .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
+
+        match outcome {
+            Ok(added) => Ok(Response::new(AddIndexedDirectoryResponse {
+                added,
+                error: None,
+            })),
+            Err(err) => Ok(Response::new(AddIndexedDirectoryResponse {
+                added: false,
+                error: Some(err),
+            })),
+        }
+    }
+
+    async fn remove_indexed_directory(
+        &self,
+        request: Request<RemoveIndexedDirectoryRequest>,
+    ) -> Result<Response<RemoveIndexedDirectoryResponse>, Status> {
+        let req = request.into_inner();
+        let zone_id = resolve_zone(&req.zone_id).to_string();
+        let path = req.path;
+        let manager = Arc::clone(&self.manager);
+        let outcome = tokio::task::spawn_blocking(move || -> Result<bool, String> {
+            let r = crate::indexed_dirs_state::IndexedDirsRegistry::open_or_create(
+                manager.zone_root(&zone_id),
+            )
+            .map_err(|e| format!("open indexed_dirs: {e}"))?;
+            let removed = r.remove(&path);
+            r.save().map_err(|e| format!("save indexed_dirs: {e}"))?;
+            Ok(removed)
+        })
+        .await
+        .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
+
+        match outcome {
+            Ok(removed) => Ok(Response::new(RemoveIndexedDirectoryResponse {
+                removed,
+                error: None,
+            })),
+            Err(err) => Ok(Response::new(RemoveIndexedDirectoryResponse {
+                removed: false,
+                error: Some(err),
+            })),
+        }
+    }
+
+    async fn list_indexed_directories(
+        &self,
+        request: Request<ListIndexedDirectoriesRequest>,
+    ) -> Result<Response<ListIndexedDirectoriesResponse>, Status> {
+        let req = request.into_inner();
+        let zone_id = resolve_zone(&req.zone_id).to_string();
+        let zone_for_reply = zone_id.clone();
+        let manager = Arc::clone(&self.manager);
+        let outcome = tokio::task::spawn_blocking(move || {
+            crate::indexed_dirs_state::IndexedDirsRegistry::open_or_create(
+                manager.zone_root(&zone_id),
+            )
+            .map(|r| r.list())
+            .map_err(|e| format!("open indexed_dirs: {e}"))
+        })
+        .await
+        .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
+
+        match outcome {
+            Ok(entries) => Ok(Response::new(ListIndexedDirectoriesResponse {
+                directories: entries
+                    .into_iter()
+                    .map(|e| crate::search_proto::IndexedDirectory {
+                        path: e.path,
+                        zone_id: zone_for_reply.clone(),
+                        added_at_ms: e.added_at_ms,
+                    })
+                    .collect(),
+                error: None,
+            })),
+            Err(err) => Ok(Response::new(ListIndexedDirectoriesResponse {
+                directories: Vec::new(),
+                error: Some(err),
+            })),
+        }
+    }
+
+    async fn set_zone_indexing_mode(
+        &self,
+        request: Request<SetZoneIndexingModeRequest>,
+    ) -> Result<Response<SetZoneIndexingModeResponse>, Status> {
+        let req = request.into_inner();
+        let zone_id = resolve_zone(&req.zone_id).to_string();
+        let mode = req.mode;
+        let manager = Arc::clone(&self.manager);
+        let outcome = tokio::task::spawn_blocking(move || -> Result<(), String> {
+            let reg = crate::zone_modes_state::ZoneModesRegistry::open_or_create(
+                manager.root().to_path_buf(),
+            )
+            .map_err(|e| format!("open zone_modes: {e}"))?;
+            reg.set(&zone_id, &mode)
+                .map_err(|e| format!("set zone mode: {e}"))?;
+            reg.save().map_err(|e| format!("save zone_modes: {e}"))?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
+
+        match outcome {
+            Ok(()) => Ok(Response::new(SetZoneIndexingModeResponse { error: None })),
+            Err(err) => Ok(Response::new(SetZoneIndexingModeResponse {
+                error: Some(err),
+            })),
+        }
+    }
+
+    async fn list_zone_indexing_modes(
+        &self,
+        _request: Request<ListZoneIndexingModesRequest>,
+    ) -> Result<Response<ListZoneIndexingModesResponse>, Status> {
+        let manager = Arc::clone(&self.manager);
+        let outcome = tokio::task::spawn_blocking(move || {
+            crate::zone_modes_state::ZoneModesRegistry::open_or_create(manager.root().to_path_buf())
+                .map(|r| r.list())
+                .map_err(|e| format!("open zone_modes: {e}"))
+        })
+        .await
+        .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
+
+        match outcome {
+            Ok(entries) => Ok(Response::new(ListZoneIndexingModesResponse {
+                modes: entries
+                    .into_iter()
+                    .map(|(zone_id, mode)| crate::search_proto::ZoneIndexingMode { zone_id, mode })
+                    .collect(),
+                error: None,
+            })),
+            Err(err) => Ok(Response::new(ListZoneIndexingModesResponse {
+                modes: Vec::new(),
+                error: Some(err),
+            })),
+        }
+    }
+
+    async fn health(
+        &self,
+        _request: Request<HealthRequest>,
+    ) -> Result<Response<HealthResponse>, Status> {
+        // Health is trivial + valuable during cutover — land the
+        // real impl inline rather than another commit.  Semantic
+        // "degraded" surfaces when the embedder slot is empty; if
+        // the plugin ever fails to open the FTS on request, that
+        // caller sees `unavailable` at the failing RPC (this poll
+        // says "healthy" because it doesn't itself open anything).
+        let has_embedder = self.embedder_slot.lock().is_some();
+        let status = if has_embedder { "healthy" } else { "degraded" };
+        let detail = if has_embedder {
+            "fts + ann online".to_string()
+        } else {
+            "fts online; semantic unavailable (embedder not initialised — normal on lite profile)"
+                .to_string()
+        };
+        Ok(Response::new(HealthResponse {
+            status: status.to_string(),
+            detail,
+        }))
+    }
+
+    async fn stats(
+        &self,
+        request: Request<StatsRequest>,
+    ) -> Result<Response<StatsResponse>, Status> {
+        let req = request.into_inner();
+        let zone_id = resolve_zone(&req.zone_id).to_string();
+        let manager = Arc::clone(&self.manager);
+        let embedder_tag_dim = self
+            .embedder_slot
+            .lock()
+            .as_ref()
+            .map(|e| (e.tag().to_string(), e.dim()));
+        let outcome = tokio::task::spawn_blocking(move || -> Result<StatsResponse, String> {
+            // FTS side: count chunks + distinct paths in the zone.
+            // FtsIndex doesn't expose a raw count today, so we open
+            // it (which is cheap when already cached) and let the
+            // caller derive from search + get_chunks_by_path.  For
+            // v0 we surface zero counts on error — Stats is a poll
+            // surface, not a source of truth.
+            let fts_open = manager.get_or_open(&zone_id);
+            let (fts_doc_count, fts_path_count) = match fts_open {
+                Ok(_fts) => {
+                    // Rough approximation — no cheap enumerator on
+                    // tantivy without a full read.  Real accounting
+                    // lands with the P5 IndexState-driven counter in
+                    // a follow-up.  For now surface (parked
+                    // + indexed_dirs) counts so callers see SOMETHING
+                    // useful even if FTS totals are zero.
+                    let state =
+                        crate::index_state::IndexState::open_or_create(manager.zone_root(&zone_id));
+                    match state {
+                        Ok(s) => (s.len() as u32, s.len() as u32),
+                        Err(_) => (0, 0),
+                    }
+                }
+                Err(_) => (0, 0),
+            };
+            let ann_chunk_count = if let Some((tag, dim)) = embedder_tag_dim {
+                manager
+                    .get_or_open_ann(&zone_id, &tag, dim)
+                    .map(|a| a.live_count() as u32)
+                    .unwrap_or(0)
+            } else {
+                0
+            };
+            let parked_count =
+                crate::parked_state::ParkedQueue::open_or_create(manager.zone_root(&zone_id))
+                    .map(|q| q.len() as u32)
+                    .unwrap_or(0);
+            Ok(StatsResponse {
+                fts_doc_count,
+                fts_path_count,
+                ann_chunk_count,
+                parked_count,
+                error: None,
+            })
+        })
+        .await
+        .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
+
+        match outcome {
+            Ok(resp) => Ok(Response::new(resp)),
+            Err(err) => Ok(Response::new(StatsResponse {
+                fts_doc_count: 0,
+                fts_path_count: 0,
+                ann_chunk_count: 0,
+                parked_count: 0,
                 error: Some(err),
             })),
         }

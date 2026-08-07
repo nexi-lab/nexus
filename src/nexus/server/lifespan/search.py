@@ -339,16 +339,38 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
             if _ss is not None:
                 _vec_backend = getattr(_ss, "_sqlite_vec_backend", None)
 
-        app.state.search_daemon = SearchDaemon(
-            config,
-            async_session_factory=_async_sf,
-            zoekt_client=_zoekt_client,
-            cache_brick=_cache_brick,
-            settings_store=_settings_store,
-            path_context_cache=path_context_cache,  # Issue #3773
-            sqlite_vec_backend=_vec_backend,
-            zone_registry=getattr(app.state, "zone_registry", None),
-        )
+        # P8 cutover: SEARCH_BACKEND=rust ⇒ construct the
+        # RustSearchDaemon that forwards every method to the
+        # nexus-search-plugin RPCs.  Default stays 'python' so
+        # existing deployments are unaffected; an operator flips
+        # SEARCH_BACKEND=rust to route through the plugin.
+        #
+        # See rust/services/search-plugin/PARITY_ROADMAP.md P8-P12
+        # for the cutover strategy — Python code stays live and
+        # receives fixes until P12 (full deletion).
+        backend = os.environ.get("SEARCH_BACKEND", "python").lower()
+        if backend == "rust":
+            from nexus.bricks.search.rust_daemon import RustSearchDaemon
+
+            logger.warning(
+                "SEARCH_BACKEND=rust — routing search through the "
+                "nexus-search-plugin cdylib.  Python-side embeddings + "
+                "projection consumers are inactive.",
+            )
+            app.state.search_daemon = RustSearchDaemon(
+                target=os.environ.get("NEXUS_SEARCH_PLUGIN_TARGET"),
+            )
+        else:
+            app.state.search_daemon = SearchDaemon(
+                config,
+                async_session_factory=_async_sf,
+                zoekt_client=_zoekt_client,
+                cache_brick=_cache_brick,
+                settings_store=_settings_store,
+                path_context_cache=path_context_cache,  # Issue #3773
+                sqlite_vec_backend=_vec_backend,
+                zone_registry=getattr(app.state, "zone_registry", None),
+            )
 
         # Embeddings are now handled by txtai backend (Issue #2663).
         # The old nexus.bricks.search.embeddings module has been deleted.

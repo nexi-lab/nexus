@@ -9,6 +9,39 @@ ranking.py and bm25s_search.py (Issue #1092, #1499).
 """
 
 from dataclasses import dataclass
+from typing import Any
+
+
+# Backend timing legs surfaced on ``SearchResultList.search_timing`` and
+# echoed by the ``/query`` router in its response envelope.  Federated
+# search sums per-peer legs into the aggregate under the same keys.
+BACKEND_LEG_TIMING_KEYS = (
+    "backend_ms",
+    "embed_ms",
+    "keyword_ms",
+    "page_keyword_ms",
+    "title_ms",
+    "vector_ms",
+    "fusion_ms",
+    "rerank_ms",
+    "index_load_ms",
+    "fallback_ms",
+)
+
+
+# Tier-boost over-fetch cap (Issue #4544): env-sourced ranking knobs are
+# untrusted input; the widening factor is capped so route-limit × ReBAC
+# over-fetch × this cap keeps backend work bounded.
+TIER_BOOST_OVERFETCH_CAP = 10
+
+
+def sane_overfetch_factor(raw: Any) -> int:
+    """Clamp the tier-boost over-fetch factor to ``[1, TIER_BOOST_OVERFETCH_CAP]``."""
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return 1
+    return max(1, min(value, TIER_BOOST_OVERFETCH_CAP))
 
 
 @dataclass

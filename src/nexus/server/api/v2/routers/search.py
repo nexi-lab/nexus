@@ -37,7 +37,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
-from nexus.bricks.search.daemon import _BACKEND_LEG_TIMING_KEYS
+from nexus.bricks.search.results import BACKEND_LEG_TIMING_KEYS as _BACKEND_LEG_TIMING_KEYS
 from nexus.contracts.search_types import BatchQueryFailure, SearchRequest
 from nexus.lib.pagination import build_paginated_list_response
 from nexus.lib.rebac_filter import apply_rebac_filter as _apply_rebac_filter

@@ -118,9 +118,9 @@ async def graph_enhanced_search(
         has_weights, tier_snapshot = await probe(effective_zone_id)
     fetch_limit = limit
     if has_weights:
-        from nexus.bricks.search.daemon import _sane_overfetch_factor
+        from nexus.bricks.search.results import sane_overfetch_factor
 
-        factor = _sane_overfetch_factor(
+        factor = sane_overfetch_factor(
             getattr(getattr(search_daemon, "config", None), "tier_boost_overfetch_factor", 1)
         )
         fetch_limit = limit * factor

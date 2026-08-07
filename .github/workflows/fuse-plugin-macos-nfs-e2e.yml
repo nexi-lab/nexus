@@ -34,10 +34,13 @@ jobs:
     runs-on: macos-latest
     # 12-min budget is a safety net, not a gate.  Layers that catch
     # wedges BEFORE this triggers:
+    #   * readiness poll below — bounded mount probe (wedge_probe.py
+    #     --readonly) on a 180s wall-clock deadline, so a mounted-but-
+    #     not-yet-serving backend can never block the poll;
     #   * per-test pytest-timeout via `wedge_watchdog` marker
     #     (tests/e2e/macos/conftest.py — 60s per test);
-    #   * pre-pytest wedge probe below — stat+mkdir+rmdir on the mount
-    #     with hard subprocess timeouts.
+    #   * pre-pytest wedge probe below — stat+readdir+mkdir+rmdir on the
+    #     mount with hard subprocess timeouts.
     # In practice this workflow completes in <8min warm-cache and
     # <15min cold.  If we approach 12min it means something below the
     # test layer failed (build hung, cargo install hung, or the
@@ -194,23 +197,30 @@ jobs:
           DAEMON_PID=$!
           echo "nexusd-cluster started, pid=$DAEMON_PID"
 
-          # Wait for gRPC + NFS mount ready.
+          # Wait for gRPC + NFS mount ready, on a hard 180s wall-clock
+          # deadline — NOT an iteration count.  The mount probe can take
+          # up to its per-op timeout on a not-yet-serving mount, so a
+          # fixed `seq` loop would let slow probes overshoot the job
+          # budget; the deadline keeps total readiness wait bounded.
           READY=false
-          for i in $(seq 1 90); do
+          READY_DEADLINE=$(( $(date +%s) + 180 ))
+          i=0
+          while [ "$(date +%s)" -lt "$READY_DEADLINE" ]; do
+            i=$((i + 1))
             GRPC_OK=false
             if nc -z 127.0.0.1 2126 2>/dev/null; then
               GRPC_OK=true
             fi
+            # Mount liveness = it answers a *bounded* read (stat + readdir).
+            # A bare `ls` here blocks forever on macOS's hard NFS mount when
+            # the backend mounted but cannot yet serve, defeating the
+            # deadline; wedge_probe.py --readonly caps every syscall.
             MOUNT_OK=false
-            # Check if the mount point is live by testing for a
-            # directory that only exists when the VFS is mounted.
-            # `mount | grep` doesn't reliably show FUSE-T or NFS
-            # mounts in all mount output formats on macOS.
-            if [ -d "/tmp/nexus-nfs-e2e" ] && ls /tmp/nexus-nfs-e2e >/dev/null 2>&1; then
+            if python3 scripts/wedge_probe.py "$NEXUS_FUSE_MOUNT_POINT" --readonly --per-op-timeout 5 >/dev/null 2>&1; then
               MOUNT_OK=true
             fi
             if [ "$GRPC_OK" = "true" ] && [ "$MOUNT_OK" = "true" ]; then
-              echo "Cluster healthy (gRPC + NFS mount) after ${i}s"
+              echo "Cluster healthy (gRPC + NFS mount) after ${i} probes"
               READY=true
               break
             fi

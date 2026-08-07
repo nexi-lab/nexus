@@ -16,8 +16,6 @@ import logging
 import os
 from typing import TYPE_CHECKING
 
-from nexus.contracts.constants import ROOT_ZONE_ID
-
 if TYPE_CHECKING:
     from fastapi import FastAPI
 

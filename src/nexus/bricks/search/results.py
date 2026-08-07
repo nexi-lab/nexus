@@ -8,9 +8,9 @@ Also provides detect_matched_field() — the canonical 6-field version used by
 ranking.py and bm25s_search.py (Issue #1092, #1499).
 """
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
-
 
 # Backend timing legs surfaced on ``SearchResultList.search_timing`` and
 # echoed by the ``/query`` router in its response envelope.  Federated
@@ -99,6 +99,28 @@ class BaseSearchResult:
         Computed from zone_id + path so it can never drift out of sync.
         """
         return f"{self.zone_id}:{self.path}" if self.zone_id else None
+
+
+class SearchResultList(list[BaseSearchResult]):
+    """``list[BaseSearchResult]`` plus request-level search-timing snapshot.
+
+    ``semantic_degraded`` (#3778) carries request-level degradation so a
+    federated response whose result list is *empty* still surfaces the
+    signal — per-result stamping alone loses it when there are no
+    results.  ``search_timing`` holds the per-leg backend phase timings
+    keyed by :data:`BACKEND_LEG_TIMING_KEYS`.
+    """
+
+    semantic_degraded: bool = False
+
+    def __init__(
+        self,
+        results: Iterable[BaseSearchResult] = (),
+        *,
+        search_timing: dict[str, float] | None = None,
+    ) -> None:
+        super().__init__(results)
+        self.search_timing = dict(search_timing or {})
 
 
 def detect_matched_field(

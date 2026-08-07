@@ -35,7 +35,6 @@ from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel
 
 from nexus.bricks.search.results import BACKEND_LEG_TIMING_KEYS as _BACKEND_LEG_TIMING_KEYS
 from nexus.contracts.search_types import BatchQueryFailure, SearchRequest
@@ -50,7 +49,7 @@ from nexus.server.api.v2.routers._search_batch import (
     spec_query_text,
 )
 from nexus.server.api.v2.routers._search_deps import _get_search_daemon
-from nexus.server.dependencies import get_operation_context, require_admin, require_auth
+from nexus.server.dependencies import get_operation_context, require_auth
 from nexus.server.zone_execution import run_zone_scoped
 
 logger = logging.getLogger(__name__)

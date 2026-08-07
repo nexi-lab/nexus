@@ -678,7 +678,7 @@ class TestResultCaching:
     async def test_federated_response_carries_degradation_flag(self) -> None:
         """#4541 review round 9: zone-level degradation (even with an empty
         result list) surfaces on the FederatedSearchResponse."""
-        from nexus.bricks.search.daemon import SearchResultList
+        from nexus.bricks.search.results import SearchResultList
 
         degraded_empty = SearchResultList([])
         degraded_empty.semantic_degraded = True
@@ -1386,8 +1386,8 @@ class TestRound10Hardening:
     async def test_cache_hit_preserves_degradation_marker(self) -> None:
         """#4541 review round 10: a cache hit serves the same degraded
         payload, so semantic_degraded must survive the cache-hit clone."""
-        from nexus.bricks.search.daemon import SearchResultList
         from nexus.bricks.search.federated_search import FederatedSearchConfig
+        from nexus.bricks.search.results import SearchResultList
 
         degraded_empty = SearchResultList([])
         degraded_empty.semantic_degraded = True

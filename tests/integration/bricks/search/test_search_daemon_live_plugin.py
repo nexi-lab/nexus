@@ -99,8 +99,8 @@ def daemon():
 class TestSearchDaemonRoundtrip:
     """Every method the FastAPI router touches — verify it round-
     trips through the plugin.  Same shape as the direct-gRPC E2E
-    suite, but the caller is SearchDaemon (what production
-    uses at SEARCH_BACKEND=rust)."""
+    suite, but the caller is the production ``SearchDaemon``
+    Python proxy."""
 
     def test_health_returns_status(self, daemon) -> None:
         h = daemon.get_health()

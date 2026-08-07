@@ -1,6 +1,6 @@
 # nexus-search-plugin — Python-parity roadmap
 
-**Status:** P0-P7 landed. P8-P12 revised post-audit — see the
+**Status:** P0-P8 landed. P9-P12 remaining — see the
 "Cutover strategy" section for why P8 is no longer "delete Python".
 
 **Goal:** Rust plugin matches Python's user-observable feature set
@@ -38,6 +38,7 @@ discussion, not a silent change.
 | P6 | Recency decay + path-prefix boost | #4589 |
 | P7 | Zone-scoped query cache | #4590 |
 | P5-P7r | Audit retrofits (cache E2E, delete-through-Refresh E2E, builder) | #4591 |
+| P8 | Coexist mode — `SEARCH_BACKEND=rust` routes Python daemon through Rust plugin; +15 first-class RPCs (BatchQuery, IndexDocuments, NotifyFileChange, Locate, Parked×3, IndexedDirs×3, ZoneMode×2, Health, Stats); RustSearchDaemon Python drop-in; per-zone parked/indexed-dirs sidecars + cluster-wide zone-modes sidecar | #4596 |
 
 ## Cutover strategy (revised post-P7 audit)
 
@@ -48,13 +49,18 @@ Python before those are ported crashes ShareOne.
 
 **Revised strategy: cutover in phases, delete last.**
 
-- **P8** — coexist-mode. Add `SEARCH_BACKEND=rust|python` env flag
-  to the Python router; when set to `rust`, the three
-  already-parity endpoints (`/query`, `/index`, `/refresh`) forward
-  to the Rust plugin. Every other endpoint keeps its Python impl.
-  Default stays `python`; a per-zone override can flip specific
-  zones early for testing.
-- **P9-P11** — port the remaining endpoints one PR per group,
+- **P8** — coexist-mode (LANDED, #4596). `SEARCH_BACKEND=rust` at
+  the Python router constructs `RustSearchDaemon` (drop-in for the
+  Python `SearchDaemon`) that speaks gRPC to the Rust plugin at
+  `NEXUS_SEARCH_PLUGIN_TARGET` (default `127.0.0.1:2126`). Added 15
+  first-class RPCs to `nexus.search.v1.SearchService` — no adapter
+  layer — covering BatchQuery / IndexDocuments / NotifyFileChange /
+  Locate / Parked×3 / IndexedDirs×3 / ZoneMode×2 / Health / Stats.
+  Persistent state reuses the IndexState/AnnIndex sidecar shape
+  (per-zone JSON + `RwLock` + atomic rename): `parked.json`,
+  `indexed_dirs.json`, and cluster-wide `zone_modes.json`. Default
+  stays `python`; flip via env when a zone is ready.
+- **P9-P11** — port the remaining endpoint groups one PR per group,
   cutover under the same flag. See "Endpoint gap list" below.
 - **P12** — with every endpoint on Rust + one full release cycle
   in ShareOne dogfood at green, flip default to `rust`, delete
@@ -72,18 +78,37 @@ sub-routers. Anything checkmarked already forwards under P8's flag.
 - ☑ `POST /index` — full walk indexing (P1 / P4)
 - ☑ `POST /refresh` — incremental (P5)
 - ☑ `POST /expand` (as `expand=macro` param on `/query`) (P4)
-- ☐ `POST /query/batch` — batched multi-query (P9 target)
-- ☐ `POST /locate` — path-only lookup, no scoring (P9 target)
-- ☐ `GET /parked` + `POST /parked/retry` + `POST /parked/discard`
-  — indexing-failure queue mgmt (P10 target)
+- ☑ `POST /query/batch` — batched multi-query (P8, `BatchQuery` RPC)
+- ☑ `POST /locate` — path-only lookup, no scoring (P8, `Locate` RPC)
+- ☑ `GET /parked` + `POST /parked/retry` + `POST /parked/discard`
+  — indexing-failure queue mgmt (P8, `ListParked` / `RetryParked` /
+  `DiscardParked` RPCs backed by per-zone `parked.json` sidecar).
+  Note: `do_index_documents` doesn't populate the queue yet — the
+  RPC surface is dial-able and shape-correct, but auto-park on
+  failure is a P10 subtask.
+- ☑ `POST /notify-file-change` — mtime-driven index invalidation
+  (P8, `NotifyFileChange` RPC)
+- ☑ `GET /index-dirs/{zone}` list + `POST` add + `DELETE` remove
+  (P8, `AddIndexedDirectory` / `RemoveIndexedDirectory` /
+  `ListIndexedDirectories` RPCs backed by per-zone
+  `indexed_dirs.json`). Remaining `/index-dirs/*` sub-endpoints
+  (2 of 5) are P11 target.
+- ☑ `POST /zones/{zone}/indexing-mode` + `GET /zones/indexing-modes`
+  — per-zone on/off/sandbox switch (P8, `SetZoneIndexingMode` /
+  `ListZoneIndexingModes` RPCs backed by cluster-wide
+  `zone_modes.json`)
+- ☑ `GET /health` + `GET /stats` (P8, `Health` / `Stats` RPCs)
 - ☐ `POST /consumers/{name}/skip-to` — projection cursor mgmt
   (P10 target)
-- ☐ `GET /index-dirs/*` — indexed-dirs metadata surface, 5
-  sub-endpoints (P11 target)
+- ☐ `POST /force-checkpoint`, `POST /purge-unscoped-embeddings`,
+  `POST /rerun-backfill-for-directory` — 3 admin surfaces stubbed
+  as warn-log no-ops in `RustSearchDaemon`; real impls are P11
+  target.
 
-Total new Rust surface for P9-P11 estimated at ~2 000 LoC (each
-endpoint is 100-400 LoC on top of existing FtsIndex + AnnIndex
-primitives).
+Total remaining Rust surface for P9-P11 estimated at ~600 LoC
+(auto-park hook + consumers/skip-to + 3 admin endpoints + 2
+remaining index-dirs sub-endpoints; each 50-300 LoC on top of
+existing FtsIndex + AnnIndex primitives).
 
 ## Success criteria for P12 (deletion gate)
 

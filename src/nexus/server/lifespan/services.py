@@ -619,6 +619,7 @@ async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> No
         except Exception as e:
             logger.warning("[PIPE] TaskDispatchPipeConsumer start failed: %s", e, exc_info=True)
 
+
 async def _shutdown_pipe_consumers(app: "FastAPI") -> None:
     """Stop DT_PIPE consumers (Issue #809, #810).
 
@@ -658,4 +659,3 @@ async def _shutdown_pipe_consumers(app: "FastAPI") -> None:
             logger.info("[PIPE] TaskDispatchPipeConsumer stopped")
         except Exception as e:
             logger.warning("[PIPE] Error stopping TaskDispatchPipeConsumer: %s", e, exc_info=True)
-

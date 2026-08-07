@@ -316,6 +316,7 @@ class SearchDaemon:
 
         return asyncio.get_event_loop().run_until_complete(_call())
 
+
 def _result_to_base(pb: search_pb2.QueryResult) -> BaseSearchResult:
     """Convert a proto QueryResult into the Python daemon's result
     shape.  Fields Python has that Rust doesn't (matched_field,

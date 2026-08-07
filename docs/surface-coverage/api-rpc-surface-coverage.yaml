@@ -6429,8 +6429,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: PUT /api/v2/path-contexts/ {"path_prefix":"src/nexus/bricks/search","description":"Search brick"}
-  correctness_test: tests/integration/server/api/v2/routers/test_path_contexts_router.py; tests/integration/bricks/search/test_path_context.py
-    tests/e2e/self_contained/test_search_surface_live_e2e.py
+  correctness_test: tests/e2e/self_contained/test_search_surface_live_e2e.py
   perf_class: control
   perf_link: control-plane or setup operation; tests/e2e/self_contained/test_search_surface_live_e2e.py enforces live latency
   gap_issue: null
@@ -7874,7 +7873,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: nexus reindex --zone-id root --limit 1000
-  correctness_test: 
+  correctness_test: tests/integration/bricks/search/test_indexing_pipeline.py
   perf_class: setup
   perf_link: tests/benchmarks/test_indexing_benchmarks.py
   gap_issue: null

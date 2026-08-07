@@ -2237,20 +2237,59 @@ impl SearchService for SearchServiceImpl {
 
     async fn set_zone_indexing_mode(
         &self,
-        _request: Request<SetZoneIndexingModeRequest>,
+        request: Request<SetZoneIndexingModeRequest>,
     ) -> Result<Response<SetZoneIndexingModeResponse>, Status> {
-        Err(Status::unimplemented(
-            "SetZoneIndexingMode — landing in P8 step 6",
-        ))
+        let req = request.into_inner();
+        let zone_id = resolve_zone(&req.zone_id).to_string();
+        let mode = req.mode;
+        let manager = Arc::clone(&self.manager);
+        let outcome = tokio::task::spawn_blocking(move || -> Result<(), String> {
+            let reg = crate::zone_modes_state::ZoneModesRegistry::open_or_create(
+                manager.root().to_path_buf(),
+            )
+            .map_err(|e| format!("open zone_modes: {e}"))?;
+            reg.set(&zone_id, &mode)
+                .map_err(|e| format!("set zone mode: {e}"))?;
+            reg.save().map_err(|e| format!("save zone_modes: {e}"))?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
+
+        match outcome {
+            Ok(()) => Ok(Response::new(SetZoneIndexingModeResponse { error: None })),
+            Err(err) => Ok(Response::new(SetZoneIndexingModeResponse {
+                error: Some(err),
+            })),
+        }
     }
 
     async fn list_zone_indexing_modes(
         &self,
         _request: Request<ListZoneIndexingModesRequest>,
     ) -> Result<Response<ListZoneIndexingModesResponse>, Status> {
-        Err(Status::unimplemented(
-            "ListZoneIndexingModes — landing in P8 step 6",
-        ))
+        let manager = Arc::clone(&self.manager);
+        let outcome = tokio::task::spawn_blocking(move || {
+            crate::zone_modes_state::ZoneModesRegistry::open_or_create(manager.root().to_path_buf())
+                .map(|r| r.list())
+                .map_err(|e| format!("open zone_modes: {e}"))
+        })
+        .await
+        .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
+
+        match outcome {
+            Ok(entries) => Ok(Response::new(ListZoneIndexingModesResponse {
+                modes: entries
+                    .into_iter()
+                    .map(|(zone_id, mode)| crate::search_proto::ZoneIndexingMode { zone_id, mode })
+                    .collect(),
+                error: None,
+            })),
+            Err(err) => Ok(Response::new(ListZoneIndexingModesResponse {
+                modes: Vec::new(),
+                error: Some(err),
+            })),
+        }
     }
 
     async fn health(
@@ -2279,9 +2318,74 @@ impl SearchService for SearchServiceImpl {
 
     async fn stats(
         &self,
-        _request: Request<StatsRequest>,
+        request: Request<StatsRequest>,
     ) -> Result<Response<StatsResponse>, Status> {
-        Err(Status::unimplemented("Stats — landing in P8 step 6"))
+        let req = request.into_inner();
+        let zone_id = resolve_zone(&req.zone_id).to_string();
+        let manager = Arc::clone(&self.manager);
+        let embedder_tag_dim = self
+            .embedder_slot
+            .lock()
+            .as_ref()
+            .map(|e| (e.tag().to_string(), e.dim()));
+        let outcome = tokio::task::spawn_blocking(move || -> Result<StatsResponse, String> {
+            // FTS side: count chunks + distinct paths in the zone.
+            // FtsIndex doesn't expose a raw count today, so we open
+            // it (which is cheap when already cached) and let the
+            // caller derive from search + get_chunks_by_path.  For
+            // v0 we surface zero counts on error — Stats is a poll
+            // surface, not a source of truth.
+            let fts_open = manager.get_or_open(&zone_id);
+            let (fts_doc_count, fts_path_count) = match fts_open {
+                Ok(_fts) => {
+                    // Rough approximation — no cheap enumerator on
+                    // tantivy without a full read.  Real accounting
+                    // lands with the P5 IndexState-driven counter in
+                    // a follow-up.  For now surface (parked
+                    // + indexed_dirs) counts so callers see SOMETHING
+                    // useful even if FTS totals are zero.
+                    let state =
+                        crate::index_state::IndexState::open_or_create(manager.zone_root(&zone_id));
+                    match state {
+                        Ok(s) => (s.len() as u32, s.len() as u32),
+                        Err(_) => (0, 0),
+                    }
+                }
+                Err(_) => (0, 0),
+            };
+            let ann_chunk_count = if let Some((tag, dim)) = embedder_tag_dim {
+                manager
+                    .get_or_open_ann(&zone_id, &tag, dim)
+                    .map(|a| a.live_count() as u32)
+                    .unwrap_or(0)
+            } else {
+                0
+            };
+            let parked_count =
+                crate::parked_state::ParkedQueue::open_or_create(manager.zone_root(&zone_id))
+                    .map(|q| q.len() as u32)
+                    .unwrap_or(0);
+            Ok(StatsResponse {
+                fts_doc_count,
+                fts_path_count,
+                ann_chunk_count,
+                parked_count,
+                error: None,
+            })
+        })
+        .await
+        .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
+
+        match outcome {
+            Ok(resp) => Ok(Response::new(resp)),
+            Err(err) => Ok(Response::new(StatsResponse {
+                fts_doc_count: 0,
+                fts_path_count: 0,
+                ann_chunk_count: 0,
+                parked_count: 0,
+                error: Some(err),
+            })),
+        }
     }
 }
 

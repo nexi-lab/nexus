@@ -23,7 +23,6 @@ from nexus.bricks.search.contextual_chunking import (
     ContextualChunker,
     ContextualChunkResult,
 )
-from nexus.bricks.search.index_scope import IndexScope, is_path_indexed
 from nexus.bricks.search.mutation_events import extract_zone_id, strip_zone_prefix
 
 # Removed: txtai handles this (Issue #2663)
@@ -90,7 +89,6 @@ class IndexingPipeline:
         batch_size: int = 100,
         max_embedding_concurrency: int = 5,
         cross_doc_batching: bool = True,
-        scope_provider: Callable[[], IndexScope | None] | None = None,
         sqlite_vec_backend: Any | None = None,
     ):
         self._chunker = chunker
@@ -103,11 +101,6 @@ class IndexingPipeline:
         self._batch_size = batch_size
         self._max_embedding_concurrency = max_embedding_concurrency
         self._cross_doc_batching = cross_doc_batching
-        # Central gate for per-directory semantic index scoping (Issue #3698).
-        # A callable lets the daemon hand us a live snapshot without the
-        # pipeline owning IndexScope state. If None or returning None, the
-        # filter is disabled and every document is indexed (legacy behavior).
-        self._scope_provider = scope_provider
         # Codex review R5 (high): SANDBOX-only side-write into the local
         # ``SqliteVecBackend`` so the hybrid path's vector lane is
         # actually populated by normal indexing. Without this, the
@@ -188,86 +181,6 @@ class IndexingPipeline:
         if not documents:
             return []
 
-        # Preserve the caller's input order for the final return value,
-        # before any scope filtering rearranges the working list.
-        original_order: list[str] = [p for p, _, _ in documents]
-
-        # Central index-scope gate (Issue #3698). Drops out-of-scope paths
-        # BEFORE any chunking, embedding API call, or DB write. This is the
-        # single authoritative cost-control chokepoint for the embedding
-        # pipeline — every other filter site (bootstrap, mutation consumers,
-        # refresh loop) is an optimization on top of this gate.
-        pre_scope_results: dict[str, IndexResult] = {}
-        if self._scope_provider is not None:
-            try:
-                scope = self._scope_provider()
-            except Exception:
-                # A scope provider failure must not break indexing — degrade
-                # to "index everything" (legacy behavior) and log loudly.
-                logger.exception("scope_provider raised; indexing every document")
-                scope = None
-            if scope is not None:
-                filtered_documents: list[tuple[str, str, str]] = []
-                # Codex review R7 #3 (high): track out-of-scope paths
-                # so we can prune any sqlite-vec rows they may have
-                # left behind from a prior in-scope index pass. A path
-                # being de-scoped is the same effective state as a
-                # delete from the search lane's perspective.
-                descoped_by_zone: dict[str, list[str]] = {}
-                for path, content, path_id in documents:
-                    try:
-                        zone_id = extract_zone_id(path)
-                        virtual_path = strip_zone_prefix(path)
-                        if is_path_indexed(scope, zone_id, virtual_path):
-                            filtered_documents.append((path, content, path_id))
-                        else:
-                            pre_scope_results[path] = IndexResult(path=path, chunks_indexed=0)
-                            descoped_by_zone.setdefault(zone_id, []).append(path)
-                    except ValueError as exc:
-                        # Contract violation (empty path, bad shape, etc.)
-                        # Surface as an error on that specific path but
-                        # keep the rest of the batch moving.
-                        logger.warning("index_scope contract violation for %s: %s", path, exc)
-                        pre_scope_results[path] = IndexResult(
-                            path=path,
-                            chunks_indexed=0,
-                            error=f"scope check failed: {exc}",
-                        )
-                # Best-effort prune of de-scoped paths from the SANDBOX
-                # vec lane. Idempotent: ``delete`` is a no-op when no
-                # rows match, so running it for paths that were never
-                # in scope is harmless. Failures must NOT break
-                # indexing — log and proceed.
-                if self._sqlite_vec_backend is not None and descoped_by_zone:
-                    for zone_id, descoped_paths in descoped_by_zone.items():
-                        try:
-                            # Codex review R9 #3 (high): canonical (unscoped)
-                            # + legacy (scoped) keys so legacy rows from
-                            # pre-R9 builds also get pruned.
-                            keys: list[str] = []
-                            for p in descoped_paths:
-                                canon = strip_zone_prefix(p) if p.startswith("/zone/") else p
-                                if canon not in keys:
-                                    keys.append(canon)
-                                if p != canon and p not in keys:
-                                    keys.append(p)
-                            await self._sqlite_vec_backend.delete(keys, zone_id=zone_id)
-                        except Exception as exc:
-                            logger.warning(
-                                "[IndexingPipeline] sqlite-vec descope-prune failed "
-                                "for zone=%s paths=%s: %s",
-                                zone_id,
-                                descoped_paths,
-                                exc,
-                            )
-                documents = filtered_documents
-                if not documents:
-                    # Nothing left to index after scope filter.
-                    return [
-                        pre_scope_results.get(p, IndexResult(path=p, chunks_indexed=0))
-                        for p in original_order
-                    ]
-
         total = len(documents)
         sem = asyncio.Semaphore(self._max_concurrency)
         completed = 0
@@ -297,11 +210,9 @@ class IndexingPipeline:
 
         phase1 = await asyncio.gather(*[_chunk_one(p, c, pid) for p, c, pid in documents])
 
-        # Separate successful chunks from errors. Seed the results map with
-        # any out-of-scope paths captured by the scope filter above so the
-        # final return preserves the caller's original input order.
         chunked_docs: list[_ChunkedDoc] = []
-        results_map: dict[str, IndexResult] = dict(pre_scope_results)
+        results_map: dict[str, IndexResult] = {}
+        original_order: list[str] = [p for p, _, _ in documents]
 
         # Codex review R7 #2 (high): zero-chunk docs (empty file,
         # parser returned nothing) skip _bulk_insert entirely — but

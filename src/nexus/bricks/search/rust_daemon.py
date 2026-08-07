@@ -334,37 +334,6 @@ class RustSearchDaemon:
 
         return asyncio.get_event_loop().run_until_complete(_call())
 
-    # ── Python-specific no-ops ─────────────────────────────────
-
-    async def force_checkpoint(self, consumer_name: str, sequence_number: int) -> dict[str, int]:
-        # Python-side projection log; Rust plugin has no equivalent.
-        # Return the caller's requested sequence unchanged so the
-        # router surfaces a 200; log a warning so operators know
-        # the call was a no-op.
-        logger.warning(
-            "force_checkpoint(%s, %s) is a no-op on RustSearchDaemon",
-            consumer_name,
-            sequence_number,
-        )
-        return {"applied": sequence_number}
-
-    async def purge_unscoped_embeddings(self, zone_id: str | None = None) -> dict[str, int]:
-        logger.warning(
-            "purge_unscoped_embeddings(%s) is a no-op on RustSearchDaemon",
-            zone_id,
-        )
-        return {"purged": 0}
-
-    async def rerun_backfill_for_directory(self, zone_id: str, directory_path: str) -> Any:
-        logger.warning(
-            "rerun_backfill_for_directory(%s, %s) is a no-op on RustSearchDaemon; "
-            "trigger a full Refresh via the standard Index / Refresh RPC instead",
-            zone_id,
-            directory_path,
-        )
-        return {"triggered": False}
-
-
 def _result_to_base(pb: search_pb2.QueryResult) -> BaseSearchResult:
     """Convert a proto QueryResult into the Python daemon's result
     shape.  Fields Python has that Rust doesn't (matched_field,

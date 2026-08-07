@@ -2011,25 +2011,127 @@ impl SearchService for SearchServiceImpl {
 
     async fn parked_list(
         &self,
-        _request: Request<ParkedListRequest>,
+        request: Request<ParkedListRequest>,
     ) -> Result<Response<ParkedListResponse>, Status> {
-        Err(Status::unimplemented("ParkedList — landing in P8 step 4"))
+        let req = request.into_inner();
+        let zone_id = resolve_zone(&req.zone_id).to_string();
+        let manager = Arc::clone(&self.manager);
+        let zone_for_entries = zone_id.clone();
+        let outcome = tokio::task::spawn_blocking(move || {
+            crate::parked_state::ParkedQueue::open_or_create(manager.zone_root(&zone_id))
+                .map(|q| q.list())
+                .map_err(|e| format!("open parked queue: {e}"))
+        })
+        .await
+        .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
+
+        match outcome {
+            Ok(entries) => Ok(Response::new(ParkedListResponse {
+                entries: entries
+                    .into_iter()
+                    .map(|e| crate::search_proto::ParkedEntry {
+                        path: e.path,
+                        zone_id: zone_for_entries.clone(),
+                        parked_at_ms: e.parked_at_ms,
+                        reason: e.reason,
+                    })
+                    .collect(),
+                error: None,
+            })),
+            Err(err) => Ok(Response::new(ParkedListResponse {
+                entries: Vec::new(),
+                error: Some(err),
+            })),
+        }
     }
 
     async fn parked_retry(
         &self,
-        _request: Request<ParkedRetryRequest>,
+        request: Request<ParkedRetryRequest>,
     ) -> Result<Response<ParkedRetryResponse>, Status> {
-        Err(Status::unimplemented("ParkedRetry — landing in P8 step 4"))
+        let req = request.into_inner();
+        let zone_id = resolve_zone(&req.zone_id).to_string();
+        let paths = req.paths;
+        let manager = Arc::clone(&self.manager);
+        let outcome = tokio::task::spawn_blocking(move || -> Result<(u32, u32), String> {
+            let q = crate::parked_state::ParkedQueue::open_or_create(manager.zone_root(&zone_id))
+                .map_err(|e| format!("open parked queue: {e}"))?;
+            // Empty paths ⇒ retry every parked doc (matches
+            // Python).  "Retry" here just drops entries from the
+            // queue — real retry means the caller follows with
+            // IndexDocuments carrying the fresh text.  Same shape
+            // Python has: /parked/retry acks the caller; the retry
+            // actually happens on the next IndexDocuments call.
+            let targets: Vec<String> = if paths.is_empty() {
+                q.list().into_iter().map(|e| e.path).collect()
+            } else {
+                paths
+            };
+            let mut retried: u32 = 0;
+            for p in &targets {
+                if q.remove(p) {
+                    retried += 1;
+                }
+            }
+            q.save().map_err(|e| format!("save parked queue: {e}"))?;
+            let still = q.len() as u32;
+            Ok((retried, still))
+        })
+        .await
+        .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
+
+        match outcome {
+            Ok((retried, still)) => Ok(Response::new(ParkedRetryResponse {
+                retried_count: retried,
+                still_parked_count: still,
+                error: None,
+            })),
+            Err(err) => Ok(Response::new(ParkedRetryResponse {
+                retried_count: 0,
+                still_parked_count: 0,
+                error: Some(err),
+            })),
+        }
     }
 
     async fn parked_discard(
         &self,
-        _request: Request<ParkedDiscardRequest>,
+        request: Request<ParkedDiscardRequest>,
     ) -> Result<Response<ParkedDiscardResponse>, Status> {
-        Err(Status::unimplemented(
-            "ParkedDiscard — landing in P8 step 4",
-        ))
+        let req = request.into_inner();
+        let zone_id = resolve_zone(&req.zone_id).to_string();
+        let paths = req.paths;
+        let manager = Arc::clone(&self.manager);
+        let outcome = tokio::task::spawn_blocking(move || -> Result<u32, String> {
+            let q = crate::parked_state::ParkedQueue::open_or_create(manager.zone_root(&zone_id))
+                .map_err(|e| format!("open parked queue: {e}"))?;
+            let targets: Vec<String> = if paths.is_empty() {
+                q.list().into_iter().map(|e| e.path).collect()
+            } else {
+                paths
+            };
+            let mut discarded: u32 = 0;
+            for p in &targets {
+                if q.remove(p) {
+                    discarded += 1;
+                }
+            }
+            q.save().map_err(|e| format!("save parked queue: {e}"))?;
+            Ok(discarded)
+        })
+        .await
+        .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
+
+        match outcome {
+            Ok(count) => Ok(Response::new(ParkedDiscardResponse {
+                discarded_count: count,
+                error: None,
+            })),
+            Err(err) => Ok(Response::new(ParkedDiscardResponse {
+                discarded_count: 0,
+                error: Some(err),
+            })),
+        }
     }
 
     async fn add_indexed_directory(

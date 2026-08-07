@@ -60,6 +60,7 @@ pub mod fusion;
 pub mod index_manager;
 pub mod index_state;
 pub mod kernel_io;
+pub mod parked_state;
 pub mod query_cache;
 pub mod scoring;
 pub mod service;

@@ -59,6 +59,7 @@ pub mod fts_index;
 pub mod fusion;
 pub mod index_manager;
 pub mod index_state;
+pub mod indexed_dirs_state;
 pub mod kernel_io;
 pub mod parked_state;
 pub mod query_cache;

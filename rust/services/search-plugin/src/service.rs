@@ -2136,29 +2136,103 @@ impl SearchService for SearchServiceImpl {
 
     async fn add_indexed_directory(
         &self,
-        _request: Request<AddIndexedDirectoryRequest>,
+        request: Request<AddIndexedDirectoryRequest>,
     ) -> Result<Response<AddIndexedDirectoryResponse>, Status> {
-        Err(Status::unimplemented(
-            "AddIndexedDirectory — landing in P8 step 5",
-        ))
+        let req = request.into_inner();
+        let zone_id = resolve_zone(&req.zone_id).to_string();
+        let path = req.path;
+        let manager = Arc::clone(&self.manager);
+        let outcome = tokio::task::spawn_blocking(move || -> Result<bool, String> {
+            let r = crate::indexed_dirs_state::IndexedDirsRegistry::open_or_create(
+                manager.zone_root(&zone_id),
+            )
+            .map_err(|e| format!("open indexed_dirs: {e}"))?;
+            let added = r.add(&path, current_time_ms());
+            r.save().map_err(|e| format!("save indexed_dirs: {e}"))?;
+            Ok(added)
+        })
+        .await
+        .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
+
+        match outcome {
+            Ok(added) => Ok(Response::new(AddIndexedDirectoryResponse {
+                added,
+                error: None,
+            })),
+            Err(err) => Ok(Response::new(AddIndexedDirectoryResponse {
+                added: false,
+                error: Some(err),
+            })),
+        }
     }
 
     async fn remove_indexed_directory(
         &self,
-        _request: Request<RemoveIndexedDirectoryRequest>,
+        request: Request<RemoveIndexedDirectoryRequest>,
     ) -> Result<Response<RemoveIndexedDirectoryResponse>, Status> {
-        Err(Status::unimplemented(
-            "RemoveIndexedDirectory — landing in P8 step 5",
-        ))
+        let req = request.into_inner();
+        let zone_id = resolve_zone(&req.zone_id).to_string();
+        let path = req.path;
+        let manager = Arc::clone(&self.manager);
+        let outcome = tokio::task::spawn_blocking(move || -> Result<bool, String> {
+            let r = crate::indexed_dirs_state::IndexedDirsRegistry::open_or_create(
+                manager.zone_root(&zone_id),
+            )
+            .map_err(|e| format!("open indexed_dirs: {e}"))?;
+            let removed = r.remove(&path);
+            r.save().map_err(|e| format!("save indexed_dirs: {e}"))?;
+            Ok(removed)
+        })
+        .await
+        .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
+
+        match outcome {
+            Ok(removed) => Ok(Response::new(RemoveIndexedDirectoryResponse {
+                removed,
+                error: None,
+            })),
+            Err(err) => Ok(Response::new(RemoveIndexedDirectoryResponse {
+                removed: false,
+                error: Some(err),
+            })),
+        }
     }
 
     async fn list_indexed_directories(
         &self,
-        _request: Request<ListIndexedDirectoriesRequest>,
+        request: Request<ListIndexedDirectoriesRequest>,
     ) -> Result<Response<ListIndexedDirectoriesResponse>, Status> {
-        Err(Status::unimplemented(
-            "ListIndexedDirectories — landing in P8 step 5",
-        ))
+        let req = request.into_inner();
+        let zone_id = resolve_zone(&req.zone_id).to_string();
+        let zone_for_reply = zone_id.clone();
+        let manager = Arc::clone(&self.manager);
+        let outcome = tokio::task::spawn_blocking(move || {
+            crate::indexed_dirs_state::IndexedDirsRegistry::open_or_create(
+                manager.zone_root(&zone_id),
+            )
+            .map(|r| r.list())
+            .map_err(|e| format!("open indexed_dirs: {e}"))
+        })
+        .await
+        .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
+
+        match outcome {
+            Ok(entries) => Ok(Response::new(ListIndexedDirectoriesResponse {
+                directories: entries
+                    .into_iter()
+                    .map(|e| crate::search_proto::IndexedDirectory {
+                        path: e.path,
+                        zone_id: zone_for_reply.clone(),
+                        added_at_ms: e.added_at_ms,
+                    })
+                    .collect(),
+                error: None,
+            })),
+            Err(err) => Ok(Response::new(ListIndexedDirectoriesResponse {
+                directories: Vec::new(),
+                error: Some(err),
+            })),
+        }
     }
 
     async fn set_zone_indexing_mode(

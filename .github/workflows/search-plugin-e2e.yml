@@ -26,6 +26,8 @@ on:
       - 'tests/e2e/docker/test_search_plugin.py'
       - 'tests/e2e/docker/search_helpers.py'
       - 'tests/e2e/docker/runbook_helpers.py'
+      - 'tests/integration/bricks/search/test_search_daemon_live_plugin.py'
+      - 'src/nexus/bricks/search/daemon.py'
       - '.github/workflows/search-plugin-e2e.yml'
   pull_request:
     branches: [main, develop]
@@ -62,7 +64,7 @@ jobs:
           cat /tmp/changed_files.txt
           # Workflow file itself is intentionally NOT in the regex — see
           # federation-e2e.yml's identical rationale.
-          if grep -Eq '^(dockerfiles/(Dockerfile\.(search-plugin-test|nexusd-cluster|federation-test)|docker-compose\.search-plugin-e2e\.yml)|rust/services/(search-plugin|proto/nexus/search)/|Cargo\.toml$|Cargo\.lock$|tests/e2e/docker/(test_search_plugin|search_helpers|runbook_helpers)\.py$)' /tmp/changed_files.txt; then
+          if grep -Eq '^(dockerfiles/(Dockerfile\.(search-plugin-test|nexusd-cluster|federation-test)|docker-compose\.search-plugin-e2e\.yml)|rust/services/(search-plugin|proto/nexus/search)/|Cargo\.toml$|Cargo\.lock$|tests/e2e/docker/(test_search_plugin|search_helpers|runbook_helpers)\.py$|tests/integration/bricks/search/test_search_daemon_live_plugin\.py$|src/nexus/bricks/search/daemon\.py$)' /tmp/changed_files.txt; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
             echo "run=false" >> "$GITHUB_OUTPUT"
@@ -161,6 +163,40 @@ jobs:
         run: |
           docker compose -f dockerfiles/docker-compose.search-plugin-e2e.yml \
             run --rm test
+
+      # RustSearchDaemon proxy round-trip: exercises the exact
+      # `SearchDaemon.<method>` shapes the FastAPI router calls, so a
+      # regression in the async gRPC wrapper (like sync methods calling
+      # `run_until_complete` inside a live event loop) is caught here
+      # rather than at first request.  Runs on the runner rather than
+      # in-compose because the slim federation-test image doesn't ship
+      # `nexus.bricks`.
+      - name: Set up Python for daemon-proxy tests
+        if: steps.changes.outputs.run == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install uv
+        if: steps.changes.outputs.run == 'true'
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install nexus dependencies
+        if: steps.changes.outputs.run == 'true'
+        env:
+          # Third-party PyO3 sdists (pdf-inspector) reject 3.14 at
+          # build time without ABI3 forward-compat; mirrors the setting
+          # code-quality.yml already applies for the same reason.
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
+        run: uv sync --frozen
+
+      - name: Run SearchDaemon live-plugin proxy tests
+        if: steps.changes.outputs.run == 'true'
+        env:
+          NEXUS_SEARCH_LIVE_PLUGIN: "1"
+          NEXUS_SEARCH_PLUGIN_TARGET: "127.0.0.1:2126"
+        run: |
+          uv run pytest tests/integration/bricks/search/test_search_daemon_live_plugin.py -v
 
       - name: Dump container logs on failure
         if: failure() && steps.changes.outputs.run == 'true'

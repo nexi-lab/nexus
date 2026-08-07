@@ -179,58 +179,6 @@ class SearchDaemon:
         )
         await self._get_stub().NotifyFileChange(req)
 
-    # ── Parked queue ───────────────────────────────────────────
-
-    def list_parked(self) -> dict[str, list[dict[str, Any]]]:
-        # Python's list_parked is sync + returns {zone: entries}.
-        # SearchDaemon runs single-zone at a time; return a
-        # single-key dict keyed by the default zone for parity.  A
-        # zone-scoped variant is a follow-up if callers need it.
-        import asyncio
-
-        async def _call() -> list[dict[str, Any]]:
-            req = search_pb2.ParkedListRequest(zone_id="")
-            resp = await self._get_stub().ParkedList(req)
-            return [
-                {
-                    "path": e.path,
-                    "zone_id": e.zone_id,
-                    "parked_at_ms": e.parked_at_ms,
-                    "reason": e.reason,
-                }
-                for e in resp.entries
-            ]
-
-        entries = asyncio.get_event_loop().run_until_complete(_call())
-        # Group by zone.
-        by_zone: dict[str, list[dict[str, Any]]] = {}
-        for entry in entries:
-            by_zone.setdefault(entry["zone_id"], []).append(entry)
-        return by_zone
-
-    async def retry_parked(
-        self,
-        paths: list[str] | None = None,
-        *,
-        zone_id: str | None = None,
-    ) -> dict[str, int]:
-        req = search_pb2.ParkedRetryRequest(paths=paths or [], zone_id=zone_id or "")
-        resp = await self._get_stub().ParkedRetry(req)
-        return {
-            "retried": resp.retried_count,
-            "still_parked": resp.still_parked_count,
-        }
-
-    async def discard_parked(
-        self,
-        paths: list[str] | None = None,
-        *,
-        zone_id: str | None = None,
-    ) -> dict[str, int]:
-        req = search_pb2.ParkedDiscardRequest(paths=paths or [], zone_id=zone_id or "")
-        resp = await self._get_stub().ParkedDiscard(req)
-        return {"discarded": resp.discarded_count}
-
     # ── Indexed-directories registry ──────────────────────────
 
     async def add_indexed_directory(
@@ -251,15 +199,10 @@ class SearchDaemon:
         resp = await self._get_stub().RemoveIndexedDirectory(req)
         return "removed" if resp.removed else "not_found"
 
-    def list_indexed_directories(self, zone_id: str) -> list[str]:
-        import asyncio
-
-        async def _call() -> list[str]:
-            req = search_pb2.ListIndexedDirectoriesRequest(zone_id=zone_id)
-            resp = await self._get_stub().ListIndexedDirectories(req)
-            return [d.path for d in resp.directories]
-
-        return asyncio.get_event_loop().run_until_complete(_call())
+    async def list_indexed_directories(self, zone_id: str) -> list[str]:
+        req = search_pb2.ListIndexedDirectoriesRequest(zone_id=zone_id)
+        resp = await self._get_stub().ListIndexedDirectories(req)
+        return [d.path for d in resp.directories]
 
     # ── Zone indexing modes ────────────────────────────────────
 
@@ -270,45 +213,26 @@ class SearchDaemon:
             raise ValueError(resp.error)
         return {"zone_id": zone_id, "mode": mode}
 
-    @property
-    def _zone_indexing_modes(self) -> dict[str, str]:
-        # Python router touches this as a mapping; we make it a
-        # property that fetches on read.  A caller iterating in a
-        # tight loop pays one gRPC per read — acceptable for the
-        # operator UI which polls infrequently.
-        import asyncio
-
-        async def _call() -> dict[str, str]:
-            req = search_pb2.ListZoneIndexingModesRequest()
-            resp = await self._get_stub().ListZoneIndexingModes(req)
-            return {m.zone_id: m.mode for m in resp.modes}
-
-        return asyncio.get_event_loop().run_until_complete(_call())
+    async def get_zone_indexing_modes(self) -> dict[str, str]:
+        """Snapshot per-zone indexing modes from the plugin."""
+        req = search_pb2.ListZoneIndexingModesRequest()
+        resp = await self._get_stub().ListZoneIndexingModes(req)
+        return {m.zone_id: m.mode for m in resp.modes}
 
     # ── Health + stats ────────────────────────────────────────
 
-    def get_health(self) -> dict[str, Any]:
-        import asyncio
+    async def get_health(self) -> dict[str, Any]:
+        resp = await self._get_stub().Health(search_pb2.HealthRequest())
+        return {"status": resp.status, "detail": resp.detail}
 
-        async def _call() -> dict[str, Any]:
-            resp = await self._get_stub().Health(search_pb2.HealthRequest())
-            return {"status": resp.status, "detail": resp.detail}
-
-        return asyncio.get_event_loop().run_until_complete(_call())
-
-    def get_stats(self) -> dict[str, Any]:
-        import asyncio
-
-        async def _call() -> dict[str, Any]:
-            resp = await self._get_stub().Stats(search_pb2.StatsRequest())
-            return {
-                "fts_doc_count": resp.fts_doc_count,
-                "fts_path_count": resp.fts_path_count,
-                "ann_chunk_count": resp.ann_chunk_count,
-                "parked_count": resp.parked_count,
-            }
-
-        return asyncio.get_event_loop().run_until_complete(_call())
+    async def get_stats(self) -> dict[str, Any]:
+        resp = await self._get_stub().Stats(search_pb2.StatsRequest())
+        return {
+            "fts_doc_count": resp.fts_doc_count,
+            "fts_path_count": resp.fts_path_count,
+            "ann_chunk_count": resp.ann_chunk_count,
+            "parked_count": resp.parked_count,
+        }
 
 
 def _result_to_base(pb: search_pb2.QueryResult) -> BaseSearchResult:

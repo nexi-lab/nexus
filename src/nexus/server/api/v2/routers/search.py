@@ -167,7 +167,7 @@ async def search_daemon_health(
             "daemon_enabled": False,
             "message": "Search daemon unavailable (set NEXUS_SEARCH_DAEMON=false to disable)",
         }
-    health: dict[str, Any] = search_daemon.get_health()
+    health: dict[str, Any] = await search_daemon.get_health()
     return health
 
 
@@ -176,7 +176,7 @@ async def search_daemon_stats(
     search_daemon: Any = Depends(_get_search_daemon),
 ) -> dict[str, Any]:
     """Get search daemon statistics."""
-    stats: dict[str, Any] = search_daemon.get_stats()
+    stats: dict[str, Any] = await search_daemon.get_stats()
     return stats
 
 

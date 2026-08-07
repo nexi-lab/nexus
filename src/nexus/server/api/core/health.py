@@ -88,7 +88,7 @@ async def health_check_detailed(request: Request) -> dict[str, Any]:
 
     # Check search daemon (Issue #951)
     if state.search_daemon:
-        daemon_health = state.search_daemon.get_health()
+        daemon_health = await state.search_daemon.get_health()
         health["components"]["search_daemon"] = daemon_health
     else:
         health["components"]["search_daemon"] = {

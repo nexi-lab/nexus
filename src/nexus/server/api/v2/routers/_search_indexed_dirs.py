@@ -155,8 +155,9 @@ async def list_indexed_dirs(
         )
 
     zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
-    mode = search_daemon._zone_indexing_modes.get(zone_id, "on")
-    directories = search_daemon.list_indexed_directories(zone_id)
+    modes = await search_daemon.get_zone_indexing_modes()
+    mode = modes.get(zone_id, "on")
+    directories = await search_daemon.list_indexed_directories(zone_id)
     return {
         "zone_id": zone_id,
         "indexing_mode": mode,

@@ -61,6 +61,13 @@ services:
       # service armed" log lines the plan calls out as the E2E's
       # readiness signals.
       RUST_LOG: info,nexus_raft=info,kernel::plugins=debug,plugins=debug
+    # Host port exposure so the search-plugin CI job can drive
+    # tests/integration/bricks/search/test_search_daemon_live_plugin.py
+    # (needs nexus.bricks — not shippable inside the slim
+    # federation-test runner image, so it runs directly on the CI
+    # runner against the exposed host port).
+    ports:
+      - "2126:2126"
     volumes:
       - search_plugin_node_data:/app/data
     networks:

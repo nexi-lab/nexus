@@ -1,22 +1,29 @@
-"""P8 end-to-end: RustSearchDaemon → nexus-search-plugin gRPC.
+"""P8 live-plugin integration: RustSearchDaemon → nexus-search-plugin gRPC.
 
-The Python-side client sits behind the same
-NEXUS_SEARCH_PLUGIN_E2E gate the direct-gRPC suite uses so the
-docker compose provisioning stays a single stack.  Where
-`test_search_plugin.py` dials the plugin's tonic stub directly,
-this file exercises the same plugin THROUGH the Python daemon
-that the FastAPI router uses when `SEARCH_BACKEND=rust` — the
-same code path production takes at cutover.
+Requires a running nexus-search-plugin cdylib inside a
+nexusd-cluster reachable at NEXUS_SEARCH_PLUGIN_TARGET (default
+127.0.0.1:2126) — the docker-compose.search-plugin-e2e.yml stack
+provisions exactly that.  The gate env var
+NEXUS_SEARCH_LIVE_PLUGIN=1 opts callers in; without it the whole
+module skips so CI runs that don't have the plugin available
+don't fail collection.
 
-Boots RustSearchDaemon in-process (no FastAPI needed) pointing at
-the compose's plugin node; verifies every SearchBrickProtocol
-method the P8 roadmap promised: search, index_documents,
-notify_file_change, locate, list_parked, add_indexed_directory /
-remove_indexed_directory / list_indexed_directories,
-set_zone_indexing_mode, get_health, get_stats.
+Lives under tests/integration/bricks/search/ rather than
+tests/e2e/docker/ because it imports nexus.bricks.search directly
+— the docker E2E runner image (Dockerfile.federation-test) ships
+a slim /opt/proto stub tree that deliberately doesn't include
+nexus.bricks.  Run against a real nexus Python env alongside the
+docker compose:
 
-Skipped when NEXUS_SEARCH_PLUGIN_E2E isn't set — matches the
-sibling test file's convention.
+    docker compose -f dockerfiles/docker-compose.search-plugin-e2e.yml up -d node
+    NEXUS_SEARCH_LIVE_PLUGIN=1 NEXUS_SEARCH_PLUGIN_TARGET=127.0.0.1:2126 \\
+        pytest tests/integration/bricks/search/test_rust_search_daemon.py
+
+Verifies every SearchBrickProtocol method the P8 roadmap promised:
+search, index_documents, notify_file_change, locate, list_parked,
+add_indexed_directory / remove_indexed_directory /
+list_indexed_directories, set_zone_indexing_mode, get_health,
+get_stats.
 """
 
 from __future__ import annotations
@@ -26,17 +33,15 @@ import os
 
 import pytest
 
-pytestmark = [
-    pytest.mark.xdist_group("search-plugin-e2e"),
-    pytest.mark.skipif(
-        os.environ.get("NEXUS_SEARCH_PLUGIN_E2E") != "1",
-        reason="P8 RustSearchDaemon E2E needs the docker-compose.search-plugin-e2e stack; "
-        "set NEXUS_SEARCH_PLUGIN_E2E=1 to enable (CI sets this automatically).",
-    ),
-]
+pytestmark = pytest.mark.skipif(
+    os.environ.get("NEXUS_SEARCH_LIVE_PLUGIN") != "1",
+    reason="RustSearchDaemon live-plugin test needs a running "
+    "nexus-search-plugin (see module docstring for compose recipe); "
+    "set NEXUS_SEARCH_LIVE_PLUGIN=1 to enable.",
+)
 
 
-NODE_GRPC = os.environ.get("NEXUS_SEARCH_NODE_GRPC", "node:2126")
+NODE_GRPC = os.environ.get("NEXUS_SEARCH_PLUGIN_TARGET", "127.0.0.1:2126")
 
 
 class _MinimalSearchRequest:

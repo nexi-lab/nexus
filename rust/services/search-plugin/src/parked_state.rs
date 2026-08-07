@@ -224,7 +224,8 @@ mod tests {
         q.park("/b.md", "r", 100);
         q.park("/a.md", "r", 50);
         q.park("/c.md", "r", 200);
-        let paths: Vec<&str> = q.list().iter().map(|e| e.path.as_str()).collect();
+        let listed = q.list();
+        let paths: Vec<&str> = listed.iter().map(|e| e.path.as_str()).collect();
         assert_eq!(paths, vec!["/a.md", "/b.md", "/c.md"]);
     }
 

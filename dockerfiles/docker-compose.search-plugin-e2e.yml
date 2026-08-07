@@ -106,11 +106,6 @@ services:
     command:
       - pytest
       - tests/e2e/docker/test_search_plugin.py
-      # P8 RustSearchDaemon E2E — Python-side client exercising
-      # the same plugin as test_search_plugin.py, this time
-      # through the daemon shim the FastAPI router uses at
-      # SEARCH_BACKEND=rust.
-      - tests/e2e/docker/test_rust_search_daemon.py
       - -v
       - --no-header
       - -o

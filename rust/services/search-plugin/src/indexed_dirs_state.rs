@@ -199,7 +199,8 @@ mod tests {
         r.add("/c", 300);
         r.add("/a", 100);
         r.add("/b", 200);
-        let paths: Vec<&str> = r.list().iter().map(|e| e.path.as_str()).collect();
+        let listed = r.list();
+        let paths: Vec<&str> = listed.iter().map(|e| e.path.as_str()).collect();
         assert_eq!(paths, vec!["/a", "/b", "/c"]);
     }
 

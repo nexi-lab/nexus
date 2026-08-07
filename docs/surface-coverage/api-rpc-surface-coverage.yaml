@@ -256,7 +256,7 @@ operations:
   transports:
     http:
       name: POST /index-directory
-      source: src/nexus/server/api/v2/routers/_search_indexed_dirs.py:78
+      source: src/nexus/server/api/v2/routers/_search_indexed_dirs.py:68
   profiles:
     lite: supported
     sandbox: supported
@@ -273,7 +273,7 @@ operations:
   transports:
     http:
       name: GET /indexed-dirs
-      source: src/nexus/server/api/v2/routers/_search_indexed_dirs.py:296
+      source: src/nexus/server/api/v2/routers/_search_indexed_dirs.py:137
   profiles:
     lite: supported
     sandbox: supported
@@ -290,7 +290,7 @@ operations:
   transports:
     http:
       name: POST /indexing-mode
-      source: src/nexus/server/api/v2/routers/_search_indexed_dirs.py:333
+      source: src/nexus/server/api/v2/routers/_search_indexed_dirs.py:167
   profiles:
     lite: supported
     sandbox: supported
@@ -7692,7 +7692,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/expand
-      source: src/nexus/server/api/v2/routers/search.py:1687
+      source: src/nexus/server/api/v2/routers/search.py:1611
   profiles:
     lite: supported
     sandbox: supported
@@ -7716,7 +7716,7 @@ operations:
       source: src/nexus/bricks/search/search_service.py:1792
     http:
       name: POST /api/v2/search/glob
-      source: src/nexus/server/api/v2/routers/search.py:1545
+      source: src/nexus/server/api/v2/routers/search.py:1469
     mcp:
       name: nexus_glob
       source: src/nexus/config/tool_profiles.yaml:1
@@ -7743,7 +7743,7 @@ operations:
       source: src/nexus/bricks/search/search_service.py:2102
     http:
       name: POST /api/v2/search/grep
-      source: src/nexus/server/api/v2/routers/search.py:1422
+      source: src/nexus/server/api/v2/routers/search.py:1346
     mcp:
       name: nexus_grep
       source: src/nexus/config/tool_profiles.yaml:1
@@ -7779,7 +7779,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/search/health
-      source: src/nexus/server/api/v2/routers/search.py:160
+      source: src/nexus/server/api/v2/routers/search.py:159
   profiles:
     lite: supported
     sandbox: supported
@@ -7796,14 +7796,13 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/index
-      source: src/nexus/server/api/v2/routers/search.py:1607
+      source: src/nexus/server/api/v2/routers/search.py:1531
   profiles:
     lite: supported
     sandbox: supported
     full: supported
   usage_example: POST /api/v2/search/index {"documents":[{"path":"/docs/a.md","content":"..."}]}
-  correctness_test: tests/integration/bricks/search/test_indexing_service.py
-    tests/e2e/self_contained/test_search_surface_live_e2e.py
+  correctness_test: tests/integration/bricks/search/test_indexing_service.py tests/e2e/self_contained/test_search_surface_live_e2e.py
   perf_class: setup
   perf_link: tests/benchmarks/test_indexing_benchmarks.py; tests/e2e/self_contained/test_search_surface_live_e2e.py
   gap_issue: null
@@ -7814,7 +7813,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/search/query
-      source: src/nexus/server/api/v2/routers/search.py:259
+      source: src/nexus/server/api/v2/routers/search.py:183
   profiles:
     lite: supported
     sandbox: supported
@@ -7832,7 +7831,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/query/batch
-      source: src/nexus/server/api/v2/routers/search.py:803
+      source: src/nexus/server/api/v2/routers/search.py:727
   profiles:
     lite: supported
     sandbox: supported
@@ -7849,14 +7848,13 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/refresh
-      source: src/nexus/server/api/v2/routers/search.py:1666
+      source: src/nexus/server/api/v2/routers/search.py:1590
   profiles:
     lite: supported
     sandbox: supported
     full: supported
   usage_example: POST /api/v2/search/refresh {"path":"/workspace/docs/readme.md","change_type":"update"}
-  correctness_test: 
-    tests/e2e/self_contained/test_search_surface_live_e2e.py
+  correctness_test: tests/e2e/self_contained/test_search_surface_live_e2e.py
   perf_class: control
   perf_link: control-plane or setup operation; tests/e2e/self_contained/test_search_surface_live_e2e.py enforces live latency
   gap_issue: null
@@ -7884,7 +7882,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/search/stats
-      source: src/nexus/server/api/v2/routers/search.py:175
+      source: src/nexus/server/api/v2/routers/search.py:174
   profiles:
     lite: supported
     sandbox: supported
@@ -9840,14 +9838,6 @@ parity_warnings:
   - mcp
   - sdk
 - operation_id: _search_indexed_dirs.indexing_mode
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
-- operation_id: _search_indexed_dirs.purge_unscoped
   has:
   - http
   missing:
@@ -12231,14 +12221,6 @@ parity_warnings:
   - http
   - mcp
   - sdk
-- operation_id: search.consumers_{consumer_name}_skip_to
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
 - operation_id: search.expand
   has:
   - http
@@ -12272,30 +12254,6 @@ parity_warnings:
   - mcp
   - sdk
 - operation_id: search.index
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
-- operation_id: search.parked
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
-- operation_id: search.parked_discard
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
-- operation_id: search.parked_retry
   has:
   - http
   missing:

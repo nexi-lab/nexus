@@ -22,9 +22,16 @@ use crate::index_manager::IndexManager;
 use crate::kernel_io::{self, DirEntry, KernelIoError, DT_DIR, DT_REG};
 use crate::search_proto::search_service_server::SearchService;
 use crate::search_proto::{
-    FusionMethod, GlobRequest, GlobResponse, GrepMatch, GrepRequest, GrepResponse, IndexRequest,
-    IndexResponse, QueryRequest, QueryResponse, QueryResult, QueryType, RefreshRequest,
-    RefreshResponse,
+    AddIndexedDirectoryRequest, AddIndexedDirectoryResponse, BatchQueryRequest, BatchQueryResponse,
+    FusionMethod, GlobRequest, GlobResponse, GrepMatch, GrepRequest, GrepResponse, HealthRequest,
+    HealthResponse, IndexDocumentsRequest, IndexDocumentsResponse, IndexRequest, IndexResponse,
+    ListIndexedDirectoriesRequest, ListIndexedDirectoriesResponse, ListZoneIndexingModesRequest,
+    ListZoneIndexingModesResponse, LocateRequest, LocateResponse, NotifyFileChangeRequest,
+    NotifyFileChangeResponse, ParkedDiscardRequest, ParkedDiscardResponse, ParkedListRequest,
+    ParkedListResponse, ParkedRetryRequest, ParkedRetryResponse, QueryRequest, QueryResponse,
+    QueryResult, QueryType, RefreshRequest, RefreshResponse, RemoveIndexedDirectoryRequest,
+    RemoveIndexedDirectoryResponse, SetZoneIndexingModeRequest, SetZoneIndexingModeResponse,
+    StatsRequest, StatsResponse,
 };
 
 /// Server-side default when the caller sends `max_results = 0`.
@@ -1682,6 +1689,142 @@ impl SearchService for SearchServiceImpl {
                 error: Some(err),
             })),
         }
+    }
+
+    // ── P8 Python-parity RPCs — stubs.  Each returns a typed
+    //    error on the response's `error` field so callers can tell
+    //    "not implemented yet" from a real failure.  Handlers land
+    //    in the following commits.
+
+    async fn batch_query(
+        &self,
+        _request: Request<BatchQueryRequest>,
+    ) -> Result<Response<BatchQueryResponse>, Status> {
+        Err(Status::unimplemented("BatchQuery — landing in P8 step 3"))
+    }
+
+    async fn index_documents(
+        &self,
+        _request: Request<IndexDocumentsRequest>,
+    ) -> Result<Response<IndexDocumentsResponse>, Status> {
+        Err(Status::unimplemented(
+            "IndexDocuments — landing in P8 step 3",
+        ))
+    }
+
+    async fn notify_file_change(
+        &self,
+        _request: Request<NotifyFileChangeRequest>,
+    ) -> Result<Response<NotifyFileChangeResponse>, Status> {
+        Err(Status::unimplemented(
+            "NotifyFileChange — landing in P8 step 3",
+        ))
+    }
+
+    async fn locate(
+        &self,
+        _request: Request<LocateRequest>,
+    ) -> Result<Response<LocateResponse>, Status> {
+        Err(Status::unimplemented("Locate — landing in P8 step 3"))
+    }
+
+    async fn parked_list(
+        &self,
+        _request: Request<ParkedListRequest>,
+    ) -> Result<Response<ParkedListResponse>, Status> {
+        Err(Status::unimplemented("ParkedList — landing in P8 step 4"))
+    }
+
+    async fn parked_retry(
+        &self,
+        _request: Request<ParkedRetryRequest>,
+    ) -> Result<Response<ParkedRetryResponse>, Status> {
+        Err(Status::unimplemented("ParkedRetry — landing in P8 step 4"))
+    }
+
+    async fn parked_discard(
+        &self,
+        _request: Request<ParkedDiscardRequest>,
+    ) -> Result<Response<ParkedDiscardResponse>, Status> {
+        Err(Status::unimplemented(
+            "ParkedDiscard — landing in P8 step 4",
+        ))
+    }
+
+    async fn add_indexed_directory(
+        &self,
+        _request: Request<AddIndexedDirectoryRequest>,
+    ) -> Result<Response<AddIndexedDirectoryResponse>, Status> {
+        Err(Status::unimplemented(
+            "AddIndexedDirectory — landing in P8 step 5",
+        ))
+    }
+
+    async fn remove_indexed_directory(
+        &self,
+        _request: Request<RemoveIndexedDirectoryRequest>,
+    ) -> Result<Response<RemoveIndexedDirectoryResponse>, Status> {
+        Err(Status::unimplemented(
+            "RemoveIndexedDirectory — landing in P8 step 5",
+        ))
+    }
+
+    async fn list_indexed_directories(
+        &self,
+        _request: Request<ListIndexedDirectoriesRequest>,
+    ) -> Result<Response<ListIndexedDirectoriesResponse>, Status> {
+        Err(Status::unimplemented(
+            "ListIndexedDirectories — landing in P8 step 5",
+        ))
+    }
+
+    async fn set_zone_indexing_mode(
+        &self,
+        _request: Request<SetZoneIndexingModeRequest>,
+    ) -> Result<Response<SetZoneIndexingModeResponse>, Status> {
+        Err(Status::unimplemented(
+            "SetZoneIndexingMode — landing in P8 step 6",
+        ))
+    }
+
+    async fn list_zone_indexing_modes(
+        &self,
+        _request: Request<ListZoneIndexingModesRequest>,
+    ) -> Result<Response<ListZoneIndexingModesResponse>, Status> {
+        Err(Status::unimplemented(
+            "ListZoneIndexingModes — landing in P8 step 6",
+        ))
+    }
+
+    async fn health(
+        &self,
+        _request: Request<HealthRequest>,
+    ) -> Result<Response<HealthResponse>, Status> {
+        // Health is trivial + valuable during cutover — land the
+        // real impl inline rather than another commit.  Semantic
+        // "degraded" surfaces when the embedder slot is empty; if
+        // the plugin ever fails to open the FTS on request, that
+        // caller sees `unavailable` at the failing RPC (this poll
+        // says "healthy" because it doesn't itself open anything).
+        let has_embedder = self.embedder_slot.lock().is_some();
+        let status = if has_embedder { "healthy" } else { "degraded" };
+        let detail = if has_embedder {
+            "fts + ann online".to_string()
+        } else {
+            "fts online; semantic unavailable (embedder not initialised — normal on lite profile)"
+                .to_string()
+        };
+        Ok(Response::new(HealthResponse {
+            status: status.to_string(),
+            detail,
+        }))
+    }
+
+    async fn stats(
+        &self,
+        _request: Request<StatsRequest>,
+    ) -> Result<Response<StatsResponse>, Status> {
+        Err(Status::unimplemented("Stats — landing in P8 step 6"))
     }
 }
 

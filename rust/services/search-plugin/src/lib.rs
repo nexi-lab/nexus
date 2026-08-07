@@ -65,7 +65,13 @@ pub mod scoring;
 pub mod service;
 
 use search_proto::search_service_server::SearchService as SearchServiceTrait;
-use search_proto::{GlobRequest, GrepRequest, IndexRequest, QueryRequest, RefreshRequest};
+use search_proto::{
+    AddIndexedDirectoryRequest, BatchQueryRequest, GlobRequest, GrepRequest, HealthRequest,
+    IndexDocumentsRequest, IndexRequest, ListIndexedDirectoriesRequest,
+    ListZoneIndexingModesRequest, LocateRequest, NotifyFileChangeRequest, ParkedDiscardRequest,
+    ParkedListRequest, ParkedRetryRequest, QueryRequest, RefreshRequest,
+    RemoveIndexedDirectoryRequest, SetZoneIndexingModeRequest, StatsRequest,
+};
 
 /// Plugin state held between `create` and `destroy`.
 ///
@@ -230,6 +236,224 @@ fn dispatch_grpc(plugin: &SearchPlugin, method: &str, payload: &[u8]) -> Result<
                 .block_on(plugin.svc.refresh(Request::new(req)))
                 .map_err(|s| {
                     tracing::warn!(status = %s, "Refresh handler");
+                    -3
+                })?
+                .into_inner();
+            Ok(resp.encode_to_vec())
+        }
+        // ── P8 Python-parity RPCs ───────────────────────────
+        //
+        // The dispatch macro pattern repeats; a helper
+        // (dispatch_rpc!(name, req_ty, method)) would DRY it up
+        // but the current 15 arms are still tractable and the
+        // repetition is the code being self-documenting about
+        // which RPCs land here.  Extract when a 20th arm shows
+        // up.
+        "BatchQuery" => {
+            let req = BatchQueryRequest::decode(payload).map_err(|e| {
+                tracing::warn!(err = %e, "BatchQuery decode");
+                -2
+            })?;
+            let resp = plugin
+                .rt
+                .block_on(plugin.svc.batch_query(Request::new(req)))
+                .map_err(|s| {
+                    tracing::warn!(status = %s, "BatchQuery handler");
+                    -3
+                })?
+                .into_inner();
+            Ok(resp.encode_to_vec())
+        }
+        "IndexDocuments" => {
+            let req = IndexDocumentsRequest::decode(payload).map_err(|e| {
+                tracing::warn!(err = %e, "IndexDocuments decode");
+                -2
+            })?;
+            let resp = plugin
+                .rt
+                .block_on(plugin.svc.index_documents(Request::new(req)))
+                .map_err(|s| {
+                    tracing::warn!(status = %s, "IndexDocuments handler");
+                    -3
+                })?
+                .into_inner();
+            Ok(resp.encode_to_vec())
+        }
+        "NotifyFileChange" => {
+            let req = NotifyFileChangeRequest::decode(payload).map_err(|e| {
+                tracing::warn!(err = %e, "NotifyFileChange decode");
+                -2
+            })?;
+            let resp = plugin
+                .rt
+                .block_on(plugin.svc.notify_file_change(Request::new(req)))
+                .map_err(|s| {
+                    tracing::warn!(status = %s, "NotifyFileChange handler");
+                    -3
+                })?
+                .into_inner();
+            Ok(resp.encode_to_vec())
+        }
+        "Locate" => {
+            let req = LocateRequest::decode(payload).map_err(|e| {
+                tracing::warn!(err = %e, "Locate decode");
+                -2
+            })?;
+            let resp = plugin
+                .rt
+                .block_on(plugin.svc.locate(Request::new(req)))
+                .map_err(|s| {
+                    tracing::warn!(status = %s, "Locate handler");
+                    -3
+                })?
+                .into_inner();
+            Ok(resp.encode_to_vec())
+        }
+        "ParkedList" => {
+            let req = ParkedListRequest::decode(payload).map_err(|e| {
+                tracing::warn!(err = %e, "ParkedList decode");
+                -2
+            })?;
+            let resp = plugin
+                .rt
+                .block_on(plugin.svc.parked_list(Request::new(req)))
+                .map_err(|s| {
+                    tracing::warn!(status = %s, "ParkedList handler");
+                    -3
+                })?
+                .into_inner();
+            Ok(resp.encode_to_vec())
+        }
+        "ParkedRetry" => {
+            let req = ParkedRetryRequest::decode(payload).map_err(|e| {
+                tracing::warn!(err = %e, "ParkedRetry decode");
+                -2
+            })?;
+            let resp = plugin
+                .rt
+                .block_on(plugin.svc.parked_retry(Request::new(req)))
+                .map_err(|s| {
+                    tracing::warn!(status = %s, "ParkedRetry handler");
+                    -3
+                })?
+                .into_inner();
+            Ok(resp.encode_to_vec())
+        }
+        "ParkedDiscard" => {
+            let req = ParkedDiscardRequest::decode(payload).map_err(|e| {
+                tracing::warn!(err = %e, "ParkedDiscard decode");
+                -2
+            })?;
+            let resp = plugin
+                .rt
+                .block_on(plugin.svc.parked_discard(Request::new(req)))
+                .map_err(|s| {
+                    tracing::warn!(status = %s, "ParkedDiscard handler");
+                    -3
+                })?
+                .into_inner();
+            Ok(resp.encode_to_vec())
+        }
+        "AddIndexedDirectory" => {
+            let req = AddIndexedDirectoryRequest::decode(payload).map_err(|e| {
+                tracing::warn!(err = %e, "AddIndexedDirectory decode");
+                -2
+            })?;
+            let resp = plugin
+                .rt
+                .block_on(plugin.svc.add_indexed_directory(Request::new(req)))
+                .map_err(|s| {
+                    tracing::warn!(status = %s, "AddIndexedDirectory handler");
+                    -3
+                })?
+                .into_inner();
+            Ok(resp.encode_to_vec())
+        }
+        "RemoveIndexedDirectory" => {
+            let req = RemoveIndexedDirectoryRequest::decode(payload).map_err(|e| {
+                tracing::warn!(err = %e, "RemoveIndexedDirectory decode");
+                -2
+            })?;
+            let resp = plugin
+                .rt
+                .block_on(plugin.svc.remove_indexed_directory(Request::new(req)))
+                .map_err(|s| {
+                    tracing::warn!(status = %s, "RemoveIndexedDirectory handler");
+                    -3
+                })?
+                .into_inner();
+            Ok(resp.encode_to_vec())
+        }
+        "ListIndexedDirectories" => {
+            let req = ListIndexedDirectoriesRequest::decode(payload).map_err(|e| {
+                tracing::warn!(err = %e, "ListIndexedDirectories decode");
+                -2
+            })?;
+            let resp = plugin
+                .rt
+                .block_on(plugin.svc.list_indexed_directories(Request::new(req)))
+                .map_err(|s| {
+                    tracing::warn!(status = %s, "ListIndexedDirectories handler");
+                    -3
+                })?
+                .into_inner();
+            Ok(resp.encode_to_vec())
+        }
+        "SetZoneIndexingMode" => {
+            let req = SetZoneIndexingModeRequest::decode(payload).map_err(|e| {
+                tracing::warn!(err = %e, "SetZoneIndexingMode decode");
+                -2
+            })?;
+            let resp = plugin
+                .rt
+                .block_on(plugin.svc.set_zone_indexing_mode(Request::new(req)))
+                .map_err(|s| {
+                    tracing::warn!(status = %s, "SetZoneIndexingMode handler");
+                    -3
+                })?
+                .into_inner();
+            Ok(resp.encode_to_vec())
+        }
+        "ListZoneIndexingModes" => {
+            let req = ListZoneIndexingModesRequest::decode(payload).map_err(|e| {
+                tracing::warn!(err = %e, "ListZoneIndexingModes decode");
+                -2
+            })?;
+            let resp = plugin
+                .rt
+                .block_on(plugin.svc.list_zone_indexing_modes(Request::new(req)))
+                .map_err(|s| {
+                    tracing::warn!(status = %s, "ListZoneIndexingModes handler");
+                    -3
+                })?
+                .into_inner();
+            Ok(resp.encode_to_vec())
+        }
+        "Health" => {
+            let req = HealthRequest::decode(payload).map_err(|e| {
+                tracing::warn!(err = %e, "Health decode");
+                -2
+            })?;
+            let resp = plugin
+                .rt
+                .block_on(plugin.svc.health(Request::new(req)))
+                .map_err(|s| {
+                    tracing::warn!(status = %s, "Health handler");
+                    -3
+                })?
+                .into_inner();
+            Ok(resp.encode_to_vec())
+        }
+        "Stats" => {
+            let req = StatsRequest::decode(payload).map_err(|e| {
+                tracing::warn!(err = %e, "Stats decode");
+                -2
+            })?;
+            let resp = plugin
+                .rt
+                .block_on(plugin.svc.stats(Request::new(req)))
+                .map_err(|s| {
+                    tracing::warn!(status = %s, "Stats handler");
                     -3
                 })?
                 .into_inner();

@@ -268,7 +268,9 @@ impl Harness {
         let mock = Box::into_raw(Box::new(MockKernel::new()));
         let handle = handle_for(mock);
         let manager = Arc::new(IndexManager::with_root(dir.path().to_path_buf()));
-        let svc = SearchServiceImpl::with_manager(Arc::new(handle), manager);
+        let svc = SearchServiceImpl::builder(Arc::new(handle))
+            .manager(manager)
+            .build();
         Self {
             _dir: dir,
             mock,

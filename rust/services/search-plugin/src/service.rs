@@ -97,60 +97,21 @@ impl SearchServiceImpl {
     /// default (`$NEXUS_DATA_DIR/plugins/search/`).  Embedder init
     /// is deferred to the first SemanticQuery (D3).
     pub fn new(handle: Arc<KernelHandle>) -> Self {
-        Self {
-            handle,
-            manager: Arc::new(IndexManager::new()),
-            embedder_slot: Arc::new(Mutex::new(None)),
-            query_cache: Arc::new(crate::query_cache::QueryCache::new()),
-        }
+        Self::builder(handle).build()
     }
 
-    /// Test / operator constructor — inject a pre-configured
-    /// `IndexManager` (typically rooted at a tempdir for tests, or
-    /// at an explicit data volume for operators overriding the
-    /// default storage location).  Embedder init is deferred to the
-    /// first SemanticQuery.
-    pub fn with_manager(handle: Arc<KernelHandle>, manager: Arc<IndexManager>) -> Self {
-        Self {
+    /// Start a builder for a customised SearchServiceImpl.  All
+    /// non-required knobs default to the same values `new` uses;
+    /// tests + operators override just the fields they care about
+    /// via chained setters.  Avoids the previous
+    /// `with_manager` / `with_manager_and_embedder` /
+    /// `with_manager_embedder_and_cache` constructor explosion.
+    pub fn builder(handle: Arc<KernelHandle>) -> SearchServiceBuilder {
+        SearchServiceBuilder {
             handle,
-            manager,
-            embedder_slot: Arc::new(Mutex::new(None)),
-            query_cache: Arc::new(crate::query_cache::QueryCache::new()),
-        }
-    }
-
-    /// Test / operator constructor — inject BOTH a pre-configured
-    /// `IndexManager` and an [`Embedder`].  Bypasses the
-    /// [`build_default_embedder`] discovery step so integration tests
-    /// can use a [`MockEmbedder`](crate::embedder::MockEmbedder)
-    /// without pointing at real model files.
-    pub fn with_manager_and_embedder(
-        handle: Arc<KernelHandle>,
-        manager: Arc<IndexManager>,
-        embedder: Arc<dyn Embedder>,
-    ) -> Self {
-        Self {
-            handle,
-            manager,
-            embedder_slot: Arc::new(Mutex::new(Some(embedder))),
-            query_cache: Arc::new(crate::query_cache::QueryCache::new()),
-        }
-    }
-
-    /// Test constructor — inject a QueryCache with an explicit
-    /// TTL.  Used by integration tests that want to observe cache
-    /// expiry within seconds rather than the 5-minute default.
-    pub fn with_manager_embedder_and_cache(
-        handle: Arc<KernelHandle>,
-        manager: Arc<IndexManager>,
-        embedder: Arc<dyn Embedder>,
-        query_cache: crate::query_cache::SharedQueryCache,
-    ) -> Self {
-        Self {
-            handle,
-            manager,
-            embedder_slot: Arc::new(Mutex::new(Some(embedder))),
-            query_cache,
+            manager: None,
+            embedder: None,
+            query_cache: None,
         }
     }
 
@@ -174,6 +135,61 @@ impl SearchServiceImpl {
         }
         *slot = Some(Arc::clone(&built));
         Ok(built)
+    }
+}
+
+/// Fluent builder for [`SearchServiceImpl`].  Every knob is
+/// optional; unset knobs get the same defaults [`new`] uses.
+///
+/// Replaces the earlier `with_manager` / `with_manager_and_embedder`
+/// / `with_manager_embedder_and_cache` triad — one builder covers
+/// every combination of overrides without a combinatorial
+/// constructor blow-up when the next knob lands.
+pub struct SearchServiceBuilder {
+    handle: Arc<KernelHandle>,
+    manager: Option<Arc<IndexManager>>,
+    embedder: Option<Arc<dyn Embedder>>,
+    query_cache: Option<crate::query_cache::SharedQueryCache>,
+}
+
+impl SearchServiceBuilder {
+    /// Inject a pre-configured `IndexManager` (typically rooted at
+    /// a tempdir for tests, or at an explicit data volume for
+    /// operators overriding the default storage location).
+    pub fn manager(mut self, manager: Arc<IndexManager>) -> Self {
+        self.manager = Some(manager);
+        self
+    }
+
+    /// Pre-seed the embedder slot so SemanticQuery / Hybrid skip
+    /// the [`build_default_embedder`] discovery step.  Integration
+    /// tests use this to inject a
+    /// [`MockEmbedder`](crate::embedder::MockEmbedder) without
+    /// pointing at real model files.
+    pub fn embedder(mut self, embedder: Arc<dyn Embedder>) -> Self {
+        self.embedder = Some(embedder);
+        self
+    }
+
+    /// Inject a shared `QueryCache` — used by tests that need a
+    /// shorter TTL than the 5-minute default so cache expiry is
+    /// observable within a few seconds.
+    pub fn query_cache(mut self, cache: crate::query_cache::SharedQueryCache) -> Self {
+        self.query_cache = Some(cache);
+        self
+    }
+
+    pub fn build(self) -> SearchServiceImpl {
+        SearchServiceImpl {
+            handle: self.handle,
+            manager: self
+                .manager
+                .unwrap_or_else(|| Arc::new(IndexManager::new())),
+            embedder_slot: Arc::new(Mutex::new(self.embedder)),
+            query_cache: self
+                .query_cache
+                .unwrap_or_else(|| Arc::new(crate::query_cache::QueryCache::new())),
+        }
     }
 }
 
@@ -1309,20 +1325,26 @@ impl SearchService for SearchServiceImpl {
                 error: Some("q must not be empty".into()),
             }));
         }
+        // Canonicalise the zone BEFORE cache lookup so the cache
+        // and Index/Refresh invalidation agree on the key.  Wire
+        // zone_id="" resolves to ROOT_ZONE_ID everywhere else
+        // (do_index, do_refresh, do_*_query); the cache must see
+        // the same resolved value or invalidation misses a call
+        // that inserted under the empty string.
+        let mut req_for_cache = req.clone();
+        req_for_cache.zone_id = resolve_zone(&req.zone_id).to_string();
+
         // P7 cache check.  Zone is the auth boundary (D5), so a
         // hit here is safe to serve directly — we don't need to
         // re-check permission, the kernel router already did.  A
         // hit skips FTS + ANN + fusion + scoring + pooling +
         // expand entirely.
-        if let Some(cached) = self.query_cache.get(&req) {
+        if let Some(cached) = self.query_cache.get(&req_for_cache) {
             return Ok(Response::new(QueryResponse {
                 results: cached,
                 error: None,
             }));
         }
-        // Retained across the outcome branches to feed the cache
-        // insert on success.  Cloning is cheap next to the fetch.
-        let req_for_cache = req.clone();
         // Parse borrow-only fields FIRST so later `let q = req.q`
         // moves don't leave `req` partially moved for later reads.
         let query_type = QueryType::try_from(req.query_type).unwrap_or(QueryType::Unspecified);

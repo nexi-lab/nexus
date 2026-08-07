@@ -256,7 +256,10 @@ impl Harness {
         let handle = handle_for(mock);
         let manager = Arc::new(IndexManager::with_root(dir.path().to_path_buf()));
         let embedder = Arc::new(MockEmbedder::with_dim(16));
-        let svc = SearchServiceImpl::with_manager_and_embedder(Arc::new(handle), manager, embedder);
+        let svc = SearchServiceImpl::builder(Arc::new(handle))
+            .manager(manager)
+            .embedder(embedder)
+            .build();
         Self {
             _dir: dir,
             mock,
@@ -452,7 +455,10 @@ async fn semantic_zone_isolation_holds() {
     }
     let manager = Arc::new(IndexManager::with_root(dir.path().to_path_buf()));
     let embedder = Arc::new(MockEmbedder::with_dim(16));
-    let svc = SearchServiceImpl::with_manager_and_embedder(Arc::new(handle), manager, embedder);
+    let svc = SearchServiceImpl::builder(Arc::new(handle))
+        .manager(manager)
+        .embedder(embedder)
+        .build();
 
     // Index into zone-a only.
     let idx_a = svc

@@ -4802,7 +4802,7 @@ class SearchService:
         """Get semantic search indexing statistics."""
         daemon = getattr(self, "_search_daemon", None)
         if daemon is not None:
-            stats = dict(daemon.get_stats())
+            stats = dict(await daemon.get_stats())
             stats.setdefault("engine", stats.get("backend", "txtai"))
             return stats
 

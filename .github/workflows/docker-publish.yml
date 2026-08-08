@@ -249,10 +249,14 @@ jobs:
           sudo chmod 777 "$(docker volume inspect nexus-shared-workspace --format '{{.Mountpoint}}')"
 
       - name: Start search-plugin sidecar on 127.0.0.1:2126
-        env:
-          NEXUS_SHARED_WORKSPACE: nexus-shared-workspace
         run: |
-          docker compose -f dockerfiles/docker-compose.search-plugin-e2e.yml up -d node
+          # Compose with the edge-override so both the plugin sidecar
+          # and nexus-e2e see the same bytes at /workspace (see
+          # dockerfiles/docker-compose.search-plugin-e2e.edge-override.yml).
+          docker compose \
+            -f dockerfiles/docker-compose.search-plugin-e2e.yml \
+            -f dockerfiles/docker-compose.search-plugin-e2e.edge-override.yml \
+            up -d node
           # Wait for the plugin's gRPC bind to be reachable from the host
           # (compose maps 2126:2126 so --network host of nexus-e2e sees
           # the same port).
@@ -265,7 +269,10 @@ jobs:
             sleep 2
           done
           echo "::error::Search plugin sidecar failed to bind 127.0.0.1:2126 within 120s"
-          docker compose -f dockerfiles/docker-compose.search-plugin-e2e.yml logs --tail=200 node
+          docker compose \
+            -f dockerfiles/docker-compose.search-plugin-e2e.yml \
+            -f dockerfiles/docker-compose.search-plugin-e2e.edge-override.yml \
+            logs --tail=200 node
           exit 1
 
       - name: Start Nexus edge container
@@ -526,5 +533,8 @@ jobs:
         if: always()
         run: |
           docker rm -f nexus-e2e 2>/dev/null || true
-          docker compose -f dockerfiles/docker-compose.search-plugin-e2e.yml down -v --remove-orphans 2>/dev/null || true
+          docker compose \
+            -f dockerfiles/docker-compose.search-plugin-e2e.yml \
+            -f dockerfiles/docker-compose.search-plugin-e2e.edge-override.yml \
+            down -v --remove-orphans 2>/dev/null || true
           docker volume rm -f nexus-shared-workspace 2>/dev/null || true

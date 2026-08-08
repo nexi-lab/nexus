@@ -44,26 +44,23 @@ class ZoneSearchCapabilities:
 
     @classmethod
     def from_daemon_stats(cls, zone_id: str, daemon: Any) -> "ZoneSearchCapabilities":
-        """Derive capabilities from a SearchDaemon's runtime state.
+        """Derive capabilities for a SearchDaemon (Rust plugin proxy).
 
-        Inspects the daemon to determine what search backends are available.
+        Post-P12 the sole daemon shape is the ``SearchDaemon`` proxy that
+        forwards to the Rust ``nexus-search-plugin`` cdylib.  The plugin
+        always supports keyword + semantic + hybrid; there's no graph
+        store and no SPLADE lane.  A per-zone gRPC round-trip to
+        ``get_stats()`` would only confirm what we already know, and
+        keeping this classmethod SYNC lets the sync ``register()``
+        caller stay unchanged.
         """
-        stats = daemon.get_stats() if hasattr(daemon, "get_stats") else {}
-        modes = ["keyword"]  # BM25S/FTS always available
-
-        has_db = stats.get("db_pool_size", 0) > 0
-        if has_db:
-            modes.append("semantic")
-            modes.append("hybrid")
-
-        has_graph = hasattr(daemon, "_graph_store")
-
+        del daemon  # capability set is fixed for the Rust plugin
         return cls(
             zone_id=zone_id,
-            search_modes=tuple(modes),
-            has_graph=has_graph,
-            has_splade=False,  # Detected at startup, not from stats
-            embedding_dimensions=stats.get("embedding_dimensions", 0),
+            search_modes=("keyword", "semantic", "hybrid"),
+            has_graph=False,
+            has_splade=False,
+            embedding_dimensions=0,
         )
 
 

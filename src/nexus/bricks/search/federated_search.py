@@ -333,54 +333,26 @@ class FederatedSearchDispatcher:
 
         Phase 3: Skips semantic queries to keyword-only zones.
 
+        Post-P12 the sole daemon shape is the Rust ``nexus-search-plugin``
+        proxy, which routes keyword through a zone-filtered tantivy index
+        — there's no cross-zone leak like the Python daemon's BM25S /
+        Zoekt in-memory indexes had.  So decision 13B (force keyword →
+        hybrid to avoid leak) no longer applies; return the requested
+        type unless the registry says the zone can't do semantic.
+
         Returns:
             (effective_search_type, alpha_override_or_None)
         """
-        # Decision 13B rationale: BM25S and Zoekt in-memory indexes don't
-        # filter by zone_id, so keyword search through them leaks cross-zone
-        # results. When they're active, we force the semantic path which
-        # uses pgvector (zone-filtered).
-        #
-        # However, when BM25S/Zoekt are NOT available (bm25_documents=0,
-        # zoekt_available=False), keyword search falls through to PostgreSQL
-        # FTS which IS zone-filtered. In that case, forcing semantic would
-        # break search on DBs without embeddings. So we only force semantic
-        # when the leaky backends are actually active.
-        # Check if the daemon has leaky (non-zone-filtered) keyword backends.
-        # BM25S and Zoekt don't filter by zone_id, so keyword through them
-        # leaks cross-zone results. When they have data, we force semantic.
-        # When they're empty or absent, FTS (zone-filtered) handles keyword.
-        try:
-            daemon = self._get_daemon_for_zone(zone_id)
-            _stats = (
-                daemon.get_stats()
-                if hasattr(daemon, "get_stats") and callable(getattr(daemon, "get_stats", None))
-                else {}
-            )
-            has_bm25s = _stats.get("bm25_documents", 0) > 0 if isinstance(_stats, dict) else False
-            has_zoekt = _stats.get("zoekt_available", False) if isinstance(_stats, dict) else False
-        except Exception:
-            has_bm25s = False
-            has_zoekt = False
-        has_leaky_keyword = has_bm25s or has_zoekt
-
         if self._registry is None:
-            if search_type == "keyword" and has_leaky_keyword:
-                return ("hybrid", 1.0)  # 13B: force semantic to avoid zone leak
             return (search_type, None)
 
         caps = self._registry.get_capabilities(zone_id)
         if caps is None:
-            if search_type == "keyword" and has_leaky_keyword:
-                return ("hybrid", 1.0)
             return (search_type, None)
 
         # Phase 3: Route based on zone capabilities
         if search_type in ("semantic", "hybrid") and not caps.supports_semantic:
             return ("keyword", None)
-
-        if search_type == "keyword" and has_leaky_keyword:
-            return ("hybrid", 1.0)
 
         return (search_type, None)
 

@@ -70,12 +70,6 @@ services:
       - "2126:2126"
     volumes:
       - search_plugin_node_data:/app/data
-      # Optional host-shared workspace so a co-tenant container (edge
-      # smoke's nexus-e2e) that writes to /workspace can have those
-      # writes seen by the plugin when NotifyFileChange fires with an
-      # absolute path.  The mount is a bind if $NEXUS_SHARED_WORKSPACE
-      # is set, otherwise falls back to a plugin-owned empty dir.
-      - ${NEXUS_SHARED_WORKSPACE:-search_plugin_workspace}:/workspace
     networks:
       - nexus-search-plugin-net
     healthcheck:
@@ -136,5 +130,3 @@ secrets:
 volumes:
   search_plugin_node_data:
     name: nexus-search-plugin-node-data
-  search_plugin_workspace:
-    name: nexus-search-plugin-workspace

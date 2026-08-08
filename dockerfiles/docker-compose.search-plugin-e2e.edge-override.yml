@@ -1,0 +1,16 @@
+# Compose override used by .github/workflows/docker-publish.yml's
+# e2e-edge job.  Adds a bind mount so the plugin sidecar and the
+# nexus-e2e edge container see the SAME bytes at /workspace — the
+# plugin has to open the file NotifyFileChange references, so a
+# nexus-e2e write is only index-able when the plugin's FS agrees.
+#
+# Standalone search-plugin-e2e.yml stays unchanged; this override is
+# only merged in via `docker compose -f base.yml -f edge-override.yml`.
+services:
+  node:
+    volumes:
+      - nexus-shared-workspace:/workspace
+
+volumes:
+  nexus-shared-workspace:
+    external: true

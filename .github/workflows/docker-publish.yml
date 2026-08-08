@@ -184,6 +184,79 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # ---------------------------------------------------------------
+      # Search plugin sidecar (P12 topology contract): post-#4598 the
+      # Rust nexus-search-plugin cdylib is the sole search backend.
+      # The edge image is Python-server-only (no plugin baked in), so
+      # the smoke tests that assert auto-index-on-write (sections 9+10
+      # of test_build_perf_e2e.py) need a plugin process reachable at
+      # NEXUS_SEARCH_PLUGIN_TARGET.  Reuse the search-plugin-e2e
+      # compose so the plugin build + signing pipeline stays SSOT.
+      # ---------------------------------------------------------------
+      - name: Set up Docker Buildx (for cluster image)
+        uses: docker/setup-buildx-action@v3
+
+      - name: Read NEXUS_VFS_REV from Cargo.toml
+        id: vfs_rev
+        run: |
+          sha=$(grep -oP '(?<=rev = ")[a-f0-9]{40}' Cargo.toml | sort -u | head -1)
+          if [ -z "$sha" ]; then
+            echo "::error::Could not parse nexus-vfs SHA from Cargo.toml"
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout nexus-vfs source at pinned SHA
+        uses: actions/checkout@v4
+        with:
+          repository: nexi-lab/nexus-vfs
+          ref: ${{ steps.vfs_rev.outputs.sha }}
+          path: nexus-vfs-src
+          fetch-depth: 1
+
+      - name: Build nexusd-cluster image (for plugin sidecar)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: dockerfiles/Dockerfile.nexusd-cluster
+          build-contexts: |
+            nexus-vfs-src=nexus-vfs-src
+          load: true
+          tags: nexusd-cluster:latest
+          # Share cache scope with search-plugin-e2e so this stage
+          # comes up warm on most runs (cold build is ~10 min).
+          cache-from: type=gha,scope=search-plugin-cluster
+          cache-to: type=gha,scope=search-plugin-cluster,mode=max
+
+      - name: Build search-plugin-test image
+        env:
+          BUILDX_BUILDER: default
+          PLUGIN_SIGNING_PRIVKEY: ${{ secrets.PLUGIN_SIGNING_PRIVKEY }}
+        run: |
+          if [ -z "$PLUGIN_SIGNING_PRIVKEY" ]; then
+            echo "::error::PLUGIN_SIGNING_PRIVKEY secret is not available."
+            exit 1
+          fi
+          docker compose -f dockerfiles/docker-compose.search-plugin-e2e.yml build node
+
+      - name: Start search-plugin sidecar on 127.0.0.1:2126
+        run: |
+          docker compose -f dockerfiles/docker-compose.search-plugin-e2e.yml up -d node
+          # Wait for the plugin's gRPC bind to be reachable from the host
+          # (compose maps 2126:2126 so --network host of nexus-e2e sees
+          # the same port).
+          deadline=$((SECONDS + 120))
+          while [ $SECONDS -lt $deadline ]; do
+            if timeout 1 bash -c '</dev/tcp/127.0.0.1/2126' 2>/dev/null; then
+              echo "Search plugin sidecar healthy after ${SECONDS}s"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::Search plugin sidecar failed to bind 127.0.0.1:2126 within 120s"
+          docker compose -f dockerfiles/docker-compose.search-plugin-e2e.yml logs --tail=200 node
+          exit 1
+
       - name: Start Nexus edge container
         run: |
           # Container runs as nexus (UID 1000) — match host volume ownership
@@ -208,6 +281,7 @@ jobs:
             -e NEXUS_VDB_WORKERS=1 \
             -e NEXUS_SEARCH_POOL_MIN=2 \
             -e NEXUS_SEARCH_POOL_MAX=8 \
+            -e NEXUS_SEARCH_PLUGIN_TARGET=127.0.0.1:2126 \
             -v /tmp/nexus-data:/app/data \
             ghcr.io/nexi-lab/nexus:edge
 
@@ -438,4 +512,6 @@ jobs:
 
       - name: Cleanup
         if: always()
-        run: docker rm -f nexus-e2e 2>/dev/null || true
+        run: |
+          docker rm -f nexus-e2e 2>/dev/null || true
+          docker compose -f dockerfiles/docker-compose.search-plugin-e2e.yml down -v --remove-orphans 2>/dev/null || true

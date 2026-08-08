@@ -239,7 +239,18 @@ jobs:
           fi
           docker compose -f dockerfiles/docker-compose.search-plugin-e2e.yml build node
 
+      - name: Prepare shared workspace volume
+        run: |
+          # Both containers see the same /workspace bytes.  Post-P12
+          # the plugin has to read a file by absolute path when
+          # NotifyFileChange fires, so nexus-e2e's writes must land
+          # somewhere the plugin container can also read.
+          docker volume create nexus-shared-workspace
+          sudo chmod 777 "$(docker volume inspect nexus-shared-workspace --format '{{.Mountpoint}}')"
+
       - name: Start search-plugin sidecar on 127.0.0.1:2126
+        env:
+          NEXUS_SHARED_WORKSPACE: nexus-shared-workspace
         run: |
           docker compose -f dockerfiles/docker-compose.search-plugin-e2e.yml up -d node
           # Wait for the plugin's gRPC bind to be reachable from the host
@@ -283,6 +294,7 @@ jobs:
             -e NEXUS_SEARCH_POOL_MAX=8 \
             -e NEXUS_SEARCH_PLUGIN_TARGET=127.0.0.1:2126 \
             -v /tmp/nexus-data:/app/data \
+            -v nexus-shared-workspace:/workspace \
             ghcr.io/nexi-lab/nexus:edge
 
           # Wait for server to be ready
@@ -515,3 +527,4 @@ jobs:
         run: |
           docker rm -f nexus-e2e 2>/dev/null || true
           docker compose -f dockerfiles/docker-compose.search-plugin-e2e.yml down -v --remove-orphans 2>/dev/null || true
+          docker volume rm -f nexus-shared-workspace 2>/dev/null || true

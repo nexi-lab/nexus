@@ -30,7 +30,6 @@ ADMIN_KEY = os.environ.get("NEXUS_API_KEY", "")
 USER_KEY = os.environ.get("NEXUS_DEMO_USER_KEY", "")
 GRPC_PORT = os.environ.get("NEXUS_GRPC_PORT", "2029")
 HERB_SEARCH_PATH = "/workspace/demo/herb"
-AUTO_INDEX_MARKER = "zephyr marker"
 PLAN_AUTH_ORIGINAL = "- Configure authentication"
 PLAN_AUTH_EDITED = "- Configure auth (test-edit)"
 
@@ -534,112 +533,18 @@ def main() -> None:
     print(f"    p50={p50:.1f}ms  p95={p95:.1f}ms", flush=True)
 
     # =========================================================================
-    section("9. AUTO-INDEX ON EDIT")
+    # Sections 9 + 10 (auto-index-on-write + delete-through-index) live at
+    # tests/e2e/docker/test_search_plugin.py against the sidecar cluster
+    # (Docker Compose in .github/workflows/search-plugin-e2e.yml).  Edge
+    # smoke exercises the Python edge topology, which post-P12 (#4598) has
+    # no writer→plugin content path: the plugin sidecar receives absolute
+    # virtual paths via NotifyFileChange but has no way to fetch the
+    # bytes (nexus-e2e writes land in the record store, not on a shared
+    # host FS).  Testing auto-index here would only cover a topology we
+    # don't actually ship — the split-container edge image is being
+    # retired in favour of nexusd-cluster + plugin as the single search
+    # deployment.  See project_search_plugin_python_deleted memory.
     # =========================================================================
-
-    step(f"RPC edit: write '{AUTO_INDEX_MARKER}' to plan.md")
-    t.call_rpc(
-        "edit",
-        {
-            "path": "/workspace/demo/plan.md",
-            "edits": [["Deploy to production", f"Deploy using {AUTO_INDEX_MARKER}"]],
-        },
-    )
-    indexed = False
-    for attempt in range(6):
-        step(f"waiting 10s for daemon auto-index (attempt {attempt + 1}/6)")
-        time.sleep(10)
-        r = cli(
-            "search",
-            "query",
-            AUTO_INDEX_MARKER,
-            "--path",
-            "/workspace/demo/plan.md",
-            "--mode",
-            "keyword",
-            "--limit",
-            "3",
-        )
-        print(f"    stdout: {r.stdout[:200]!r}", file=sys.stderr, flush=True)
-        if "plan.md" in r.stdout and AUTO_INDEX_MARKER in r.stdout:
-            indexed = True
-            break
-    check(
-        "auto-index after edit",
-        indexed,
-        "updated plan.md content never appeared in search results after 6×10s",
-    )
-
-    step("RPC edit: restore original plan.md text")
-    t.call_rpc(
-        "edit",
-        {
-            "path": "/workspace/demo/plan.md",
-            "edits": [[f"Deploy using {AUTO_INDEX_MARKER}", "Deploy to production"]],
-            "fuzzy_threshold": 0.8,
-        },
-    )
-
-    # =========================================================================
-    section("10. DELETE → STALE INDEX CHECK")
-    # =========================================================================
-
-    step("RPC write /workspace/demo/delete-test.md with unique string")
-    t.call_rpc(
-        "write",
-        {"path": "/workspace/demo/delete-test.md", "buf": "Quantum entanglement teleportation"},
-    )
-    indexed = False
-    for attempt in range(8):
-        step(f"waiting 10s for auto-index (attempt {attempt + 1}/8)")
-        time.sleep(10)
-        r = cli(
-            "search",
-            "query",
-            "quantum entanglement teleportation",
-            "--path",
-            "/workspace/demo",
-            "--mode",
-            "keyword",
-            "--limit",
-            "3",
-        )
-        print(f"    stdout: {r.stdout[:200]!r}", file=sys.stderr, flush=True)
-        if "delete-test" in r.stdout:
-            indexed = True
-            break
-    check(
-        "file indexed before delete",
-        indexed,
-        "delete-test.md never appeared in search results after 8×10s",
-    )
-
-    step("RPC sys_unlink /workspace/demo/delete-test.md")
-    t.call_rpc("sys_unlink", {"path": "/workspace/demo/delete-test.md"})
-    stale = True
-    for attempt in range(5):
-        step(f"waiting 10s for delete to propagate (attempt {attempt + 1}/5)")
-        time.sleep(10)
-        r = cli(
-            "search",
-            "query",
-            "quantum entanglement teleportation",
-            "--path",
-            "/workspace/demo",
-            "--mode",
-            "keyword",
-            "--limit",
-            "3",
-        )
-        print(f"    stdout: {r.stdout[:200]!r}", file=sys.stderr, flush=True)
-        if "delete-test" not in r.stdout:
-            stale = False
-            break
-    check(
-        "deleted file removed from search",
-        not stale,
-        "stale result still present after 5×10s" if stale else "",
-    )
 
     t.close()
 

@@ -39,15 +39,45 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
         logger.debug("Search Daemon disabled (set NEXUS_SEARCH_DAEMON=true to enable)")
         return []
 
+    app.state.database_url = svc.database_url
+
     try:
         from nexus.bricks.search.daemon import SearchDaemon
 
-        app.state.search_daemon = SearchDaemon(
-            target=os.environ.get("NEXUS_SEARCH_PLUGIN_TARGET"),
-        )
-        app.state.database_url = svc.database_url
+        target = os.environ.get("NEXUS_SEARCH_PLUGIN_TARGET")
+        candidate = SearchDaemon(target=target)
+        await candidate.startup()
 
-        await app.state.search_daemon.startup()
+        # Boot-time reachability probe.  P12 turned the daemon into a
+        # gRPC proxy to the nexus-search-plugin cdylib; a deployment
+        # that boots the FastAPI server without also loading the plugin
+        # (single-container edge-smoke topology, dev workstations, any
+        # deployment that hasn't caught up to the new sidecar contract)
+        # used to get an in-process daemon and now would fail every
+        # request with UNAVAILABLE if we left the unusable proxy in
+        # place.  Fail-soft instead: if the plugin can't be reached in
+        # bounded time, warn loudly and leave app.state.search_daemon
+        # unset so _get_search_daemon returns 503 and no code path
+        # blocks on unreachable gRPC.
+        try:
+            await asyncio.wait_for(candidate.get_health(), timeout=5.0)
+        except Exception as probe_exc:
+            logger.warning(
+                "Search plugin not reachable at %s (%s: %s); disabling "
+                "search daemon.  Load nexus-search-plugin via "
+                "nexusd-cluster --plugin-dir to enable, or set "
+                "NEXUS_SEARCH_DAEMON=false to silence this warning.",
+                target or "<default>",
+                type(probe_exc).__name__,
+                probe_exc,
+            )
+            with contextlib.suppress(Exception):
+                await candidate.shutdown()
+            app.state.search_daemon = None
+            app.state.search_daemon_enabled = False
+            return []
+
+        app.state.search_daemon = candidate
         app.state.search_daemon_enabled = True
 
         # Wire the daemon into SearchService so semantic_search queries
@@ -62,11 +92,12 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
 
         logger.info(
             "Search Daemon started (backend=rust-plugin, target=%s)",
-            os.environ.get("NEXUS_SEARCH_PLUGIN_TARGET") or "<default>",
+            target or "<default>",
         )
 
     except Exception as e:
         logger.warning("Failed to start Search Daemon: %s", e)
+        app.state.search_daemon = None
         app.state.search_daemon_enabled = False
 
     return []

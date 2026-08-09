@@ -2627,6 +2627,7 @@ dependencies = [
  "anndists",
  "bytes",
  "fastembed",
+ "futures-util",
  "globset",
  "hnsw_rs",
  "libloading 0.8.9",

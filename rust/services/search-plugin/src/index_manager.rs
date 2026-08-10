@@ -92,6 +92,10 @@ pub struct IndexManager {
     /// Holding this lock for the duration of a zone's index
     /// transaction serializes writers; queries never take it.
     zone_write_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    /// Per-zone skeleton snapshots for the title arm (#4628), keyed
+    /// implicitly by each snapshot's FTS generation — see
+    /// [`Self::get_or_build_skeleton`].
+    skeletons: Mutex<HashMap<String, Arc<crate::title_index::ZoneSkeleton>>>,
 }
 
 /// Cache key for the ANN index — one entry per `(zone, embedder tag)`.
@@ -118,6 +122,7 @@ impl IndexManager {
             zones: Mutex::new(HashMap::new()),
             ann_zones: Mutex::new(HashMap::new()),
             zone_write_locks: Mutex::new(HashMap::new()),
+            skeletons: Mutex::new(HashMap::new()),
         }
     }
 
@@ -182,6 +187,36 @@ impl IndexManager {
         let idx = FtsIndex::open_or_create(self.index_dir(zone_id))?;
         zones.insert(zone_id.to_string(), Arc::clone(&idx));
         Ok(idx)
+    }
+
+    /// Get the zone's skeleton snapshot, rebuilding when the FTS
+    /// index has committed since the cached build.  Generation-keyed
+    /// (not call-site invalidated): every Index / Refresh /
+    /// IndexDocuments / NotifyFileChange mutation ends in an FTS
+    /// commit, which bumps the searcher generation — so staleness
+    /// detection is structural and new mutation paths can't forget
+    /// to invalidate.  The build runs OUTSIDE the cache lock; two
+    /// racing builders duplicate work and last-write-wins, which is
+    /// harmless (both snapshots are internally consistent).
+    pub fn get_or_build_skeleton(
+        &self,
+        zone_id: &str,
+    ) -> Result<Arc<crate::title_index::ZoneSkeleton>, IndexError> {
+        let fts = self.get_or_open(zone_id)?;
+        let current_gen = fts.generation_id();
+        {
+            let cache = self.skeletons.lock();
+            if let Some(sk) = cache.get(zone_id) {
+                if sk.generation_id() == current_gen {
+                    return Ok(Arc::clone(sk));
+                }
+            }
+        }
+        let built = Arc::new(crate::title_index::ZoneSkeleton::build(&fts)?);
+        self.skeletons
+            .lock()
+            .insert(zone_id.to_string(), Arc::clone(&built));
+        Ok(built)
     }
 
     /// Fetch (or lazily open) the ANN index for `zone_id` under the
@@ -349,5 +384,31 @@ mod tests {
         let hits_b = b.search("only", 10, None).expect("search b");
         assert_eq!(hits_b.len(), 1);
         assert_eq!(hits_b[0].path, "/y.md");
+    }
+
+    #[test]
+    fn skeleton_cache_rebuilds_on_generation_change() {
+        let root = tempfile::tempdir().expect("tempdir").keep();
+        let mgr = IndexManager::with_root(root);
+        let fts = mgr.get_or_open("zoneA").expect("open");
+        fts.add_document("/a.md", 0, "# Alpha\nbody", Some(1)).expect("add");
+        fts.commit().expect("commit");
+
+        let sk1 = mgr.get_or_build_skeleton("zoneA").expect("build");
+        assert_eq!(sk1.doc_count(), 1);
+        // Same generation → the SAME Arc comes back (cache hit).
+        let sk1b = mgr.get_or_build_skeleton("zoneA").expect("cached");
+        assert!(std::sync::Arc::ptr_eq(&sk1, &sk1b));
+
+        // Mutate + commit → generation bump → rebuild with fresh docs.
+        fts.add_document("/b.md", 0, "# Beta\nbody", Some(2)).expect("add");
+        fts.commit().expect("commit");
+        let sk2 = mgr.get_or_build_skeleton("zoneA").expect("rebuild");
+        assert!(!std::sync::Arc::ptr_eq(&sk1, &sk2));
+        assert_eq!(sk2.doc_count(), 2);
+
+        // Zone isolation: an unrelated zone builds its own skeleton.
+        let sk_other = mgr.get_or_build_skeleton("zoneB").expect("other");
+        assert_eq!(sk_other.doc_count(), 0);
     }
 }

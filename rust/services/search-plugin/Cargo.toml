@@ -62,6 +62,12 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "macros"] 
 # Bytes for tonic Request/Response body types.
 bytes = "1"
 
+# Stream combinators for BatchQuery's bounded, order-preserving
+# concurrent dispatch (#4610 — `stream::iter(..).buffered(n)`).
+# Already in the tree transitively via tonic; this only makes the
+# dependency direct.
+futures-util = "0.3"
+
 # Full-text search backend for the Query RPC (Phase 1 of the
 # Python-parity roadmap; see PARITY_ROADMAP.md D1).  Pure Rust, no
 # native deps — links into this plugin's cdylib only, cluster core

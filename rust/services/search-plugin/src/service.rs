@@ -10,11 +10,13 @@
 
 use std::sync::Arc;
 
+use futures_util::StreamExt;
 use nexus_plugin_abi::KernelHandle;
 use parking_lot::Mutex;
 use tonic::{async_trait, Request, Response, Status};
 
 use crate::ann_index::AnnHit;
+use crate::embed_cache::{embed_query_cached, QueryEmbedCache};
 use crate::embedder::{build_default_embedder, EmbedError, Embedder};
 use crate::fts_index::FtsHit;
 use crate::fusion::{self, DEFAULT_ALPHA, DEFAULT_RRF_K};
@@ -41,6 +43,22 @@ const DEFAULT_GLOB_MAX: usize = 10_000;
 const DEFAULT_GREP_MAX: usize = 1_000;
 const DEFAULT_QUERY_LIMIT: usize = 10;
 const DEFAULT_INDEX_MAX_DOCS: usize = 10_000;
+
+/// BatchQuery inner-query concurrency (#4610).  Each in-flight query
+/// spawns up to two blocking tasks (hybrid's keyword + semantic legs),
+/// so the ceiling stays small; `1` restores the pre-#4610 serial
+/// behaviour.  Env override: `NEXUS_SEARCH_BATCH_CONCURRENCY`.
+const BATCH_QUERY_CONCURRENCY_ENV: &str = "NEXUS_SEARCH_BATCH_CONCURRENCY";
+const DEFAULT_BATCH_QUERY_CONCURRENCY: usize = 4;
+const MAX_BATCH_QUERY_CONCURRENCY: usize = 16;
+
+fn batch_query_concurrency() -> usize {
+    std::env::var(BATCH_QUERY_CONCURRENCY_ENV)
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .map(|n| n.clamp(1, MAX_BATCH_QUERY_CONCURRENCY))
+        .unwrap_or(DEFAULT_BATCH_QUERY_CONCURRENCY)
+}
 
 /// Belt-and-suspenders per-file size cap for grep — a 100 MB
 /// binary blob would otherwise stall a single request for seconds.
@@ -97,6 +115,14 @@ pub struct SearchServiceImpl {
     /// dispatch; Index + Refresh invalidate the target zone so
     /// callers who mutated the corpus don't see stale results.
     query_cache: crate::query_cache::SharedQueryCache,
+    /// Query-embedding cache (#4610).  Distinct from `query_cache`:
+    /// that one keys on the FULL request (including `path_filter`),
+    /// so a path-scoped fan-out sending the same q across N prefixes
+    /// misses it N times — but all N share one embedding, and
+    /// `FastEmbedder` serialises embeds on a single session mutex.
+    /// Embeddings have no corpus dependency, so Index / Refresh do
+    /// not invalidate this cache.
+    embed_cache: Arc<QueryEmbedCache>,
 }
 
 impl SearchServiceImpl {
@@ -119,6 +145,7 @@ impl SearchServiceImpl {
             manager: None,
             embedder: None,
             query_cache: None,
+            embed_cache: None,
         }
     }
 
@@ -157,6 +184,7 @@ pub struct SearchServiceBuilder {
     manager: Option<Arc<IndexManager>>,
     embedder: Option<Arc<dyn Embedder>>,
     query_cache: Option<crate::query_cache::SharedQueryCache>,
+    embed_cache: Option<Arc<QueryEmbedCache>>,
 }
 
 impl SearchServiceBuilder {
@@ -186,6 +214,13 @@ impl SearchServiceBuilder {
         self
     }
 
+    /// Inject a query-embedding cache (#4610) — tests use a tiny or
+    /// zero capacity to make hit / bypass behaviour observable.
+    pub fn embed_cache(mut self, cache: Arc<QueryEmbedCache>) -> Self {
+        self.embed_cache = Some(cache);
+        self
+    }
+
     pub fn build(self) -> SearchServiceImpl {
         SearchServiceImpl {
             handle: self.handle,
@@ -196,6 +231,9 @@ impl SearchServiceBuilder {
             query_cache: self
                 .query_cache
                 .unwrap_or_else(|| Arc::new(crate::query_cache::QueryCache::new())),
+            embed_cache: self
+                .embed_cache
+                .unwrap_or_else(|| Arc::new(QueryEmbedCache::from_env())),
         }
     }
 }
@@ -604,6 +642,7 @@ fn do_keyword_query(
 fn do_semantic_query(
     manager: &IndexManager,
     embedder: &Arc<dyn Embedder>,
+    embed_cache: &QueryEmbedCache,
     q: &str,
     zone_id: &str,
     limit: usize,
@@ -613,12 +652,10 @@ fn do_semantic_query(
         .get_or_open_ann(zone_id, embedder.tag(), embedder.dim())
         .map_err(|e| format!("open ann for zone {zone_id:?}: {e}"))?;
 
-    let query_vec = embedder
-        .embed_batch(&[q])
-        .map_err(|e| format!("embed query: {e}"))?
-        .into_iter()
-        .next()
-        .ok_or_else(|| "embed query: empty result".to_string())?;
+    // #4610: cached — a fan-out repeating the same q across path
+    // filters embeds once instead of serialising N times on the
+    // embedder's session mutex.
+    let query_vec = embed_query_cached(embedder.as_ref(), embed_cache, q)?;
 
     // Over-fetch when a path prefix is set — the post-scoring
     // filter would otherwise underfill the response.
@@ -1606,8 +1643,17 @@ impl SearchService for SearchServiceImpl {
                         }));
                     }
                 };
+                let embed_cache = Arc::clone(&self.embed_cache);
                 tokio::task::spawn_blocking(move || {
-                    do_semantic_query(&manager, &embedder, &q, &zone_id, limit, &path_filter)
+                    do_semantic_query(
+                        &manager,
+                        &embedder,
+                        &embed_cache,
+                        &q,
+                        &zone_id,
+                        limit,
+                        &path_filter,
+                    )
                 })
                 .await
                 .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?
@@ -1637,6 +1683,7 @@ impl SearchService for SearchServiceImpl {
                     let mgr_kw = Arc::clone(&manager);
                     let mgr_sem = Arc::clone(&manager);
                     let embedder = Arc::clone(&embedder);
+                    let embed_cache = Arc::clone(&self.embed_cache);
                     let q_kw = q.clone();
                     let q_sem = q;
                     let zone_kw = zone_id.clone();
@@ -1649,7 +1696,13 @@ impl SearchService for SearchServiceImpl {
                         }),
                         tokio::task::spawn_blocking(move || {
                             do_semantic_query(
-                                &mgr_sem, &embedder, &q_sem, &zone_sem, over_fetch, &path_sem,
+                                &mgr_sem,
+                                &embedder,
+                                &embed_cache,
+                                &q_sem,
+                                &zone_sem,
+                                over_fetch,
+                                &path_sem,
                             )
                         }),
                     )
@@ -1896,15 +1949,70 @@ impl SearchService for SearchServiceImpl {
         request: Request<BatchQueryRequest>,
     ) -> Result<Response<BatchQueryResponse>, Status> {
         let req = request.into_inner();
-        // Serialise the batch: each Query has its own scoring +
-        // caching pass and reusing the existing `query` handler
-        // keeps the cache + scoring pipeline consistent.  A future
-        // optimisation could dedupe zone / caching lookups across
-        // the batch; not worth it until Python parity is proven.
-        let mut responses = Vec::with_capacity(req.queries.len());
-        for q_req in req.queries {
-            let resp = self.query(Request::new(q_req)).await?;
-            responses.push(resp.into_inner());
+        // #4610: the batch used to run strictly serially, so a caller
+        // batching N queries paid N × full query latency — measured
+        // live as the throughput ceiling on Koodle's cross-workspace
+        // fan-out (DeepBuildAI/koodle#2176: ~30% workspace coverage,
+        // client-side width increases only made it worse).  Each
+        // query still runs the full cache + scoring pipeline via the
+        // `query` handler, so per-query behaviour (result cache,
+        // fusion, recency, error surfaces) is identical to singles.
+        //
+        // Two changes:
+        //
+        // 1. Pre-warm the query-embedding cache once per DUPLICATE
+        //    embedding-needing text.  The fan-out pattern sends the
+        //    same q across many path filters; without this, the
+        //    parallel dispatch below would thundering-herd N
+        //    identical embeds into the embedder's serialising
+        //    session mutex on a cold cache.  Singleton texts skip
+        //    pre-warm — they embed inside their own query, in
+        //    parallel.  Pre-warm failures are ignored: each inner
+        //    query retries and surfaces its own error exactly as
+        //    before.
+        //
+        // 2. Bounded, order-preserving concurrent dispatch
+        //    (`buffered`).  The bound keeps one giant benchmark
+        //    batch from flooding the blocking pool; 1 restores the
+        //    serial behaviour.
+        let mut dupe_counts: std::collections::HashMap<&str, usize> =
+            std::collections::HashMap::new();
+        for q_req in &req.queries {
+            let qt = QueryType::try_from(q_req.query_type).unwrap_or(QueryType::Unspecified);
+            if matches!(qt, QueryType::Semantic | QueryType::Hybrid) && !q_req.q.is_empty() {
+                *dupe_counts.entry(q_req.q.as_str()).or_default() += 1;
+            }
+        }
+        let dupe_texts: Vec<String> = dupe_counts
+            .into_iter()
+            .filter(|(_, n)| *n > 1)
+            .map(|(t, _)| t.to_string())
+            .collect();
+        if !dupe_texts.is_empty() {
+            // Embedder init failure is fine here — the inner queries
+            // will produce their per-query "unavailable" errors.
+            if let Ok(embedder) = self.get_or_init_embedder() {
+                let cache = Arc::clone(&self.embed_cache);
+                let _ = tokio::task::spawn_blocking(move || {
+                    for text in dupe_texts {
+                        let _ = embed_query_cached(embedder.as_ref(), &cache, &text);
+                    }
+                })
+                .await;
+            }
+        }
+
+        let results: Vec<Result<Response<QueryResponse>, Status>> = futures_util::stream::iter(
+            req.queries
+                .into_iter()
+                .map(|q_req| self.query(Request::new(q_req))),
+        )
+        .buffered(batch_query_concurrency())
+        .collect()
+        .await;
+        let mut responses = Vec::with_capacity(results.len());
+        for resp in results {
+            responses.push(resp?.into_inner());
         }
         Ok(Response::new(BatchQueryResponse { responses }))
     }
@@ -2487,5 +2595,31 @@ mod tests {
         );
         assert_eq!(out.len(), 2);
         assert!(truncated);
+    }
+
+    #[test]
+    fn batch_query_concurrency_defaults_and_clamps() {
+        // SAFETY: no other test in this binary reads
+        // NEXUS_SEARCH_BATCH_CONCURRENCY (same convention as the
+        // embedder.rs env tests).
+        let saved = std::env::var(BATCH_QUERY_CONCURRENCY_ENV).ok();
+        unsafe { std::env::remove_var(BATCH_QUERY_CONCURRENCY_ENV) };
+        assert_eq!(batch_query_concurrency(), DEFAULT_BATCH_QUERY_CONCURRENCY);
+        unsafe { std::env::set_var(BATCH_QUERY_CONCURRENCY_ENV, "8") };
+        assert_eq!(batch_query_concurrency(), 8);
+        unsafe { std::env::set_var(BATCH_QUERY_CONCURRENCY_ENV, "0") };
+        assert_eq!(
+            batch_query_concurrency(),
+            1,
+            "0 clamps to serial, not panic"
+        );
+        unsafe { std::env::set_var(BATCH_QUERY_CONCURRENCY_ENV, "9999") };
+        assert_eq!(batch_query_concurrency(), MAX_BATCH_QUERY_CONCURRENCY);
+        unsafe { std::env::set_var(BATCH_QUERY_CONCURRENCY_ENV, "not-a-number") };
+        assert_eq!(batch_query_concurrency(), DEFAULT_BATCH_QUERY_CONCURRENCY);
+        match saved {
+            Some(v) => unsafe { std::env::set_var(BATCH_QUERY_CONCURRENCY_ENV, v) },
+            None => unsafe { std::env::remove_var(BATCH_QUERY_CONCURRENCY_ENV) },
+        }
     }
 }

@@ -95,6 +95,14 @@ services:
       NEXUS_API_KEY: ${NEXUS_API_KEY:-}
       # Search
       NEXUS_SEARCH_DAEMON: "true"
+      # Post-P12 (#4598) the Rust nexus-search-plugin (hosted by
+      # nexusd-cluster --plugin-dir, or the ghcr.io/nexi-lab/nexusd-cluster
+      # image) is the SOLE search backend.  Point this at a reachable plugin
+      # host; unreachable => the server boots with search disabled
+      # (fail-soft probe).  host.docker.internal reaches a host-side plugin
+      # process from inside the container on Docker Desktop / OrbStack.
+      # See docs/deployment/search-plugin.md (#4613).
+      NEXUS_SEARCH_PLUGIN_TARGET: ${NEXUS_SEARCH_PLUGIN_TARGET:-host.docker.internal:2126}
       NEXUS_TXTAI_MODEL: ${NEXUS_TXTAI_MODEL:-}
       NEXUS_TXTAI_USE_API_EMBEDDINGS: ${NEXUS_TXTAI_USE_API_EMBEDDINGS:-false}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}

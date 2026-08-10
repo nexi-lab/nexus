@@ -30,6 +30,83 @@ logger = logging.getLogger(__name__)
 _TARGET_ENV = "NEXUS_SEARCH_PLUGIN_TARGET"
 _DEFAULT_TARGET = "127.0.0.1:2126"
 
+# Transport security (#4622 review R1).  Plaintext is only acceptable
+# on the loopback topology the default target implies; a cross-host
+# deployment must either enable TLS or explicitly accept the risk.
+#
+# - NEXUS_SEARCH_PLUGIN_TLS=true          → TLS channel
+# - NEXUS_SEARCH_PLUGIN_TLS_CA=<path>     → CA bundle for server verification
+#                                           (system roots when unset)
+# - NEXUS_SEARCH_PLUGIN_TLS_CERT/_KEY     → client cert+key pair for mTLS
+# - NEXUS_SEARCH_PLUGIN_ALLOW_INSECURE=true
+#     → permit PLAINTEXT to a non-loopback target (trusted-network
+#       escape hatch; dev compose sets it for host.docker.internal).
+_TLS_ENV = "NEXUS_SEARCH_PLUGIN_TLS"
+_TLS_CA_ENV = "NEXUS_SEARCH_PLUGIN_TLS_CA"
+_TLS_CERT_ENV = "NEXUS_SEARCH_PLUGIN_TLS_CERT"
+_TLS_KEY_ENV = "NEXUS_SEARCH_PLUGIN_TLS_KEY"
+_ALLOW_INSECURE_ENV = "NEXUS_SEARCH_PLUGIN_ALLOW_INSECURE"
+
+_LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1", "[::1]")
+
+
+def _target_is_loopback(target: str) -> bool:
+    """True when ``target``'s host part is a loopback address."""
+    host = target.rsplit(":", 1)[0] if ":" in target else target
+    return host in _LOOPBACK_HOSTS
+
+
+def _read_env_file(env_name: str) -> bytes | None:
+    path = os.environ.get(env_name)
+    if not path:
+        return None
+    with open(path, "rb") as f:
+        return f.read()
+
+
+def _build_channel(target: str) -> "grpc.aio.Channel":
+    """Construct the plugin channel per the transport-security env contract.
+
+    TLS on ⇒ ``secure_channel`` with server verification (CA bundle or
+    system roots) and optional mTLS client identity.  TLS off ⇒
+    plaintext, but ONLY to loopback unless the operator explicitly set
+    ``NEXUS_SEARCH_PLUGIN_ALLOW_INSECURE=true`` — a raised error here
+    surfaces through the boot probe's fail-soft path as a loud
+    "search disabled" warning instead of silently shipping tenant
+    queries over an unauthenticated cross-host link.
+    """
+    if os.environ.get(_TLS_ENV, "").lower() in ("true", "1", "yes"):
+        cert = _read_env_file(_TLS_CERT_ENV)
+        key = _read_env_file(_TLS_KEY_ENV)
+        creds = grpc.ssl_channel_credentials(
+            root_certificates=_read_env_file(_TLS_CA_ENV),
+            private_key=key,
+            certificate_chain=cert,
+        )
+        return grpc.aio.secure_channel(target, creds)
+    if not _target_is_loopback(target) and os.environ.get(_ALLOW_INSECURE_ENV, "").lower() not in (
+        "true",
+        "1",
+        "yes",
+    ):
+        raise RuntimeError(
+            f"refusing PLAINTEXT gRPC to non-loopback search plugin target {target!r}: "
+            f"set {_TLS_ENV}=true (+ {_TLS_CA_ENV}/{_TLS_CERT_ENV}/{_TLS_KEY_ENV}) for a "
+            f"secured host, or {_ALLOW_INSECURE_ENV}=true to accept an unauthenticated "
+            "link on a trusted network"
+        )
+    if not _target_is_loopback(target):
+        logger.warning(
+            "search plugin transport is PLAINTEXT to non-loopback target %s "
+            "(%s=true) — anyone on the network path can read queries and "
+            "index content; prefer %s=true",
+            target,
+            _ALLOW_INSECURE_ENV,
+            _TLS_ENV,
+        )
+    return grpc.aio.insecure_channel(target)
+
+
 _QUERY_TYPE_MAP = {
     "keyword": search_pb2.QUERY_TYPE_KEYWORD,
     "semantic": search_pb2.QUERY_TYPE_SEMANTIC,
@@ -75,9 +152,11 @@ class SearchDaemon:
 
     def _get_stub(self) -> search_pb2_grpc.SearchServiceStub:
         """Lazy channel + stub construction.  aio channel so the
-        Python daemon's async methods stay async without a thread hop."""
+        Python daemon's async methods stay async without a thread hop.
+        Channel security follows the NEXUS_SEARCH_PLUGIN_TLS* env
+        contract — see :func:`_build_channel`."""
         if self._stub is None:
-            self._channel = grpc.aio.insecure_channel(self._target)
+            self._channel = _build_channel(self._target)
             self._stub = search_pb2_grpc.SearchServiceStub(self._channel)
         return self._stub
 
@@ -149,9 +228,19 @@ class SearchDaemon:
             pb_docs.append(entry)
         req = search_pb2.IndexDocumentsRequest(documents=pb_docs, zone_id=zone_id or "")
         resp = await self._get_stub().IndexDocuments(req)
+        # Fail closed: a populated error means FTS/ANN persistence broke
+        # mid-batch — swallowing it here would let the route 200 an
+        # incomplete index (review R1).  The route maps the raised
+        # exception to HTTP 500 so clients retry.
+        if resp.HasField("error"):
+            raise RuntimeError(f"plugin index_documents failed: {resp.error}")
         return {
             "indexed": resp.indexed_count,
             "skipped": list(resp.parked_paths),
+            # Content-level skips (empty/whitespace docs, chunkless
+            # docs) — distinct from the projection-wait ``skipped``
+            # paths above, which drive the route's 409.
+            "skipped_count": resp.skipped_count,
         }
 
     async def notify_file_change(

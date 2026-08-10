@@ -636,6 +636,83 @@ jobs:
             -e NEXUS_PROFILE=remote \
             nexus-e2e nexus search query "Nexus Core" --path /workspace/demo/herb --mode hybrid --limit 1 || true
 
+      # ---------------------------------------------------------------
+      # Search HTTP contract smoke (#4616/#4617) — UNCONDITIONAL.
+      # The full build-perf script below needs VFS gRPC and is skipped
+      # when the edge image lacks it, which previously meant a tag
+      # could publish without ANY check that the plugin actually
+      # LOADED (TCP bind alone doesn't prove dlopen + signature
+      # verification succeeded) or that the repaired wire contracts
+      # hold.  This step needs only HTTP, so it always runs: it FAILS
+      # the workflow when /search/health is not healthy/degraded (the
+      # server→plugin gRPC link end-to-end) or when the /index,
+      # /stats, and /query/batch response shapes drift.
+      # ---------------------------------------------------------------
+      - name: Search HTTP contract smoke
+        run: |
+          docker exec \
+            -e NEXUS_URL=http://127.0.0.1:2026 \
+            -e NEXUS_API_KEY="${NEXUS_API_KEY}" \
+            -i nexus-e2e python3 - <<'PY'
+          import json, os, urllib.request
+
+          url, key = os.environ["NEXUS_URL"], os.environ["NEXUS_API_KEY"]
+
+          def http(method, path, body=None):
+              req = urllib.request.Request(
+                  f"{url}{path}",
+                  data=json.dumps(body).encode() if body is not None else None,
+                  headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                  method=method,
+              )
+              resp = urllib.request.urlopen(req, timeout=60)
+              return resp.status, json.loads(resp.read().decode())
+
+          failures = []
+
+          # 1. Plugin actually loaded: the server-side probe + live link.
+          st, health = http("GET", "/api/v2/search/health")
+          if health.get("status") not in ("healthy", "degraded"):
+              failures.append(f"plugin link not healthy: {health}")
+          for k in ("initialized", "daemon_initialized", "backend",
+                    "bm25_index_loaded", "db_pool_ready", "zoekt_available"):
+              if k not in health:
+                  failures.append(f"health missing contract key {k!r}: {health}")
+
+          # 2. /index count is a plain int + zoneId casing (#4617).
+          st, idx = http("POST", "/api/v2/search/index",
+                         {"documents": [{"path": "/workspace/demo/README.md",
+                                         "text": "contract smoke seed doc"}]})
+          if st != 200 or not isinstance(idx.get("count"), int) or "zoneId" not in idx:
+              failures.append(f"index contract drift: status={st} body={idx}")
+
+          # 3. /stats identity + visibility fields (#4617/#4623).
+          st, stats = http("GET", "/api/v2/search/stats")
+          for k in ("initialized", "backend", "embedding_model", "indexing_in_progress"):
+              if k not in stats:
+                  failures.append(f"stats missing contract key {k!r}: {stats}")
+
+          # 4. /query/batch answers with per-entry error semantics (#4616/#4612).
+          st, batch = http("POST", "/api/v2/search/query/batch",
+                           {"queries": [{"q": "contract smoke seed", "type": "keyword", "limit": 3},
+                                        {"q": "bad", "limit": 0}]})
+          entries = batch.get("queries", [])
+          if st != 200 or len(entries) != 2:
+              failures.append(f"batch endpoint broken: status={st} body={batch}")
+          else:
+              if "error" in entries[0]:
+                  failures.append(f"batch valid entry carries error: {entries[0]}")
+              if "error" not in entries[1]:
+                  failures.append(f"batch invalid spec missing per-entry error: {entries[1]}")
+
+          if failures:
+              print("SEARCH CONTRACT SMOKE FAILED:")
+              for f in failures:
+                  print(f"  - {f}")
+              raise SystemExit(1)
+          print("search contract smoke OK (health/index/stats/batch)")
+          PY
+
       - name: Run build perf e2e
         if: steps.vfs_grpc.outputs.available == 'true'
         run: |

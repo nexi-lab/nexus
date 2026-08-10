@@ -84,6 +84,14 @@ pub struct IndexManager {
     root: PathBuf,
     zones: Mutex<HashMap<String, Arc<FtsIndex>>>,
     ann_zones: Mutex<HashMap<AnnKey, Arc<AnnIndex>>>,
+    /// Per-zone WRITE locks (review R1).  Index / IndexDocuments /
+    /// Refresh / NotifyFileChange each open an independent
+    /// `IndexState` and save the whole snapshot at the end, so two
+    /// concurrent mutations of the same zone could overwrite each
+    /// other's entries (lost update) even with atomic renames.
+    /// Holding this lock for the duration of a zone's index
+    /// transaction serializes writers; queries never take it.
+    zone_write_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
 }
 
 /// Cache key for the ANN index — one entry per `(zone, embedder tag)`.
@@ -109,7 +117,22 @@ impl IndexManager {
             root,
             zones: Mutex::new(HashMap::new()),
             ann_zones: Mutex::new(HashMap::new()),
+            zone_write_locks: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Handle to the given zone's write lock.  Callers hold the
+    /// returned mutex for the WHOLE index transaction (open state →
+    /// mutate FTS/ANN → commit → save state) so concurrent writers
+    /// can't interleave and lose each other's state entries.  Held on
+    /// blocking-pool threads only — never across an await.
+    pub fn zone_write_lock(&self, zone_id: &str) -> Arc<Mutex<()>> {
+        Arc::clone(
+            self.zone_write_locks
+                .lock()
+                .entry(zone_id.to_string())
+                .or_default(),
+        )
     }
 
     /// Return the on-disk directory the given zone's FTS index lives

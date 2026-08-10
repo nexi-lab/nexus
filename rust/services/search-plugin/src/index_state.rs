@@ -55,6 +55,10 @@ use serde::{Deserialize, Serialize};
 /// derived-state; this is meta about them).
 const STATE_FILE: &str = "index_state.json";
 
+/// Process-wide save sequence — combined with the pid it makes every
+/// save's temp file name unique (see `save` for why that matters).
+static SAVE_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// On-disk schema version.  A mismatched on-disk version loads as
 /// EMPTY (not an error): the cache is derived state, and a version
 /// bump signals the indices it describes were invalidated — an empty
@@ -204,7 +208,17 @@ impl IndexState {
         };
         let bytes =
             serde_json::to_vec_pretty(&persisted).map_err(|e| StateError::Encode(e.to_string()))?;
-        let tmp = path.with_extension("json.tmp");
+        // Unique temp file per save: a FIXED .tmp path lets two
+        // concurrent savers interleave write/rename and publish a
+        // torn or stale snapshot (review R1).  The zone write lock
+        // serializes indexing ops in-process, but a unique name also
+        // keeps a crashed writer's leftover from being renamed over
+        // fresh state by a later save.
+        let tmp = path.with_extension(format!(
+            "json.tmp.{}.{:x}",
+            std::process::id(),
+            SAVE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        ));
         std::fs::write(&tmp, &bytes)
             .map_err(|e| StateError::Write(tmp.display().to_string(), e.to_string()))?;
         std::fs::rename(&tmp, &path)

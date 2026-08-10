@@ -139,8 +139,14 @@ pub struct SearchServiceImpl {
     indexing_ops: Arc<std::sync::atomic::AtomicU32>,
 }
 
-/// RAII increment of [`SearchServiceImpl::indexing_ops`] — decrements
-/// on every exit path, including handler errors and cancellation.
+/// RAII increment of [`SearchServiceImpl::indexing_ops`].
+///
+/// MUST be moved INTO the `spawn_blocking` closure doing the actual
+/// index mutation: a guard owned by the async RPC future would be
+/// dropped on RPC cancellation/timeout while the already-started
+/// blocking task keeps mutating the indices — understating
+/// `indexing_in_progress` during exactly the partial-build window
+/// the counter exists to expose (#4623 review R1).
 struct IndexingGuard(Arc<std::sync::atomic::AtomicU32>);
 
 impl IndexingGuard {
@@ -934,6 +940,11 @@ fn do_index(
     recursive: bool,
     max_docs: usize,
 ) -> Result<(u32, u32), String> {
+    // Serialize writers per zone: state is opened fresh and saved
+    // whole at the end, so concurrent mutations would lose entries.
+    let zone_lock = manager.zone_write_lock(zone_id);
+    let _zone_guard = zone_lock.lock();
+
     let fts = manager
         .get_or_open(zone_id)
         .map_err(|e| format!("open index for zone {zone_id:?}: {e}"))?;
@@ -1099,11 +1110,12 @@ fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> I
         }
     }
 
-    // ANN side — best-effort per file.  Batch-embed the whole
-    // chunk set in one embedder call to amortise ort session
-    // overhead; per-chunk add + shared delete_all mirrors the
-    // FTS discipline.  A failure on embed / add does NOT fail
-    // the whole Index — keyword still works.
+    // ANN side — keyword-degradation per query is fine, but a
+    // transient embed failure must stay RETRYABLE (review R1):
+    // recording the fresh mtime below despite a failed embed would
+    // make the semantic hole permanent, because the next Refresh sees
+    // the matching mtime and skips the doc forever.
+    let mut ann_complete = true;
     if let (Some(ann), Some(embedder)) = (sinks.ann, sinks.embedder) {
         let inputs: Vec<&str> = chunks.iter().map(|c| c.embed_input.as_str()).collect();
         match embedder.embed_batch(&inputs) {
@@ -1111,28 +1123,31 @@ fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> I
                 ann.delete_all_chunks(vfs_path);
                 for (chunk, vec) in chunks.iter().zip(vecs.iter()) {
                     if let Err(e) = ann.add_vector(vfs_path, chunk.chunk_index, vec) {
+                        ann_complete = false;
                         tracing::warn!(
                             path = %vfs_path,
                             chunk = chunk.chunk_index,
                             err = %e,
-                            "index: ann add_vector failed — semantic misses this chunk",
+                            "index: ann add_vector failed — will retry on next refresh",
                         );
                     }
                 }
             }
             Ok(vecs) => {
+                ann_complete = false;
                 tracing::warn!(
                     path = %vfs_path,
                     got = vecs.len(),
                     expected = chunks.len(),
-                    "index: embedder returned wrong vec count — semantic misses this doc",
+                    "index: embedder returned wrong vec count — will retry on next refresh",
                 );
             }
             Err(e) => {
+                ann_complete = false;
                 tracing::warn!(
                     path = %vfs_path,
                     err = %e,
-                    "index: embed failed — semantic misses this doc",
+                    "index: embed failed — will retry on next refresh",
                 );
             }
         }
@@ -1144,7 +1159,17 @@ fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> I
     // known-paths snapshot — the verdict for None caches is
     // Changed, so it'll re-index next time, but it won't be
     // mistaken for a deleted file during the stale sweep.
-    sinks.state.record(vfs_path, mtime_ms);
+    //
+    // Recording is gated on ANN completeness: an incompletely
+    // embedded doc is recorded with mtime None, which keeps it in
+    // the known-paths snapshot (protecting it from the stale sweep)
+    // while guaranteeing the next Refresh re-indexes it — the FTS
+    // re-add is idempotent, so the retry costs a re-chunk only.
+    if ann_complete {
+        sinks.state.record(vfs_path, mtime_ms);
+    } else {
+        sinks.state.record(vfs_path, None);
+    }
 
     IndexOne::Added
 }
@@ -1185,6 +1210,10 @@ fn do_refresh(
     recursive: bool,
     max_docs: usize,
 ) -> Result<RefreshCounts, String> {
+    // Serialize writers per zone — same rationale as do_index.
+    let zone_lock = manager.zone_write_lock(zone_id);
+    let _zone_guard = zone_lock.lock();
+
     let fts = manager
         .get_or_open(zone_id)
         .map_err(|e| format!("open index for zone {zone_id:?}: {e}"))?;
@@ -1334,6 +1363,10 @@ fn do_index_documents(
     let mut total_skipped: u32 = 0;
 
     for (zone_id, docs) in by_zone {
+        // Serialize writers per zone — same rationale as do_index.
+        let zone_lock = manager.zone_write_lock(&zone_id);
+        let _zone_guard = zone_lock.lock();
+
         let fts = manager
             .get_or_open(&zone_id)
             .map_err(|e| format!("open fts for zone {zone_id:?}: {e}"))?;
@@ -1388,7 +1421,14 @@ fn do_index_documents(
                 continue;
             }
 
-            // ANN: best-effort, same pattern as do_index.
+            // ANN: keyword-degradation is fine per query, but a
+            // transient embed failure must stay RETRYABLE.  Recording
+            // the mtime below despite a failed embed would make the
+            // hole permanent — the next Refresh sees the matching
+            // mtime and never retries the missing vectors (a remote
+            // provider 429/timeout would silently produce a
+            // forever-keyword-only doc; review R1).
+            let mut ann_complete = true;
             if let (Some(ann), Some(emb)) = (ann.as_ref(), embedder) {
                 let inputs: Vec<&str> = chunks.iter().map(|c| c.embed_input.as_str()).collect();
                 match emb.embed_batch(&inputs) {
@@ -1396,22 +1436,44 @@ fn do_index_documents(
                         ann.delete_all_chunks(&doc.path);
                         for (chunk, vec) in chunks.iter().zip(vecs.iter()) {
                             if let Err(e) = ann.add_vector(&doc.path, chunk.chunk_index, vec) {
+                                ann_complete = false;
                                 tracing::warn!(
                                     path = %doc.path,
                                     err = %e,
-                                    "index_documents: ann add failed — semantic misses",
+                                    "index_documents: ann add failed — will retry on next index/refresh",
                                 );
                             }
                         }
                     }
-                    Ok(_) | Err(_) => {
-                        // Embed failure logged already inside; ANN
-                        // just skipped for this doc.
+                    Ok(vecs) => {
+                        ann_complete = false;
+                        tracing::warn!(
+                            path = %doc.path,
+                            got = vecs.len(),
+                            want = chunks.len(),
+                            "index_documents: embed count mismatch — will retry on next index/refresh",
+                        );
+                    }
+                    Err(e) => {
+                        ann_complete = false;
+                        tracing::warn!(
+                            path = %doc.path,
+                            err = %e,
+                            "index_documents: embed failed — will retry on next index/refresh",
+                        );
                     }
                 }
             }
 
-            state.record(&doc.path, doc.mtime_ms);
+            // Only a FULLY indexed doc (FTS + ANN when an embedder is
+            // configured) gets its mtime recorded; an incomplete doc
+            // stays "stale" so Refresh / a repeated IndexDocuments
+            // re-processes it.  FTS re-adds are idempotent
+            // (delete-then-add), so the retry costs a re-chunk, not
+            // correctness.
+            if ann_complete {
+                state.record(&doc.path, doc.mtime_ms);
+            }
             total_indexed += 1;
             docs_since_commit += 1;
             if docs_since_commit >= INDEX_INCREMENTAL_COMMIT_EVERY {
@@ -1456,6 +1518,10 @@ fn do_notify_file_change(
     change_type: &str,
     cache: &crate::query_cache::SharedQueryCache,
 ) -> Result<String, String> {
+    // Serialize writers per zone — same rationale as do_index.
+    let zone_lock = manager.zone_write_lock(zone_id);
+    let _zone_guard = zone_lock.lock();
+
     let fts = manager
         .get_or_open(zone_id)
         .map_err(|e| format!("open fts for zone {zone_id:?}: {e}"))?;
@@ -1866,7 +1932,7 @@ impl SearchService for SearchServiceImpl {
         &self,
         request: Request<IndexRequest>,
     ) -> Result<Response<IndexResponse>, Status> {
-        let _indexing = IndexingGuard::enter(&self.indexing_ops);
+        let indexing = IndexingGuard::enter(&self.indexing_ops);
         let req = request.into_inner();
         let root = if req.root_path.is_empty() {
             "/".to_string()
@@ -1893,6 +1959,7 @@ impl SearchService for SearchServiceImpl {
         // spawn_blocking).
         let zone_for_invalidate = zone_id.clone();
         let outcome = tokio::task::spawn_blocking(move || {
+            let _indexing = indexing; // held until the WORK ends, not the RPC
             do_index(
                 &handle,
                 &manager,
@@ -1933,7 +2000,7 @@ impl SearchService for SearchServiceImpl {
         &self,
         request: Request<RefreshRequest>,
     ) -> Result<Response<RefreshResponse>, Status> {
-        let _indexing = IndexingGuard::enter(&self.indexing_ops);
+        let indexing = IndexingGuard::enter(&self.indexing_ops);
         let req = request.into_inner();
         let root = if req.root_path.is_empty() {
             "/".to_string()
@@ -1955,6 +2022,7 @@ impl SearchService for SearchServiceImpl {
         let embedder = self.get_or_init_embedder().ok();
         let zone_for_invalidate = zone_id.clone();
         let outcome = tokio::task::spawn_blocking(move || {
+            let _indexing = indexing; // held until the WORK ends, not the RPC
             do_refresh(
                 &handle,
                 &manager,
@@ -2078,13 +2146,14 @@ impl SearchService for SearchServiceImpl {
         &self,
         request: Request<IndexDocumentsRequest>,
     ) -> Result<Response<IndexDocumentsResponse>, Status> {
-        let _indexing = IndexingGuard::enter(&self.indexing_ops);
+        let indexing = IndexingGuard::enter(&self.indexing_ops);
         let req = request.into_inner();
         let default_zone = resolve_zone(&req.zone_id).to_string();
         let manager = Arc::clone(&self.manager);
         let embedder = self.get_or_init_embedder().ok();
         let cache = Arc::clone(&self.query_cache);
         let outcome = tokio::task::spawn_blocking(move || {
+            let _indexing = indexing; // held until the WORK ends, not the RPC
             do_index_documents(
                 &manager,
                 embedder.as_ref(),

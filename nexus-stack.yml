@@ -164,6 +164,17 @@ services:
       # process from inside the container on Docker Desktop / OrbStack.
       # See docs/deployment/search-plugin.md (#4613).
       NEXUS_SEARCH_PLUGIN_TARGET: ${NEXUS_SEARCH_PLUGIN_TARGET:-host.docker.internal:2126}
+      # Transport security for the plugin link.  The dev default
+      # target crosses the container boundary to the SAME machine, so
+      # this local compose accepts plaintext explicitly; production
+      # cross-host deployments must set NEXUS_SEARCH_PLUGIN_TLS=true
+      # (+ CA / client cert+key for mTLS) instead — the server
+      # REFUSES plaintext to non-loopback targets without this opt-in.
+      NEXUS_SEARCH_PLUGIN_ALLOW_INSECURE: ${NEXUS_SEARCH_PLUGIN_ALLOW_INSECURE:-true}
+      NEXUS_SEARCH_PLUGIN_TLS: ${NEXUS_SEARCH_PLUGIN_TLS:-}
+      NEXUS_SEARCH_PLUGIN_TLS_CA: ${NEXUS_SEARCH_PLUGIN_TLS_CA:-}
+      NEXUS_SEARCH_PLUGIN_TLS_CERT: ${NEXUS_SEARCH_PLUGIN_TLS_CERT:-}
+      NEXUS_SEARCH_PLUGIN_TLS_KEY: ${NEXUS_SEARCH_PLUGIN_TLS_KEY:-}
       NEXUS_TXTAI_MODEL: ${NEXUS_TXTAI_MODEL:-}
       NEXUS_TXTAI_USE_API_EMBEDDINGS: ${NEXUS_TXTAI_USE_API_EMBEDDINGS:-}
       NEXUS_TXTAI_RERANKER: ${NEXUS_TXTAI_RERANKER:-}

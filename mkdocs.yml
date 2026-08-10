@@ -211,5 +211,6 @@ nav:
     - SANDBOX Profile: deployment/sandbox-profile.md
     - MCP Hub Mode: deployment/mcp-hub-mode.md
     - S3 / R2 Payload Backend: deployment/s3-r2-payload-backend.md
+    - Search Plugin (post-P12): deployment/search-plugin.md
     - Hub Deploy: hub-deploy.md
     - Hub Deploy on Kubernetes: hub-deploy-k8s.md

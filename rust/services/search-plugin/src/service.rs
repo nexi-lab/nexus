@@ -1100,16 +1100,20 @@ fn hydrate_title_hits(
             .take(TITLE_ARM_MAX_HYDRATION_FETCH)
             .collect();
         for path in uncovered {
-            match fts.get_chunks_by_path(path) {
-                // Sorted by chunk_index — first entry is chunk 0.
-                Ok(chunks) => {
-                    if let Some(c0) = chunks.into_iter().next() {
-                        fetched.insert(path, c0);
-                    }
+            // Single-doc TermQuery — decodes exactly ONE stored row
+            // per uncovered path (review R6: get_chunks_by_path
+            // decoded up to 512 chunks per path just to keep one).
+            // The fusion identity only needs SOME live chunk of the
+            // path; Python's borrow-from-legs took arbitrary
+            // best-scored chunks too.
+            match fts.get_by_path(path) {
+                Ok(Some(row)) => {
+                    fetched.insert(path, row);
                 }
+                Ok(None) => {}
                 Err(e) => tracing::debug!(
                     err = %e, path = %path,
-                    "title arm: representative-chunk fetch failed — empty text",
+                    "title arm: representative-chunk fetch failed — hit dropped",
                 ),
             }
         }
@@ -1146,6 +1150,37 @@ fn hydrate_title_hits(
             })
         })
         .collect()
+}
+
+/// Build the hybrid keyword lane (#4628).  The pass-through
+/// decision happens AFTER hydration (review R6): a title arm whose
+/// every hit was dropped (deleted paths from a stale skeleton, FTS
+/// drift) must leave the keyword arm byte-identical — re-fusing a
+/// lone chunk arm rewrites BM25 scores into RRF values, which
+/// shifts WEIGHTED-method blends even with zero title votes.
+fn build_kw_lane(
+    manager: &IndexManager,
+    zone_id: &str,
+    keyword: Vec<QueryResult>,
+    semantic: &[QueryResult],
+    title_hits: &[crate::title_index::TitleHit],
+    rrf_k: u32,
+) -> Vec<QueryResult> {
+    if title_hits.is_empty() {
+        return keyword;
+    }
+    let fts = manager.get_or_open(zone_id).ok();
+    let hydrated = hydrate_title_hits(fts.as_deref(), title_hits, &keyword, semantic, zone_id);
+    if hydrated.is_empty() {
+        return keyword;
+    }
+    fusion::rrf_multi(
+        &[
+            (fusion::ArmKind::Chunk, keyword.as_slice()),
+            (fusion::ArmKind::Title, hydrated.as_slice()),
+        ],
+        rrf_k,
+    )
 }
 
 /// Fuse two source result lists per the caller's chosen method,
@@ -2468,30 +2503,33 @@ impl SearchService for SearchServiceImpl {
                         // method normalises raw scores, so even a
                         // score-preserving no-op re-fusion would
                         // shift its blend).
-                        let kw_lane = if title_hits.is_empty() {
-                            keyword
-                        } else {
-                            let fts = manager_for_expand.get_or_open(&zone_for_expand).ok();
-                            let hydrated = hydrate_title_hits(
-                                fts.as_deref(),
-                                &title_hits,
-                                &keyword,
+                        // Hydration decodes stored docs and the
+                        // fusions merge over-fetched pools — run the
+                        // whole tail on the blocking pool instead of
+                        // the async handler (review R6: up to 512
+                        // representative lookups must not stall the
+                        // runtime).  Keep the over-fetched pool
+                        // through fusion when adjustments still need
+                        // to reorder it; the final truncate-to-limit
+                        // happens post-adjustment below.
+                        let mgr_fuse = Arc::clone(&manager_for_expand);
+                        let zone_fuse = zone_for_expand.clone();
+                        let fused = tokio::task::spawn_blocking(move || {
+                            let kw_lane = build_kw_lane(
+                                &mgr_fuse,
+                                &zone_fuse,
+                                keyword,
                                 &semantic,
-                                &zone_for_expand,
-                            );
-                            fusion::rrf_multi(
-                                &[
-                                    (fusion::ArmKind::Chunk, keyword.as_slice()),
-                                    (fusion::ArmKind::Title, hydrated.as_slice()),
-                                ],
+                                &title_hits,
                                 fusion_opts.rrf_k,
-                            )
-                        };
-                        // Keep the over-fetched pool through fusion
-                        // when adjustments still need to reorder it;
-                        // the final truncate-to-limit happens post-
-                        // adjustment below.
-                        Ok(fuse_hybrid(kw_lane, semantic, fetch_limit, fusion_opts))
+                            );
+                            fuse_hybrid(kw_lane, semantic, fetch_limit, fusion_opts)
+                        })
+                        .await
+                        .map_err(|e| {
+                            Status::internal(format!("spawn_blocking joined error: {e}"))
+                        })?;
+                        Ok(fused)
                     }
                     // A source-side error on either leg — surface it
                     // as the response's `error` field rather than a
@@ -3489,4 +3527,35 @@ mod tests {
         }
     }
 
+    #[test]
+    fn build_kw_lane_passes_through_when_hydration_drops_everything() {
+        // Review R6 (#4628): a stale skeleton can hand locate() hits
+        // whose paths are deleted from every leg AND from FTS —
+        // hydration drops them all, and the keyword arm must then
+        // pass through UNCHANGED.  Re-fusing a lone arm would
+        // rewrite BM25 scores into RRF values and shift
+        // WEIGHTED-method blends with zero title votes.
+        let root = tempfile::tempdir().expect("tempdir").keep();
+        let manager = IndexManager::with_root(root);
+        // The zone's FTS exists but holds nothing — the title hit's
+        // path resolves to no live row.
+        manager.get_or_open("zoneA").expect("open");
+        let keyword = vec![QueryResult {
+            path: "/live/doc.md".into(),
+            chunk_index: 0,
+            chunk_text: "bm25 text".into(),
+            score: 7.5,
+            zone_id: "zoneA".into(),
+            mtime_ms: Some(1),
+            expanded_context: String::new(),
+            title_score: None,
+        }];
+        let ghost_hits = vec![crate::title_index::TitleHit {
+            path: "/deleted/ghost.md".into(),
+            score: 6.0,
+            title: Some("Ghost".into()),
+        }];
+        let lane = build_kw_lane(&manager, "zoneA", keyword.clone(), &[], &ghost_hits, 60);
+        assert_eq!(lane, keyword, "all-dropped hydration must pass the keyword arm through");
+    }
 }

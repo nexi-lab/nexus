@@ -162,10 +162,27 @@ impl IndexManager {
         }
     }
 
+    /// On-disk twin of the in-memory dirty flag (#4628 review R6):
+    /// a crash between sink commits would erase a memory-only flag
+    /// while leaving the sinks mixed, so the marker also lives as a
+    /// sentinel file under the zone root and survives restarts.
+    fn zone_dirty_sentinel(&self, zone_id: &str) -> PathBuf {
+        self.zone_root(zone_id).join(".write-dirty")
+    }
+
     /// Mark a zone's index write as in flight — call BEFORE the
-    /// first sink mutation.  See `dirty_zones`.
+    /// first sink mutation.  Persists a sentinel file so the mark
+    /// survives a crash mid-write (review R6); sentinel I/O failure
+    /// degrades to the in-memory flag with a warning (the non-crash
+    /// path stays fully protected).
     pub fn mark_zone_dirty(&self, zone_id: &str) {
         self.dirty_zones.lock().insert(zone_id.to_string());
+        let sentinel = self.zone_dirty_sentinel(zone_id);
+        if let Err(e) = std::fs::create_dir_all(self.zone_root(zone_id))
+            .and_then(|_| std::fs::write(&sentinel, b""))
+        {
+            tracing::warn!(err = %e, zone = %zone_id, "dirty sentinel write failed — restart protection degraded");
+        }
     }
 
     /// Clear the write-in-flight mark — call only after EVERY sink
@@ -175,12 +192,20 @@ impl IndexManager {
     /// zone.
     pub fn clear_zone_dirty(&self, zone_id: &str) {
         self.dirty_zones.lock().remove(zone_id);
+        if let Err(e) = std::fs::remove_file(self.zone_dirty_sentinel(zone_id)) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                tracing::warn!(err = %e, zone = %zone_id, "dirty sentinel remove failed — zone stays cache-bypassed");
+            }
+        }
     }
 
-    /// Is a write in flight (or a failed write unrepaired) for this
-    /// zone?  Query callers skip cache reads AND inserts while true.
+    /// Is a write in flight (or a failed/interrupted write
+    /// unrepaired) for this zone?  Query callers skip cache reads
+    /// AND inserts while true.  Consults the persistent sentinel
+    /// too, so a crash mid-write keeps the cache bypassed after
+    /// restart until a successful write clears it (review R6).
     pub fn zone_is_dirty(&self, zone_id: &str) -> bool {
-        self.dirty_zones.lock().contains(zone_id)
+        self.dirty_zones.lock().contains(zone_id) || self.zone_dirty_sentinel(zone_id).exists()
     }
 
     /// Handle to the given zone's write lock.  Callers hold the
@@ -536,6 +561,26 @@ mod tests {
         assert!(!mgr.zone_is_dirty("zoneA"));
         // Clearing an unmarked zone is a no-op, not a panic.
         mgr.clear_zone_dirty("zoneB");
+    }
+
+    #[test]
+    fn zone_dirty_flag_survives_restart() {
+        // Review R6 (#4628): a crash between sink commits must not
+        // erase the cache-bypass signal — the sentinel file carries
+        // it across manager restarts.
+        let root = tempfile::tempdir().expect("tempdir").keep();
+        {
+            let mgr = IndexManager::with_root(root.clone());
+            mgr.mark_zone_dirty("zoneA");
+            // Simulated crash: the manager is dropped without clear.
+        }
+        let reborn = IndexManager::with_root(root);
+        assert!(
+            reborn.zone_is_dirty("zoneA"),
+            "dirty mark must survive a restart until a successful write clears it"
+        );
+        reborn.clear_zone_dirty("zoneA");
+        assert!(!reborn.zone_is_dirty("zoneA"));
     }
 
     #[test]

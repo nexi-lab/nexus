@@ -171,18 +171,29 @@ impl IndexManager {
     }
 
     /// Mark a zone's index write as in flight — call BEFORE the
-    /// first sink mutation.  Persists a sentinel file so the mark
-    /// survives a crash mid-write (review R6); sentinel I/O failure
-    /// degrades to the in-memory flag with a warning (the non-crash
-    /// path stays fully protected).
-    pub fn mark_zone_dirty(&self, zone_id: &str) {
+    /// first sink mutation.  FALLIBLE (review R7): if the sentinel
+    /// cannot be durably created, the caller must ABORT the write —
+    /// proceeding would mean a crash under the same degraded
+    /// storage re-enables caching over mixed sinks after restart.
+    /// Returns whether the zone was ALREADY dirty (a prior failed /
+    /// interrupted write left unreconciled drift) — callers use it
+    /// to avoid clearing dirt they didn't create.
+    pub fn mark_zone_dirty(&self, zone_id: &str) -> Result<bool, String> {
+        let was_dirty = self.zone_is_dirty(zone_id);
         self.dirty_zones.lock().insert(zone_id.to_string());
         let sentinel = self.zone_dirty_sentinel(zone_id);
-        if let Err(e) = std::fs::create_dir_all(self.zone_root(zone_id))
-            .and_then(|_| std::fs::write(&sentinel, b""))
-        {
-            tracing::warn!(err = %e, zone = %zone_id, "dirty sentinel write failed — restart protection degraded");
-        }
+        std::fs::create_dir_all(self.zone_root(zone_id))
+            .and_then(|_| std::fs::File::create(&sentinel))
+            // sync_all pins the (empty) file itself; the directory
+            // entry is not separately fsynced — a hard power cut in
+            // that window loses at most the marker for a write that
+            // also lost its own sink data, which the index-state
+            // repair path already covers.
+            .and_then(|f| f.sync_all())
+            .map_err(|e| {
+                format!("dirty sentinel create failed for zone {zone_id:?}: {e} — write aborted")
+            })?;
+        Ok(was_dirty)
     }
 
     /// Clear the write-in-flight mark — call only after EVERY sink
@@ -204,8 +215,11 @@ impl IndexManager {
     /// AND inserts while true.  Consults the persistent sentinel
     /// too, so a crash mid-write keeps the cache bypassed after
     /// restart until a successful write clears it (review R6).
+    /// Sentinel metadata errors read as DIRTY (review R7) — a
+    /// filesystem that can't answer must not re-enable caching.
     pub fn zone_is_dirty(&self, zone_id: &str) -> bool {
-        self.dirty_zones.lock().contains(zone_id) || self.zone_dirty_sentinel(zone_id).exists()
+        self.dirty_zones.lock().contains(zone_id)
+            || !matches!(self.zone_dirty_sentinel(zone_id).try_exists(), Ok(false))
     }
 
     /// Handle to the given zone's write lock.  Callers hold the

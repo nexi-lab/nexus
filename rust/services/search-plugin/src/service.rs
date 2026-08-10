@@ -1066,13 +1066,19 @@ fn hydrate_title_hits(
     semantic: &[QueryResult],
     zone_id: &str,
 ) -> Vec<QueryResult> {
-    let mut best_by_path: std::collections::HashMap<&str, &QueryResult> =
+    // Keyword rows are LIVE FTS evidence — BM25 served them from
+    // the current index.  Dense rows are not (review R7): delete
+    // handling defers ANN cleanup to the next Refresh, so an ANN
+    // row can outlive its document; borrowing it would resurrect
+    // the deleted path through title RRF.  Dense-covered hits
+    // therefore also require an FTS liveness check below.
+    let mut best_kw: std::collections::HashMap<&str, &QueryResult> =
         std::collections::HashMap::new();
     for r in keyword {
-        match best_by_path.get(r.path.as_str()) {
+        match best_kw.get(r.path.as_str()) {
             Some(cur) if cur.score >= r.score => {}
             _ => {
-                best_by_path.insert(&r.path, r);
+                best_kw.insert(&r.path, r);
             }
         }
     }
@@ -1086,26 +1092,21 @@ fn hydrate_title_hits(
             }
         }
     }
-    for (path, r) in best_dense {
-        best_by_path.entry(path).or_insert(r);
-    }
 
+    // One FTS liveness/representative lookup per non-kw-covered
+    // hit.  Single-doc TermQuery — decodes exactly ONE stored row
+    // per path (review R6); the fusion identity only needs SOME
+    // live chunk, matching Python's arbitrary best-chunk borrows.
     let mut fetched: std::collections::HashMap<&str, crate::fts_index::FtsHit> =
         std::collections::HashMap::new();
     if let Some(fts) = fts {
-        let uncovered: Vec<&str> = title_hits
+        let need_liveness: Vec<&str> = title_hits
             .iter()
             .map(|h| h.path.as_str())
-            .filter(|p| !best_by_path.contains_key(*p))
+            .filter(|p| !best_kw.contains_key(*p))
             .take(TITLE_ARM_MAX_HYDRATION_FETCH)
             .collect();
-        for path in uncovered {
-            // Single-doc TermQuery — decodes exactly ONE stored row
-            // per uncovered path (review R6: get_chunks_by_path
-            // decoded up to 512 chunks per path just to keep one).
-            // The fusion identity only needs SOME live chunk of the
-            // path; Python's borrow-from-legs took arbitrary
-            // best-scored chunks too.
+        for path in need_liveness {
             match fts.get_by_path(path) {
                 Ok(Some(row)) => {
                     fetched.insert(path, row);
@@ -1122,20 +1123,27 @@ fn hydrate_title_hits(
     title_hits
         .iter()
         .filter_map(|h| {
-            let (chunk_index, chunk_text, mtime_ms) =
-                if let Some(leg) = best_by_path.get(h.path.as_str()) {
-                    (leg.chunk_index, leg.chunk_text.clone(), leg.mtime_ms)
-                } else if let Some(row) = fetched.get(h.path.as_str()) {
-                    (row.chunk_index, row.chunk_text.clone(), row.mtime_ms)
+            let path = h.path.as_str();
+            let (chunk_index, chunk_text, mtime_ms) = if let Some(leg) = best_kw.get(path) {
+                (leg.chunk_index, leg.chunk_text.clone(), leg.mtime_ms)
+            } else if let Some(row) = fetched.get(path) {
+                // FTS-live.  Prefer the dense row's identity when
+                // one exists so the title vote merges with the
+                // dense vote on one fused entry (Python round-5
+                // rationale) — the FTS row is the liveness proof
+                // and the fallback representative.
+                if let Some(dense) = best_dense.get(path) {
+                    (dense.chunk_index, dense.chunk_text.clone(), dense.mtime_ms)
                 } else {
-                    // No leg coverage AND no live FTS row: the
-                    // skeleton (fresh: drift; stale: a file deleted
-                    // or retitled since the snapshot) references a
-                    // doc the index no longer holds — DROP the hit
-                    // (review R5).  Synthesizing an empty-text
-                    // result would resurrect removed paths.
-                    return None;
-                };
+                    (row.chunk_index, row.chunk_text.clone(), row.mtime_ms)
+                }
+            } else {
+                // No live FTS row: the skeleton (fresh: drift;
+                // stale: deleted/retitled since the snapshot) or an
+                // orphaned ANN row references a doc the index no
+                // longer holds — DROP the hit (reviews R5/R7).
+                return None;
+            };
             Some(QueryResult {
                 path: h.path.clone(),
                 chunk_index,
@@ -1264,8 +1272,10 @@ fn do_index(
     // query cache must be bypassed from the first sink mutation
     // until every sink committed.  Error paths deliberately leave
     // the flag set — a half-applied write keeps the cache off until
-    // a later successful write repairs the zone.
-    manager.mark_zone_dirty(zone_id);
+    // a later successful write repairs the zone.  Marking is
+    // fail-closed (R7): if the sentinel can't be durably created,
+    // the write aborts before touching any sink.
+    let zone_was_dirty = manager.mark_zone_dirty(zone_id)?;
 
     let fts = manager
         .get_or_open(zone_id)
@@ -1367,12 +1377,23 @@ fn do_index(
     // an up-to-date baseline.  A crash between the sink commits and
     // this save just means the next Refresh will re-index those
     // files (fresh mtime not yet in the cache) — safe, wasted work.
-    if let Err(e) = state.save() {
-        tracing::warn!(err = %e, "index_state save failed");
-    }
+    let state_saved = match state.save() {
+        Ok(()) => true,
+        Err(e) => {
+            tracing::warn!(err = %e, "index_state save failed — zone stays cache-bypassed");
+            false
+        }
+    };
 
     visit_result?;
-    manager.clear_zone_dirty(zone_id);
+    // Clear only dirt THIS write created, and only when every sink
+    // (including the state file) persisted (review R7).  Pre-
+    // existing dirt marks unreconciled cross-sink drift from a
+    // FAILED earlier write — a scoped success here didn't repair
+    // it; a full Refresh does.
+    if state_saved && !zone_was_dirty {
+        manager.clear_zone_dirty(zone_id);
+    }
     Ok((indexed, skipped))
 }
 
@@ -1668,8 +1689,8 @@ fn do_refresh(
     // Serialize writers per zone — same rationale as do_index.
     let zone_lock = manager.zone_write_lock(zone_id);
     let _zone_guard = zone_lock.lock();
-    // Dirty window — same rationale as do_index (review R5).
-    manager.mark_zone_dirty(zone_id);
+    // Dirty window — same rationale as do_index (reviews R5/R7).
+    let zone_was_dirty = manager.mark_zone_dirty(zone_id)?;
 
     let fts = manager
         .get_or_open(zone_id)
@@ -1825,13 +1846,24 @@ fn do_refresh(
             return Err(format!("ann commit: {e}"));
         }
     }
-    if let Err(e) = state.save() {
-        tracing::warn!(err = %e, "index_state save failed");
-    }
+    let state_saved = match state.save() {
+        Ok(()) => true,
+        Err(e) => {
+            tracing::warn!(err = %e, "index_state save failed — zone stays cache-bypassed");
+            false
+        }
+    };
 
     visit_result?;
     counts.truncated = truncated;
-    manager.clear_zone_dirty(zone_id);
+    // Refresh IS the reconciliation op: a FULL, un-truncated walk
+    // from the zone root re-verified every path (tombstone sweep
+    // included), so it may clear PRE-EXISTING dirt too.  A scoped
+    // or truncated refresh clears only its own mark (review R7).
+    let full_reconciliation = root_path == "/" && recursive && !truncated;
+    if state_saved && (!zone_was_dirty || full_reconciliation) {
+        manager.clear_zone_dirty(zone_id);
+    }
     Ok(counts)
 }
 
@@ -1870,8 +1902,8 @@ fn do_index_documents(
         // Serialize writers per zone — same rationale as do_index.
         let zone_lock = manager.zone_write_lock(&zone_id);
         let _zone_guard = zone_lock.lock();
-        // Dirty window — same rationale as do_index (review R5).
-        manager.mark_zone_dirty(&zone_id);
+        // Dirty window — same rationale as do_index (reviews R5/R7).
+        let zone_was_dirty = manager.mark_zone_dirty(&zone_id)?;
 
         let fts = manager
             .get_or_open(&zone_id)
@@ -2042,11 +2074,19 @@ fn do_index_documents(
                 return Err(format!("ann commit for zone {zone_id:?}: {e}"));
             }
         }
-        if let Err(e) = state.save() {
-            tracing::warn!(err = %e, zone = %zone_id, "index_state save failed");
-        }
+        let state_saved = match state.save() {
+            Ok(()) => true,
+            Err(e) => {
+                tracing::warn!(err = %e, zone = %zone_id, "index_state save failed — zone stays cache-bypassed");
+                false
+            }
+        };
         cache.invalidate_zone(&zone_id);
-        manager.clear_zone_dirty(&zone_id);
+        // Clear only dirt this write created, and only when the
+        // state file persisted too (review R7).
+        if state_saved && !zone_was_dirty {
+            manager.clear_zone_dirty(&zone_id);
+        }
     }
 
     Ok((total_indexed, total_skipped))
@@ -2077,12 +2117,12 @@ fn do_notify_file_change(
 
     match change_type {
         "delete" => {
-            // Dirty window — same rationale as do_index (review
-            // R5).  Marked only on this MUTATING arm: the no-op
+            // Dirty window — same rationale as do_index (reviews
+            // R5/R7).  Marked only on this MUTATING arm: the no-op
             // arms must neither set nor clear the flag, or a
             // "skipped" ack could erase the fail-closed mark left
             // by an earlier failed write.
-            manager.mark_zone_dirty(zone_id);
+            let zone_was_dirty = manager.mark_zone_dirty(zone_id)?;
             fts.delete_all_chunks(path);
             // Only open ANN if it happens to already be there —
             // creating an empty ANN dir on a delete is
@@ -2107,7 +2147,12 @@ fn do_notify_file_change(
                 return Err(format!("delete tombstone persist failed: {e}"));
             }
             cache.invalidate_zone(zone_id);
-            manager.clear_zone_dirty(zone_id);
+            // Clear only dirt this delete created (review R7): a
+            // pre-existing mark is unreconciled drift a scoped
+            // delete didn't repair.
+            if !zone_was_dirty {
+                manager.clear_zone_dirty(zone_id);
+            }
             Ok("accepted".to_string())
         }
         "create" | "update" | "" => {
@@ -3557,5 +3602,54 @@ mod tests {
         }];
         let lane = build_kw_lane(&manager, "zoneA", keyword.clone(), &[], &ghost_hits, 60);
         assert_eq!(lane, keyword, "all-dropped hydration must pass the keyword arm through");
+    }
+
+    #[test]
+    fn hydration_drops_ann_orphaned_paths_without_live_fts_rows() {
+        // Review R7 (#4628): delete handling defers ANN cleanup, so
+        // a dense row can outlive its document.  A title hit covered
+        // ONLY by that orphaned semantic row must be dropped — the
+        // FTS liveness check is the gate.
+        let root = tempfile::tempdir().expect("tempdir").keep();
+        let manager = IndexManager::with_root(root);
+        let fts = manager.get_or_open("zoneA").expect("open");
+        fts.add_document("/live/doc.md", 0, "# Live\nbody", Some(1)).expect("add");
+        fts.commit().expect("commit");
+
+        let ghost_dense = QueryResult {
+            path: "/deleted/ghost.md".into(),
+            chunk_index: 2,
+            chunk_text: "orphaned vector text".into(),
+            score: 0.9,
+            zone_id: "zoneA".into(),
+            mtime_ms: Some(5),
+            expanded_context: String::new(),
+            title_score: None,
+        };
+        let hits = vec![
+            crate::title_index::TitleHit {
+                path: "/deleted/ghost.md".into(),
+                score: 6.0,
+                title: Some("Ghost".into()),
+            },
+            crate::title_index::TitleHit {
+                path: "/live/doc.md".into(),
+                score: 4.0,
+                title: Some("Live".into()),
+            },
+        ];
+        let hydrated = hydrate_title_hits(
+            Some(&fts),
+            &hits,
+            &[],
+            std::slice::from_ref(&ghost_dense),
+            "zoneA",
+        );
+        let paths: Vec<&str> = hydrated.iter().map(|r| r.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            ["/live/doc.md"],
+            "ANN-orphaned path must be dropped; FTS-live path survives"
+        );
     }
 }

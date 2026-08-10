@@ -831,8 +831,6 @@ jobs:
           CLUSTER_SOURCE: ${{ env.REGISTRY }}/${{ env.CLUSTER_IMAGE_NAME }}:${{ needs.push-cluster-manifest.outputs.version }}
           SERVER_TAGS_JSON: ${{ steps.meta.outputs.json }}
           CLUSTER_TAGS_JSON: ${{ steps.cluster_meta.outputs.json }}
-          # gh packages API for the delete-new-tags rollback path.
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Strict mode (review R5): an unguarded cluster-promotion
           # failure previously fell through to server promotion,
@@ -850,46 +848,53 @@ jobs:
           }
 
           # Symmetric snapshot + rollback for ONE image repo (review
-          # R6): restore tags that had a prior digest, DELETE tags
-          # that were freshly minted (a multi-tag imagetools create is
-          # not transactional — a partial failure may have applied
-          # some tags).
+          # R6/R7).  Snapshot is FAIL-CLOSED: only a positively
+          # identified manifest-not-found marks a tag as new; any
+          # other inspect failure (network/auth/registry) aborts the
+          # step BEFORE any promotion, so rollback never acts on a
+          # guessed state.  Rollback restores prior digests only —
+          # GHCR's package API deletes whole VERSIONS (a version
+          # carries EVERY tag aliased to that manifest, including the
+          # immutable staging SHA), so freshly minted tags are never
+          # API-deleted; they are reported for manual removal instead.
           snapshot() {
             # $1 = tags_json; echoes "tag digest" lines (digest empty = new)
+            local tag digest err
             while IFS= read -r tag; do
-              digest=$(docker buildx imagetools inspect "$tag" --format '{{.Manifest.Digest}}' 2>/dev/null || true)
-              printf '%s %s\n' "$tag" "$digest"
+              if digest=$(docker buildx imagetools inspect "$tag" --format '{{.Manifest.Digest}}' 2>/tmp/inspect-err); then
+                printf '%s %s\n' "$tag" "$digest"
+              else
+                err=$(cat /tmp/inspect-err)
+                if printf '%s' "$err" | grep -qiE 'not found|manifest unknown|MANIFEST_UNKNOWN|no such manifest'; then
+                  printf '%s \n' "$tag"
+                else
+                  echo "::error::could not snapshot $tag before promotion (treating as fatal, not as a new tag): $err" >&2
+                  return 1
+                fi
+              fi
             done < <(jq -r '.tags[]' <<< "$1")
           }
 
           rollback_image() {
             # $1 = source ref (for base repo), $2 = snapshot lines
             local base="${1%%:*}"
-            local pkg="${base##*/}"
-            local org="${GITHUB_REPOSITORY_OWNER}"
             while IFS=' ' read -r tag digest; do
               [ -z "$tag" ] && continue
               if [ -n "$digest" ]; then
                 docker buildx imagetools create -t "$tag" "${base}@${digest}" || \
                   echo "::error::rollback of $tag failed — repair manually"
               else
-                local tagname="${tag##*:}"
-                local version_id
-                version_id=$(gh api "/orgs/${org}/packages/container/${pkg}/versions" --paginate \
-                  --jq ".[] | select(.metadata.container.tags[]? == \"${tagname}\") | .id" 2>/dev/null | head -1 || true)
-                if [ -n "$version_id" ]; then
-                  gh api -X DELETE "/orgs/${org}/packages/container/${pkg}/versions/${version_id}" \
-                    && echo "deleted freshly minted tag ${tagname}" \
-                    || echo "::error::could not delete new tag ${tagname} — remove manually"
-                else
-                  echo "note: new tag ${tagname} not found (promotion likely never applied it)"
-                fi
+                echo "::error::tag $tag was freshly minted by this failed promotion — remove it manually (GHCR has no safe single-tag delete; the package-version API would also delete the staging SHA aliased to the same manifest)"
               fi
             done <<< "$2"
           }
 
-          cluster_snapshot=$(snapshot "$CLUSTER_TAGS_JSON")
-          server_snapshot=$(snapshot "$SERVER_TAGS_JSON")
+          if ! cluster_snapshot=$(snapshot "$CLUSTER_TAGS_JSON"); then
+            exit 1
+          fi
+          if ! server_snapshot=$(snapshot "$SERVER_TAGS_JSON"); then
+            exit 1
+          fi
 
           if ! promote "$CLUSTER_SOURCE" "$CLUSTER_TAGS_JSON"; then
             echo "::error::cluster tag promotion failed — rolling back partial cluster tags"

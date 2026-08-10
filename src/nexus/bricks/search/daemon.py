@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 import grpc
 
 from nexus.bricks.search.results import BaseSearchResult
+from nexus.contracts.search_types import BatchQueryFailure
 from nexus.grpc.search.v1 import search_pb2, search_pb2_grpc
 
 if TYPE_CHECKING:
@@ -28,6 +29,93 @@ logger = logging.getLogger(__name__)
 # docker E2E already uses.
 _TARGET_ENV = "NEXUS_SEARCH_PLUGIN_TARGET"
 _DEFAULT_TARGET = "127.0.0.1:2126"
+
+# Transport security (#4622 review R1).  Plaintext is only acceptable
+# on the loopback topology the default target implies; a cross-host
+# deployment must either enable TLS or explicitly accept the risk.
+#
+# - NEXUS_SEARCH_PLUGIN_TLS=true          → TLS channel
+# - NEXUS_SEARCH_PLUGIN_TLS_CA=<path>     → CA bundle for server verification
+#                                           (system roots when unset)
+# - NEXUS_SEARCH_PLUGIN_TLS_CERT/_KEY     → client cert+key pair for mTLS
+# - NEXUS_SEARCH_PLUGIN_ALLOW_INSECURE=true
+#     → permit PLAINTEXT to a non-loopback target (trusted-network
+#       escape hatch; dev compose sets it for host.docker.internal).
+_TLS_ENV = "NEXUS_SEARCH_PLUGIN_TLS"
+_TLS_CA_ENV = "NEXUS_SEARCH_PLUGIN_TLS_CA"
+_TLS_CERT_ENV = "NEXUS_SEARCH_PLUGIN_TLS_CERT"
+_TLS_KEY_ENV = "NEXUS_SEARCH_PLUGIN_TLS_KEY"
+_ALLOW_INSECURE_ENV = "NEXUS_SEARCH_PLUGIN_ALLOW_INSECURE"
+
+_LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1", "[::1]")
+
+# Docker's host-gateway alias resolves to the machine RUNNING the
+# container (Docker Desktop / OrbStack) — a container→host link on one
+# box, not a network hop.  Treated as same-machine so the dev default
+# target works out of the box WITHOUT a blanket ALLOW_INSECURE that
+# would also waive protection for genuinely remote targets (review
+# R5): an operator pointing NEXUS_SEARCH_PLUGIN_TARGET at another host
+# still hits the plaintext refusal.
+_SAME_MACHINE_HOSTS = _LOOPBACK_HOSTS + ("host.docker.internal",)
+
+
+def _target_is_loopback(target: str) -> bool:
+    """True when ``target``'s host part is same-machine (loopback or
+    Docker's host-gateway alias)."""
+    host = target.rsplit(":", 1)[0] if ":" in target else target
+    return host in _SAME_MACHINE_HOSTS
+
+
+def _read_env_file(env_name: str) -> bytes | None:
+    path = os.environ.get(env_name)
+    if not path:
+        return None
+    with open(path, "rb") as f:
+        return f.read()
+
+
+def _build_channel(target: str) -> "grpc.aio.Channel":
+    """Construct the plugin channel per the transport-security env contract.
+
+    TLS on ⇒ ``secure_channel`` with server verification (CA bundle or
+    system roots) and optional mTLS client identity.  TLS off ⇒
+    plaintext, but ONLY to loopback unless the operator explicitly set
+    ``NEXUS_SEARCH_PLUGIN_ALLOW_INSECURE=true`` — a raised error here
+    surfaces through the boot probe's fail-soft path as a loud
+    "search disabled" warning instead of silently shipping tenant
+    queries over an unauthenticated cross-host link.
+    """
+    if os.environ.get(_TLS_ENV, "").lower() in ("true", "1", "yes"):
+        cert = _read_env_file(_TLS_CERT_ENV)
+        key = _read_env_file(_TLS_KEY_ENV)
+        creds = grpc.ssl_channel_credentials(
+            root_certificates=_read_env_file(_TLS_CA_ENV),
+            private_key=key,
+            certificate_chain=cert,
+        )
+        return grpc.aio.secure_channel(target, creds)
+    if not _target_is_loopback(target) and os.environ.get(_ALLOW_INSECURE_ENV, "").lower() not in (
+        "true",
+        "1",
+        "yes",
+    ):
+        raise RuntimeError(
+            f"refusing PLAINTEXT gRPC to non-loopback search plugin target {target!r}: "
+            f"set {_TLS_ENV}=true (+ {_TLS_CA_ENV}/{_TLS_CERT_ENV}/{_TLS_KEY_ENV}) for a "
+            f"secured host, or {_ALLOW_INSECURE_ENV}=true to accept an unauthenticated "
+            "link on a trusted network"
+        )
+    if not _target_is_loopback(target):
+        logger.warning(
+            "search plugin transport is PLAINTEXT to non-loopback target %s "
+            "(%s=true) — anyone on the network path can read queries and "
+            "index content; prefer %s=true",
+            target,
+            _ALLOW_INSECURE_ENV,
+            _TLS_ENV,
+        )
+    return grpc.aio.insecure_channel(target)
+
 
 _QUERY_TYPE_MAP = {
     "keyword": search_pb2.QUERY_TYPE_KEYWORD,
@@ -74,56 +162,67 @@ class SearchDaemon:
 
     def _get_stub(self) -> search_pb2_grpc.SearchServiceStub:
         """Lazy channel + stub construction.  aio channel so the
-        Python daemon's async methods stay async without a thread hop."""
+        Python daemon's async methods stay async without a thread hop.
+        Channel security follows the NEXUS_SEARCH_PLUGIN_TLS* env
+        contract — see :func:`_build_channel`."""
         if self._stub is None:
-            self._channel = grpc.aio.insecure_channel(self._target)
+            self._channel = _build_channel(self._target)
             self._stub = search_pb2_grpc.SearchServiceStub(self._channel)
         return self._stub
 
     # ── Core search ────────────────────────────────────────────
 
-    async def search(self, request: "SearchRequest") -> list[BaseSearchResult]:
-        """Forward a SearchRequest to the Rust plugin's Query RPC."""
-        req = search_pb2.QueryRequest(
-            q=request.query,
-            zone_id=request.zone_id or "",
-            limit=request.limit,
-            path_filter=request.path_filter or "",
-            query_type=_QUERY_TYPE_MAP.get(request.search_type, search_pb2.QUERY_TYPE_UNSPECIFIED),
-            alpha=request.alpha,
-            fusion_method=_FUSION_METHOD_MAP.get(
-                request.fusion_method, search_pb2.FUSION_METHOD_UNSPECIFIED
-            ),
-            rrf_k=request.rrf_k,
-            expand=request.expand or "",
-            recency_mode=request.recency or "",
-            recency_weight=request.recency_weight or 0.0,
-            recency_half_life_days=request.recency_half_life_days or 0.0,
-        )
-        resp = await self._get_stub().Query(req)
+    async def search_with_error(
+        self, request: "SearchRequest"
+    ) -> tuple[list[BaseSearchResult], str | None]:
+        """Query RPC with the plugin's per-query error PRESERVED.
+
+        Review R4: collapsing a backend failure (embedder down,
+        provider timeout, misconfiguration) into a bare ``[]`` makes a
+        degraded dependency indistinguishable from "no matches".  The
+        HTTP single-query route surfaces the returned error additively
+        — same contract shape as the batch endpoint's per-entry
+        failures (#4612).
+        """
+        resp = await self._get_stub().Query(_request_to_pb(request))
         if resp.HasField("error"):
             logger.warning("rust search returned error: %s", resp.error)
-            return []
-        return [_result_to_base(r) for r in resp.results]
+            return [], resp.error
+        return [_result_to_base(r) for r in resp.results], None
+
+    async def search(self, request: "SearchRequest") -> list[BaseSearchResult]:
+        """Forward a SearchRequest to the Rust plugin's Query RPC.
+
+        Degrades a per-query backend error to ``[]`` — the documented
+        interactive posture for the federated / service-layer callers.
+        Callers that must DISTINGUISH failure from empty use
+        :meth:`search_with_error`.
+        """
+        results, _error = await self.search_with_error(request)
+        return results
 
     async def batch_search(
         self,
         requests: list["SearchRequest"],
-    ) -> list[list[BaseSearchResult]]:
-        """Forward a batch of queries to the Rust plugin."""
-        pb_queries = [
-            search_pb2.QueryRequest(
-                q=r.query,
-                zone_id=r.zone_id or "",
-                limit=r.limit,
-                path_filter=r.path_filter or "",
-                query_type=_QUERY_TYPE_MAP.get(r.search_type, search_pb2.QUERY_TYPE_UNSPECIFIED),
-            )
-            for r in requests
-        ]
-        req = search_pb2.BatchQueryRequest(queries=pb_queries)
+    ) -> list[list[BaseSearchResult] | BatchQueryFailure]:
+        """Forward a batch of queries to the Rust plugin.
+
+        Positional with ``requests``.  An inner query the plugin failed
+        (embedder unavailable, per-query timeout, backend error) comes
+        back as :class:`BatchQueryFailure` — NOT an empty list — so the
+        batch endpoint can emit its per-entry additive ``error`` field
+        and fail-closed consumers can tell "searched, no matches" from
+        "search failed" (#4612).
+        """
+        req = search_pb2.BatchQueryRequest(queries=[_request_to_pb(r) for r in requests])
         resp = await self._get_stub().BatchQuery(req)
-        return [[_result_to_base(hit) for hit in sub.results] for sub in resp.responses]
+        out: list[list[BaseSearchResult] | BatchQueryFailure] = []
+        for sub in resp.responses:
+            if sub.HasField("error"):
+                out.append(BatchQueryFailure(error=sub.error))
+            else:
+                out.append([_result_to_base(hit) for hit in sub.results])
+        return out
 
     async def locate(
         self,
@@ -153,16 +252,32 @@ class SearchDaemon:
             entry = search_pb2.DocumentInput(
                 path=d.get("path", ""),
                 text=d.get("text", ""),
-                zone_id=d.get("zone_id", ""),
+                # Tenant boundary (review R2): when the caller passes an
+                # authorized zone, it OVERRIDES any per-document zone —
+                # the plugin treats a non-empty doc zone as a routing
+                # override, so honoring caller-controlled values here
+                # would let one tenant write into another's index.  The
+                # HTTP route additionally 403s explicit mismatches.
+                zone_id=zone_id or d.get("zone_id", ""),
             )
             if "mtime_ms" in d and d["mtime_ms"] is not None:
                 entry.mtime_ms = int(d["mtime_ms"])
             pb_docs.append(entry)
         req = search_pb2.IndexDocumentsRequest(documents=pb_docs, zone_id=zone_id or "")
         resp = await self._get_stub().IndexDocuments(req)
+        # Fail closed: a populated error means FTS/ANN persistence broke
+        # mid-batch — swallowing it here would let the route 200 an
+        # incomplete index (review R1).  The route maps the raised
+        # exception to HTTP 500 so clients retry.
+        if resp.HasField("error"):
+            raise RuntimeError(f"plugin index_documents failed: {resp.error}")
         return {
             "indexed": resp.indexed_count,
             "skipped": list(resp.parked_paths),
+            # Content-level skips (empty/whitespace docs, chunkless
+            # docs) — distinct from the projection-wait ``skipped``
+            # paths above, which drive the route's 409.
+            "skipped_count": resp.skipped_count,
         }
 
     async def notify_file_change(
@@ -177,7 +292,12 @@ class SearchDaemon:
             change_type=change_type,
             zone_id=zone_id or "",
         )
-        await self._get_stub().NotifyFileChange(req)
+        resp = await self._get_stub().NotifyFileChange(req)
+        # Fail closed (review R4): a delete whose tombstone could not
+        # be persisted must not report success — swallowing the error
+        # here would leave orphaned vectors behind an HTTP 200.
+        if resp.HasField("error"):
+            raise RuntimeError(f"plugin notify_file_change failed: {resp.error}")
 
     # ── Indexed-directories registry ──────────────────────────
 
@@ -232,7 +352,42 @@ class SearchDaemon:
             "fts_path_count": resp.fts_path_count,
             "ann_chunk_count": resp.ann_chunk_count,
             "parked_count": resp.parked_count,
+            # #4617 identity fields — pre-P12 stats consumers key on
+            # these.  ``embedding_model`` empty on the wire means
+            # keyword-only mode; surface that as None, matching the
+            # old daemon's "no embedding model configured" contract.
+            "backend": resp.backend or "rust-plugin",
+            "embedding_model": resp.embedding_model or None,
+            # #4623: non-zero while explicit index ops are in flight —
+            # "empty results" then mean "still building", not "no
+            # matches".
+            "indexing_in_progress": resp.indexing_in_progress,
         }
+
+
+def _request_to_pb(request: "SearchRequest") -> search_pb2.QueryRequest:
+    """Map a SearchRequest onto the plugin's QueryRequest proto.
+
+    Shared by ``search`` and ``batch_search`` so the batch path can
+    never silently drop a tuning knob the single path forwards.
+    """
+    return search_pb2.QueryRequest(
+        q=request.query,
+        zone_id=request.zone_id or "",
+        limit=request.limit,
+        path_filter=request.path_filter or "",
+        query_type=_QUERY_TYPE_MAP.get(request.search_type, search_pb2.QUERY_TYPE_UNSPECIFIED),
+        alpha=request.alpha,
+        fusion_method=_FUSION_METHOD_MAP.get(
+            request.fusion_method, search_pb2.FUSION_METHOD_UNSPECIFIED
+        ),
+        rrf_k=request.rrf_k,
+        expand=request.expand or "",
+        recency_mode=request.recency or "",
+        recency_weight=request.recency_weight or 0.0,
+        recency_half_life_days=request.recency_half_life_days or 0.0,
+        path_prefix_boosts=request.path_prefix_boosts or {},
+    )
 
 
 def _result_to_base(pb: search_pb2.QueryResult) -> BaseSearchResult:

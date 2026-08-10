@@ -7692,7 +7692,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/expand
-      source: src/nexus/server/api/v2/routers/search.py:1611
+      source: src/nexus/server/api/v2/routers/search.py:1836
   profiles:
     lite: supported
     sandbox: supported
@@ -7716,7 +7716,7 @@ operations:
       source: src/nexus/bricks/search/search_service.py:1792
     http:
       name: POST /api/v2/search/glob
-      source: src/nexus/server/api/v2/routers/search.py:1469
+      source: src/nexus/server/api/v2/routers/search.py:1623
     mcp:
       name: nexus_glob
       source: src/nexus/config/tool_profiles.yaml:1
@@ -7743,7 +7743,7 @@ operations:
       source: src/nexus/bricks/search/search_service.py:2102
     http:
       name: POST /api/v2/search/grep
-      source: src/nexus/server/api/v2/routers/search.py:1346
+      source: src/nexus/server/api/v2/routers/search.py:1500
     mcp:
       name: nexus_grep
       source: src/nexus/config/tool_profiles.yaml:1
@@ -7779,7 +7779,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/search/health
-      source: src/nexus/server/api/v2/routers/search.py:159
+      source: src/nexus/server/api/v2/routers/search.py:160
   profiles:
     lite: supported
     sandbox: supported
@@ -7796,7 +7796,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/index
-      source: src/nexus/server/api/v2/routers/search.py:1531
+      source: src/nexus/server/api/v2/routers/search.py:1685
   profiles:
     lite: supported
     sandbox: supported
@@ -7813,7 +7813,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/search/query
-      source: src/nexus/server/api/v2/routers/search.py:183
+      source: src/nexus/server/api/v2/routers/search.py:227
   profiles:
     lite: supported
     sandbox: supported
@@ -7831,7 +7831,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/query/batch
-      source: src/nexus/server/api/v2/routers/search.py:727
+      source: src/nexus/server/api/v2/routers/search.py:872
   profiles:
     lite: supported
     sandbox: supported
@@ -7848,7 +7848,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/refresh
-      source: src/nexus/server/api/v2/routers/search.py:1590
+      source: src/nexus/server/api/v2/routers/search.py:1792
   profiles:
     lite: supported
     sandbox: supported
@@ -7882,7 +7882,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/search/stats
-      source: src/nexus/server/api/v2/routers/search.py:174
+      source: src/nexus/server/api/v2/routers/search.py:210
   profiles:
     lite: supported
     sandbox: supported

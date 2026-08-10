@@ -157,6 +157,14 @@ pub fn apply_recency(
 /// multiply the score by that entry's multiplier.  No matching
 /// prefix ⇒ score unchanged (multiplier 1.0).
 ///
+/// A key ending in `/` also matches the path that EQUALS the key
+/// minus that trailing slash (#4620): the server wraps stored
+/// path-context prefixes as `/{p}/` for slash-boundary safety, and a
+/// row whose prefix names an exact file (`/notes/hello.md/` after
+/// wrapping) must still boost that file — the pre-P12 stack matched
+/// it via `path == prefix` equality.  Plain `starts_with` keys keep
+/// their raw semantics.
+///
 /// Longest-match semantics matter when boosts overlap
 /// (`/docs/` = 1.5, `/docs/api/` = 2.0) — the more specific
 /// prefix wins.  Ties (same length) break arbitrarily but stably
@@ -168,7 +176,10 @@ pub fn apply_prefix_boost(hits: &mut [QueryResult], boosts: &HashMap<String, f32
     for hit in hits.iter_mut() {
         let best = boosts
             .iter()
-            .filter(|(prefix, _)| hit.path.starts_with(prefix.as_str()))
+            .filter(|(prefix, _)| {
+                hit.path.starts_with(prefix.as_str())
+                    || (prefix.ends_with('/') && hit.path == prefix[..prefix.len() - 1])
+            })
             .max_by_key(|(prefix, _)| prefix.len());
         if let Some((_, &multiplier)) = best {
             hit.score *= multiplier;
@@ -347,6 +358,39 @@ mod tests {
     }
 
     // ── apply_prefix_boost ─────────────────────────────────────
+
+    #[test]
+    fn prefix_boost_trailing_slash_key_matches_exact_file_path() {
+        // #4620 parity: the server wraps stored path_contexts prefixes
+        // as "/{p}/" for slash-boundary safety.  A row whose prefix
+        // names an exact FILE ("/notes/hello.md/" after wrapping) must
+        // still boost that file — pre-P12 matched it via
+        // `path == prefix` equality.
+        let mut hits = vec![hit("/notes/hello.md", 1.0, None)];
+        let mut boosts = HashMap::new();
+        boosts.insert("/notes/hello.md/".to_string(), 3.0);
+        apply_prefix_boost(&mut hits, &boosts);
+        assert!(
+            (hits[0].score - 3.0).abs() < 1e-6,
+            "exact-file trailing-slash key must boost, got {}",
+            hits[0].score
+        );
+    }
+
+    #[test]
+    fn prefix_boost_trailing_slash_key_does_not_leak_to_siblings() {
+        // The boundary guarantee that motivated the "/{p}/" wrapping:
+        // "/docs/" must not touch "/docs-v2/…" or "/docsfile.md".
+        let mut hits = vec![
+            hit("/docs-v2/x.md", 1.0, None),
+            hit("/docsfile.md", 1.0, None),
+        ];
+        let mut boosts = HashMap::new();
+        boosts.insert("/docs/".to_string(), 5.0);
+        apply_prefix_boost(&mut hits, &boosts);
+        assert!((hits[0].score - 1.0).abs() < 1e-6, "sibling dir leaked");
+        assert!((hits[1].score - 1.0).abs() < 1e-6, "sibling file leaked");
+    }
 
     #[test]
     fn prefix_boost_empty_map_is_noop() {

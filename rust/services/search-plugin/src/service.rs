@@ -60,6 +60,16 @@ fn batch_query_concurrency() -> usize {
         .unwrap_or(DEFAULT_BATCH_QUERY_CONCURRENCY)
 }
 
+/// #4623: explicit-index incremental FTS commit cadence.  Every N
+/// successfully indexed documents the FTS layer commits (and the
+/// zone's result cache drops) so keyword hits become visible while
+/// the embed-heavy remainder of the batch is still building.
+const INDEX_INCREMENTAL_COMMIT_EVERY: usize = 8;
+
+/// #4617: backend identity string on Stats — distinguishes this
+/// generation from the deleted Python daemon's BM25S/pgvector stack.
+const SEARCH_BACKEND_NAME: &str = "rust-plugin";
+
 /// Belt-and-suspenders per-file size cap for grep — a 100 MB
 /// binary blob would otherwise stall a single request for seconds.
 /// Files above this size are skipped with a `tracing::debug` log.
@@ -123,6 +133,33 @@ pub struct SearchServiceImpl {
     /// Embeddings have no corpus dependency, so Index / Refresh do
     /// not invalidate this cache.
     embed_cache: Arc<QueryEmbedCache>,
+    /// #4623: in-flight explicit Index / IndexDocuments / Refresh
+    /// operations.  Surfaced on Stats as `indexing_in_progress` so
+    /// pollers can tell "genuinely empty" from "still building".
+    indexing_ops: Arc<std::sync::atomic::AtomicU32>,
+}
+
+/// RAII increment of [`SearchServiceImpl::indexing_ops`].
+///
+/// MUST be moved INTO the `spawn_blocking` closure doing the actual
+/// index mutation: a guard owned by the async RPC future would be
+/// dropped on RPC cancellation/timeout while the already-started
+/// blocking task keeps mutating the indices — understating
+/// `indexing_in_progress` during exactly the partial-build window
+/// the counter exists to expose (#4623 review R1).
+struct IndexingGuard(Arc<std::sync::atomic::AtomicU32>);
+
+impl IndexingGuard {
+    fn enter(counter: &Arc<std::sync::atomic::AtomicU32>) -> Self {
+        counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Self(Arc::clone(counter))
+    }
+}
+
+impl Drop for IndexingGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 impl SearchServiceImpl {
@@ -169,6 +206,29 @@ impl SearchServiceImpl {
         }
         *slot = Some(Arc::clone(&built));
         Ok(built)
+    }
+
+    /// Embedder resolution for INDEXING paths (review R2).  Returns
+    /// `(embedder, embed_broken)` — distinguishing "no embedder
+    /// configured" (clean NotAvailable ⇒ keyword-only mode, docs
+    /// record their real mtime) from "configured but failed to
+    /// initialise" (Load/Runtime ⇒ `embed_broken = true`, every doc
+    /// indexed this pass records mtime None so the next
+    /// Refresh/IndexDocuments retries its vectors once the embedder
+    /// recovers, instead of the failure minting permanently
+    /// keyword-only documents behind a success response).
+    fn indexing_embedder(&self) -> (Option<Arc<dyn Embedder>>, bool) {
+        match self.get_or_init_embedder() {
+            Ok(e) => (Some(e), false),
+            Err(EmbedError::NotAvailable(_)) => (None, false),
+            Err(e) => {
+                tracing::warn!(
+                    err = %e,
+                    "embedder init failed — this pass's docs stay ANN-retryable",
+                );
+                (None, true)
+            }
+        }
     }
 }
 
@@ -234,6 +294,7 @@ impl SearchServiceBuilder {
             embed_cache: self
                 .embed_cache
                 .unwrap_or_else(|| Arc::new(QueryEmbedCache::from_env())),
+            indexing_ops: Arc::new(std::sync::atomic::AtomicU32::new(0)),
         }
     }
 }
@@ -846,6 +907,19 @@ fn apply_expand(manager: &IndexManager, zone_id: &str, mode: ExpandMode, hits: &
 /// more than the caller-visible `limit` to give fusion headroom.
 const HYBRID_OVER_FETCH_MULT: usize = 2;
 
+/// Over-fetch multiplier when POST-FUSION score adjustments (recency,
+/// path-prefix boosts) are active (review R4).  Prefix weights are
+/// capped at 10x by the path-contexts store, so a 10x candidate pool
+/// covers any doc whose base score is within one full boost of the
+/// unadjusted cut line.  This is a pragmatic bound, not a proof — a
+/// doc scoring >10x below the cut can still be unreachable; the
+/// alternative (applying boosts inside candidate collection) means
+/// pushing operator config into the tantivy/HNSW scorers and is
+/// tracked as follow-up work.  Clamped so limit=100 doesn't fan a
+/// 1000-doc fetch into the blocking pool.
+const ADJUSTMENT_OVER_FETCH_MULT: usize = 10;
+const ADJUSTMENT_FETCH_CEILING: usize = 500;
+
 /// Fuse two source result lists per the caller's chosen method,
 /// pool per-doc, and truncate to `limit`.  Pure math — the two
 /// source lists come in already fetched.  The RPC handler runs
@@ -881,6 +955,17 @@ struct IndexSinks<'a> {
     ann: Option<&'a Arc<crate::ann_index::AnnIndex>>,
     embedder: Option<&'a Arc<dyn Embedder>>,
     state: &'a crate::index_state::IndexState,
+    /// True when an embedder IS configured but failed to initialise
+    /// (review R2).  Distinct from `embedder: None` with a clean
+    /// NotAvailable (keyword-only mode): a broken embedder means
+    /// every doc indexed this pass must stay ANN-retryable (mtime
+    /// None) so vectors land once the embedder recovers.
+    embed_broken: bool,
+    /// Does the zone have any `ann-*` directory on disk?  Content
+    /// skips and the sweep consult this to tell "no vectors exist"
+    /// (safe to finalize) from "vectors exist but the ANN sink is
+    /// unreachable" (keep a retry tombstone) — review R6.
+    zone_has_ann: bool,
 }
 
 /// Walk `root_path` and index every regular file.  Same walker Glob +
@@ -893,15 +978,25 @@ struct IndexSinks<'a> {
 /// the file's text and adds it to the vector index — semantic +
 /// keyword stay in sync from one call.  Missing embedder ⇒ FTS-only
 /// (log a debug once per Index call so operators see it).
+// 8 args: the R2 embed_broken flag pushed this over clippy's 7-arg
+// default.  The alternatives (params struct for two call sites, or
+// folding embed_broken into the Option) obscure more than they help.
+#[allow(clippy::too_many_arguments)]
 fn do_index(
     handle: &KernelHandle,
     manager: &IndexManager,
     embedder: Option<&Arc<dyn Embedder>>,
+    embed_broken: bool,
     root_path: &str,
     zone_id: &str,
     recursive: bool,
     max_docs: usize,
 ) -> Result<(u32, u32), String> {
+    // Serialize writers per zone: state is opened fresh and saved
+    // whole at the end, so concurrent mutations would lose entries.
+    let zone_lock = manager.zone_write_lock(zone_id);
+    let _zone_guard = zone_lock.lock();
+
     let fts = manager
         .get_or_open(zone_id)
         .map_err(|e| format!("open index for zone {zone_id:?}: {e}"))?;
@@ -922,11 +1017,26 @@ fn do_index(
     let state = crate::index_state::IndexState::open_or_create(manager.zone_root(zone_id))
         .map_err(|e| format!("open state for zone {zone_id:?}: {e}"))?;
 
+    // Embedder-generation alignment (review R8): a model swap keys a
+    // FRESH ann-<tag> directory; mtimes completed under another tag
+    // must not verdict Unchanged against it.
+    if let Some(e) = embedder {
+        if state.ensure_embedder_generation(e.tag()) {
+            tracing::warn!(
+                zone = %zone_id,
+                tag = %e.tag(),
+                "embedder generation changed — invalidated mtime cache; full re-embed",
+            );
+        }
+    }
+
     let sinks = IndexSinks {
         fts: &fts,
         ann: ann.as_ref(),
         embedder,
         state: &state,
+        embed_broken,
+        zone_has_ann: zone_has_ann_dir(manager, zone_id),
     };
 
     let mut indexed: u32 = 0;
@@ -999,8 +1109,47 @@ fn do_index(
 /// `do_index` can tally added vs skipped without a per-call error
 /// return (a skip is not an error).
 enum IndexOne {
+    // NOTE (review R5): content skips are DETERMINISTIC on the same
+    // bytes (empty, oversize, binary, whitespace-only) — they record
+    // their mtime in state so a Refresh dedups them like indexed
+    // files and they stop consuming the repair budget every pass.
+    // Transient skips (read errors, FTS write errors) record nothing
+    // and are retried.
     Added,
     Skipped,
+}
+
+/// Record a deterministic content-skip so Refresh dedups it (same
+/// mtime ⇒ Unchanged) instead of re-reading + re-skipping it on every
+/// pass — with max_docs stable content-skips ahead of the tail, the
+/// old behaviour starved the repair budget forever (review R5).
+///
+/// A skip is also a CONTENT TRANSITION (review R6): a previously
+/// indexed file that became empty/oversize/binary must have its old
+/// chunks PURGED, or deleted text stays searchable forever.  FTS
+/// purges idempotently; ANN purges when the sink is open, else the
+/// entry keeps a retry tombstone (mtime None) so a later pass with a
+/// working ANN sink finishes the cleanup — unless the zone has no
+/// ANN directory at all, in which case there is nothing to purge and
+/// the real mtime finalizes the skip.
+fn record_content_skip(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> IndexOne {
+    sinks.fts.delete_all_chunks(vfs_path);
+    match sinks.ann {
+        Some(ann) => {
+            ann.delete_all_chunks(vfs_path);
+        }
+        None if sinks.zone_has_ann => {
+            // Vectors may exist but are unreachable — retry tombstone.
+            sinks.state.record(vfs_path, None);
+            return IndexOne::Skipped;
+        }
+        None => {}
+    }
+    let mtime_ms = kernel_io::sys_stat(handle, vfs_path)
+        .ok()
+        .and_then(|info| info.modified_at_ms);
+    sinks.state.record(vfs_path, mtime_ms);
+    IndexOne::Skipped
 }
 
 fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> IndexOne {
@@ -1012,7 +1161,7 @@ fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> I
         }
     };
     if bytes.is_empty() {
-        return IndexOne::Skipped;
+        return record_content_skip(handle, sinks, vfs_path);
     }
     if bytes.len() > INDEX_MAX_FILE_BYTES {
         tracing::debug!(
@@ -1021,7 +1170,7 @@ fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> I
             cap = INDEX_MAX_FILE_BYTES,
             "index: file over size cap — skipping",
         );
-        return IndexOne::Skipped;
+        return record_content_skip(handle, sinks, vfs_path);
     }
     // Non-UTF8 files are treated as binary and skipped rather than
     // indexed as gibberish.  A future phase may want to add a
@@ -1031,7 +1180,7 @@ fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> I
         Ok(s) => s,
         Err(_) => {
             tracing::debug!(path = %vfs_path, "index: non-utf8 payload — skipping");
-            return IndexOne::Skipped;
+            return record_content_skip(handle, sinks, vfs_path);
         }
     };
     let mtime_ms = kernel_io::sys_stat(handle, vfs_path)
@@ -1043,8 +1192,9 @@ fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> I
     // and keeps each chunk under the embedder's soft budget.
     let chunks = crate::chunker::chunk_document(text);
     if chunks.is_empty() {
-        // Whitespace-only file — nothing to index.
-        return IndexOne::Skipped;
+        // Whitespace-only file — nothing to index; purge any prior
+        // chunks + record per ANN reachability (review R6).
+        return record_content_skip(handle, sinks, vfs_path);
     }
 
     // FTS side: drop the file's old chunk set, add the fresh one.
@@ -1067,11 +1217,19 @@ fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> I
         }
     }
 
-    // ANN side — best-effort per file.  Batch-embed the whole
-    // chunk set in one embedder call to amortise ort session
-    // overhead; per-chunk add + shared delete_all mirrors the
-    // FTS discipline.  A failure on embed / add does NOT fail
-    // the whole Index — keyword still works.
+    // ANN side — keyword-degradation per query is fine, but a
+    // transient embed failure must stay RETRYABLE (review R1):
+    // recording the fresh mtime below despite a failed embed would
+    // make the semantic hole permanent, because the next Refresh sees
+    // the matching mtime and skips the doc forever.
+    // ANN completeness starts false in BOTH embedder-down shapes
+    // (review R7): a broken embedder (embed_broken) AND a clean
+    // NotAvailable while ann-* directories exist.  In the latter, a
+    // keyword-only edit would otherwise update FTS + record the fresh
+    // mtime while the zone's OLD vectors stay live — when the
+    // embedder returns, Refresh reads Unchanged forever and
+    // semantic/hybrid ranking silently serves pre-edit vectors.
+    let mut ann_complete = !sinks.embed_broken && !(sinks.embedder.is_none() && sinks.zone_has_ann);
     if let (Some(ann), Some(embedder)) = (sinks.ann, sinks.embedder) {
         let inputs: Vec<&str> = chunks.iter().map(|c| c.embed_input.as_str()).collect();
         match embedder.embed_batch(&inputs) {
@@ -1079,28 +1237,31 @@ fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> I
                 ann.delete_all_chunks(vfs_path);
                 for (chunk, vec) in chunks.iter().zip(vecs.iter()) {
                     if let Err(e) = ann.add_vector(vfs_path, chunk.chunk_index, vec) {
+                        ann_complete = false;
                         tracing::warn!(
                             path = %vfs_path,
                             chunk = chunk.chunk_index,
                             err = %e,
-                            "index: ann add_vector failed — semantic misses this chunk",
+                            "index: ann add_vector failed — will retry on next refresh",
                         );
                     }
                 }
             }
             Ok(vecs) => {
+                ann_complete = false;
                 tracing::warn!(
                     path = %vfs_path,
                     got = vecs.len(),
                     expected = chunks.len(),
-                    "index: embedder returned wrong vec count — semantic misses this doc",
+                    "index: embedder returned wrong vec count — will retry on next refresh",
                 );
             }
             Err(e) => {
+                ann_complete = false;
                 tracing::warn!(
                     path = %vfs_path,
                     err = %e,
-                    "index: embed failed — semantic misses this doc",
+                    "index: embed failed — will retry on next refresh",
                 );
             }
         }
@@ -1112,7 +1273,17 @@ fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> I
     // known-paths snapshot — the verdict for None caches is
     // Changed, so it'll re-index next time, but it won't be
     // mistaken for a deleted file during the stale sweep.
-    sinks.state.record(vfs_path, mtime_ms);
+    //
+    // Recording is gated on ANN completeness: an incompletely
+    // embedded doc is recorded with mtime None, which keeps it in
+    // the known-paths snapshot (protecting it from the stale sweep)
+    // while guaranteeing the next Refresh re-indexes it — the FTS
+    // re-add is idempotent, so the retry costs a re-chunk only.
+    if ann_complete {
+        sinks.state.record(vfs_path, mtime_ms);
+    } else {
+        sinks.state.record(vfs_path, None);
+    }
 
     IndexOne::Added
 }
@@ -1121,12 +1292,71 @@ fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> I
 /// when a file that was previously indexed no longer exists in the
 /// current walk.  Both FTS and ANN's `delete_all_chunks` queue on
 /// their writer transactions; the caller commits at end-of-Refresh.
-fn remove_one(sinks: &IndexSinks<'_>, vfs_path: &str) {
+/// Remove `vfs_path` from every sink.  Returns true when the state
+/// entry was actually forgotten.
+///
+/// When no ANN sink is open (embedder unavailable/broken) but ANN
+/// directories EXIST on disk, the state entry is a live deletion-set
+/// tombstone for vectors we cannot reach right now — forgetting it
+/// would orphan them permanently (review R4).  FTS chunks still drop
+/// (idempotent); the tombstone survives until a refresh with a
+/// working ANN sink completes the removal.
+fn remove_one(sinks: &IndexSinks<'_>, vfs_path: &str, zone_has_ann: bool) -> bool {
     sinks.fts.delete_all_chunks(vfs_path);
-    if let Some(ann) = sinks.ann {
-        ann.delete_all_chunks(vfs_path);
+    match sinks.ann {
+        Some(ann) => {
+            ann.delete_all_chunks(vfs_path);
+            sinks.state.forget(vfs_path);
+            true
+        }
+        None if !zone_has_ann => {
+            // No ANN index exists at all — nothing to tombstone for.
+            sinks.state.forget(vfs_path);
+            true
+        }
+        None => {
+            // Keep the tombstone: mtime None so the entry always
+            // verdicts Changed and never masquerades as current.
+            sinks.state.record(vfs_path, None);
+            tracing::warn!(
+                path = %vfs_path,
+                "refresh sweep: ANN sink unavailable — kept deletion tombstone",
+            );
+            false
+        }
     }
-    sinks.state.forget(vfs_path);
+}
+
+/// Does the zone root contain any `ann-*` directory?  Cheap readdir;
+/// used by the sweep and the completion invariant to decide whether
+/// an unopened ANN sink means "no vectors exist" or "vectors exist
+/// but are unreachable".
+///
+/// FAIL-CLOSED on inspection errors (review R8): a read_dir or
+/// entry-level I/O failure is treated as "vectors MAY exist" — the
+/// conservative answer keeps documents ANN-retryable (mtime None)
+/// instead of finalizing them over vectors we merely could not see.
+/// The zone root not existing at all is a positive absence (fresh
+/// zone) and safely reads false.
+fn zone_has_ann_dir(manager: &IndexManager, zone_id: &str) -> bool {
+    // No exists() preflight (review R9): Path::exists() returns false
+    // for BOTH a genuinely absent root and a failed metadata call, so
+    // it would reopen the error-to-absence hole read_dir handling
+    // closes.  Only ErrorKind::NotFound is positive absence.
+    match std::fs::read_dir(manager.zone_root(zone_id)) {
+        Ok(rd) => rd.into_iter().any(|entry| match entry {
+            Ok(e) => e.file_name().to_string_lossy().starts_with("ann-"),
+            Err(e) => {
+                tracing::warn!(err = %e, zone = %zone_id, "ann-dir scan entry error — assuming ANN present");
+                true
+            }
+        }),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+        Err(e) => {
+            tracing::warn!(err = %e, zone = %zone_id, "ann-dir scan failed — assuming ANN present");
+            true
+        }
+    }
 }
 
 /// Result counts from `do_refresh` — one number per RefreshResponse
@@ -1137,6 +1367,15 @@ struct RefreshCounts {
     removed: u32,
     unchanged: u32,
     skipped: u32,
+    /// Sweep entries whose FTS chunks dropped but whose ANN cleanup
+    /// is deferred behind a kept tombstone (ANN sink unavailable).
+    /// Counted separately from `removed` (review R5): the INDEX still
+    /// changed, so the query cache must invalidate even when
+    /// `removed == 0`.
+    tombstoned: u32,
+    /// Walk stopped at the max_docs repair budget (review R4) — the
+    /// caller should refresh again; the stale sweep was skipped.
+    truncated: bool,
 }
 
 /// Incremental refresh: walk `root_path`, ask the mtime cache
@@ -1144,15 +1383,21 @@ struct RefreshCounts {
 /// Same walker + sink shape as do_index; the diff is just the
 /// per-file verdict before calling `index_one` and a post-walk
 /// pass for cache-vs-corpus deletions.
+#[allow(clippy::too_many_arguments)] // same rationale as do_index
 fn do_refresh(
     handle: &KernelHandle,
     manager: &IndexManager,
     embedder: Option<&Arc<dyn Embedder>>,
+    embed_broken: bool,
     root_path: &str,
     zone_id: &str,
     recursive: bool,
     max_docs: usize,
 ) -> Result<RefreshCounts, String> {
+    // Serialize writers per zone — same rationale as do_index.
+    let zone_lock = manager.zone_write_lock(zone_id);
+    let _zone_guard = zone_lock.lock();
+
     let fts = manager
         .get_or_open(zone_id)
         .map_err(|e| format!("open index for zone {zone_id:?}: {e}"))?;
@@ -1170,11 +1415,26 @@ fn do_refresh(
     let state = crate::index_state::IndexState::open_or_create(manager.zone_root(zone_id))
         .map_err(|e| format!("open state for zone {zone_id:?}: {e}"))?;
 
+    // Embedder-generation alignment (review R8): a model swap keys a
+    // FRESH ann-<tag> directory; mtimes completed under another tag
+    // must not verdict Unchanged against it.
+    if let Some(e) = embedder {
+        if state.ensure_embedder_generation(e.tag()) {
+            tracing::warn!(
+                zone = %zone_id,
+                tag = %e.tag(),
+                "embedder generation changed — invalidated mtime cache; full re-embed",
+            );
+        }
+    }
+
     let sinks = IndexSinks {
         fts: &fts,
         ann: ann.as_ref(),
         embedder,
         state: &state,
+        embed_broken,
+        zone_has_ann: zone_has_ann_dir(manager, zone_id),
     };
 
     let mut counts = RefreshCounts::default();
@@ -1182,8 +1442,23 @@ fn do_refresh(
     // which cached entries no longer exist in the corpus.
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
+    // Set when the walk stops early at `max_docs` — the sweep below
+    // must NOT run then, or every cached path beyond the cap would be
+    // falsely treated as deleted (review R3: on a >max_docs corpus the
+    // first post-migration Refresh would discard the tail's deletion
+    // set and its indexed docs).
+    let mut truncated = false;
+
     let mut visit_file = |vfs_path: &str| -> WalkAction {
-        if (counts.reindexed as usize + counts.unchanged as usize) >= max_docs {
+        // The cap budgets REPAIR work (re-index = chunk + embed), not
+        // cheap unchanged visits (one sys_stat each).  Counting
+        // unchanged visits toward the cap made a capped refresh
+        // unable to advance past its first page: after the
+        // post-migration pass repaired the first max_docs files,
+        // every later refresh re-counted those now-unchanged entries
+        // and stopped before ever reaching the tail (review R4).
+        if (counts.reindexed as usize + counts.skipped as usize) >= max_docs {
+            truncated = true;
             return WalkAction::Stop;
         }
         seen.insert(vfs_path.to_string());
@@ -1234,23 +1509,37 @@ fn do_refresh(
     // walk didn't see, drop it from FTS + ANN + state.  Guarded by
     //
     //   (a) visit_result.is_ok() — a mid-walk crash would falsely
-    //       report un-visited paths as deleted, and
-    //   (b) path is under the caller's `root_path` scope — a
+    //       report un-visited paths as deleted,
+    //   (b) !truncated — a walk stopped at `max_docs` did not SEE the
+    //       tail, so "not seen" proves nothing (review R3), and
+    //   (c) path is under the caller's `root_path` scope — a
     //       Refresh scoped to /a/ must NOT wipe cached paths under
     //       /b/.  Without this guard, a scoped Refresh silently
     //       reindexes-with-drops for the WHOLE zone and any file
     //       that lives outside the caller's scope gets flagged as
     //       deleted.
-    if visit_result.is_ok() {
+    if truncated {
+        tracing::warn!(
+            max_docs,
+            root = %root_path,
+            "refresh walk truncated at max_docs — stale sweep skipped; \
+             raise max_docs or refresh in narrower scopes to sweep deletions",
+        );
+    }
+    if visit_result.is_ok() && !truncated {
         let scope = root_path.trim_end_matches('/');
+        let has_ann_dir = sinks.zone_has_ann;
         for cached_path in sinks.state.known_paths() {
             let in_scope = scope.is_empty()
                 || scope == "/"
                 || cached_path == scope
                 || cached_path.starts_with(&format!("{scope}/"));
             if in_scope && !seen.contains(&cached_path) {
-                remove_one(&sinks, &cached_path);
-                counts.removed += 1;
+                if remove_one(&sinks, &cached_path, has_ann_dir) {
+                    counts.removed += 1;
+                } else {
+                    counts.tombstoned += 1;
+                }
             }
         }
     }
@@ -1268,6 +1557,7 @@ fn do_refresh(
     }
 
     visit_result?;
+    counts.truncated = truncated;
     Ok(counts)
 }
 
@@ -1282,6 +1572,7 @@ fn do_refresh(
 fn do_index_documents(
     manager: &IndexManager,
     embedder: Option<&Arc<dyn Embedder>>,
+    embed_broken: bool,
     default_zone: &str,
     documents: Vec<crate::search_proto::DocumentInput>,
     cache: &crate::query_cache::SharedQueryCache,
@@ -1302,6 +1593,10 @@ fn do_index_documents(
     let mut total_skipped: u32 = 0;
 
     for (zone_id, docs) in by_zone {
+        // Serialize writers per zone — same rationale as do_index.
+        let zone_lock = manager.zone_write_lock(&zone_id);
+        let _zone_guard = zone_lock.lock();
+
         let fts = manager
             .get_or_open(&zone_id)
             .map_err(|e| format!("open fts for zone {zone_id:?}: {e}"))?;
@@ -1317,13 +1612,59 @@ fn do_index_documents(
         let state = crate::index_state::IndexState::open_or_create(manager.zone_root(&zone_id))
             .map_err(|e| format!("open state for zone {zone_id:?}: {e}"))?;
 
+        // Embedder-generation alignment — same rationale as do_index.
+        if let Some(e) = embedder {
+            if state.ensure_embedder_generation(e.tag()) {
+                tracing::warn!(
+                    zone = %zone_id,
+                    tag = %e.tag(),
+                    "embedder generation changed — invalidated mtime cache; full re-embed",
+                );
+            }
+        }
+
+        // #4623: incremental FTS visibility.  Embedding dominates a
+        // large explicit batch (tens of seconds of CPU), and a single
+        // end-of-batch commit left keyword queries answering
+        // healthy-empty the whole time — indistinguishable from the
+        // silent-degradation modes health sentinels exist to catch.
+        // Commit (and drop the zone's cached results) every few docs
+        // so keyword hits appear progressively; commits are a couple
+        // of ms, noise next to the embed cost.  ANN stays end-commit:
+        // the dense leg is what's being built, and hnsw dumps are not
+        // cheap per-doc.
+        let mut docs_since_commit: usize = 0;
+
+        let zone_has_ann = zone_has_ann_dir(manager, &zone_id);
+        // Content transition on explicit indexing (review R6): a doc
+        // re-posted with empty/whitespace text must PURGE its prior
+        // chunks, not leave stale text searchable behind a skip.
+        let content_skip = |path: &str| {
+            fts.delete_all_chunks(path);
+            match ann.as_ref() {
+                Some(a) => {
+                    a.delete_all_chunks(path);
+                    state.forget(path);
+                }
+                None if zone_has_ann => {
+                    // Vectors may exist but are unreachable — retry
+                    // tombstone so a later pass finishes the purge.
+                    state.record(path, None);
+                }
+                None => {
+                    state.forget(path);
+                }
+            }
+        };
         for doc in docs {
             if doc.text.trim().is_empty() {
+                content_skip(&doc.path);
                 total_skipped += 1;
                 continue;
             }
             let chunks = crate::chunker::chunk_document(&doc.text);
             if chunks.is_empty() {
+                content_skip(&doc.path);
                 total_skipped += 1;
                 continue;
             }
@@ -1344,7 +1685,16 @@ fn do_index_documents(
                 continue;
             }
 
-            // ANN: best-effort, same pattern as do_index.
+            // ANN: keyword-degradation is fine per query, but a
+            // transient embed failure must stay RETRYABLE.  Recording
+            // the mtime below despite a failed embed would make the
+            // hole permanent — the next Refresh sees the matching
+            // mtime and never retries the missing vectors (a remote
+            // provider 429/timeout would silently produce a
+            // forever-keyword-only doc; review R1).
+            // Same completion invariant as index_one (review R7):
+            // embedder absent + existing ann-* dirs ⇒ stay retryable.
+            let mut ann_complete = !embed_broken && !(embedder.is_none() && zone_has_ann);
             if let (Some(ann), Some(emb)) = (ann.as_ref(), embedder) {
                 let inputs: Vec<&str> = chunks.iter().map(|c| c.embed_input.as_str()).collect();
                 match emb.embed_batch(&inputs) {
@@ -1352,23 +1702,60 @@ fn do_index_documents(
                         ann.delete_all_chunks(&doc.path);
                         for (chunk, vec) in chunks.iter().zip(vecs.iter()) {
                             if let Err(e) = ann.add_vector(&doc.path, chunk.chunk_index, vec) {
+                                ann_complete = false;
                                 tracing::warn!(
                                     path = %doc.path,
                                     err = %e,
-                                    "index_documents: ann add failed — semantic misses",
+                                    "index_documents: ann add failed — will retry on next index/refresh",
                                 );
                             }
                         }
                     }
-                    Ok(_) | Err(_) => {
-                        // Embed failure logged already inside; ANN
-                        // just skipped for this doc.
+                    Ok(vecs) => {
+                        ann_complete = false;
+                        tracing::warn!(
+                            path = %doc.path,
+                            got = vecs.len(),
+                            want = chunks.len(),
+                            "index_documents: embed count mismatch — will retry on next index/refresh",
+                        );
+                    }
+                    Err(e) => {
+                        ann_complete = false;
+                        tracing::warn!(
+                            path = %doc.path,
+                            err = %e,
+                            "index_documents: embed failed — will retry on next index/refresh",
+                        );
                     }
                 }
             }
 
-            state.record(&doc.path, doc.mtime_ms);
+            // Only a FULLY indexed doc (FTS + ANN when an embedder is
+            // configured) gets its real mtime recorded.  An incomplete
+            // doc records mtime None EXPLICITLY — merely skipping the
+            // record would leave a PRIOR same-mtime entry in place and
+            // Refresh would read Unchanged forever (review R2).  A
+            // None mtime always verdicts Changed, so the next
+            // Refresh / IndexDocuments retries the missing vectors;
+            // FTS re-adds are idempotent (delete-then-add).
+            if ann_complete {
+                state.record(&doc.path, doc.mtime_ms);
+            } else {
+                state.record(&doc.path, None);
+            }
             total_indexed += 1;
+            docs_since_commit += 1;
+            if docs_since_commit >= INDEX_INCREMENTAL_COMMIT_EVERY {
+                if let Err(e) = fts.commit() {
+                    return Err(format!("fts incremental commit for zone {zone_id:?}: {e}"));
+                }
+                // Cached results captured before this commit would
+                // mask the fresh docs for the cache TTL — drop them
+                // with every visibility step, not just at the end.
+                cache.invalidate_zone(&zone_id);
+                docs_since_commit = 0;
+            }
         }
 
         if let Err(e) = fts.commit() {
@@ -1401,6 +1788,10 @@ fn do_notify_file_change(
     change_type: &str,
     cache: &crate::query_cache::SharedQueryCache,
 ) -> Result<String, String> {
+    // Serialize writers per zone — same rationale as do_index.
+    let zone_lock = manager.zone_write_lock(zone_id);
+    let _zone_guard = zone_lock.lock();
+
     let fts = manager
         .get_or_open(zone_id)
         .map_err(|e| format!("open fts for zone {zone_id:?}: {e}"))?;
@@ -1413,15 +1804,24 @@ fn do_notify_file_change(
             // Only open ANN if it happens to already be there —
             // creating an empty ANN dir on a delete is
             // counterproductive.  We'd need the embedder tag to
-            // open; the cheap approach is to leave ANN cleanup
-            // for the next Refresh, which already sweeps orphan
-            // vectors via the shadow-set contract.
-            state.forget(path);
+            // open; ANN cleanup is deferred to the next Refresh's
+            // stale sweep.  That sweep is driven by known_paths(),
+            // so the path must stay KNOWN as a tombstone (mtime
+            // None) — forgetting it here would make the orphaned
+            // vectors undiscoverable forever and semantic queries
+            // would keep returning the deleted path (review R3).
+            // Refresh sees the tombstone, misses the path in the
+            // walk, and removes FTS remnants + ANN + state together.
+            state.record(path, None);
             if let Err(e) = fts.commit() {
                 return Err(format!("fts commit: {e}"));
             }
+            // The tombstone IS the deferred-ANN-cleanup record — if it
+            // cannot be persisted the delete must FAIL so the caller
+            // retries, instead of reporting success while the vectors
+            // silently outlive their document (review R4).
             if let Err(e) = state.save() {
-                tracing::warn!(err = %e, "index_state save failed");
+                return Err(format!("delete tombstone persist failed: {e}"));
             }
             cache.invalidate_zone(zone_id);
             Ok("accepted".to_string())
@@ -1606,6 +2006,22 @@ impl SearchService for SearchServiceImpl {
         } else {
             req.limit as usize
         };
+        // Post-fusion score adjustments (recency, prefix boosts) can
+        // PROMOTE a hit from below the requested limit — so the pool
+        // they act on must be over-fetched, or a heavily boosted doc
+        // initially ranked at limit+1 is unreachable (review R3).
+        // Final truncation to `limit` happens after apply_all+re-sort.
+        let adjustments_active = matches!(
+            recency_mode,
+            crate::scoring::RecencyMode::On | crate::scoring::RecencyMode::Auto
+        ) || !prefix_boosts.is_empty();
+        let fetch_limit = if adjustments_active {
+            limit
+                .saturating_mul(ADJUSTMENT_OVER_FETCH_MULT)
+                .clamp(limit, ADJUSTMENT_FETCH_CEILING.max(limit))
+        } else {
+            limit
+        };
         let zone_id = resolve_zone(&req.zone_id).to_string();
         // Now safe to move fields out.
         let q = req.q;
@@ -1625,7 +2041,7 @@ impl SearchService for SearchServiceImpl {
 
         let outcome = match query_type {
             QueryType::Unspecified | QueryType::Keyword => tokio::task::spawn_blocking(move || {
-                do_keyword_query(&manager, &q, &zone_id, limit, &path_filter)
+                do_keyword_query(&manager, &q, &zone_id, fetch_limit, &path_filter)
             })
             .await
             .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?,
@@ -1651,7 +2067,7 @@ impl SearchService for SearchServiceImpl {
                         &embed_cache,
                         &q,
                         &zone_id,
-                        limit,
+                        fetch_limit,
                         &path_filter,
                     )
                 })
@@ -1678,7 +2094,10 @@ impl SearchService for SearchServiceImpl {
                 // on the blocking pool + joining brings wall-clock to
                 // max(kw, sem) ≈ 300 ms — no free lunch on total CPU
                 // but user-visible p95 halves in the worst-case ratio.
-                let over_fetch = limit.saturating_mul(HYBRID_OVER_FETCH_MULT).max(limit);
+                let over_fetch = limit
+                    .saturating_mul(HYBRID_OVER_FETCH_MULT)
+                    .max(limit)
+                    .max(fetch_limit);
                 let (kw_task, sem_task) = {
                     let mgr_kw = Arc::clone(&manager);
                     let mgr_sem = Arc::clone(&manager);
@@ -1714,7 +2133,11 @@ impl SearchService for SearchServiceImpl {
                     .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
                 match (kw, sem) {
                     (Ok(keyword), Ok(semantic)) => {
-                        Ok(fuse_hybrid(keyword, semantic, limit, fusion_opts))
+                        // Keep the over-fetched pool through fusion
+                        // when adjustments still need to reorder it;
+                        // the final truncate-to-limit happens post-
+                        // adjustment below.
+                        Ok(fuse_hybrid(keyword, semantic, fetch_limit, fusion_opts))
                     }
                     // A source-side error on either leg — surface it
                     // as the response's `error` field rather than a
@@ -1771,9 +2194,11 @@ impl SearchService for SearchServiceImpl {
                 // pooled + truncated) so it's cheap to always run.
                 if fusion_opts.chunks_per_page > 0 {
                     results = fusion::pool_by_document(results, fusion_opts.chunks_per_page);
-                    if results.len() > limit {
-                        results.truncate(limit);
-                    }
+                }
+                // Final caller-visible truncation — unconditional, so
+                // the adjustment over-fetch never leaks past `limit`.
+                if results.len() > limit {
+                    results.truncate(limit);
                 }
                 // Post-outcome enrichment.  Runs inside the async
                 // handler (no spawn_blocking) because expand-macro's
@@ -1811,6 +2236,7 @@ impl SearchService for SearchServiceImpl {
         &self,
         request: Request<IndexRequest>,
     ) -> Result<Response<IndexResponse>, Status> {
+        let indexing = IndexingGuard::enter(&self.indexing_ops);
         let req = request.into_inner();
         let root = if req.root_path.is_empty() {
             "/".to_string()
@@ -1831,16 +2257,18 @@ impl SearchService for SearchServiceImpl {
         // just stays empty until an operator wires the embedder up
         // and re-runs Index.  This matches the "graceful degradation"
         // posture SemanticQuery uses.
-        let embedder = self.get_or_init_embedder().ok();
+        let (embedder, embed_broken) = self.indexing_embedder();
         // Retain the zone id for post-outcome cache invalidation
         // (the closure below moves the owned copy into
         // spawn_blocking).
         let zone_for_invalidate = zone_id.clone();
         let outcome = tokio::task::spawn_blocking(move || {
+            let _indexing = indexing; // held until the WORK ends, not the RPC
             do_index(
                 &handle,
                 &manager,
                 embedder.as_ref(),
+                embed_broken,
                 &root,
                 &zone_id,
                 recursive,
@@ -1877,6 +2305,7 @@ impl SearchService for SearchServiceImpl {
         &self,
         request: Request<RefreshRequest>,
     ) -> Result<Response<RefreshResponse>, Status> {
+        let indexing = IndexingGuard::enter(&self.indexing_ops);
         let req = request.into_inner();
         let root = if req.root_path.is_empty() {
             "/".to_string()
@@ -1895,13 +2324,15 @@ impl SearchService for SearchServiceImpl {
         // Same best-effort embedder posture as Index: a missing
         // embedder means ANN stays unchanged this Refresh; keyword
         // side still incrementally updates.
-        let embedder = self.get_or_init_embedder().ok();
+        let (embedder, embed_broken) = self.indexing_embedder();
         let zone_for_invalidate = zone_id.clone();
         let outcome = tokio::task::spawn_blocking(move || {
+            let _indexing = indexing; // held until the WORK ends, not the RPC
             do_refresh(
                 &handle,
                 &manager,
                 embedder.as_ref(),
+                embed_broken,
                 &root,
                 &zone_id,
                 recursive,
@@ -1918,7 +2349,11 @@ impl SearchService for SearchServiceImpl {
                 // (all cached unchanged) leaves the cache intact —
                 // avoids gratuitously blowing away hot entries when
                 // an operator polls Refresh on a quiet corpus.
-                if counts.reindexed > 0 || counts.removed > 0 {
+                if counts.reindexed > 0
+                    || counts.removed > 0
+                    || counts.tombstoned > 0
+                    || counts.skipped > 0
+                {
                     self.query_cache.invalidate_zone(&zone_for_invalidate);
                 }
                 Ok(Response::new(RefreshResponse {
@@ -1927,6 +2362,7 @@ impl SearchService for SearchServiceImpl {
                     unchanged_count: counts.unchanged,
                     skipped_count: counts.skipped,
                     error: None,
+                    truncated: counts.truncated,
                 }))
             }
             Err(err) => Ok(Response::new(RefreshResponse {
@@ -1935,6 +2371,7 @@ impl SearchService for SearchServiceImpl {
                 unchanged_count: 0,
                 skipped_count: 0,
                 error: Some(err),
+                truncated: false,
             })),
         }
     }
@@ -2021,15 +2458,18 @@ impl SearchService for SearchServiceImpl {
         &self,
         request: Request<IndexDocumentsRequest>,
     ) -> Result<Response<IndexDocumentsResponse>, Status> {
+        let indexing = IndexingGuard::enter(&self.indexing_ops);
         let req = request.into_inner();
         let default_zone = resolve_zone(&req.zone_id).to_string();
         let manager = Arc::clone(&self.manager);
-        let embedder = self.get_or_init_embedder().ok();
+        let (embedder, embed_broken) = self.indexing_embedder();
         let cache = Arc::clone(&self.query_cache);
         let outcome = tokio::task::spawn_blocking(move || {
+            let _indexing = indexing; // held until the WORK ends, not the RPC
             do_index_documents(
                 &manager,
                 embedder.as_ref(),
+                embed_broken,
                 &default_zone,
                 req.documents,
                 &cache,
@@ -2436,6 +2876,19 @@ impl SearchService for SearchServiceImpl {
             .lock()
             .as_ref()
             .map(|e| (e.tag().to_string(), e.dim()));
+        // #4617: identity fields.  The live embedder's tag when one is
+        // initialised; otherwise the CONFIGURED tag (env / feature
+        // default) so pollers see the model identity without stats
+        // ever forcing an ONNX session build.
+        let embedding_model = embedder_tag_dim
+            .as_ref()
+            .map(|(tag, _)| tag.clone())
+            .or_else(crate::embedder::configured_embedder_tag)
+            .unwrap_or_default();
+        // #4623: non-zero while explicit Index/IndexDocuments/Refresh
+        // ops are in flight — "empty results" during that window mean
+        // "still building", not "no matches".
+        let indexing_in_progress = self.indexing_ops.load(std::sync::atomic::Ordering::SeqCst);
         let outcome = tokio::task::spawn_blocking(move || -> Result<StatsResponse, String> {
             // FTS side: count chunks + distinct paths in the zone.
             // FtsIndex doesn't expose a raw count today, so we open
@@ -2479,6 +2932,9 @@ impl SearchService for SearchServiceImpl {
                 ann_chunk_count,
                 parked_count,
                 error: None,
+                backend: SEARCH_BACKEND_NAME.to_string(),
+                embedding_model,
+                indexing_in_progress,
             })
         })
         .await
@@ -2492,6 +2948,9 @@ impl SearchService for SearchServiceImpl {
                 ann_chunk_count: 0,
                 parked_count: 0,
                 error: Some(err),
+                backend: SEARCH_BACKEND_NAME.to_string(),
+                embedding_model: String::new(),
+                indexing_in_progress: 0,
             })),
         }
     }
@@ -2511,6 +2970,41 @@ mod tests {
         assert_eq!(strip_root("/", "/foo/bar"), "foo/bar");
         assert_eq!(strip_root("/root", "/root/a/b"), "a/b");
         assert_eq!(strip_root("/root/", "/root/a/b"), "a/b");
+    }
+
+    #[test]
+    fn zone_has_ann_dir_fails_closed_on_inspection_errors() {
+        // Review R9: only positive absence (NotFound) may read false —
+        // a permission/metadata failure must read "ANN may exist" so
+        // outage-time indexing keeps documents retryable instead of
+        // finalizing over vectors it merely could not see.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let manager = IndexManager::with_root(tmp.path().to_path_buf());
+
+        // Absent zone root: positive absence.
+        assert!(!zone_has_ann_dir(&manager, "fresh-zone"));
+
+        // Present with an ann dir: present.
+        std::fs::create_dir_all(manager.zone_root("z").join("ann-mock-v2")).unwrap();
+        assert!(zone_has_ann_dir(&manager, "z"));
+
+        // Present without ann dirs: absent.
+        std::fs::create_dir_all(manager.zone_root("kw-only")).unwrap();
+        assert!(!zone_has_ann_dir(&manager, "kw-only"));
+
+        // Unreadable zone root (unix): inspection failure ⇒ assume present.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let locked = manager.zone_root("locked");
+            std::fs::create_dir_all(&locked).unwrap();
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+            let verdict = zone_has_ann_dir(&manager, "locked");
+            // Restore perms BEFORE asserting so tempdir cleanup works
+            // even on failure.
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+            assert!(verdict, "permission failure must read as ANN-present");
+        }
     }
 
     #[test]

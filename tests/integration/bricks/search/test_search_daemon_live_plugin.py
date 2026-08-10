@@ -66,6 +66,7 @@ class _MinimalSearchRequest:
         recency: str = "",
         recency_weight: float = 0.0,
         recency_half_life_days: float = 0.0,
+        path_prefix_boosts: dict[str, float] | None = None,
     ) -> None:
         self.query = query
         self.search_type = search_type
@@ -79,6 +80,9 @@ class _MinimalSearchRequest:
         self.recency = recency
         self.recency_weight = recency_weight
         self.recency_half_life_days = recency_half_life_days
+        # #4620: the proxy's _request_to_pb reads this unconditionally —
+        # duck-typed stand-ins must keep pace with SearchRequest.
+        self.path_prefix_boosts = path_prefix_boosts
 
 
 @pytest.fixture(scope="module")

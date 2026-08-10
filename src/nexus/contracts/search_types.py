@@ -97,6 +97,13 @@ class SearchRequest:
     # their own embed attempt (hybrid degrades to keyword-only immediately)
     # instead of re-hammering a degraded embedding provider once per query.
     embedding_unavailable: bool = False
+    # Path-prefix score multipliers applied post-fusion by the plugin
+    # (#4544 tier boost, rewired for P12 in #4620). Keys are in the
+    # plugin's wire shape — slash-wrapped directory prefixes ("/docs/")
+    # or "" for zone-wide — longest starts_with match wins. None/{} skips
+    # the plugin's boost pass entirely. Built from the zone's
+    # path_contexts rows by ``prefix_boosts_from_records``.
+    path_prefix_boosts: dict[str, float] | None = None
 
 
 @dataclass(frozen=True, kw_only=True)

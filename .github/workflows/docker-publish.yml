@@ -20,8 +20,36 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository_owner }}/nexus
+  # Plugin-host image (#4613): nexusd-cluster + signed search plugin.
+  # Post-P12 the Rust plugin is the sole search backend, so a published
+  # server image without a published plugin-host image cannot serve
+  # search — the two are tagged from the same commit so deployments can
+  # pin the pairing by digest.
+  CLUSTER_IMAGE_NAME: ${{ github.repository_owner }}/nexusd-cluster
 
 jobs:
+  # Review R3: a workflow_dispatch custom tag is pushed as the
+  # immutable staging reference BEFORE the smoke — so it must never be
+  # allowed to name a public release tag, or the smoke gate is
+  # bypassed by typing "edge" into the dispatch box.
+  validate-inputs:
+    name: Validate dispatch inputs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject reserved release tags as custom dispatch tags
+        env:
+          CUSTOM_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          if [ -z "$CUSTOM_TAG" ]; then
+            echo "no custom tag — nothing to validate"
+            exit 0
+          fi
+          if printf '%s' "$CUSTOM_TAG" | grep -qE '^(edge|stable|latest|v?[0-9]+(\.[0-9]+)*.*)$'; then
+            echo "::error::custom tag '$CUSTOM_TAG' is a reserved release tag — release tags are only applied by promote-tags AFTER the e2e smoke passes"
+            exit 1
+          fi
+          echo "custom tag '$CUSTOM_TAG' accepted"
+
   # Fan out amd64 and arm64 onto native GitHub-hosted runners; emit one
   # push-by-digest image per platform. QEMU-emulated multi-arch on a
   # single ubuntu-latest runner is 5-10x slower than native and times
@@ -30,6 +58,7 @@ jobs:
   # See docs: https://docs.docker.com/build/ci/github-actions/multi-platform/
   build-platform:
     name: Build ${{ matrix.platform }}
+    needs: [validate-inputs]
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -89,6 +118,8 @@ jobs:
     name: Build & push multi-arch image
     needs: [build-platform]
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -110,19 +141,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Review R2 (#4613 ask 3): this job pushes ONLY the immutable
+      # staging reference (commit SHA, or the dispatch's custom tag).
+      # Every mutable/public tag — edge, stable, latest, semver — is
+      # promoted by the promote-tags job AFTER the e2e smoke passes,
+      # so a broken image can no longer land on a tag the public pulls.
       - name: Determine image tags
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            # For tagged releases: v1.2.3 -> 1.2.3, latest, stable
-            type=semver,pattern={{version}}
-            type=raw,value=stable,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
-            # For main, develop, or tagged releases: edge (e2e-edge job always pulls :edge)
-            type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/tags/v') }}
-            # For manual dispatch: custom tag or SHA
             type=raw,value=${{ github.event.inputs.tag }},enable=${{ github.event.inputs.tag != '' }}
             type=sha,prefix=,enable=${{ github.event.inputs.tag == '' }}
 
@@ -147,15 +176,167 @@ jobs:
           docker buildx imagetools inspect "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}"
 
   # ---------------------------------------------------------------------------
-  # E2E smoke tests against the edge image (develop + tagged releases)
-  # Starts a Nexus container, runs init, then exercises the permissions demo
-  # and build-perf e2e scripts.  Failures block the workflow so issues are
-  # caught early.
+  # Plugin-host image (#4613): nexusd-cluster + signed nexus-search-plugin
+  # baked into /plugins.  Built from dockerfiles/Dockerfile.nexusd-cluster-plugins
+  # (self-contained — cluster binary from the pinned nexus-vfs rev, plugin
+  # cdylib from this repo, Ed25519 signing in-build) and published with the
+  # SAME tag set as the server image so every server tag has a matching
+  # plugin-host tag from the same commit.
+  # ---------------------------------------------------------------------------
+  build-cluster-platform:
+    name: Build cluster ${{ matrix.platform }}
+    needs: [validate-inputs]
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check plugin signing key availability
+        env:
+          PLUGIN_SIGNING_PRIVKEY: ${{ secrets.PLUGIN_SIGNING_PRIVKEY }}
+        run: |
+          if [ -z "$PLUGIN_SIGNING_PRIVKEY" ]; then
+            echo "::error::PLUGIN_SIGNING_PRIVKEY secret is not available — cannot sign the plugin, and an unsigned plugin would only defer the failure to daemon boot."
+            exit 1
+          fi
+
+      - name: Read NEXUS_VFS_REV from Cargo.toml
+        id: vfs_rev
+        run: |
+          sha=$(grep -oP '(?<=rev = ")[a-f0-9]{40}' Cargo.toml | sort -u | head -1)
+          if [ -z "$sha" ]; then
+            echo "::error::Could not parse nexus-vfs SHA from Cargo.toml"
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout nexus-vfs source at pinned SHA
+        uses: actions/checkout@v4
+        with:
+          repository: nexi-lab/nexus-vfs
+          ref: ${{ steps.vfs_rev.outputs.sha }}
+          path: nexus-vfs-src
+          fetch-depth: 1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Normalize platform pair (for artifact name)
+        id: pair
+        run: |
+          pair="${{ matrix.platform }}"
+          echo "value=${pair//\//-}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: dockerfiles/Dockerfile.nexusd-cluster-plugins
+          build-contexts: |
+            nexus-vfs-src=nexus-vfs-src
+          secrets: |
+            plugin_signing_key=${{ secrets.PLUGIN_SIGNING_PRIVKEY }}
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.CLUSTER_IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true,oci-mediatypes=true
+          cache-from: type=gha,scope=cluster-publish-${{ steps.pair.outputs.value }}
+          cache-to: type=gha,mode=max,scope=cluster-publish-${{ steps.pair.outputs.value }},ignore-error=true
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-cluster-publish-${{ steps.pair.outputs.value }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  push-cluster-manifest:
+    name: Push multi-arch cluster image
+    needs: [build-cluster-platform]
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-cluster-publish-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Immutable staging reference only — mutable tags are promoted
+      # after the smoke by promote-tags (same rule as the server image).
+      - name: Determine image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.CLUSTER_IMAGE_NAME }}
+          tags: |
+            type=raw,value=${{ github.event.inputs.tag }},enable=${{ github.event.inputs.tag != '' }}
+            type=sha,prefix=,enable=${{ github.event.inputs.tag == '' }}
+
+      - name: Create manifest list and push
+        working-directory: /tmp/digests
+        run: |
+          mapfile -t image_tags < <(jq -r '.tags[]' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+          tag_args=()
+          for tag in "${image_tags[@]}"; do
+            tag_args+=("-t" "$tag")
+          done
+          digest_args=()
+          for digest in *; do
+            digest_args+=("${{ env.REGISTRY }}/${{ env.CLUSTER_IMAGE_NAME }}@sha256:${digest}")
+          done
+          docker buildx imagetools create \
+            "${tag_args[@]}" \
+            "${digest_args[@]}"
+
+      - name: Inspect
+        run: |
+          docker buildx imagetools inspect "${{ env.REGISTRY }}/${{ env.CLUSTER_IMAGE_NAME }}:${{ steps.meta.outputs.version }}"
+
+  # ---------------------------------------------------------------------------
+  # E2E smoke tests against the just-pushed IMMUTABLE image references.
+  # Runs for EVERY publishing trigger (develop, main, tags, dispatch) —
+  # review R2: a publish path that skips the smoke can ship a plugin
+  # that never loaded.  Mutable tags (edge/stable/latest/semver) are
+  # only promoted by promote-tags after this job passes.
   # ---------------------------------------------------------------------------
   e2e-edge:
     name: E2E edge smoke tests
-    needs: build-and-push
-    if: github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/tags/v')
+    needs: [build-and-push, push-cluster-manifest]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     services:
@@ -190,55 +371,14 @@ jobs:
       # The edge image is Python-server-only (no plugin baked in), so
       # the smoke tests that assert auto-index-on-write (sections 9+10
       # of test_build_perf_e2e.py) need a plugin process reachable at
-      # NEXUS_SEARCH_PLUGIN_TARGET.  Reuse the search-plugin-e2e
-      # compose so the plugin build + signing pipeline stays SSOT.
+      # NEXUS_SEARCH_PLUGIN_TARGET.
+      #
+      # #4613: the sidecar now runs the PUBLISHED plugin-host image
+      # (pushed by push-cluster-manifest earlier in this workflow)
+      # instead of an in-workflow build — the smoke validates the
+      # exact artifact the public pulls, so a tag can no longer pass
+      # e2e using an image that doesn't exist outside CI.
       # ---------------------------------------------------------------
-      - name: Set up Docker Buildx (for cluster image)
-        uses: docker/setup-buildx-action@v3
-
-      - name: Read NEXUS_VFS_REV from Cargo.toml
-        id: vfs_rev
-        run: |
-          sha=$(grep -oP '(?<=rev = ")[a-f0-9]{40}' Cargo.toml | sort -u | head -1)
-          if [ -z "$sha" ]; then
-            echo "::error::Could not parse nexus-vfs SHA from Cargo.toml"
-            exit 1
-          fi
-          echo "sha=$sha" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout nexus-vfs source at pinned SHA
-        uses: actions/checkout@v4
-        with:
-          repository: nexi-lab/nexus-vfs
-          ref: ${{ steps.vfs_rev.outputs.sha }}
-          path: nexus-vfs-src
-          fetch-depth: 1
-
-      - name: Build nexusd-cluster image (for plugin sidecar)
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: dockerfiles/Dockerfile.nexusd-cluster
-          build-contexts: |
-            nexus-vfs-src=nexus-vfs-src
-          load: true
-          tags: nexusd-cluster:latest
-          # Share cache scope with search-plugin-e2e so this stage
-          # comes up warm on most runs (cold build is ~10 min).
-          cache-from: type=gha,scope=search-plugin-cluster
-          cache-to: type=gha,scope=search-plugin-cluster,mode=max
-
-      - name: Build search-plugin-test image
-        env:
-          BUILDX_BUILDER: default
-          PLUGIN_SIGNING_PRIVKEY: ${{ secrets.PLUGIN_SIGNING_PRIVKEY }}
-        run: |
-          if [ -z "$PLUGIN_SIGNING_PRIVKEY" ]; then
-            echo "::error::PLUGIN_SIGNING_PRIVKEY secret is not available."
-            exit 1
-          fi
-          docker compose -f dockerfiles/docker-compose.search-plugin-e2e.yml build node
-
       - name: Prepare shared workspace volume
         run: |
           # Both containers see the same /workspace bytes.  Post-P12
@@ -250,16 +390,26 @@ jobs:
 
       - name: Start search-plugin sidecar on 127.0.0.1:2126
         run: |
-          # Compose with the edge-override so both the plugin sidecar
-          # and nexus-e2e see the same bytes at /workspace (see
-          # dockerfiles/docker-compose.search-plugin-e2e.edge-override.yml).
-          docker compose \
-            -f dockerfiles/docker-compose.search-plugin-e2e.yml \
-            -f dockerfiles/docker-compose.search-plugin-e2e.edge-override.yml \
-            up -d node
-          # Wait for the plugin's gRPC bind to be reachable from the host
-          # (compose maps 2126:2126 so --network host of nexus-e2e sees
-          # the same port).
+          # Same single-node topology + flags as the search-plugin-e2e
+          # compose's bootstrap entrypoint, but running the published
+          # image.  Reachable 0.0.0.0 bind + --no-tls trips the
+          # loopback auth invariant; this is a trusted CI smoke, so
+          # take the sanctioned escape.
+          docker run -d --name nexus-search-plugin-node \
+            -p 2126:2126 \
+            -e NEXUS_HOSTNAME=node \
+            -e NEXUS_ADVERTISE_ADDR=127.0.0.1:2126 \
+            -e RUST_LOG=info,nexus_raft=info,kernel::plugins=debug,plugins=debug \
+            -v nexus-shared-workspace:/workspace \
+            "${{ env.REGISTRY }}/${{ env.CLUSTER_IMAGE_NAME }}:${{ needs.push-cluster-manifest.outputs.version }}" \
+            --bind-addr 0.0.0.0:2126 \
+            --data-dir /app/data \
+            --no-tls \
+            --insecure-no-auth \
+            --plugin-dir /plugins
+          # Wait for the plugin's gRPC bind to be reachable from the
+          # host (2126:2126 mapping so --network host of nexus-e2e
+          # sees the same port).
           deadline=$((SECONDS + 120))
           while [ $SECONDS -lt $deadline ]; do
             if timeout 1 bash -c '</dev/tcp/127.0.0.1/2126' 2>/dev/null; then
@@ -269,10 +419,7 @@ jobs:
             sleep 2
           done
           echo "::error::Search plugin sidecar failed to bind 127.0.0.1:2126 within 120s"
-          docker compose \
-            -f dockerfiles/docker-compose.search-plugin-e2e.yml \
-            -f dockerfiles/docker-compose.search-plugin-e2e.edge-override.yml \
-            logs --tail=200 node
+          docker logs --tail=200 nexus-search-plugin-node || true
           exit 1
 
       - name: Start Nexus edge container
@@ -302,7 +449,7 @@ jobs:
             -e NEXUS_SEARCH_PLUGIN_TARGET=127.0.0.1:2126 \
             -v /tmp/nexus-data:/app/data \
             -v nexus-shared-workspace:/workspace \
-            ghcr.io/nexi-lab/nexus:edge
+            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-and-push.outputs.version }}"
 
           # Wait for server to be ready
           echo "Waiting for Nexus to start..."
@@ -509,6 +656,83 @@ jobs:
             -e NEXUS_PROFILE=remote \
             nexus-e2e nexus search query "Nexus Core" --path /workspace/demo/herb --mode hybrid --limit 1 || true
 
+      # ---------------------------------------------------------------
+      # Search HTTP contract smoke (#4616/#4617) — UNCONDITIONAL.
+      # The full build-perf script below needs VFS gRPC and is skipped
+      # when the edge image lacks it, which previously meant a tag
+      # could publish without ANY check that the plugin actually
+      # LOADED (TCP bind alone doesn't prove dlopen + signature
+      # verification succeeded) or that the repaired wire contracts
+      # hold.  This step needs only HTTP, so it always runs: it FAILS
+      # the workflow when /search/health is not healthy/degraded (the
+      # server→plugin gRPC link end-to-end) or when the /index,
+      # /stats, and /query/batch response shapes drift.
+      # ---------------------------------------------------------------
+      - name: Search HTTP contract smoke
+        run: |
+          docker exec \
+            -e NEXUS_URL=http://127.0.0.1:2026 \
+            -e NEXUS_API_KEY="${NEXUS_API_KEY}" \
+            -i nexus-e2e python3 - <<'PY'
+          import json, os, urllib.request
+
+          url, key = os.environ["NEXUS_URL"], os.environ["NEXUS_API_KEY"]
+
+          def http(method, path, body=None):
+              req = urllib.request.Request(
+                  f"{url}{path}",
+                  data=json.dumps(body).encode() if body is not None else None,
+                  headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                  method=method,
+              )
+              resp = urllib.request.urlopen(req, timeout=60)
+              return resp.status, json.loads(resp.read().decode())
+
+          failures = []
+
+          # 1. Plugin actually loaded: the server-side probe + live link.
+          st, health = http("GET", "/api/v2/search/health")
+          if health.get("status") not in ("healthy", "degraded"):
+              failures.append(f"plugin link not healthy: {health}")
+          for k in ("initialized", "daemon_initialized", "backend",
+                    "bm25_index_loaded", "db_pool_ready", "zoekt_available"):
+              if k not in health:
+                  failures.append(f"health missing contract key {k!r}: {health}")
+
+          # 2. /index count is a plain int + zoneId casing (#4617).
+          st, idx = http("POST", "/api/v2/search/index",
+                         {"documents": [{"path": "/workspace/demo/README.md",
+                                         "text": "contract smoke seed doc"}]})
+          if st != 200 or idx.get("count") != 1 or "zoneId" not in idx or "skippedCount" not in idx:
+              failures.append(f"index contract drift (want count==1 int + zoneId + skippedCount): status={st} body={idx}")
+
+          # 3. /stats identity + visibility fields (#4617/#4623).
+          st, stats = http("GET", "/api/v2/search/stats")
+          for k in ("initialized", "backend", "embedding_model", "indexing_in_progress"):
+              if k not in stats:
+                  failures.append(f"stats missing contract key {k!r}: {stats}")
+
+          # 4. /query/batch answers with per-entry error semantics (#4616/#4612).
+          st, batch = http("POST", "/api/v2/search/query/batch",
+                           {"queries": [{"q": "contract smoke seed", "type": "keyword", "limit": 3},
+                                        {"q": "bad", "limit": 0}]})
+          entries = batch.get("queries", [])
+          if st != 200 or len(entries) != 2:
+              failures.append(f"batch endpoint broken: status={st} body={batch}")
+          else:
+              if "error" in entries[0]:
+                  failures.append(f"batch valid entry carries error: {entries[0]}")
+              if "error" not in entries[1]:
+                  failures.append(f"batch invalid spec missing per-entry error: {entries[1]}")
+
+          if failures:
+              print("SEARCH CONTRACT SMOKE FAILED:")
+              for f in failures:
+                  print(f"  - {f}")
+              raise SystemExit(1)
+          print("search contract smoke OK (health/index/stats/batch)")
+          PY
+
       - name: Run build perf e2e
         if: steps.vfs_grpc.outputs.available == 'true'
         run: |
@@ -529,12 +753,163 @@ jobs:
           echo "Last 200 container log lines:"
           docker logs nexus-e2e 2>&1 | tail -200 || true
 
+      - name: Collect sidecar logs on failure
+        if: failure() || cancelled()
+        run: |
+          echo "Search-plugin sidecar (published image) last 200 log lines:"
+          docker logs --tail=200 nexus-search-plugin-node 2>&1 || true
+
       - name: Cleanup
         if: always()
         run: |
           docker rm -f nexus-e2e 2>/dev/null || true
-          docker compose \
-            -f dockerfiles/docker-compose.search-plugin-e2e.yml \
-            -f dockerfiles/docker-compose.search-plugin-e2e.edge-override.yml \
-            down -v --remove-orphans 2>/dev/null || true
+          docker rm -f nexus-search-plugin-node 2>/dev/null || true
           docker volume rm -f nexus-shared-workspace 2>/dev/null || true
+
+  # ---------------------------------------------------------------------------
+  # Tag promotion (review R2, #4613 ask 3): mutable/public tags — edge,
+  # stable, latest, semver — are applied ONLY after the e2e smoke passed
+  # against the immutable staging references.  A broken build therefore
+  # leaves every public tag pointing at the last good image instead of
+  # shipping and going red after the fact.  Dispatch runs publish only
+  # their custom/SHA tag, so there is nothing to promote there.
+  # ---------------------------------------------------------------------------
+  promote-tags:
+    name: Promote release tags
+    needs: [build-and-push, push-cluster-manifest, e2e-edge]
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine promotion tags (server image)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            # For tagged releases: v1.2.3 -> 1.2.3, latest, stable
+            type=semver,pattern={{version}}
+            type=raw,value=stable,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            # For main, develop, or tagged releases: edge
+            type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/tags/v') }}
+
+      - name: Determine promotion tags (cluster image)
+        id: cluster_meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.CLUSTER_IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=raw,value=stable,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/tags/v') }}
+
+      # Paired promotion (review R3): the server/plugin-host pair must
+      # move in lockstep.  Registries offer no cross-repo transaction,
+      # so: capture the cluster tags' PRIOR digests, promote cluster
+      # first, then server; if the server promotion fails, restore the
+      # cluster tags to their prior digests so the public pair never
+      # stays split.  (A pull landing inside the small promote window
+      # can still observe a mismatch — deployments needing a hard
+      # guarantee pin both images by digest per
+      # docs/deployment/search-plugin.md.)
+      # DOCKER_METADATA_OUTPUT_JSON holds the LAST metadata-action
+      # invocation — both tag sets are pinned explicitly instead.
+      - name: Promote paired release tags (rollback on partial failure)
+        env:
+          SERVER_SOURCE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-and-push.outputs.version }}
+          CLUSTER_SOURCE: ${{ env.REGISTRY }}/${{ env.CLUSTER_IMAGE_NAME }}:${{ needs.push-cluster-manifest.outputs.version }}
+          SERVER_TAGS_JSON: ${{ steps.meta.outputs.json }}
+          CLUSTER_TAGS_JSON: ${{ steps.cluster_meta.outputs.json }}
+        run: |
+          # Strict mode (review R5): an unguarded cluster-promotion
+          # failure previously fell through to server promotion,
+          # leaving the pair split behind a green step.  Every
+          # promotion is now explicitly branch-guarded; -e catches
+          # anything unguarded, pipefail catches jq/inspect pipes.
+          set -euo pipefail
+          promote() {
+            local source="$1" tags_json="$2"
+            local tag_args=()
+            while IFS= read -r tag; do
+              tag_args+=("-t" "$tag")
+            done < <(jq -r '.tags[]' <<< "$tags_json")
+            docker buildx imagetools create "${tag_args[@]}" "$source"
+          }
+
+          # Symmetric snapshot + rollback for ONE image repo (review
+          # R6/R7).  Snapshot is FAIL-CLOSED: only a positively
+          # identified manifest-not-found marks a tag as new; any
+          # other inspect failure (network/auth/registry) aborts the
+          # step BEFORE any promotion, so rollback never acts on a
+          # guessed state.  Rollback restores prior digests only —
+          # GHCR's package API deletes whole VERSIONS (a version
+          # carries EVERY tag aliased to that manifest, including the
+          # immutable staging SHA), so freshly minted tags are never
+          # API-deleted; they are reported for manual removal instead.
+          snapshot() {
+            # $1 = tags_json; echoes "tag digest" lines (digest empty = new)
+            local tag digest err
+            while IFS= read -r tag; do
+              if digest=$(docker buildx imagetools inspect "$tag" --format '{{.Manifest.Digest}}' 2>/tmp/inspect-err); then
+                printf '%s %s\n' "$tag" "$digest"
+              else
+                err=$(cat /tmp/inspect-err)
+                if printf '%s' "$err" | grep -qiE 'not found|manifest unknown|MANIFEST_UNKNOWN|no such manifest'; then
+                  printf '%s \n' "$tag"
+                else
+                  echo "::error::could not snapshot $tag before promotion (treating as fatal, not as a new tag): $err" >&2
+                  return 1
+                fi
+              fi
+            done < <(jq -r '.tags[]' <<< "$1")
+          }
+
+          rollback_image() {
+            # $1 = source ref (for base repo), $2 = snapshot lines
+            local base="${1%%:*}"
+            while IFS=' ' read -r tag digest; do
+              [ -z "$tag" ] && continue
+              if [ -n "$digest" ]; then
+                docker buildx imagetools create -t "$tag" "${base}@${digest}" || \
+                  echo "::error::rollback of $tag failed — repair manually"
+              else
+                echo "::error::tag $tag was freshly minted by this failed promotion — remove it manually (GHCR has no safe single-tag delete; the package-version API would also delete the staging SHA aliased to the same manifest)"
+              fi
+            done <<< "$2"
+          }
+
+          if ! cluster_snapshot=$(snapshot "$CLUSTER_TAGS_JSON"); then
+            exit 1
+          fi
+          if ! server_snapshot=$(snapshot "$SERVER_TAGS_JSON"); then
+            exit 1
+          fi
+
+          if ! promote "$CLUSTER_SOURCE" "$CLUSTER_TAGS_JSON"; then
+            echo "::error::cluster tag promotion failed — rolling back partial cluster tags"
+            rollback_image "$CLUSTER_SOURCE" "$cluster_snapshot"
+            exit 1
+          fi
+
+          if ! promote "$SERVER_SOURCE" "$SERVER_TAGS_JSON"; then
+            echo "::error::server tag promotion failed — rolling back BOTH image repos (a multi-tag promote may have partially applied)"
+            rollback_image "$SERVER_SOURCE" "$server_snapshot"
+            rollback_image "$CLUSTER_SOURCE" "$cluster_snapshot"
+            exit 1
+          fi
+
+      - name: Inspect promoted tags
+        run: |
+          docker buildx imagetools inspect "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}"
+          docker buildx imagetools inspect "${{ env.REGISTRY }}/${{ env.CLUSTER_IMAGE_NAME }}:${{ steps.cluster_meta.outputs.version }}"

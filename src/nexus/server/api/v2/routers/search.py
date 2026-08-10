@@ -29,6 +29,7 @@ Rewritten for txtai backend (#2663):
   instrumentation so callers can detect silent-undercount scenarios.
 """
 
+import inspect
 import logging
 import time
 from typing import Any
@@ -158,16 +159,51 @@ from nexus.server.api.v2.routers._search_serialize import (  # noqa: E402
 
 @router.get("/health")
 async def search_daemon_health(
+    request: Request,
     search_daemon: Any = Depends(_get_optional_search_daemon),
 ) -> dict[str, Any]:
-    """Health check for the search daemon."""
+    """Health check for the search daemon.
+
+    #4617: the P12 pivot reduced this to the plugin's raw
+    ``{status, detail}`` pair, breaking health pollers keyed on the
+    pre-pivot fields.  Restore the contract keys with honest post-P12
+    values — ``backend`` is now ``rust-plugin``, ``bm25_index_loaded``
+    means the plugin's FTS leg answers, ``db_pool_ready`` reports the
+    server's own async session factory (the daemon no longer owns a
+    pool), and ``zoekt_available`` is always False (retired from this
+    path).  Absent keys break consumers; changed values don't.
+    """
+    db_pool_ready = getattr(request.app.state, "async_session_factory", None) is not None
     if not search_daemon:
         return {
             "status": "disabled",
             "daemon_enabled": False,
             "message": "Search daemon unavailable (set NEXUS_SEARCH_DAEMON=false to disable)",
+            "initialized": False,
+            "daemon_initialized": False,
+            "backend": None,
+            "bm25_index_loaded": False,
+            "db_pool_ready": db_pool_ready,
+            "zoekt_available": False,
         }
-    health: dict[str, Any] = await search_daemon.get_health()
+    try:
+        health: dict[str, Any] = await search_daemon.get_health()
+    except Exception as exc:  # plugin died after the boot probe — health must not 500
+        logger.warning("search health probe failed: %s", exc)
+        health = {"status": "unavailable", "detail": f"{type(exc).__name__}: {exc}"}
+    status = health.get("status", "unavailable")
+    initialized = bool(getattr(search_daemon, "is_initialized", False))
+    health.update(
+        {
+            "initialized": initialized,
+            "daemon_initialized": initialized,
+            "backend": "rust-plugin",
+            # "degraded" = semantic leg missing, keyword still answers.
+            "bm25_index_loaded": status in ("healthy", "degraded"),
+            "db_pool_ready": db_pool_ready,
+            "zoekt_available": False,
+        }
+    )
     return health
 
 
@@ -175,8 +211,16 @@ async def search_daemon_health(
 async def search_daemon_stats(
     search_daemon: Any = Depends(_get_search_daemon),
 ) -> dict[str, Any]:
-    """Get search daemon statistics."""
+    """Get search daemon statistics.
+
+    #4617: on top of the plugin's counters (which carry the
+    ``backend`` / ``embedding_model`` identity fields and the #4623
+    ``indexing_in_progress`` build signal), restore the pre-pivot
+    ``initialized`` key stats consumers gate on.
+    """
     stats: dict[str, Any] = await search_daemon.get_stats()
+    stats["initialized"] = bool(getattr(search_daemon, "is_initialized", False))
+    stats.setdefault("backend", "rust-plugin")
     return stats
 
 
@@ -341,6 +385,73 @@ async def search_query(
     return await run_zone_scoped(_get_zone_registry(request), target_zone, _work)
 
 
+async def _resolve_path_prefix_boosts(request: Request, zone_id: str | None) -> dict[str, float]:
+    """Load the zone's path_contexts weight rows into the plugin's boost map (#4620).
+
+    Pre-P12 the daemon applied tier weights itself post-fusion (#4544);
+    post-P12 the plugin owns that pass but only sees what the server stamps
+    into ``QueryRequest.path_prefix_boosts`` — without this resolver the
+    weight rows are dead config (CRUD works, ranking silently ignores them).
+
+    Rows are served through a per-event-loop :class:`PathContextCache`
+    (fingerprint-checked, so an upsert is visible on the next query without
+    a per-request full table scan). Fail-open: any store or lookup error
+    logs once and returns ``{}`` — search must keep working unboosted.
+    """
+    import asyncio
+
+    from nexus.bricks.search.path_context import PathContextCache, prefix_boosts_from_records
+    from nexus.contracts.constants import ROOT_ZONE_ID
+
+    try:
+        from nexus.server.api.v2.routers.path_contexts import _get_store
+
+        store = await _get_store(request)
+    except HTTPException:
+        # No DB URL and no injected store — this deployment has no
+        # path-context storage at all, so there are no rows to apply.
+        return {}
+    except Exception:
+        logger.warning(
+            "path-context store unavailable; searching without tier boosts",
+            exc_info=True,
+        )
+        return {}
+
+    try:
+        # One cache per event loop, mirroring _get_store's per-loop store
+        # discipline (same loop ⇒ same store ⇒ the cache never mixes
+        # engines across loops).
+        loop = asyncio.get_running_loop()
+        caches: dict[Any, PathContextCache] | None = getattr(
+            request.app.state, "_search_prefix_boost_caches", None
+        )
+        if caches is None:
+            caches = {}
+            request.app.state._search_prefix_boost_caches = caches
+        for stale in [lk for lk in caches if not hasattr(lk, "is_closed") or lk.is_closed()]:
+            caches.pop(stale, None)
+        cache = caches.get(loop)
+        if cache is None:
+            cache = PathContextCache(store=store)
+            caches[loop] = cache
+
+        effective_zone = zone_id or ROOT_ZONE_ID
+        await cache.refresh_if_stale(effective_zone)
+        return prefix_boosts_from_records(cache.snapshot_zone(effective_zone) or [])
+    except Exception:
+        # Warn once per process, not per query — a deployment whose DB
+        # lacks the path_contexts table would otherwise log on every
+        # search. Once is enough to surface the dead-config risk.
+        if not getattr(request.app.state, "_prefix_boost_resolution_warned", False):
+            request.app.state._prefix_boost_resolution_warned = True
+            logger.warning(
+                "path-context boost resolution failed; searching without tier boosts",
+                exc_info=True,
+            )
+        return {}
+
+
 async def _handle_single_zone_search(
     *,
     request: Request,
@@ -467,22 +578,45 @@ async def _handle_single_zone_search(
                 response["routing"] = routing_info
             return response
 
-        results = await search_daemon.search(
-            SearchRequest(
-                query=q,
-                search_type=search_type,
-                limit=fetch_limit,
-                path_filter=path_filter,
-                alpha=alpha,
-                fusion_method=fusion_method,
-                rrf_k=rrf_k,
-                zone_id=zone_id,
-                expand=expand,
-                recency=recency,
-                recency_weight=recency_weight,
-                recency_half_life_days=recency_half_life_days,
-            )
+        # #4620: stamp the zone's path_contexts weight rows onto the
+        # request — the plugin applies them post-fusion (longest-prefix
+        # multiplier) and keys its query cache on them.
+        path_prefix_boosts = await _resolve_path_prefix_boosts(request, zone_id)
+
+        search_request = SearchRequest(
+            query=q,
+            search_type=search_type,
+            limit=fetch_limit,
+            path_filter=path_filter,
+            alpha=alpha,
+            fusion_method=fusion_method,
+            rrf_k=rrf_k,
+            zone_id=zone_id,
+            expand=expand,
+            recency=recency,
+            recency_weight=recency_weight,
+            recency_half_life_days=recency_half_life_days,
+            path_prefix_boosts=path_prefix_boosts or None,
         )
+        # Review R4: preserve the plugin's per-query error so a
+        # degraded backend is distinguishable from "no matches" — the
+        # additive ``error`` field mirrors the batch endpoint's
+        # per-entry contract (#4612).  ``search_with_error`` is the
+        # P12 proxy's surface; mocked/legacy daemons without it keep
+        # the plain degrade-to-empty path.
+        backend_error: str | None = None
+        search_with_error = getattr(search_daemon, "search_with_error", None)
+        # Bound-method guard (review R5): Magic/AsyncMock daemons
+        # fabricate this attribute (AsyncMock's even passes
+        # iscoroutinefunction), so only a REAL class-defined coroutine
+        # method — bound, with __func__ — takes the error-preserving
+        # path; every mock shape falls back to plain search().
+        if search_with_error is not None and inspect.iscoroutinefunction(
+            getattr(search_with_error, "__func__", None)
+        ):
+            results, backend_error = await search_with_error(search_request)
+        else:
+            results = await search_daemon.search(search_request)
 
         # Prefer the request-local snapshot carried by SearchDaemon results.
         # Fall back to the legacy daemon field for older/mocked search daemons.
@@ -536,6 +670,10 @@ async def _handle_single_zone_search(
         # Truthy-only so default responses stay byte-identical (#3778 shape).
         if semantic_degraded_flag:
             response["semantic_degraded"] = True
+        # Additive per-query backend error (review R4) — absence means
+        # the result set is genuine, mirroring the batch contract.
+        if backend_error:
+            response["error"] = backend_error
         if routing_info:
             response["routing"] = routing_info
         return response
@@ -601,11 +739,18 @@ async def _handle_federated_search(
 
     registry = getattr(request.app.state, "zone_search_registry", None)
     per_file_rebac = getattr(request.app.state, "federated_per_file_rebac", True)
+
+    # #4620: each local federated leg gets its zone's path-context tier
+    # weights, resolved through the same cache the single-zone path uses.
+    async def _boosts_for_zone(zone_id: str) -> dict[str, float]:
+        return await _resolve_path_prefix_boosts(request, zone_id)
+
     dispatcher = FederatedSearchDispatcher(
         daemon=search_daemon,
         rebac=rebac,
         registry=registry,
         enable_per_file_rebac=per_file_rebac,
+        path_prefix_boosts_resolver=_boosts_for_zone,
     )
     fed_response = await dispatcher.search(
         query=q,
@@ -748,10 +893,11 @@ async def search_query_batch(
 
     Applies the same ReBAC file-level permission filter as ``/query``
     (Decision #17), over-fetching via ``_compute_rebac_fetch_limit`` and
-    trimming to each query's requested ``limit`` after filtering. All
-    unique query texts are embedded in ONE ``embed_batch`` call and the
-    inner searches run concurrently (``NEXUS_SEARCH_BATCH_CONCURRENCY``,
-    default 8).
+    trimming to each query's requested ``limit`` after filtering. The
+    Rust plugin runs the inner searches concurrently
+    (``NEXUS_SEARCH_BATCH_CONCURRENCY``, default 4, clamped 1..=16) and
+    pre-warms its query-embedding cache for duplicate embedding-needing
+    query texts, so a fan-out batch embeds each unique text once (#4611).
     """
     from nexus.contracts.constants import ROOT_ZONE_ID
 
@@ -807,29 +953,37 @@ async def search_query_batch(
     valid: list[tuple[int, ParsedBatchSpec]] = [
         (i, p) for i, p in enumerate(parsed) if isinstance(p, ParsedBatchSpec)
     ]
-    fetch_specs = [
-        {
-            "query": spec.query,
-            "search_type": spec.search_type,
-            "limit": _compute_rebac_fetch_limit(
+    # #4620: batch is single-zone, so the zone's path_contexts tier
+    # weights resolve ONCE and stamp onto every inner request — the
+    # same boost map single /query sends, cached per event loop.
+    path_prefix_boosts = await _resolve_path_prefix_boosts(request, zone_id) if valid else {}
+    # Same typed request shape as the single-query path — the P12 proxy's
+    # batch_search takes SearchRequest objects (zone_id rides inside each
+    # request, exactly like single ``search()``), so every tuning knob the
+    # single route forwards reaches the plugin here too (#4612).
+    fetch_requests = [
+        SearchRequest(
+            query=spec.query,
+            search_type=spec.search_type,
+            limit=_compute_rebac_fetch_limit(
                 spec.limit, has_enforcer=permission_enforcer is not None
             ),
-            "path_filter": spec.path_filter,
-            "alpha": spec.alpha,
-            "fusion_method": spec.fusion_method,
-            "rrf_k": spec.rrf_k,
-            "expand": spec.expand,
-            "recency": spec.recency,
-            "recency_weight": spec.recency_weight,
-            "recency_half_life_days": spec.recency_half_life_days,
-        }
+            path_filter=spec.path_filter,
+            alpha=spec.alpha,
+            fusion_method=spec.fusion_method,
+            rrf_k=spec.rrf_k,
+            zone_id=zone_id,
+            expand=spec.expand,
+            recency=spec.recency,
+            recency_weight=spec.recency_weight,
+            recency_half_life_days=spec.recency_half_life_days,
+            path_prefix_boosts=path_prefix_boosts or None,
+        )
         for _, spec in valid
     ]
 
     t0 = time.perf_counter()
-    raw_results = (
-        await search_daemon.batch_search(fetch_specs, zone_id=zone_id) if fetch_specs else []
-    )
+    raw_results = await search_daemon.batch_search(fetch_requests) if fetch_requests else []
     elapsed_ms = (time.perf_counter() - t0) * 1000
 
     result_by_index: dict[int, Any] = {
@@ -1556,6 +1710,33 @@ async def search_index_documents(
     documents: list[dict[str, Any]] = body.get("documents", [])
     if not documents:
         raise HTTPException(status_code=400, detail="No documents provided")
+    # Tenant boundary (review R2, CRITICAL): the request is authorized
+    # for ONE zone, but each document dict may carry its own zone_id,
+    # which the plugin treats as an override — a writer authorized for
+    # zone A could inject documents into zone B's index.  Reject any
+    # explicit mismatch loudly; matching/absent per-doc zones are
+    # normalized to the authorized zone (the proxy also force-stamps
+    # it as defense in depth).
+    for doc in documents:
+        doc_zone = doc.get("zone_id") if isinstance(doc, dict) else None
+        if doc_zone and doc_zone != zone_id:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"document zone_id {doc_zone!r} does not match the authorized zone {zone_id!r}"
+                ),
+            )
+
+    # WRITE authorization (review R3): explicit indexing REPLACES the
+    # searchable content other readers see at these paths — a read-only
+    # principal must not be able to poison results.  Same
+    # admin-bypass / per-path ReBAC WRITE / fail-closed-without-enforcer
+    # gate the sibling index-directory mutation routes use.
+    from nexus.server.api.v2.routers._search_indexed_dirs import _require_admin_or_path_write
+
+    for doc in documents:
+        doc_path = doc.get("path", "") if isinstance(doc, dict) else ""
+        await _require_admin_or_path_write(request, auth_result, zone_id, doc_path or "/")
 
     async def _work() -> dict[str, Any]:
         try:
@@ -1566,9 +1747,20 @@ async def search_index_documents(
                 status_code=500,
                 detail=f"Index persistence failed: {type(exc).__name__}: {exc}",
             ) from exc
-        # ``getattr`` fallbacks keep int-returning test doubles working.
-        count = getattr(result, "indexed", result)
-        skipped = list(getattr(result, "skipped", []) or [])
+        # #4617: the P12 proxy returns a dict, the pre-P12 daemon
+        # returned an ExplicitIndexResult, and int-returning test
+        # doubles exist — normalize ALL of them so ``count`` stays the
+        # plain int the pre-pivot wire contract promised (the dict
+        # previously leaked whole into ``count`` because ``getattr``
+        # doesn't read dict keys).
+        if isinstance(result, dict):
+            count = result.get("indexed", 0)
+            skipped = list(result.get("skipped") or [])
+            skipped_count = int(result.get("skipped_count") or 0)
+        else:
+            count = getattr(result, "indexed", result)
+            skipped = list(getattr(result, "skipped", []) or [])
+            skipped_count = int(getattr(result, "skipped_count", 0) or 0)
         if skipped:
             raise HTTPException(
                 status_code=409,
@@ -1582,7 +1774,17 @@ async def search_index_documents(
                     "zone_id": zone_id,
                 },
             )
-        return {"status": "indexed", "count": count, "zone_id": zone_id}
+        # ``zoneId`` casing is the pre-P12 public contract (#4617);
+        # ``skippedCount`` is additive (review R2) — content-level
+        # skips (empty/whitespace/chunkless docs) were previously
+        # invisible behind a bare 200, so a caller couldn't tell
+        # "all indexed" from "half the batch was empty".
+        return {
+            "status": "indexed",
+            "count": int(count),
+            "skippedCount": skipped_count,
+            "zoneId": zone_id,
+        }
 
     return await run_zone_scoped(_get_zone_registry(request), _auth_target_zone(auth_result), _work)
 
@@ -1595,14 +1797,37 @@ async def search_refresh_notify(
     auth_result: dict[str, Any] = Depends(require_auth),
     search_daemon: Any = Depends(_get_search_daemon),
 ) -> dict[str, Any]:
-    """Notify the search daemon of a file change for index refresh."""
+    """Notify the search daemon of a file change for index refresh.
+
+    ``delete`` is a real index MUTATION in the plugin (drops the
+    path's chunks + records a tombstone), so this route enforces the
+    same admin-or-path-WRITE gate as ``/search/index`` (review R4) —
+    a read-only principal must not be able to evict indexed paths.
+    The authorized zone is stamped onto the notification explicitly;
+    pre-fix it was dropped and every notification mutated the ROOT
+    zone's index regardless of the caller's zone.
+    """
     from nexus.server.dependencies import get_operation_context
+
+    if change_type not in ("create", "update", "delete"):
+        raise HTTPException(status_code=400, detail=f"invalid change_type {change_type!r}")
 
     op_context = get_operation_context(auth_result)
     target_zone = target_zone_for_context(op_context, {"path": path})
 
+    from nexus.server.api.v2.routers._search_indexed_dirs import _require_admin_or_path_write
+
+    await _require_admin_or_path_write(request, auth_result, target_zone or "", path or "/")
+
     async def _work() -> dict[str, Any]:
-        await search_daemon.notify_file_change(path, change_type)
+        try:
+            await search_daemon.notify_file_change(path, change_type, zone_id=target_zone)
+        except Exception as exc:
+            logger.error("notify_file_change failed: %s", exc, exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Index refresh notification failed: {type(exc).__name__}: {exc}",
+            ) from exc
         return {"status": "accepted", "path": path, "change_type": change_type}
 
     return await run_zone_scoped(_get_zone_registry(request), target_zone, _work)

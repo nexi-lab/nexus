@@ -533,13 +533,141 @@ def main() -> None:
     print(f"    p50={p50:.1f}ms  p95={p95:.1f}ms", flush=True)
 
     # =========================================================================
-    # Sections 9 + 10 (auto-index-on-write + delete-through-index) live at
-    # tests/e2e/docker/test_search_plugin.py against the sidecar cluster
-    # (Docker Compose in .github/workflows/search-plugin-e2e.yml).  Edge
-    # smoke exercises the Python edge topology, which post-P12 (#4598) has
-    # no writer→plugin content path: the plugin sidecar receives absolute
-    # virtual paths via NotifyFileChange but has no way to fetch the
-    # bytes (nexus-e2e writes land in the record store, not on a shared
+    section("9. SEARCH HTTP CONTRACTS + BATCH SEAM (#4616 / #4612 / #4617)")
+    # =========================================================================
+    # The P12 pivot shipped /query/batch with a router→proxy signature the
+    # proxy couldn't accept — a hard 500 on EVERY call — and no server-side
+    # e2e existed to catch it (#4616).  It also drifted the /search/index,
+    # /search/health, and /search/stats wire contracts (#4617).  This
+    # section pins all of it through the full HTTP surface, self-seeding
+    # the plugin index first so the assertions hold on ANY topology (the
+    # demo-init pipeline seeds the legacy engine, not the P12 plugin).
+
+    def _http(method: str, url: str, body: dict | None = None):
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(body).encode() if body is not None else None,
+            headers={
+                "Authorization": f"Bearer {ADMIN_KEY}",
+                "Content-Type": "application/json",
+            },
+            method=method,
+        )
+        resp = urllib.request.urlopen(req, timeout=60)
+        return resp.status, json.loads(resp.read().decode())
+
+    from nexus.cli.commands.demo_data import DEMO_FILES
+
+    readme_text = next(
+        (text for path, text, _d in DEMO_FILES if path == "/workspace/demo/README.md"),
+        "Nexus Demo Workspace fallback seed text",
+    )
+
+    step("POST /api/v2/search/index (self-seed + #4617 count/zoneId contract)")
+    try:
+        status_code, body = _http(
+            "POST",
+            f"{NEXUS_URL}/api/v2/search/index",
+            {"documents": [{"path": "/workspace/demo/README.md", "text": readme_text}]},
+        )
+        print(f"    response: {json.dumps(body)[:200]}", file=sys.stderr, flush=True)
+        check(
+            "index: count is a plain int",
+            status_code == 200 and body.get("count") == 1 and isinstance(body.get("count"), int),
+            json.dumps(body)[:200],
+        )
+        check("index: zoneId key casing", "zoneId" in body, json.dumps(body)[:200])
+    except Exception as e:
+        print(f"    error: {e}", file=sys.stderr, flush=True)
+        check("index: count is a plain int", False, str(e)[:200])
+        check("index: zoneId key casing", False, "request failed")
+
+    step("GET /api/v2/search/health (#4617 contract keys)")
+    try:
+        status_code, body = _http("GET", f"{NEXUS_URL}/api/v2/search/health")
+        print(f"    response: {json.dumps(body)[:300]}", file=sys.stderr, flush=True)
+        health_keys = (
+            "status",
+            "initialized",
+            "daemon_initialized",
+            "backend",
+            "bm25_index_loaded",
+            "db_pool_ready",
+            "zoekt_available",
+        )
+        missing = [k for k in health_keys if k not in body]
+        check(
+            "health: contract keys present, backend=rust-plugin",
+            status_code == 200 and not missing and body.get("backend") == "rust-plugin",
+            f"missing={missing} body={json.dumps(body)[:200]}",
+        )
+    except Exception as e:
+        print(f"    error: {e}", file=sys.stderr, flush=True)
+        check("health: contract keys present, backend=rust-plugin", False, str(e)[:200])
+
+    step("GET /api/v2/search/stats (#4617 identity + #4623 visibility fields)")
+    try:
+        status_code, body = _http("GET", f"{NEXUS_URL}/api/v2/search/stats")
+        print(f"    response: {json.dumps(body)[:300]}", file=sys.stderr, flush=True)
+        stats_keys = ("initialized", "backend", "embedding_model", "indexing_in_progress")
+        missing = [k for k in stats_keys if k not in body]
+        check(
+            "stats: identity + visibility fields present",
+            status_code == 200 and not missing,
+            f"missing={missing} body={json.dumps(body)[:200]}",
+        )
+    except Exception as e:
+        print(f"    error: {e}", file=sys.stderr, flush=True)
+        check("stats: identity + visibility fields present", False, str(e)[:200])
+
+    step("POST /api/v2/search/query/batch (valid + invalid spec)")
+    try:
+        # Keyword type on the just-seeded doc: deterministic on any
+        # topology, embedder or not (hybrid degrades keyword-only).
+        status_code, batch_payload = _http(
+            "POST",
+            f"{NEXUS_URL}/api/v2/search/query/batch",
+            {
+                "queries": [
+                    {
+                        "q": "Nexus Demo Workspace",
+                        "path": "/workspace/demo",
+                        "type": "keyword",
+                        "limit": 3,
+                    },
+                    {"q": "bad-spec", "limit": 0},
+                ]
+            },
+        )
+        entries = batch_payload.get("queries", [])
+        ok_entry = entries[0] if entries else {}
+        bad_entry = entries[1] if len(entries) > 1 else {}
+        print(f"    entries: {json.dumps(entries)[:400]}", file=sys.stderr, flush=True)
+        check("batch endpoint answers 200", status_code == 200, f"status={status_code}")
+        check(
+            "batch valid entry: genuine results, no error key",
+            "error" not in ok_entry and ok_entry.get("total", 0) >= 1,
+            json.dumps(ok_entry)[:200],
+        )
+        check(
+            "batch invalid spec: additive per-entry error",
+            "error" in bad_entry and bad_entry.get("results") == [],
+            json.dumps(bad_entry)[:200],
+        )
+    except Exception as e:
+        print(f"    error: {e}", file=sys.stderr, flush=True)
+        check("batch endpoint answers 200", False, str(e)[:200])
+        check("batch valid entry: genuine results, no error key", False, "request failed")
+        check("batch invalid spec: additive per-entry error", False, "request failed")
+
+    # =========================================================================
+    # Auto-index-on-write + delete-through-index (former sections 9 + 10)
+    # live at tests/e2e/docker/test_search_plugin.py against the sidecar
+    # cluster (Docker Compose in .github/workflows/search-plugin-e2e.yml).
+    # Edge smoke exercises the Python edge topology, which post-P12 (#4598)
+    # has no writer→plugin content path: the plugin sidecar receives
+    # absolute virtual paths via NotifyFileChange but has no way to fetch
+    # the bytes (nexus-e2e writes land in the record store, not on a shared
     # host FS).  Testing auto-index here would only cover a topology we
     # don't actually ship — the split-container edge image is being
     # retired in favour of nexusd-cluster + plugin as the single search

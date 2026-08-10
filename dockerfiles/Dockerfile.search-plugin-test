@@ -19,6 +19,10 @@
 # image so the operator gets a single image with the daemon and the
 # signed plugin in lockstep — exactly the shape the production
 # `--plugin-dir` load path exercises.
+#
+# KEEP IN SYNC: `Dockerfile.nexusd-cluster-plugins` (the published
+# plugin-host image, #4613) mirrors this builder stage — a change
+# here almost certainly belongs there too.
 
 # ---------- Builder ----------
 FROM rust:1-slim-bookworm AS builder

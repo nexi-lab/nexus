@@ -156,6 +156,27 @@ services:
       NEXUS_NATS_URL: ${NEXUS_NATS_URL:-nats://nats:4222}
       # Search
       NEXUS_SEARCH_DAEMON: ${NEXUS_SEARCH_DAEMON:-true}
+      # Post-P12 (#4598) the Rust nexus-search-plugin (hosted by
+      # nexusd-cluster --plugin-dir, or the ghcr.io/nexi-lab/nexusd-cluster
+      # image) is the SOLE search backend.  Point this at a reachable plugin
+      # host; unreachable => the server boots with search disabled
+      # (fail-soft probe).  host.docker.internal reaches a host-side plugin
+      # process from inside the container on Docker Desktop / OrbStack.
+      # See docs/deployment/search-plugin.md (#4613).
+      NEXUS_SEARCH_PLUGIN_TARGET: ${NEXUS_SEARCH_PLUGIN_TARGET:-host.docker.internal:2126}
+      # Transport security for the plugin link.  The dev default
+      # target (host.docker.internal = the machine running the
+      # container) is treated as same-machine and needs no opt-in;
+      # any OTHER non-loopback target REQUIRES
+      # NEXUS_SEARCH_PLUGIN_TLS=true (+ CA / client cert+key for
+      # mTLS) or an explicit deliberate ALLOW_INSECURE=true — no
+      # blanket default here (review R5), so pointing the target at a
+      # remote host fails closed instead of silently going plaintext.
+      NEXUS_SEARCH_PLUGIN_ALLOW_INSECURE: ${NEXUS_SEARCH_PLUGIN_ALLOW_INSECURE:-}
+      NEXUS_SEARCH_PLUGIN_TLS: ${NEXUS_SEARCH_PLUGIN_TLS:-}
+      NEXUS_SEARCH_PLUGIN_TLS_CA: ${NEXUS_SEARCH_PLUGIN_TLS_CA:-}
+      NEXUS_SEARCH_PLUGIN_TLS_CERT: ${NEXUS_SEARCH_PLUGIN_TLS_CERT:-}
+      NEXUS_SEARCH_PLUGIN_TLS_KEY: ${NEXUS_SEARCH_PLUGIN_TLS_KEY:-}
       NEXUS_TXTAI_MODEL: ${NEXUS_TXTAI_MODEL:-}
       NEXUS_TXTAI_USE_API_EMBEDDINGS: ${NEXUS_TXTAI_USE_API_EMBEDDINGS:-}
       NEXUS_TXTAI_RERANKER: ${NEXUS_TXTAI_RERANKER:-}

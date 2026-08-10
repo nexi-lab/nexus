@@ -1,0 +1,119 @@
+# Nexus Cluster + Search Plugin — the published plugin-host image
+#
+# Post-P12 (#4598) the Rust `nexus-search-plugin` cdylib, hosted by
+# `nexusd-cluster` over gRPC loopback, is the SOLE search backend for
+# the Python server image.  This Dockerfile produces the deployable
+# pairing's second half: the cluster daemon with the signed search
+# plugin baked into `/plugins/`, published to GHCR as
+# `ghcr.io/nexi-lab/nexusd-cluster` alongside the server image from
+# the same commit (#4613) so a deployment can pin both by digest.
+#
+# Self-contained by design: unlike the CI-only
+# `Dockerfile.search-plugin-test` (which layers the plugin on top of a
+# locally pre-built `nexusd-cluster:latest`), every stage lives in this
+# one file so a single `docker build` reproduces the published artifact
+# with any buildx driver — no local base image, no ordering contract:
+#
+#   docker build \
+#     -f dockerfiles/Dockerfile.nexusd-cluster-plugins \
+#     --build-context nexus-vfs-src=../nexus-vfs \
+#     --secret id=plugin_signing_key,env=PLUGIN_SIGNING_PRIVKEY \
+#     -t nexusd-cluster:latest .
+#
+# KEEP IN SYNC: the `cluster-builder` + runtime stages mirror
+# `Dockerfile.nexusd-cluster`, and the `plugin-builder` stage mirrors
+# `Dockerfile.search-plugin-test` — a change to either sibling almost
+# certainly belongs here too.
+#
+# Pinning is single-sourced in `Cargo.toml` — the plugin cdylib and the
+# cluster binary must compile against the same nexus-vfs commit for ABI
+# parity.  CI parses the SHA from Cargo.toml and checks out
+# nexi-lab/nexus-vfs at that rev as the `nexus-vfs-src` build context.
+
+# ---------- Cluster binary ----------
+FROM rust:1-slim-bookworm AS cluster-builder
+
+# protobuf-compiler: raft proto codegen shells out to system protoc.
+# python3{,-dev}: pyo3-build-config probes for an interpreter at
+# compile time.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        protobuf-compiler \
+        python3 \
+        python3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=nexus-vfs-src . /build/nexus-vfs
+
+# `--locked` respects the source tree's `Cargo.lock` — the substrate's
+# own SSOT for dependency versions (see Dockerfile.nexusd-cluster for
+# the full rationale).
+RUN cargo install \
+    --locked \
+    --path /build/nexus-vfs/rust/profiles/cluster \
+    --bin nexusd-cluster
+
+# ---------- Search plugin cdylib ----------
+FROM rust:1-slim-bookworm AS plugin-builder
+
+# python3-cryptography: sign_plugin.py imports Ed25519PrivateKey.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        protobuf-compiler \
+        python3 \
+        python3-dev \
+        python3-cryptography \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+COPY Cargo.toml Cargo.lock ./
+COPY rust ./rust
+
+RUN cargo build --release -p nexus-search-plugin
+
+# Ed25519-sign the dylib (kernel refuses unsigned plugins; PluginLoader
+# verifies against compile-time trusted keys).  The private key arrives
+# as a BuildKit secret, never a layer.
+COPY scripts/sign_plugin.py ./scripts/sign_plugin.py
+RUN --mount=type=secret,id=plugin_signing_key \
+    PLUGIN_SIGNING_PRIVKEY="$(cat /run/secrets/plugin_signing_key)" \
+    python3 scripts/sign_plugin.py target/release/libnexus_search_plugin.so
+
+# ---------- Production image ----------
+FROM debian:bookworm-slim
+
+# bash: healthchecks use `bash -c '</dev/tcp/localhost/2126'`
+# ca-certificates: outbound TLS for remote backend drivers AND the
+# plugin's remote embedding endpoint (NEXUS_SEARCH_EMBED_API_URL).
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends bash ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=cluster-builder /usr/local/cargo/bin/nexusd-cluster /usr/local/bin/
+
+# Non-root runtime user.  Pre-creates `/app/data` (raft state cache),
+# `/app/identity` (node-bound peer address book), and `/plugins` so
+# named volumes mounted at any of them inherit `nexus:nexus` ownership.
+RUN useradd -r -m -u 1000 -s /bin/bash nexus && \
+    mkdir -p /app/data /app/identity /plugins && \
+    chown -R nexus:nexus /app /plugins
+
+# Signed dylib + detached signature — PluginLoader reads `<plugin>.sig`
+# next to `<plugin>` at --plugin-dir scan time.
+COPY --from=plugin-builder --chown=nexus:nexus \
+    /build/target/release/libnexus_search_plugin.so \
+    /plugins/libnexus_search_plugin.so
+COPY --from=plugin-builder --chown=nexus:nexus \
+    /build/target/release/libnexus_search_plugin.so.sig \
+    /plugins/libnexus_search_plugin.so.sig
+
+USER nexus
+WORKDIR /app
+
+ENV NEXUS_BIND_ADDR=0.0.0.0:2126 \
+    NEXUS_DATA_DIR=/app/data \
+    NEXUS_PLUGIN_DIR=/plugins \
+    RUST_LOG=info,nexus_raft=info
+
+EXPOSE 2126
+
+ENTRYPOINT ["nexusd-cluster"]

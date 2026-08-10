@@ -103,6 +103,17 @@ pub struct IndexManager {
     /// Exactly one caller builds; the rest serve the prior snapshot
     /// (or run with an empty arm on a cold start).
     skeleton_build_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    /// Zones with an index write IN FLIGHT or a FAILED write behind
+    /// them (#4628 review R5).  ANN mutations become search-visible
+    /// before the FTS commit bumps the generation, so the epoch
+    /// alone can't see a half-applied write: writers mark the zone
+    /// dirty before touching any sink and clear it only after every
+    /// sink committed.  The query path treats a dirty zone as
+    /// "no observable epoch" — cache reads and inserts are skipped,
+    /// so mixed-sink state is never pinned for the TTL.  A failed
+    /// write leaves the flag set (fail-closed) until a later
+    /// successful write clears it.
+    dirty_zones: Mutex<std::collections::HashSet<String>>,
 }
 
 /// Cache key for the ANN index — one entry per `(zone, embedder tag)`.
@@ -147,7 +158,29 @@ impl IndexManager {
             zone_write_locks: Mutex::new(HashMap::new()),
             skeletons: Mutex::new(HashMap::new()),
             skeleton_build_locks: Mutex::new(HashMap::new()),
+            dirty_zones: Mutex::new(std::collections::HashSet::new()),
         }
+    }
+
+    /// Mark a zone's index write as in flight — call BEFORE the
+    /// first sink mutation.  See `dirty_zones`.
+    pub fn mark_zone_dirty(&self, zone_id: &str) {
+        self.dirty_zones.lock().insert(zone_id.to_string());
+    }
+
+    /// Clear the write-in-flight mark — call only after EVERY sink
+    /// (FTS + ANN + state) committed successfully.  A failed write
+    /// path must NOT call this: the flag then keeps the query cache
+    /// bypassed until a subsequent successful write repairs the
+    /// zone.
+    pub fn clear_zone_dirty(&self, zone_id: &str) {
+        self.dirty_zones.lock().remove(zone_id);
+    }
+
+    /// Is a write in flight (or a failed write unrepaired) for this
+    /// zone?  Query callers skip cache reads AND inserts while true.
+    pub fn zone_is_dirty(&self, zone_id: &str) -> bool {
+        self.dirty_zones.lock().contains(zone_id)
     }
 
     /// Handle to the given zone's write lock.  Callers hold the
@@ -485,6 +518,24 @@ mod tests {
             SkeletonAccess::Stale(_) => panic!("expected Fresh, got Stale"),
             SkeletonAccess::Building => panic!("expected Fresh, got Building"),
         }
+    }
+
+    #[test]
+    fn zone_dirty_flag_marks_clears_and_isolates_zones() {
+        // Review R5 (#4628): writers mark before the first sink
+        // mutation and clear only after every sink committed; a
+        // failed write leaves the mark so the query cache stays
+        // bypassed until a later successful write.
+        let root = tempfile::tempdir().expect("tempdir").keep();
+        let mgr = IndexManager::with_root(root);
+        assert!(!mgr.zone_is_dirty("zoneA"));
+        mgr.mark_zone_dirty("zoneA");
+        assert!(mgr.zone_is_dirty("zoneA"));
+        assert!(!mgr.zone_is_dirty("zoneB"), "zones must not share the flag");
+        mgr.clear_zone_dirty("zoneA");
+        assert!(!mgr.zone_is_dirty("zoneA"));
+        // Clearing an unmarked zone is a no-op, not a panic.
+        mgr.clear_zone_dirty("zoneB");
     }
 
     #[test]

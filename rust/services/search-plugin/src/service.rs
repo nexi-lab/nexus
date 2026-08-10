@@ -956,9 +956,13 @@ const ADJUSTMENT_OVER_FETCH_MULT: usize = 10;
 const ADJUSTMENT_FETCH_CEILING: usize = 500;
 
 /// Cap on per-query representative-chunk fetches for uncovered
-/// title hits (Python TITLE_ARM_MAX_HYDRATION_FETCH).  Hits beyond
-/// it degrade to chunk_text="" instead of unbounded FTS lookups.
-const TITLE_ARM_MAX_HYDRATION_FETCH: usize = 32;
+/// title hits.  Sized ABOVE the adjustment fetch ceiling (review
+/// R5: a 32-hit cap silently starved recency/prefix adjustments of
+/// the mtime + text they need for candidates past rank 32) — each
+/// lookup is a ~10 µs FTS TermQuery, so covering the full 500-hit
+/// adjustment pool costs single-digit milliseconds.  Locate's own
+/// candidate budgets bound the list well before this safety cap.
+const TITLE_ARM_MAX_HYDRATION_FETCH: usize = 512;
 
 /// Run the title arm's locate: skeleton lookup (building it on
 /// first use per index generation) + evidence gate.  Fail-soft —
@@ -1113,16 +1117,22 @@ fn hydrate_title_hits(
 
     title_hits
         .iter()
-        .map(|h| {
+        .filter_map(|h| {
             let (chunk_index, chunk_text, mtime_ms) =
                 if let Some(leg) = best_by_path.get(h.path.as_str()) {
                     (leg.chunk_index, leg.chunk_text.clone(), leg.mtime_ms)
                 } else if let Some(row) = fetched.get(h.path.as_str()) {
                     (row.chunk_index, row.chunk_text.clone(), row.mtime_ms)
                 } else {
-                    (0, String::new(), None)
+                    // No leg coverage AND no live FTS row: the
+                    // skeleton (fresh: drift; stale: a file deleted
+                    // or retitled since the snapshot) references a
+                    // doc the index no longer holds — DROP the hit
+                    // (review R5).  Synthesizing an empty-text
+                    // result would resurrect removed paths.
+                    return None;
                 };
-            QueryResult {
+            Some(QueryResult {
                 path: h.path.clone(),
                 chunk_index,
                 chunk_text,
@@ -1133,7 +1143,7 @@ fn hydrate_title_hits(
                 // Stamped by rrf_multi per arm vote, not here — so
                 // merged chunk-arm entries get it too.
                 title_score: None,
-            }
+            })
         })
         .collect()
 }
@@ -1214,6 +1224,13 @@ fn do_index(
     // whole at the end, so concurrent mutations would lose entries.
     let zone_lock = manager.zone_write_lock(zone_id);
     let _zone_guard = zone_lock.lock();
+    // Dirty window (#4628 review R5): ANN mutations are search-
+    // visible before the FTS commit bumps the generation, so the
+    // query cache must be bypassed from the first sink mutation
+    // until every sink committed.  Error paths deliberately leave
+    // the flag set — a half-applied write keeps the cache off until
+    // a later successful write repairs the zone.
+    manager.mark_zone_dirty(zone_id);
 
     let fts = manager
         .get_or_open(zone_id)
@@ -1320,6 +1337,7 @@ fn do_index(
     }
 
     visit_result?;
+    manager.clear_zone_dirty(zone_id);
     Ok((indexed, skipped))
 }
 
@@ -1615,6 +1633,8 @@ fn do_refresh(
     // Serialize writers per zone — same rationale as do_index.
     let zone_lock = manager.zone_write_lock(zone_id);
     let _zone_guard = zone_lock.lock();
+    // Dirty window — same rationale as do_index (review R5).
+    manager.mark_zone_dirty(zone_id);
 
     let fts = manager
         .get_or_open(zone_id)
@@ -1776,6 +1796,7 @@ fn do_refresh(
 
     visit_result?;
     counts.truncated = truncated;
+    manager.clear_zone_dirty(zone_id);
     Ok(counts)
 }
 
@@ -1814,6 +1835,8 @@ fn do_index_documents(
         // Serialize writers per zone — same rationale as do_index.
         let zone_lock = manager.zone_write_lock(&zone_id);
         let _zone_guard = zone_lock.lock();
+        // Dirty window — same rationale as do_index (review R5).
+        manager.mark_zone_dirty(&zone_id);
 
         let fts = manager
             .get_or_open(&zone_id)
@@ -1988,6 +2011,7 @@ fn do_index_documents(
             tracing::warn!(err = %e, zone = %zone_id, "index_state save failed");
         }
         cache.invalidate_zone(&zone_id);
+        manager.clear_zone_dirty(&zone_id);
     }
 
     Ok((total_indexed, total_skipped))
@@ -2018,6 +2042,12 @@ fn do_notify_file_change(
 
     match change_type {
         "delete" => {
+            // Dirty window — same rationale as do_index (review
+            // R5).  Marked only on this MUTATING arm: the no-op
+            // arms must neither set nor clear the flag, or a
+            // "skipped" ack could erase the fail-closed mark left
+            // by an earlier failed write.
+            manager.mark_zone_dirty(zone_id);
             fts.delete_all_chunks(path);
             // Only open ANN if it happens to already be there —
             // creating an empty ANN dir on a delete is
@@ -2042,6 +2072,7 @@ fn do_notify_file_change(
                 return Err(format!("delete tombstone persist failed: {e}"));
             }
             cache.invalidate_zone(zone_id);
+            manager.clear_zone_dirty(zone_id);
             Ok("accepted".to_string())
         }
         "create" | "update" | "" => {
@@ -2050,7 +2081,9 @@ fn do_notify_file_change(
             // re-index.  A future NotifyFileChangeRequest with an
             // inline text field would let us do more here, but
             // matching Python's shape means callers pair this
-            // event with a follow-up IndexDocuments.
+            // event with a follow-up IndexDocuments.  This arm
+            // mutates nothing, so it neither sets nor clears the
+            // zone's dirty mark.
             Ok("skipped".to_string())
         }
         other => Err(format!("unknown change_type: {other:?}")),
@@ -2208,14 +2241,19 @@ impl SearchService for SearchServiceImpl {
         // are stamped with the producing query's start epoch and
         // reads validate against the reader's current epoch — so a
         // commit racing any leg, the fusion, or the insert itself
-        // makes the entry unservable.  No epoch (zone unopenable)
-        // ⇒ skip the cache entirely; the query itself will surface
-        // the real error.
-        let query_epoch = self
-            .manager
-            .get_or_open(&req_for_cache.zone_id)
-            .ok()
-            .map(|fts| fts.generation_id());
+        // makes the entry unservable.  No epoch (zone unopenable,
+        // or a write in flight / failed write behind us — review
+        // R5: ANN mutations are visible before the FTS generation
+        // moves) ⇒ skip the cache entirely; the query still runs
+        // and surfaces whatever the sinks currently hold.
+        let query_epoch = if self.manager.zone_is_dirty(&req_for_cache.zone_id) {
+            None
+        } else {
+            self.manager
+                .get_or_open(&req_for_cache.zone_id)
+                .ok()
+                .map(|fts| fts.generation_id())
+        };
 
         // P7 cache check.  Zone is the auth boundary (D5), so a
         // hit here is safe to serve directly — we don't need to

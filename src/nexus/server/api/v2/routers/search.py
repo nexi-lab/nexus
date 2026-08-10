@@ -931,6 +931,10 @@ async def search_query_batch(
     valid: list[tuple[int, ParsedBatchSpec]] = [
         (i, p) for i, p in enumerate(parsed) if isinstance(p, ParsedBatchSpec)
     ]
+    # #4620: batch is single-zone, so the zone's path_contexts tier
+    # weights resolve ONCE and stamp onto every inner request — the
+    # same boost map single /query sends, cached per event loop.
+    path_prefix_boosts = await _resolve_path_prefix_boosts(request, zone_id) if valid else {}
     # Same typed request shape as the single-query path — the P12 proxy's
     # batch_search takes SearchRequest objects (zone_id rides inside each
     # request, exactly like single ``search()``), so every tuning knob the
@@ -951,6 +955,7 @@ async def search_query_batch(
             recency=spec.recency,
             recency_weight=spec.recency_weight,
             recency_half_life_days=spec.recency_half_life_days,
+            path_prefix_boosts=path_prefix_boosts or None,
         )
         for _, spec in valid
     ]

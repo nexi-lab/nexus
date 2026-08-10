@@ -556,3 +556,79 @@ class TestBatchRealProxyRoundtrip:
         assert (round(q.alpha, 6), q.rrf_k) == (0.3, 90)
         assert (q.expand, q.recency_mode) == ("macro", "on")
         assert (q.recency_weight, q.recency_half_life_days) == (1.5, 30.0)
+
+
+# ── #4620 batch lane: path_contexts tier weights ────────────────────
+
+_PATH_CONTEXTS_TABLE_SQL = """
+CREATE TABLE path_contexts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    zone_id TEXT NOT NULL DEFAULT 'root',
+    path_prefix TEXT NOT NULL,
+    description TEXT NOT NULL,
+    weight FLOAT,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(zone_id, path_prefix)
+)
+"""
+
+
+@pytest.mark.skipif(not _HAS_FASTAPI_TESTCLIENT, reason="fastapi test client not available")
+class TestBatchPrefixBoostsWiring:
+    """Batch lane of #4620 — weighted path_contexts rows must reach EVERY
+    inner batch request, same as the single-query wiring pinned by
+    ``tests/unit/server/api/v2/test_search_prefix_boosts_wiring.py``.
+    Without this the batch endpoint silently ignores operator tier
+    weights — the same dead-config class the single lane fixed.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _no_db_env(self, monkeypatch):
+        # Force _get_store's app.state.path_context_store fallback — a DB
+        # URL in the environment would spin up a real engine instead.
+        monkeypatch.delenv("DATABASE_URL", raising=False)
+        monkeypatch.delenv("NEXUS_DATABASE_URL", raising=False)
+
+    def _make_store_app(self, daemon):
+        import asyncio
+
+        from sqlalchemy.ext.asyncio import (
+            AsyncSession,
+            async_sessionmaker,
+            create_async_engine,
+        )
+
+        from nexus.bricks.search.path_context import PathContextStore
+
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:", future=True)
+
+        async def _setup():
+            async with engine.begin() as conn:
+                await conn.exec_driver_sql(_PATH_CONTEXTS_TABLE_SQL)
+            factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+            store = PathContextStore(async_session_factory=factory, db_type="sqlite")
+            await store.upsert("eng", "docs", "tier-1 docs", weight=5.0)
+            return store
+
+        store = asyncio.new_event_loop().run_until_complete(_setup())
+        app = _build_batch_app(daemon)
+        app.state.path_context_store = store
+        return app
+
+    def test_weighted_row_reaches_every_batch_request(self):
+        daemon = MagicMock()
+        daemon.batch_search = AsyncMock(return_value=[[], []])
+        app = self._make_store_app(daemon)
+
+        with TestClient(app) as client:
+            resp = client.post(
+                "/api/v2/search/query/batch",
+                json={"queries": [{"q": "alpha"}, {"q": "beta"}]},
+            )
+
+        assert resp.status_code == 200, resp.text
+        (specs,) = daemon.batch_search.call_args.args
+        assert len(specs) == 2
+        for spec in specs:
+            assert spec.path_prefix_boosts == {"/docs/": 5.0}

@@ -89,6 +89,331 @@ pub fn extract_title(chunk0_text: &str) -> Option<String> {
     None
 }
 
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::LazyLock;
+
+use crate::fts_index::{FtsIndex, IndexError};
+
+// ── Python-parity budgets (pre-P12 daemon.py L146-241) ───────────
+//
+// TITLE_ARM_MAX_TOKEN_DF: a query token whose posting bucket exceeds
+// this is non-discriminative zone-wide — skipped (prefix-scoped
+// queries get a second chance via the in-prefix filter).
+pub const TITLE_ARM_MAX_TOKEN_DF: usize = 1024;
+// Aggregate selection budgets: per-token DF caps do not bound the
+// UNION across tokens.  Buckets are consumed most-selective-first
+// until either budget is exhausted.
+pub const TITLE_ARM_MAX_QUERY_TOKENS: usize = 12;
+pub const TITLE_ARM_MAX_CANDIDATES: usize = 4096;
+// Prefix-scoped scan budget: an oversized bucket is scanned IN FULL
+// or not at all (partial scans of unordered data would make recall
+// nondeterministic).
+pub const TITLE_ARM_MAX_PREFIX_SCAN: usize = 200_000;
+// Evidence gate: one real title-token match (2.0) qualifies a hit
+// for the fusion arm; a lone incidental path-token overlap (1.0)
+// does not.  Applied by the service-layer caller, not locate().
+pub const TITLE_ARM_MIN_SCORE: f32 = 2.0;
+
+/// Function-word query tokens carry no title evidence — without
+/// this, "how to configure authentication" scores 4.0 against an
+/// unrelated "How To Guide".  Verbatim from Python
+/// `_LOCATE_QUERY_STOPWORDS`.
+static LOCATE_QUERY_STOPWORDS: LazyLock<std::collections::HashSet<&'static str>> =
+    LazyLock::new(|| {
+        [
+            "a", "an", "the", "and", "or", "of", "to", "in", "on", "at", "for", "with",
+            "from", "by", "as", "is", "are", "was", "were", "be", "been", "do", "does",
+            "did", "can", "could", "should", "would", "will", "how", "what", "why",
+            "when", "where", "which", "who", "whom", "it", "its", "this", "that",
+            "these", "those", "i", "me", "my", "you", "your", "we", "our", "they",
+            "their",
+        ]
+        .into_iter()
+        .collect()
+    });
+
+/// One ranked locate() hit — the raw title-arm row before hydration.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TitleHit {
+    pub path: String,
+    pub score: f32,
+    pub title: Option<String>,
+}
+
+struct SkeletonDoc {
+    title: Option<String>,
+    title_tokens: BTreeSet<String>,
+    path_tokens: BTreeSet<String>,
+}
+
+/// In-memory per-zone skeleton index.  Immutable once built — the
+/// manager swaps whole snapshots keyed by FTS generation instead of
+/// mutating in place (the Rust analogue of Python's build-aside +
+/// swap bootstrap, minus the journal: queries between commits see
+/// the previous consistent snapshot).
+pub struct ZoneSkeleton {
+    generation_id: u64,
+    docs: BTreeMap<String, SkeletonDoc>,
+    title_postings: HashMap<String, BTreeSet<String>>,
+    path_postings: HashMap<String, BTreeSet<String>>,
+    exact_title: HashMap<String, BTreeSet<String>>,
+}
+
+fn round4(x: f32) -> f32 {
+    (x * 10_000.0).round() / 10_000.0
+}
+
+impl ZoneSkeleton {
+    /// Build from a full chunk-0 stored-doc scan of the zone's FTS
+    /// index.  Runs on the blocking pool (caller's job); cost is one
+    /// store pass — ms-scale for typical zones, and paid at most
+    /// once per index generation.
+    pub fn build(fts: &FtsIndex) -> Result<Self, IndexError> {
+        let mut docs: BTreeMap<String, SkeletonDoc> = BTreeMap::new();
+        let generation_id = fts.for_each_chunk0(|path, chunk0| {
+            let title = extract_title(chunk0);
+            let title_tokens: BTreeSet<String> = title
+                .as_deref()
+                .map(|t| tokenize(t).into_iter().collect())
+                .unwrap_or_default();
+            let path_tokens: BTreeSet<String> = tokenize(path).into_iter().collect();
+            docs.insert(
+                path.to_string(),
+                SkeletonDoc {
+                    title,
+                    title_tokens,
+                    path_tokens,
+                },
+            );
+        })?;
+        Ok(Self::from_docs(generation_id, docs))
+    }
+
+    fn from_docs(generation_id: u64, docs: BTreeMap<String, SkeletonDoc>) -> Self {
+        let mut title_postings: HashMap<String, BTreeSet<String>> = HashMap::new();
+        let mut path_postings: HashMap<String, BTreeSet<String>> = HashMap::new();
+        let mut exact_title: HashMap<String, BTreeSet<String>> = HashMap::new();
+        for (path, doc) in &docs {
+            for t in &doc.title_tokens {
+                title_postings.entry(t.clone()).or_default().insert(path.clone());
+            }
+            for t in &doc.path_tokens {
+                path_postings.entry(t.clone()).or_default().insert(path.clone());
+            }
+            if let Some(title) = &doc.title {
+                let norm = tokenize(title).join(" ");
+                if !norm.is_empty() {
+                    exact_title.entry(norm).or_default().insert(path.clone());
+                }
+            }
+        }
+        Self {
+            generation_id,
+            docs,
+            title_postings,
+            path_postings,
+            exact_title,
+        }
+    }
+
+    /// The FTS searcher generation this snapshot was built from —
+    /// the manager's cache key (#4628).
+    pub fn generation_id(&self) -> u64 {
+        self.generation_id
+    }
+
+    pub fn doc_count(&self) -> usize {
+        self.docs.len()
+    }
+
+    /// BM25-lite path+title search — the port of Python
+    /// `SearchDaemon.locate()` (pre-P12 daemon.py L2158).  Scores
+    /// each candidate by token overlap: title × 2 + path × 1.
+    /// Candidate selection is inverted-index driven with per-field
+    /// DF caps, an oversized-bucket prefix rescue, and aggregate
+    /// token/candidate budgets.  Ordering: score desc, path asc —
+    /// deterministic across restarts (RRF ranks depend on it).
+    pub fn locate(&self, q: &str, limit: usize, path_prefix: Option<&str>) -> Vec<TitleHit> {
+        if q.trim().is_empty() || limit == 0 {
+            return Vec::new();
+        }
+        let raw_tokens: BTreeSet<String> = tokenize(q).into_iter().collect();
+        if raw_tokens.is_empty() {
+            return Vec::new();
+        }
+        let query_tokens: BTreeSet<&str> = raw_tokens
+            .iter()
+            .map(String::as_str)
+            .filter(|t| !LOCATE_QUERY_STOPWORDS.contains(*t))
+            .collect();
+
+        if query_tokens.is_empty() {
+            // Stopword-only query ("How To") — content-token selection
+            // is impossible, but an EXACT normalized title match is
+            // still unambiguous evidence.
+            let norm_q = tokenize(q).join(" ");
+            let Some(bucket) = self.exact_title.get(&norm_q) else {
+                return Vec::new();
+            };
+            if bucket.len() > TITLE_ARM_MAX_TOKEN_DF {
+                return Vec::new();
+            }
+            let mut hits = Vec::new();
+            for path in bucket {
+                if let Some(p) = path_prefix {
+                    if !path.starts_with(p) {
+                        continue;
+                    }
+                }
+                let Some(doc) = self.docs.get(path) else { continue };
+                let score = 2.0 * doc.title_tokens.len() as f32;
+                hits.push(TitleHit {
+                    path: path.clone(),
+                    score: round4(score),
+                    title: doc.title.clone(),
+                });
+                if hits.len() >= limit {
+                    break;
+                }
+            }
+            return hits;
+        }
+
+        // Per-token, per-field posting buckets under the DF cap;
+        // oversized buckets are set aside for the prefix rescue.
+        // field_rank 0 = title, 1 = path (stable tie-break order).
+        let mut token_buckets: BTreeMap<&str, Vec<Vec<&String>>> = BTreeMap::new();
+        let mut token_min_df: BTreeMap<&str, usize> = BTreeMap::new();
+        let mut oversized: Vec<(usize, &str, usize, &BTreeSet<String>)> = Vec::new();
+        for token in &query_tokens {
+            for (field_rank, index) in
+                [&self.title_postings, &self.path_postings].into_iter().enumerate()
+            {
+                let Some(bucket) = index.get(*token) else { continue };
+                if bucket.len() > TITLE_ARM_MAX_TOKEN_DF {
+                    if path_prefix.is_some() {
+                        oversized.push((bucket.len(), token, field_rank, bucket));
+                    }
+                    continue;
+                }
+                token_buckets.entry(token).or_default().push(bucket.iter().collect());
+                let e = token_min_df.entry(token).or_insert(usize::MAX);
+                *e = (*e).min(bucket.len());
+            }
+        }
+
+        // Oversized second chance: scan whole buckets (never partial)
+        // in stable (size, token, field) order under a shared budget;
+        // keep the in-prefix subset when it fits the DF cap.
+        if let Some(prefix) = path_prefix {
+            let mut scan_budget = TITLE_ARM_MAX_PREFIX_SCAN;
+            oversized.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(b.1)).then(a.2.cmp(&b.2)));
+            for (size, token, _field_rank, big) in oversized {
+                if size > scan_budget {
+                    continue;
+                }
+                scan_budget -= size;
+                let filtered: Vec<&String> =
+                    big.iter().filter(|p| p.starts_with(prefix)).collect();
+                if filtered.is_empty() || filtered.len() > TITLE_ARM_MAX_TOKEN_DF {
+                    continue;
+                }
+                let e = token_min_df.entry(token).or_insert(usize::MAX);
+                *e = (*e).min(filtered.len());
+                token_buckets.entry(token).or_default().push(filtered);
+            }
+        }
+
+        // Most-selective-first token expansion under aggregate budgets.
+        let mut selected: Vec<&str> = token_buckets.keys().copied().collect();
+        selected.sort_by_key(|t| (token_min_df[t], *t));
+        selected.truncate(TITLE_ARM_MAX_QUERY_TOKENS);
+
+        let mut candidates: BTreeSet<&String> = BTreeSet::new();
+        'tokens: for token in &selected {
+            for bucket in &token_buckets[*token] {
+                let remaining = TITLE_ARM_MAX_CANDIDATES.saturating_sub(candidates.len());
+                if remaining == 0 {
+                    break 'tokens;
+                }
+                // Buckets are sorted (BTreeSet-derived) — a capped
+                // take is deterministic.
+                candidates.extend(bucket.iter().take(remaining).copied());
+            }
+            if candidates.len() >= TITLE_ARM_MAX_CANDIDATES {
+                break;
+            }
+        }
+
+        let mut scored: Vec<(f32, &String, &Option<String>)> = Vec::new();
+        for path in candidates {
+            if let Some(p) = path_prefix {
+                if !path.starts_with(p) {
+                    continue;
+                }
+            }
+            let Some(doc) = self.docs.get(path) else { continue };
+            let title_overlap = doc
+                .title_tokens
+                .iter()
+                .filter(|t| query_tokens.contains(t.as_str()))
+                .count();
+            let path_overlap = doc
+                .path_tokens
+                .iter()
+                .filter(|t| query_tokens.contains(t.as_str()))
+                .count();
+            let score = title_overlap as f32 * 2.0 + path_overlap as f32;
+            if score > 0.0 {
+                scored.push((score, path, &doc.title));
+            }
+        }
+        scored.sort_by(|a, b| {
+            b.0.partial_cmp(&a.0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.1.cmp(b.1))
+        });
+        scored.truncate(limit);
+        scored
+            .into_iter()
+            .map(|(score, path, title)| TitleHit {
+                path: path.clone(),
+                score: round4(score),
+                title: title.clone(),
+            })
+            .collect()
+    }
+}
+
+#[cfg(test)]
+impl ZoneSkeleton {
+    /// Test-only: empty skeleton for synthetic DF-cap fixtures.
+    pub fn empty_for_test() -> Self {
+        Self::from_docs(0, BTreeMap::new())
+    }
+
+    /// Test-only: insert one doc and rebuild postings.  O(n) per
+    /// call — fine for fixtures, not exposed to production code.
+    pub fn insert_doc_for_test(&mut self, path: &str, title: Option<&str>) {
+        let title = title.map(str::to_string);
+        let title_tokens: BTreeSet<String> = title
+            .as_deref()
+            .map(|t| tokenize(t).into_iter().collect())
+            .unwrap_or_default();
+        let path_tokens: BTreeSet<String> = tokenize(path).into_iter().collect();
+        let mut docs = std::mem::take(&mut self.docs);
+        docs.insert(
+            path.to_string(),
+            SkeletonDoc {
+                title,
+                title_tokens,
+                path_tokens,
+            },
+        );
+        *self = Self::from_docs(self.generation_id, docs);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -148,5 +473,148 @@ mod tests {
         // Heading past the 2 KiB window is not a title.
         let text = format!("{}\n# Late Heading\n", "x".repeat(SKELETON_HEAD_BYTES));
         assert_eq!(extract_title(&text), None);
+    }
+
+    // ── ZoneSkeleton build + locate ────────────────────────────
+
+    use crate::fts_index::FtsIndex;
+
+    fn fts_with(docs: &[(&str, u32, &str)]) -> std::sync::Arc<FtsIndex> {
+        let dir = tempfile::tempdir().expect("tempdir").keep().join("fts");
+        let idx = FtsIndex::open_or_create(dir).expect("open");
+        for (path, chunk_index, text) in docs {
+            idx.add_document(path, *chunk_index, text, Some(1)).expect("add");
+        }
+        idx.commit().expect("commit");
+        idx
+    }
+
+    fn atlas_skeleton() -> ZoneSkeleton {
+        // The acceptance workload shape from the Python plan doc:
+        // /designs/atlas.md titled "Atlas Design Doc", plus decoys.
+        let fts = fts_with(&[
+            ("/designs/atlas.md", 0, "# Atlas Design Doc\nbody of atlas"),
+            ("/designs/atlas.md", 1, "more atlas body"),
+            ("/notes/other.md", 0, "# Meeting Notes\nunrelated"),
+            ("/src/parseUserLogin.py", 0, "def parse():\n    pass"),
+        ]);
+        ZoneSkeleton::build(&fts).expect("build")
+    }
+
+    #[test]
+    fn build_indexes_titles_and_paths_from_chunk0() {
+        let sk = atlas_skeleton();
+        assert_eq!(sk.doc_count(), 3, "one skeleton doc per path, chunk 1 ignored");
+    }
+
+    #[test]
+    fn locate_scores_title_2x_plus_path_1x() {
+        let sk = atlas_skeleton();
+        let hits = sk.locate("atlas design doc", 10, None);
+        assert_eq!(hits[0].path, "/designs/atlas.md");
+        // 3 title-token overlaps × 2.0 + 1 path-token overlap ("atlas")
+        // — same 7.0 the Python acceptance test pinned.
+        assert!((hits[0].score - 7.0).abs() < 1e-4, "got {}", hits[0].score);
+        assert_eq!(hits[0].title.as_deref(), Some("Atlas Design Doc"));
+    }
+
+    #[test]
+    fn locate_path_only_match_scores_1_per_token() {
+        let sk = atlas_skeleton();
+        // "login" hits only path tokens of parseUserLogin.py.
+        let hits = sk.locate("login", 10, None);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].path, "/src/parseUserLogin.py");
+        assert!((hits[0].score - 1.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn locate_stopwords_stripped_from_query() {
+        let sk = atlas_skeleton();
+        // "the atlas design doc" — "the" contributes nothing.
+        let with = sk.locate("the atlas design doc", 10, None);
+        let without = sk.locate("atlas design doc", 10, None);
+        assert_eq!(with, without);
+    }
+
+    #[test]
+    fn locate_stopword_only_query_uses_exact_title_match() {
+        let fts = fts_with(&[
+            ("/docs/howto.md", 0, "# How To\nguide body"),
+            ("/docs/other.md", 0, "# Setup Guide\nbody"),
+        ]);
+        let sk = ZoneSkeleton::build(&fts).expect("build");
+        // Every query token is a stopword → only an exact normalized
+        // title match returns; score = 2 × title-token-count.
+        let hits = sk.locate("How To", 10, None);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].path, "/docs/howto.md");
+        assert!((hits[0].score - 4.0).abs() < 1e-4);
+        // Non-matching stopword-only query → nothing.
+        assert!(sk.locate("the who", 10, None).is_empty());
+    }
+
+    #[test]
+    fn locate_path_prefix_filters() {
+        let sk = atlas_skeleton();
+        assert!(sk.locate("atlas design doc", 10, Some("/notes/")).is_empty());
+        assert_eq!(
+            sk.locate("atlas design doc", 10, Some("/designs/"))[0].path,
+            "/designs/atlas.md"
+        );
+    }
+
+    #[test]
+    fn locate_ordering_is_deterministic_on_ties() {
+        let fts = fts_with(&[
+            ("/b/report.md", 0, "# Q3 Report\nbody"),
+            ("/a/report.md", 0, "# Q3 Report\nbody"),
+        ]);
+        let sk = ZoneSkeleton::build(&fts).expect("build");
+        let hits = sk.locate("q3 report", 10, None);
+        assert_eq!(hits.len(), 2);
+        // Equal scores → ascending path.
+        assert_eq!(hits[0].path, "/a/report.md");
+        assert_eq!(hits[1].path, "/b/report.md");
+    }
+
+    #[test]
+    fn locate_empty_query_and_no_hit_query() {
+        let sk = atlas_skeleton();
+        assert!(sk.locate("", 10, None).is_empty());
+        assert!(sk.locate("   ", 10, None).is_empty());
+        assert!(sk.locate("zzz qqq nomatch", 10, None).is_empty());
+    }
+
+    #[test]
+    fn locate_respects_limit() {
+        let fts = fts_with(&[
+            ("/a.md", 0, "# widget alpha\nx"),
+            ("/b.md", 0, "# widget beta\nx"),
+            ("/c.md", 0, "# widget gamma\nx"),
+        ]);
+        let sk = ZoneSkeleton::build(&fts).expect("build");
+        assert_eq!(sk.locate("widget", 2, None).len(), 2);
+    }
+
+    #[test]
+    fn locate_df_cap_drops_flooded_tokens_but_prefix_rescues() {
+        // A token flooding > TITLE_ARM_MAX_TOKEN_DF paths is dropped
+        // zone-wide; with a path_prefix the oversized bucket gets a
+        // second chance via the in-prefix filter.  Build synthetic
+        // skeleton directly (indexing 1025 tantivy docs in a unit
+        // test is slow).
+        let mut sk = ZoneSkeleton::empty_for_test();
+        for i in 0..(TITLE_ARM_MAX_TOKEN_DF + 1) {
+            sk.insert_doc_for_test(&format!("/flood/doc{i}"), Some("Common Term"));
+        }
+        sk.insert_doc_for_test("/special/doc", Some("Common Term"));
+        // Zone-wide: "common term" postings exceed the DF cap → no hits.
+        assert!(sk.locate("common term", 10, None).is_empty());
+        // Prefix-scoped: the oversized bucket is filtered to the
+        // prefix (1 doc ≤ cap) and the hit comes back.
+        let hits = sk.locate("common term", 10, Some("/special/"));
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].path, "/special/doc");
     }
 }

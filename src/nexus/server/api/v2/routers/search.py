@@ -29,6 +29,7 @@ Rewritten for txtai backend (#2663):
   instrumentation so callers can detect silent-undercount scenarios.
 """
 
+import inspect
 import logging
 import time
 from typing import Any
@@ -582,23 +583,36 @@ async def _handle_single_zone_search(
         # multiplier) and keys its query cache on them.
         path_prefix_boosts = await _resolve_path_prefix_boosts(request, zone_id)
 
-        results = await search_daemon.search(
-            SearchRequest(
-                query=q,
-                search_type=search_type,
-                limit=fetch_limit,
-                path_filter=path_filter,
-                alpha=alpha,
-                fusion_method=fusion_method,
-                rrf_k=rrf_k,
-                zone_id=zone_id,
-                expand=expand,
-                recency=recency,
-                recency_weight=recency_weight,
-                recency_half_life_days=recency_half_life_days,
-                path_prefix_boosts=path_prefix_boosts or None,
-            )
+        search_request = SearchRequest(
+            query=q,
+            search_type=search_type,
+            limit=fetch_limit,
+            path_filter=path_filter,
+            alpha=alpha,
+            fusion_method=fusion_method,
+            rrf_k=rrf_k,
+            zone_id=zone_id,
+            expand=expand,
+            recency=recency,
+            recency_weight=recency_weight,
+            recency_half_life_days=recency_half_life_days,
+            path_prefix_boosts=path_prefix_boosts or None,
         )
+        # Review R4: preserve the plugin's per-query error so a
+        # degraded backend is distinguishable from "no matches" — the
+        # additive ``error`` field mirrors the batch endpoint's
+        # per-entry contract (#4612).  ``search_with_error`` is the
+        # P12 proxy's surface; mocked/legacy daemons without it keep
+        # the plain degrade-to-empty path.
+        backend_error: str | None = None
+        search_with_error = getattr(search_daemon, "search_with_error", None)
+        # iscoroutinefunction guard: a MagicMock daemon fabricates a
+        # non-awaitable attribute here — only the real proxy (or an
+        # async test double) takes the error-preserving path.
+        if inspect.iscoroutinefunction(search_with_error):
+            results, backend_error = await search_with_error(search_request)
+        else:
+            results = await search_daemon.search(search_request)
 
         # Prefer the request-local snapshot carried by SearchDaemon results.
         # Fall back to the legacy daemon field for older/mocked search daemons.
@@ -652,6 +666,10 @@ async def _handle_single_zone_search(
         # Truthy-only so default responses stay byte-identical (#3778 shape).
         if semantic_degraded_flag:
             response["semantic_degraded"] = True
+        # Additive per-query backend error (review R4) — absence means
+        # the result set is genuine, mirroring the batch contract.
+        if backend_error:
+            response["error"] = backend_error
         if routing_info:
             response["routing"] = routing_info
         return response
@@ -1775,14 +1793,37 @@ async def search_refresh_notify(
     auth_result: dict[str, Any] = Depends(require_auth),
     search_daemon: Any = Depends(_get_search_daemon),
 ) -> dict[str, Any]:
-    """Notify the search daemon of a file change for index refresh."""
+    """Notify the search daemon of a file change for index refresh.
+
+    ``delete`` is a real index MUTATION in the plugin (drops the
+    path's chunks + records a tombstone), so this route enforces the
+    same admin-or-path-WRITE gate as ``/search/index`` (review R4) —
+    a read-only principal must not be able to evict indexed paths.
+    The authorized zone is stamped onto the notification explicitly;
+    pre-fix it was dropped and every notification mutated the ROOT
+    zone's index regardless of the caller's zone.
+    """
     from nexus.server.dependencies import get_operation_context
+
+    if change_type not in ("create", "update", "delete"):
+        raise HTTPException(status_code=400, detail=f"invalid change_type {change_type!r}")
 
     op_context = get_operation_context(auth_result)
     target_zone = target_zone_for_context(op_context, {"path": path})
 
+    from nexus.server.api.v2.routers._search_indexed_dirs import _require_admin_or_path_write
+
+    await _require_admin_or_path_write(request, auth_result, target_zone, path or "/")
+
     async def _work() -> dict[str, Any]:
-        await search_daemon.notify_file_change(path, change_type)
+        try:
+            await search_daemon.notify_file_change(path, change_type, zone_id=target_zone)
+        except Exception as exc:
+            logger.error("notify_file_change failed: %s", exc, exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Index refresh notification failed: {type(exc).__name__}: {exc}",
+            ) from exc
         return {"status": "accepted", "path": path, "change_type": change_type}
 
     return await run_zone_scoped(_get_zone_registry(request), target_zone, _work)

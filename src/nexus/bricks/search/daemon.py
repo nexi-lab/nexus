@@ -162,13 +162,34 @@ class SearchDaemon:
 
     # ── Core search ────────────────────────────────────────────
 
-    async def search(self, request: "SearchRequest") -> list[BaseSearchResult]:
-        """Forward a SearchRequest to the Rust plugin's Query RPC."""
+    async def search_with_error(
+        self, request: "SearchRequest"
+    ) -> tuple[list[BaseSearchResult], str | None]:
+        """Query RPC with the plugin's per-query error PRESERVED.
+
+        Review R4: collapsing a backend failure (embedder down,
+        provider timeout, misconfiguration) into a bare ``[]`` makes a
+        degraded dependency indistinguishable from "no matches".  The
+        HTTP single-query route surfaces the returned error additively
+        — same contract shape as the batch endpoint's per-entry
+        failures (#4612).
+        """
         resp = await self._get_stub().Query(_request_to_pb(request))
         if resp.HasField("error"):
             logger.warning("rust search returned error: %s", resp.error)
-            return []
-        return [_result_to_base(r) for r in resp.results]
+            return [], resp.error
+        return [_result_to_base(r) for r in resp.results], None
+
+    async def search(self, request: "SearchRequest") -> list[BaseSearchResult]:
+        """Forward a SearchRequest to the Rust plugin's Query RPC.
+
+        Degrades a per-query backend error to ``[]`` — the documented
+        interactive posture for the federated / service-layer callers.
+        Callers that must DISTINGUISH failure from empty use
+        :meth:`search_with_error`.
+        """
+        results, _error = await self.search_with_error(request)
+        return results
 
     async def batch_search(
         self,
@@ -261,7 +282,12 @@ class SearchDaemon:
             change_type=change_type,
             zone_id=zone_id or "",
         )
-        await self._get_stub().NotifyFileChange(req)
+        resp = await self._get_stub().NotifyFileChange(req)
+        # Fail closed (review R4): a delete whose tombstone could not
+        # be persisted must not report success — swallowing the error
+        # here would leave orphaned vectors behind an HTTP 200.
+        if resp.HasField("error"):
+            raise RuntimeError(f"plugin notify_file_change failed: {resp.error}")
 
     # ── Indexed-directories registry ──────────────────────────
 

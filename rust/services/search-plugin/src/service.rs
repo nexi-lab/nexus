@@ -907,6 +907,19 @@ fn apply_expand(manager: &IndexManager, zone_id: &str, mode: ExpandMode, hits: &
 /// more than the caller-visible `limit` to give fusion headroom.
 const HYBRID_OVER_FETCH_MULT: usize = 2;
 
+/// Over-fetch multiplier when POST-FUSION score adjustments (recency,
+/// path-prefix boosts) are active (review R4).  Prefix weights are
+/// capped at 10x by the path-contexts store, so a 10x candidate pool
+/// covers any doc whose base score is within one full boost of the
+/// unadjusted cut line.  This is a pragmatic bound, not a proof — a
+/// doc scoring >10x below the cut can still be unreachable; the
+/// alternative (applying boosts inside candidate collection) means
+/// pushing operator config into the tantivy/HNSW scorers and is
+/// tracked as follow-up work.  Clamped so limit=100 doesn't fan a
+/// 1000-doc fetch into the blocking pool.
+const ADJUSTMENT_OVER_FETCH_MULT: usize = 10;
+const ADJUSTMENT_FETCH_CEILING: usize = 500;
+
 /// Fuse two source result lists per the caller's chosen method,
 /// pool per-doc, and truncate to `limit`.  Pure math — the two
 /// source lists come in already fetched.  The RPC handler runs
@@ -1209,12 +1222,51 @@ fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> I
 /// when a file that was previously indexed no longer exists in the
 /// current walk.  Both FTS and ANN's `delete_all_chunks` queue on
 /// their writer transactions; the caller commits at end-of-Refresh.
-fn remove_one(sinks: &IndexSinks<'_>, vfs_path: &str) {
+/// Remove `vfs_path` from every sink.  Returns true when the state
+/// entry was actually forgotten.
+///
+/// When no ANN sink is open (embedder unavailable/broken) but ANN
+/// directories EXIST on disk, the state entry is a live deletion-set
+/// tombstone for vectors we cannot reach right now — forgetting it
+/// would orphan them permanently (review R4).  FTS chunks still drop
+/// (idempotent); the tombstone survives until a refresh with a
+/// working ANN sink completes the removal.
+fn remove_one(sinks: &IndexSinks<'_>, vfs_path: &str, zone_has_ann: bool) -> bool {
     sinks.fts.delete_all_chunks(vfs_path);
-    if let Some(ann) = sinks.ann {
-        ann.delete_all_chunks(vfs_path);
+    match sinks.ann {
+        Some(ann) => {
+            ann.delete_all_chunks(vfs_path);
+            sinks.state.forget(vfs_path);
+            true
+        }
+        None if !zone_has_ann => {
+            // No ANN index exists at all — nothing to tombstone for.
+            sinks.state.forget(vfs_path);
+            true
+        }
+        None => {
+            // Keep the tombstone: mtime None so the entry always
+            // verdicts Changed and never masquerades as current.
+            sinks.state.record(vfs_path, None);
+            tracing::warn!(
+                path = %vfs_path,
+                "refresh sweep: ANN sink unavailable — kept deletion tombstone",
+            );
+            false
+        }
     }
-    sinks.state.forget(vfs_path);
+}
+
+/// Does the zone root contain any `ann-*` directory?  Cheap readdir;
+/// used by the sweep to decide whether an unopened ANN sink means
+/// "no vectors exist" or "vectors exist but are unreachable".
+fn zone_has_ann_dir(manager: &IndexManager, zone_id: &str) -> bool {
+    std::fs::read_dir(manager.zone_root(zone_id))
+        .map(|rd| {
+            rd.flatten()
+                .any(|e| e.file_name().to_string_lossy().starts_with("ann-"))
+        })
+        .unwrap_or(false)
 }
 
 /// Result counts from `do_refresh` — one number per RefreshResponse
@@ -1225,6 +1277,9 @@ struct RefreshCounts {
     removed: u32,
     unchanged: u32,
     skipped: u32,
+    /// Walk stopped at the max_docs repair budget (review R4) — the
+    /// caller should refresh again; the stale sweep was skipped.
+    truncated: bool,
 }
 
 /// Incremental refresh: walk `root_path`, ask the mtime cache
@@ -1284,7 +1339,14 @@ fn do_refresh(
     let mut truncated = false;
 
     let mut visit_file = |vfs_path: &str| -> WalkAction {
-        if (counts.reindexed as usize + counts.unchanged as usize) >= max_docs {
+        // The cap budgets REPAIR work (re-index = chunk + embed), not
+        // cheap unchanged visits (one sys_stat each).  Counting
+        // unchanged visits toward the cap made a capped refresh
+        // unable to advance past its first page: after the
+        // post-migration pass repaired the first max_docs files,
+        // every later refresh re-counted those now-unchanged entries
+        // and stopped before ever reaching the tail (review R4).
+        if (counts.reindexed as usize + counts.skipped as usize) >= max_docs {
             truncated = true;
             return WalkAction::Stop;
         }
@@ -1355,13 +1417,16 @@ fn do_refresh(
     }
     if visit_result.is_ok() && !truncated {
         let scope = root_path.trim_end_matches('/');
+        let has_ann_dir = zone_has_ann_dir(manager, zone_id);
         for cached_path in sinks.state.known_paths() {
             let in_scope = scope.is_empty()
                 || scope == "/"
                 || cached_path == scope
                 || cached_path.starts_with(&format!("{scope}/"));
-            if in_scope && !seen.contains(&cached_path) {
-                remove_one(&sinks, &cached_path);
+            if in_scope
+                && !seen.contains(&cached_path)
+                && remove_one(&sinks, &cached_path, has_ann_dir)
+            {
                 counts.removed += 1;
             }
         }
@@ -1380,6 +1445,7 @@ fn do_refresh(
     }
 
     visit_result?;
+    counts.truncated = truncated;
     Ok(counts)
 }
 
@@ -1602,8 +1668,12 @@ fn do_notify_file_change(
             if let Err(e) = fts.commit() {
                 return Err(format!("fts commit: {e}"));
             }
+            // The tombstone IS the deferred-ANN-cleanup record — if it
+            // cannot be persisted the delete must FAIL so the caller
+            // retries, instead of reporting success while the vectors
+            // silently outlive their document (review R4).
             if let Err(e) = state.save() {
-                tracing::warn!(err = %e, "index_state save failed");
+                return Err(format!("delete tombstone persist failed: {e}"));
             }
             cache.invalidate_zone(zone_id);
             Ok("accepted".to_string())
@@ -1798,7 +1868,9 @@ impl SearchService for SearchServiceImpl {
             crate::scoring::RecencyMode::On | crate::scoring::RecencyMode::Auto
         ) || !prefix_boosts.is_empty();
         let fetch_limit = if adjustments_active {
-            limit.saturating_mul(HYBRID_OVER_FETCH_MULT).max(limit)
+            limit
+                .saturating_mul(ADJUSTMENT_OVER_FETCH_MULT)
+                .clamp(limit, ADJUSTMENT_FETCH_CEILING.max(limit))
         } else {
             limit
         };
@@ -1874,7 +1946,10 @@ impl SearchService for SearchServiceImpl {
                 // on the blocking pool + joining brings wall-clock to
                 // max(kw, sem) ≈ 300 ms — no free lunch on total CPU
                 // but user-visible p95 halves in the worst-case ratio.
-                let over_fetch = limit.saturating_mul(HYBRID_OVER_FETCH_MULT).max(limit);
+                let over_fetch = limit
+                    .saturating_mul(HYBRID_OVER_FETCH_MULT)
+                    .max(limit)
+                    .max(fetch_limit);
                 let (kw_task, sem_task) = {
                     let mgr_kw = Arc::clone(&manager);
                     let mgr_sem = Arc::clone(&manager);
@@ -2135,6 +2210,7 @@ impl SearchService for SearchServiceImpl {
                     unchanged_count: counts.unchanged,
                     skipped_count: counts.skipped,
                     error: None,
+                    truncated: counts.truncated,
                 }))
             }
             Err(err) => Ok(Response::new(RefreshResponse {
@@ -2143,6 +2219,7 @@ impl SearchService for SearchServiceImpl {
                 unchanged_count: 0,
                 skipped_count: 0,
                 error: Some(err),
+                truncated: false,
             })),
         }
     }

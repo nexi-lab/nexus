@@ -464,6 +464,13 @@ message RefreshResponse {
   uint32 skipped_count = 4;
   // Set when the walk aborted; same convention as IndexResponse.
   optional string error = 5;
+  // True when the walk stopped at the max_docs repair budget before
+  // covering the corpus (review R4).  Callers should re-issue
+  // Refresh until this reads false — repaired files verdict
+  // Unchanged on later passes (and don't consume the budget), so
+  // repeated calls make monotonic progress.  The stale sweep is
+  // skipped on truncated passes.
+  bool truncated = 6;
 }
 
 // ── P8 messages: Python-parity RPCs ─────────────────────────────

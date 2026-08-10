@@ -293,6 +293,48 @@ async fn prefix_boost_promotes_doc_from_below_the_requested_limit() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn prefix_boost_promotes_doc_from_beyond_double_the_limit() {
+    // Review R4: the adjustment pool must reach beyond a fixed 2x —
+    // here the boosted doc starts at BM25 rank 4 with limit=1, so a
+    // 2x over-fetch (pool of 2) could never surface it.
+    let dir = TempDir::new().unwrap();
+    let svc = SearchServiceImpl::builder(Arc::new(handle_for(leak_kernel())))
+        .manager(Arc::new(IndexManager::with_root(dir.path().to_path_buf())))
+        .embedder(Arc::new(MockEmbedder::with_dim(16)))
+        .build();
+
+    svc.index_documents(Request::new(IndexDocumentsRequest {
+        documents: vec![
+            doc("/plain/a.md", "target target target target dense match"),
+            doc("/plain/b.md", "target target target strong match"),
+            doc("/plain/c.md", "target target decent match"),
+            doc("/boosted/doc.md", "target single passing mention"),
+        ],
+        zone_id: String::new(),
+        auth_token: String::new(),
+    }))
+    .await
+    .expect("index rpc");
+
+    let boosted = svc
+        .query(Request::new(QueryRequest {
+            q: "target".to_string(),
+            limit: 1,
+            query_type: QueryType::Keyword as i32,
+            path_prefix_boosts: std::collections::HashMap::from([("/boosted/".to_string(), 10.0)]),
+            ..Default::default()
+        }))
+        .await
+        .expect("query rpc")
+        .into_inner();
+    assert_eq!(boosted.results.len(), 1);
+    assert_eq!(
+        boosted.results[0].path, "/boosted/doc.md",
+        "boost must reach a doc starting at rank 4 with limit=1"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn keyword_hits_visible_while_batch_still_embedding() {
     let dir = TempDir::new().unwrap();
     let release = Arc::new(AtomicBool::new(false));

@@ -831,6 +831,8 @@ jobs:
           CLUSTER_SOURCE: ${{ env.REGISTRY }}/${{ env.CLUSTER_IMAGE_NAME }}:${{ needs.push-cluster-manifest.outputs.version }}
           SERVER_TAGS_JSON: ${{ steps.meta.outputs.json }}
           CLUSTER_TAGS_JSON: ${{ steps.cluster_meta.outputs.json }}
+          # gh packages API for the delete-new-tags rollback path.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -u
           promote() {
@@ -842,23 +844,47 @@ jobs:
             docker buildx imagetools create "${tag_args[@]}" "$source"
           }
 
-          # Snapshot the cluster tags' current digests for rollback.
+          # Snapshot the cluster tags' current digests for rollback —
+          # tags with NO prior digest (first semver push) are tracked
+          # too, so rollback DELETES them instead of leaving a public
+          # cluster-only release tag behind (review R4).
           declare -A prior_cluster
+          new_cluster_tags=()
           while IFS= read -r tag; do
             digest=$(docker buildx imagetools inspect "$tag" --format '{{.Manifest.Digest}}' 2>/dev/null || true)
             if [ -n "$digest" ]; then
               prior_cluster["$tag"]="$digest"
+            else
+              new_cluster_tags+=("$tag")
             fi
           done < <(jq -r '.tags[]' <<< "$CLUSTER_TAGS_JSON")
 
           promote "$CLUSTER_SOURCE" "$CLUSTER_TAGS_JSON"
 
           if ! promote "$SERVER_SOURCE" "$SERVER_TAGS_JSON"; then
-            echo "::error::server tag promotion failed — rolling cluster tags back to their prior digests"
+            echo "::error::server tag promotion failed — rolling cluster tags back"
             base="${CLUSTER_SOURCE%%:*}"
             for tag in "${!prior_cluster[@]}"; do
               docker buildx imagetools create -t "$tag" "${base}@${prior_cluster[$tag]}" || \
                 echo "::error::rollback of $tag failed — pair is split; repair manually"
+            done
+            # Freshly minted tags have nothing to roll back TO —
+            # delete them via the packages API (best-effort; registry
+            # protocol has no tag-delete verb).
+            pkg="${CLUSTER_SOURCE%%:*}"
+            pkg="${pkg##*/}"
+            org="${GITHUB_REPOSITORY_OWNER}"
+            for tag in "${new_cluster_tags[@]}"; do
+              tagname="${tag##*:}"
+              version_id=$(gh api "/orgs/${org}/packages/container/${pkg}/versions" --paginate \
+                --jq ".[] | select(.metadata.container.tags[]? == \"${tagname}\") | .id" 2>/dev/null | head -1)
+              if [ -n "$version_id" ]; then
+                gh api -X DELETE "/orgs/${org}/packages/container/${pkg}/versions/${version_id}" \
+                  && echo "deleted freshly minted tag ${tagname}" \
+                  || echo "::error::could not delete new tag ${tagname} — remove manually"
+              else
+                echo "::error::could not locate new tag ${tagname} for deletion — remove manually"
+              fi
             done
             exit 1
           fi

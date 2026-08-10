@@ -341,6 +341,73 @@ async def search_query(
     return await run_zone_scoped(_get_zone_registry(request), target_zone, _work)
 
 
+async def _resolve_path_prefix_boosts(request: Request, zone_id: str | None) -> dict[str, float]:
+    """Load the zone's path_contexts weight rows into the plugin's boost map (#4620).
+
+    Pre-P12 the daemon applied tier weights itself post-fusion (#4544);
+    post-P12 the plugin owns that pass but only sees what the server stamps
+    into ``QueryRequest.path_prefix_boosts`` — without this resolver the
+    weight rows are dead config (CRUD works, ranking silently ignores them).
+
+    Rows are served through a per-event-loop :class:`PathContextCache`
+    (fingerprint-checked, so an upsert is visible on the next query without
+    a per-request full table scan). Fail-open: any store or lookup error
+    logs once and returns ``{}`` — search must keep working unboosted.
+    """
+    import asyncio
+
+    from nexus.bricks.search.path_context import PathContextCache, prefix_boosts_from_records
+    from nexus.contracts.constants import ROOT_ZONE_ID
+
+    try:
+        from nexus.server.api.v2.routers.path_contexts import _get_store
+
+        store = await _get_store(request)
+    except HTTPException:
+        # No DB URL and no injected store — this deployment has no
+        # path-context storage at all, so there are no rows to apply.
+        return {}
+    except Exception:
+        logger.warning(
+            "path-context store unavailable; searching without tier boosts",
+            exc_info=True,
+        )
+        return {}
+
+    try:
+        # One cache per event loop, mirroring _get_store's per-loop store
+        # discipline (same loop ⇒ same store ⇒ the cache never mixes
+        # engines across loops).
+        loop = asyncio.get_running_loop()
+        caches: dict[Any, PathContextCache] | None = getattr(
+            request.app.state, "_search_prefix_boost_caches", None
+        )
+        if caches is None:
+            caches = {}
+            request.app.state._search_prefix_boost_caches = caches
+        for stale in [lk for lk in caches if not hasattr(lk, "is_closed") or lk.is_closed()]:
+            caches.pop(stale, None)
+        cache = caches.get(loop)
+        if cache is None:
+            cache = PathContextCache(store=store)
+            caches[loop] = cache
+
+        effective_zone = zone_id or ROOT_ZONE_ID
+        await cache.refresh_if_stale(effective_zone)
+        return prefix_boosts_from_records(cache.snapshot_zone(effective_zone) or [])
+    except Exception:
+        # Warn once per process, not per query — a deployment whose DB
+        # lacks the path_contexts table would otherwise log on every
+        # search. Once is enough to surface the dead-config risk.
+        if not getattr(request.app.state, "_prefix_boost_resolution_warned", False):
+            request.app.state._prefix_boost_resolution_warned = True
+            logger.warning(
+                "path-context boost resolution failed; searching without tier boosts",
+                exc_info=True,
+            )
+        return {}
+
+
 async def _handle_single_zone_search(
     *,
     request: Request,
@@ -467,6 +534,11 @@ async def _handle_single_zone_search(
                 response["routing"] = routing_info
             return response
 
+        # #4620: stamp the zone's path_contexts weight rows onto the
+        # request — the plugin applies them post-fusion (longest-prefix
+        # multiplier) and keys its query cache on them.
+        path_prefix_boosts = await _resolve_path_prefix_boosts(request, zone_id)
+
         results = await search_daemon.search(
             SearchRequest(
                 query=q,
@@ -481,6 +553,7 @@ async def _handle_single_zone_search(
                 recency=recency,
                 recency_weight=recency_weight,
                 recency_half_life_days=recency_half_life_days,
+                path_prefix_boosts=path_prefix_boosts or None,
             )
         )
 

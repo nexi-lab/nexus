@@ -99,6 +99,7 @@ class SearchDaemon:
             recency_mode=request.recency or "",
             recency_weight=request.recency_weight or 0.0,
             recency_half_life_days=request.recency_half_life_days or 0.0,
+            path_prefix_boosts=request.path_prefix_boosts or {},
         )
         resp = await self._get_stub().Query(req)
         if resp.HasField("error"):
@@ -118,6 +119,7 @@ class SearchDaemon:
                 limit=r.limit,
                 path_filter=r.path_filter or "",
                 query_type=_QUERY_TYPE_MAP.get(r.search_type, search_pb2.QUERY_TYPE_UNSPECIFIED),
+                path_prefix_boosts=r.path_prefix_boosts or {},
             )
             for r in requests
         ]

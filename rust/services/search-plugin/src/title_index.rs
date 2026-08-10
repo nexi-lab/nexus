@@ -61,20 +61,66 @@ pub fn tokenize(text: &str) -> Vec<String> {
     tokens
 }
 
-/// Extract a doc title from its chunk-0 text: the first ATX heading
-/// (`# ...` – `###### ...`) within the first [`SKELETON_HEAD_BYTES`].
-/// A leading YAML frontmatter block (`---` ... `---`) is skipped so
-/// `#`-comments inside it can't masquerade as headings.  Returns
-/// `None` for docs with no heading in the head window — they still
-/// join the skeleton on path tokens alone (Python parity: extractor
-/// returning None kept the doc, title-less).
-pub fn extract_title(chunk0_text: &str) -> Option<String> {
-    let mut end = SKELETON_HEAD_BYTES.min(chunk0_text.len());
-    while end > 0 && !chunk0_text.is_char_boundary(end) {
+/// File extensions whose head is scanned for a markdown title.
+/// Mirrors the Python design: title extraction was dispatched by an
+/// extension registry, and unregistered extensions produced no
+/// title.  Restricting to markdown-family files keeps shebangs and
+/// `#` source comments in code files from ever becoming "titles"
+/// (review R3 of #4628); every doc still joins the skeleton on path
+/// tokens alone.
+const TITLE_EXTENSIONS: &[&str] = &["md", "markdown", "mdx", "mdown"];
+
+/// Does `path` name a markdown-family file eligible for title
+/// extraction?
+fn title_eligible(path: &str) -> bool {
+    let ext = path
+        .rsplit_once('.')
+        .map(|(_, e)| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    TITLE_EXTENSIONS.contains(&ext.as_str())
+}
+
+/// Parse one line as an ATX heading: up to 3 leading spaces, 1–6
+/// `#`, then whitespace and a non-empty title (same grammar family
+/// as the chunker's heading detector).  `#!shebang`, `#comment`,
+/// `####### seven`, and 4-space-indented code lines all reject.
+fn parse_atx_title(line: &str) -> Option<&str> {
+    let without_newline = line.strip_suffix('\n').unwrap_or(line);
+    // CommonMark allows up to 3 leading spaces; 4+ is indented code.
+    let leading_spaces = without_newline.len() - without_newline.trim_start_matches(' ').len();
+    if leading_spaces > 3 {
+        return None;
+    }
+    let rest = &without_newline[leading_spaces..];
+    let hashes = rest.len() - rest.trim_start_matches('#').len();
+    if !(1..=6).contains(&hashes) {
+        return None;
+    }
+    let after = &rest[hashes..];
+    let title = after.strip_prefix([' ', '\t'])?.trim();
+    (!title.is_empty()).then_some(title)
+}
+
+/// Extract a doc title from its reassembled head: the first ATX
+/// heading within the first [`SKELETON_HEAD_BYTES`], for
+/// markdown-family paths only.  A leading YAML frontmatter block
+/// (`---` ... `---`) is skipped so `#`-comments inside it can't
+/// masquerade as headings, and fenced code blocks are skipped so
+/// `# comment` lines inside a fence don't either (review R3).
+/// Returns `None` for docs with no heading in the head window —
+/// they still join the skeleton on path tokens alone (Python
+/// parity: extractor returning None kept the doc, title-less).
+pub fn extract_title(path: &str, head_text: &str) -> Option<String> {
+    if !title_eligible(path) {
+        return None;
+    }
+    let mut end = SKELETON_HEAD_BYTES.min(head_text.len());
+    while end > 0 && !head_text.is_char_boundary(end) {
         end -= 1;
     }
-    let head = &chunk0_text[..end];
+    let head = &head_text[..end];
     let mut in_frontmatter = false;
+    let mut in_code_fence = false;
     for (i, line) in head.lines().enumerate() {
         let trimmed = line.trim();
         if i == 0 && trimmed == "---" {
@@ -87,11 +133,15 @@ pub fn extract_title(chunk0_text: &str) -> Option<String> {
             }
             continue;
         }
-        if let Some(rest) = trimmed.strip_prefix('#') {
-            let title = rest.trim_start_matches('#').trim();
-            if !title.is_empty() {
-                return Some(title.to_string());
-            }
+        if trimmed.starts_with("```") {
+            in_code_fence = !in_code_fence;
+            continue;
+        }
+        if in_code_fence {
+            continue;
+        }
+        if let Some(title) = parse_atx_title(line) {
+            return Some(title.to_string());
         }
     }
     None
@@ -244,7 +294,7 @@ impl ZoneSkeleton {
                 }
                 head.push_str(&text);
             }
-            let title = extract_title(&head);
+            let title = extract_title(&path, &head);
             let title_tokens: BTreeSet<String> = title
                 .as_deref()
                 .map(|t| tokenize(t).into_iter().collect())
@@ -522,30 +572,64 @@ mod tests {
     #[test]
     fn extract_title_first_atx_heading() {
         assert_eq!(
-            extract_title("# Atlas Design Doc\n\nbody text"),
+            extract_title("/d/a.md", "# Atlas Design Doc\n\nbody text"),
             Some("Atlas Design Doc".to_string())
         );
         // Deeper heading levels count too; hashes stripped.
-        assert_eq!(extract_title("### Deep Title\nbody"), Some("Deep Title".to_string()));
+        assert_eq!(
+            extract_title("/d/a.md", "### Deep Title\nbody"),
+            Some("Deep Title".to_string())
+        );
     }
 
     #[test]
     fn extract_title_skips_yaml_frontmatter() {
         let text = "---\ntitle: raw\n# not a heading, a YAML comment\n---\n# Real Title\nbody";
-        assert_eq!(extract_title(text), Some("Real Title".to_string()));
+        assert_eq!(extract_title("/d/a.md", text), Some("Real Title".to_string()));
     }
 
     #[test]
     fn extract_title_none_when_no_heading() {
-        assert_eq!(extract_title("plain prose with no heading"), None);
-        assert_eq!(extract_title(""), None);
+        assert_eq!(extract_title("/d/a.md", "plain prose with no heading"), None);
+        assert_eq!(extract_title("/d/a.md", ""), None);
     }
 
     #[test]
     fn extract_title_respects_head_cap() {
         // Heading past the 2 KiB window is not a title.
         let text = format!("{}\n# Late Heading\n", "x".repeat(SKELETON_HEAD_BYTES));
-        assert_eq!(extract_title(&text), None);
+        assert_eq!(extract_title("/d/a.md", &text), None);
+    }
+
+    #[test]
+    fn extract_title_rejects_code_shaped_hash_lines() {
+        // Review R3 (#4628): shebangs, source comments, and code
+        // must never become title evidence.
+        // Non-markdown extensions are ineligible outright.
+        assert_eq!(extract_title("/bin/run.sh", "#!/usr/bin/env bash\n# Deploy Tool\n"), None);
+        assert_eq!(extract_title("/src/mod.py", "# Auth Module\ndef f(): ...\n"), None);
+        assert_eq!(extract_title("/src/noext", "# Title\n"), None);
+        // Inside markdown: ATX grammar enforced.
+        assert_eq!(extract_title("/d/a.md", "#!/usr/bin/env bash\n"), None, "shebang");
+        assert_eq!(extract_title("/d/a.md", "#no-space heading\n"), None, "no space after #");
+        assert_eq!(extract_title("/d/a.md", "####### seven hashes\n"), None, "7 hashes");
+        assert_eq!(extract_title("/d/a.md", "    # indented code\n"), None, "4-space indent");
+        // `# comment` inside a fenced block is code, not a heading.
+        assert_eq!(
+            extract_title("/d/a.md", "```sh\n# fence comment\n```\nprose\n"),
+            None,
+            "fenced comment"
+        );
+        // ...but a real heading AFTER the fence still wins.
+        assert_eq!(
+            extract_title("/d/a.md", "```sh\n# fence comment\n```\n# Real Title\n"),
+            Some("Real Title".to_string())
+        );
+        // Up to 3 leading spaces is still a heading (CommonMark).
+        assert_eq!(
+            extract_title("/d/a.md", "   # Indented Heading\n"),
+            Some("Indented Heading".to_string())
+        );
     }
 
     // ── ZoneSkeleton build + locate ────────────────────────────

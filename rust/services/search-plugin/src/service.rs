@@ -965,18 +965,76 @@ const TITLE_ARM_MAX_HYDRATION_FETCH: usize = 32;
 /// a skeleton build error degrades to an empty arm with a debug
 /// log; the search itself must never fail on the arm's account.
 ///
-/// The second tuple element is FRESHNESS (#4628 review R2): `true`
-/// only when the hits came from the current-generation skeleton.
-/// A ranking computed from a stale snapshot, a mid-build cold
-/// start, or a failed build must NOT enter the query cache — it
-/// would outlive the rebuild for the whole cache TTL.
+/// Outcome of the title-arm leg: the (gated) hits plus what the
+/// query-cache layer needs to decide cacheability (#4628 reviews
+/// R2/R3).  `generation` is the skeleton generation the hits were
+/// computed from — `None` when the arm didn't consult a skeleton
+/// (arm off) — and `cacheable` is the arm-side verdict (fresh
+/// snapshot used).  The final say happens at insert time via
+/// [`title_generation_still_current`], because a writer can commit
+/// (and invalidate the cache) while this query is in flight; the
+/// stale result must not be REINSERTED after that invalidation.
+struct TitleArmRun {
+    hits: Vec<crate::title_index::TitleHit>,
+    cacheable: bool,
+    generation: Option<u64>,
+}
+
+impl TitleArmRun {
+    fn disabled() -> Self {
+        Self {
+            hits: Vec::new(),
+            cacheable: true,
+            generation: None,
+        }
+    }
+
+    fn degraded() -> Self {
+        Self {
+            hits: Vec::new(),
+            cacheable: false,
+            generation: None,
+        }
+    }
+}
+
+/// Insert-time revalidation (#4628 review R3): true when the zone's
+/// FTS generation still equals the one the title arm computed from.
+/// A mismatch means a commit landed while the query was in flight —
+/// its invalidation already wiped the zone's cache, and inserting
+/// our now-stale ranking would resurrect deleted/renamed title
+/// evidence for the whole TTL.
+fn title_generation_still_current(
+    manager: &IndexManager,
+    zone_id: &str,
+    generation: Option<u64>,
+) -> bool {
+    match generation {
+        None => true,
+        Some(gen) => manager
+            .get_or_open(zone_id)
+            .map(|fts| fts.generation_id() == gen)
+            .unwrap_or(false),
+    }
+}
+
+/// Run the title arm's locate: skeleton lookup (building it on
+/// first use per index generation) + evidence gate.  Fail-soft —
+/// a skeleton build error degrades to an empty arm with a debug
+/// log; the search itself must never fail on the arm's account.
+///
+/// Freshness (#4628 review R2): `cacheable` is true only when the
+/// hits came from the current-generation skeleton.  A ranking
+/// computed from a stale snapshot, a mid-build cold start, or a
+/// failed build must NOT enter the query cache — it would outlive
+/// the rebuild for the whole cache TTL.
 fn do_title_locate(
     manager: &IndexManager,
     q: &str,
     zone_id: &str,
     limit: usize,
     path_filter: &str,
-) -> (Vec<crate::title_index::TitleHit>, bool) {
+) -> TitleArmRun {
     let locate = |skeleton: &crate::title_index::ZoneSkeleton| {
         let prefix = (!path_filter.is_empty()).then_some(path_filter);
         let mut hits = skeleton.locate(q, limit, prefix);
@@ -987,21 +1045,29 @@ fn do_title_locate(
         hits
     };
     match manager.get_or_build_skeleton(zone_id) {
-        Ok(crate::index_manager::SkeletonAccess::Fresh(skeleton)) => (locate(&skeleton), true),
+        Ok(crate::index_manager::SkeletonAccess::Fresh(skeleton)) => TitleArmRun {
+            hits: locate(&skeleton),
+            cacheable: true,
+            generation: Some(skeleton.generation_id()),
+        },
         Ok(crate::index_manager::SkeletonAccess::Stale(skeleton)) => {
             tracing::debug!(zone = %zone_id, "title arm: rebuild in flight — stale snapshot, uncacheable");
-            (locate(&skeleton), false)
+            TitleArmRun {
+                hits: locate(&skeleton),
+                cacheable: false,
+                generation: Some(skeleton.generation_id()),
+            }
         }
         // Cold start while another query is building the skeleton —
         // single-flight served no snapshot; run this query with an
         // empty arm rather than duplicating the corpus scan.
         Ok(crate::index_manager::SkeletonAccess::Building) => {
             tracing::debug!(zone = %zone_id, "title arm: skeleton build in flight — empty arm, uncacheable");
-            (Vec::new(), false)
+            TitleArmRun::degraded()
         }
         Err(e) => {
             tracing::debug!(err = %e, zone = %zone_id, "title arm: skeleton unavailable — degrading, uncacheable");
-            (Vec::new(), false)
+            TitleArmRun::degraded()
         }
     }
 }
@@ -2230,8 +2296,11 @@ impl SearchService for SearchServiceImpl {
         // arm ran DEGRADED (stale/absent skeleton, failed build) must
         // not enter the query cache — the cached ranking would
         // outlive the rebuild for the whole TTL.  Non-hybrid modes
-        // and arm-off queries stay cacheable.
+        // and arm-off queries stay cacheable.  `title_generation`
+        // (R3) carries the skeleton generation for insert-time
+        // revalidation against a commit that raced this query.
         let mut results_cacheable = true;
+        let mut title_generation: Option<u64> = None;
 
         let outcome = match query_type {
             QueryType::Unspecified | QueryType::Keyword => tokio::task::spawn_blocking(move || {
@@ -2333,7 +2402,7 @@ impl SearchService for SearchServiceImpl {
                             if !title_arm_on {
                                 // Arm off is a deterministic state —
                                 // cacheable.
-                                return (Vec::new(), true);
+                                return TitleArmRun::disabled();
                             }
                             // limit * 2 mirrors Python's locate
                             // over-fetch (fusion headroom).
@@ -2356,8 +2425,10 @@ impl SearchService for SearchServiceImpl {
                 // the arm is additive evidence, never a failure
                 // source (fail-soft parity with Python).  Degraded
                 // ⇒ uncacheable, same as stale/absent skeletons.
-                let (title_hits, title_fresh) = title_join.unwrap_or((Vec::new(), false));
-                results_cacheable = title_fresh;
+                let title_run = title_join.unwrap_or_else(|_| TitleArmRun::degraded());
+                results_cacheable = title_run.cacheable;
+                title_generation = title_run.generation;
+                let title_hits = title_run.hits;
                 match (kw, sem) {
                     (Ok(keyword), Ok(semantic)) => {
                         // Keyword-lane sub-fusion (#4628).  Empty
@@ -2473,13 +2544,26 @@ impl SearchService for SearchServiceImpl {
                 // NOT cached — a stale FTS index / missing zone
                 // may resolve on retry, and we don't want the
                 // cache to sticky-fail those.
-                if results_cacheable {
+                // Insert-time revalidation (#4628 review R3): a
+                // writer that committed while this query was in
+                // flight has ALREADY invalidated this zone's cache;
+                // inserting our result now would resurrect the
+                // pre-commit ranking for the whole TTL.  Generation
+                // equality is the same signal the skeleton cache
+                // keys on, so the check is one cached-Arc read.
+                if results_cacheable
+                    && title_generation_still_current(
+                        &manager_for_expand,
+                        &zone_for_expand,
+                        title_generation,
+                    )
+                {
                     self.query_cache
                         .insert(&req_for_cache, title_arm_on, results.clone());
                 } else {
                     tracing::debug!(
-                        "skipping query-cache insert — title arm ran degraded \
-                         (stale or absent skeleton)",
+                        "skipping query-cache insert — title arm ran degraded or a \
+                         commit raced the query",
                     );
                 }
                 Ok(Response::new(QueryResponse {
@@ -3377,5 +3461,28 @@ mod tests {
             Some(v) => unsafe { std::env::set_var(BATCH_QUERY_CONCURRENCY_ENV, v) },
             None => unsafe { std::env::remove_var(BATCH_QUERY_CONCURRENCY_ENV) },
         }
+    }
+
+    #[test]
+    fn title_generation_revalidation_detects_racing_commit() {
+        // #4628 review R3: a commit landing while a hybrid query is
+        // in flight must flip the insert-time check to false so the
+        // pre-commit ranking is not reinserted after the writer's
+        // cache invalidation.
+        let root = tempfile::tempdir().expect("tempdir").keep();
+        let manager = IndexManager::with_root(root);
+        let fts = manager.get_or_open("zoneA").expect("open");
+        fts.add_document("/a.md", 0, "# Alpha\nbody", Some(1)).expect("add");
+        fts.commit().expect("commit");
+        let gen = fts.generation_id();
+
+        // No arm consulted → always current.
+        assert!(title_generation_still_current(&manager, "zoneA", None));
+        // Same generation → current.
+        assert!(title_generation_still_current(&manager, "zoneA", Some(gen)));
+        // A racing commit bumps the generation → NOT current.
+        fts.add_document("/b.md", 0, "# Beta\nbody", Some(2)).expect("add");
+        fts.commit().expect("commit");
+        assert!(!title_generation_still_current(&manager, "zoneA", Some(gen)));
     }
 }

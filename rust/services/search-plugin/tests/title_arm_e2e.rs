@@ -287,6 +287,21 @@ fn seed_corpus(mock: &mut MockKernel) {
         b"# Scratch Two\n\nanother design doc draft, atlas atlas design notes.",
         3,
     );
+    // Six more decoys spamming the query terms in their BODIES (their
+    // titles share no token with the query) so chunk-BM25 buries the
+    // target under the arm-off ranking — the kill-switch test asserts
+    // STRICT rank benefit at a tight limit (review R3).
+    for (i, name) in ["three", "four", "five", "six", "seven", "eight"].iter().enumerate() {
+        mock.add_file(
+            &format!("/notes/scratch-{name}.md"),
+            format!(
+                "# Jotting {name}\n\ndesign doc atlas design doc atlas design \
+                 doc notes; atlas design doc rev {i} drafting design doc atlas."
+            )
+            .as_bytes(),
+            4 + i as i64,
+        );
+    }
 }
 
 async fn index_root(svc: &SearchServiceImpl) {
@@ -304,15 +319,16 @@ async fn index_root(svc: &SearchServiceImpl) {
     assert!(resp.error.is_none(), "index failed: {:?}", resp.error);
 }
 
-async fn hybrid_query(
+async fn hybrid_query_limit(
     svc: &SearchServiceImpl,
     q: &str,
+    limit: u32,
 ) -> Vec<nexus_search_plugin::search_proto::QueryResult> {
     let resp = svc
         .query(Request::new(QueryRequest {
             q: q.into(),
             zone_id: "root".into(),
-            limit: 10,
+            limit,
             query_type: QueryType::Hybrid as i32,
             ..Default::default()
         }))
@@ -321,6 +337,13 @@ async fn hybrid_query(
         .into_inner();
     assert!(resp.error.is_none(), "query failed: {:?}", resp.error);
     resp.results
+}
+
+async fn hybrid_query(
+    svc: &SearchServiceImpl,
+    q: &str,
+) -> Vec<nexus_search_plugin::search_proto::QueryResult> {
+    hybrid_query_limit(svc, q, 10).await
 }
 
 // ── Tests ───────────────────────────────────────────────────────
@@ -371,23 +394,25 @@ async fn arm_off_no_attribution_and_no_title_benefit() {
         .build();
     index_root(&svc_on).await;
 
-    let res_on = hybrid_query(&svc_on, "atlas design doc").await;
-    let res_off = hybrid_query(&svc_off, "atlas design doc").await;
+    // Tight limit + 8 decoys whose bodies spam the query terms: the
+    // arm-off ranking must bury or exclude the target, and the arm
+    // must STRICTLY improve it — this is the ranking-benefit
+    // acceptance, not just attribution plumbing (review R3).
+    let res_on = hybrid_query_limit(&svc_on, "atlas design doc", 3).await;
+    let res_off = hybrid_query_limit(&svc_off, "atlas design doc", 3).await;
 
     assert!(res_off.iter().all(|r| r.title_score.is_none()));
     let rank = |rs: &[nexus_search_plugin::search_proto::QueryResult]| {
         rs.iter().position(|r| r.path == "/designs/atlas.md")
     };
-    let rank_on = rank(&res_on).expect("arm on: target present");
-    // MockEmbedder is deterministic, so this comparison is stable:
-    // with the arm off the target either drops out of the list or
-    // ranks no better than with the arm on (the arm only ADDS
-    // evidence for the target).
+    let rank_on = rank(&res_on).expect("arm on: target must be in the top-3");
+    // MockEmbedder is deterministic and both services share one
+    // index, so this comparison is stable.
     match rank(&res_off) {
-        None => {}
+        None => {} // buried below the limit without the arm — benefit shown
         Some(rank_off) => assert!(
-            rank_on <= rank_off,
-            "title arm must never worsen the target's rank (on={rank_on}, off={rank_off})"
+            rank_on < rank_off,
+            "title arm must STRICTLY improve the target's rank (on={rank_on}, off={rank_off})"
         ),
     }
     unsafe { drop(Box::from_raw(mock)) };

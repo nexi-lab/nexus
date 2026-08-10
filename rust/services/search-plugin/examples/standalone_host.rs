@@ -130,12 +130,7 @@ unsafe extern "C" fn sys_stat(
     }
 }
 
-unsafe extern "C" fn deny_write(
-    _: *const c_void,
-    _: *const c_char,
-    _: *const u8,
-    _: usize,
-) -> i32 {
+unsafe extern "C" fn deny_write(_: *const c_void, _: *const c_char, _: *const u8, _: usize) -> i32 {
     -1
 }
 unsafe extern "C" fn deny_unlink(_: *const c_void, _: *const c_char) -> i32 {

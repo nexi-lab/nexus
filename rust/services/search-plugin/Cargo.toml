@@ -110,6 +110,23 @@ ort = { version = "2.0.0-rc.10", default-features = false, features = [
 ], optional = true }
 
 
+# ── remote/API embedder (#4614) ───────────────────────────────────
+# Blocking HTTP for `RemoteEmbedder` — embeds via an OpenAI-compatible
+# `/v1/embeddings` endpoint when NEXUS_SEARCH_EMBED_API_URL is set.
+# Blocking is deliberate: every embed_batch call site already runs on
+# a spawn_blocking worker, and reqwest::blocking keeps its own
+# dedicated runtime thread so the plugin's tokio pool is never
+# re-entered.  rustls so the cdylib carries no OpenSSL linkage to
+# manage across platforms; same 0.13 line the wider tree already
+# resolves.  NOT feature-gated behind `semantic` — remote embedding
+# needs no ONNX, so a non-semantic build still gets a dense lane when
+# an API endpoint is configured.
+reqwest = { version = "0.13", default-features = false, features = [
+    "blocking",
+    "json",
+    "rustls",
+] }
+
 # Parking-lot mutex around the per-zone index writer.  tantivy's own
 # IndexWriter is Send + Sync but only allows one writer per index at a
 # time; the lock is short-held (writer.add_document + writer.commit)

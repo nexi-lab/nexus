@@ -1,7 +1,7 @@
 //! Text-to-vector embedding abstraction for SemanticQuery (Phase 2
 //! of the Python-parity roadmap; see `PARITY_ROADMAP.md` D2).
 //!
-//! # Two impls
+//! # Three impls
 //!
 //! - [`MockEmbedder`] — deterministic hash-projection.  Always
 //!   compiled; used by unit + integration tests so they never
@@ -15,6 +15,16 @@
 //!   cdylib rather than statically linked.  Model files live under
 //!   `$NEXUS_SEARCH_MODEL_DIR` (falls back to
 //!   `$NEXUS_DATA_DIR/plugins/search/models/`).
+//!
+//! - [`RemoteEmbedder`] (#4614) — always compiled; blocking HTTP to
+//!   an OpenAI-compatible `/v1/embeddings` endpoint.  Selected by
+//!   setting `NEXUS_SEARCH_EMBED_API_URL` (+ `_MODEL`, `_DIM`,
+//!   optional `_API_KEY`), and wins over `FastEmbedder` so a
+//!   deployment migrating from the pre-P12 API-embedding stack keeps
+//!   its embedding quality instead of being forced onto local
+//!   mE5-small.  The AnnIndex tag derives from model+dim so the
+//!   `ann-<tag>-v<n>` directory contract keeps working across
+//!   embedder swaps.
 //!
 //! # Concurrency
 //!
@@ -303,6 +313,290 @@ mod fast {
 #[cfg(feature = "semantic")]
 pub use fast::FastEmbedder;
 
+// ── RemoteEmbedder (#4614, always compiled) ───────────────────────
+//
+// Blocking HTTP against an OpenAI-compatible embeddings endpoint.
+// Every `embed_batch` call site in the service runs inside
+// `spawn_blocking`, and `reqwest::blocking` drives its I/O on a
+// dedicated internal runtime thread — the plugin's own tokio pool is
+// never re-entered, so a plain synchronous `.send()` here is safe.
+//
+// Not gated behind `semantic`: no ONNX involved, so a build without
+// the local-model feature still gets a dense lane when an API
+// endpoint is configured.
+
+/// Embeddings endpoint URL, e.g. `https://api.openai.com/v1/embeddings`
+/// or a local gateway.  Presence of this var selects the remote
+/// embedder over the local ONNX path.
+pub const EMBED_API_URL_ENV: &str = "NEXUS_SEARCH_EMBED_API_URL";
+/// Bearer token for the endpoint.  Optional — local gateways often
+/// need none; when set it is sent as `Authorization: Bearer <key>`.
+pub const EMBED_API_KEY_ENV: &str = "NEXUS_SEARCH_EMBED_API_KEY";
+/// Model name sent in the request body (e.g. `text-embedding-3-small`).
+/// Required whenever the URL is set.
+pub const EMBED_MODEL_ENV: &str = "NEXUS_SEARCH_EMBED_MODEL";
+/// Embedding dimensionality.  Required whenever the URL is set: it
+/// pins the AnnIndex dim at open-or-create time WITHOUT a boot-time
+/// network probe, and every response is validated against it so a
+/// model/dim mismatch fails loud instead of corrupting the index.
+pub const EMBED_DIM_ENV: &str = "NEXUS_SEARCH_EMBED_DIM";
+/// Per-request timeout in seconds (default 30).
+pub const EMBED_TIMEOUT_ENV: &str = "NEXUS_SEARCH_EMBED_TIMEOUT_SECONDS";
+
+const DEFAULT_EMBED_TIMEOUT_SECONDS: u64 = 30;
+
+/// Provider batch ceiling — one HTTP request carries at most this
+/// many inputs (OpenAI caps at 2048; a conservative bound keeps
+/// request bodies reasonable for local gateways too).  Larger
+/// `embed_batch` calls are transparently chunked.
+const REMOTE_EMBED_MAX_BATCH: usize = 512;
+
+/// Parsed remote-embedder configuration.  `from_env` returns
+/// `Ok(None)` when [`EMBED_API_URL_ENV`] is unset (caller falls back
+/// to the local path) and `Err` when the URL is set but the rest of
+/// the contract is incomplete — a typo'd config must fail LOUD, not
+/// silently reindex the corpus into a different vector space.
+#[derive(Debug, Clone)]
+pub struct RemoteEmbedderConfig {
+    pub url: String,
+    pub api_key: Option<String>,
+    pub model: String,
+    pub dim: usize,
+    pub timeout: std::time::Duration,
+}
+
+impl RemoteEmbedderConfig {
+    /// Read the `NEXUS_SEARCH_EMBED_*` contract from process env.
+    pub fn from_env() -> Result<Option<Self>, EmbedError> {
+        Self::from_lookup(|k| std::env::var(k).ok())
+    }
+
+    /// Env-shape parser with an injectable lookup so unit tests never
+    /// touch process-global env vars (which race across test threads).
+    fn from_lookup(get: impl Fn(&str) -> Option<String>) -> Result<Option<Self>, EmbedError> {
+        let url = match get(EMBED_API_URL_ENV).filter(|v| !v.trim().is_empty()) {
+            Some(u) => u.trim().to_string(),
+            None => return Ok(None),
+        };
+        let model = get(EMBED_MODEL_ENV)
+            .filter(|v| !v.trim().is_empty())
+            .map(|v| v.trim().to_string())
+            .ok_or_else(|| {
+                EmbedError::NotAvailable(format!(
+                    "{EMBED_API_URL_ENV} is set but {EMBED_MODEL_ENV} is not — \
+                     the remote embedder needs an explicit model name",
+                ))
+            })?;
+        let dim_raw = get(EMBED_DIM_ENV)
+            .filter(|v| !v.trim().is_empty())
+            .ok_or_else(|| {
+                EmbedError::NotAvailable(format!(
+                    "{EMBED_API_URL_ENV} is set but {EMBED_DIM_ENV} is not — \
+                     the remote embedder needs the embedding dimensionality \
+                     to pin the ANN index without a boot-time network probe",
+                ))
+            })?;
+        let dim = dim_raw
+            .trim()
+            .parse::<usize>()
+            .ok()
+            .filter(|d| *d > 0)
+            .ok_or_else(|| {
+                EmbedError::NotAvailable(format!(
+                    "{EMBED_DIM_ENV}={dim_raw:?} is not a positive integer",
+                ))
+            })?;
+        let timeout_secs = match get(EMBED_TIMEOUT_ENV).filter(|v| !v.trim().is_empty()) {
+            Some(t) => t
+                .trim()
+                .parse::<u64>()
+                .ok()
+                .filter(|s| *s > 0)
+                .ok_or_else(|| {
+                    EmbedError::NotAvailable(format!(
+                        "{EMBED_TIMEOUT_ENV}={t:?} is not a positive integer",
+                    ))
+                })?,
+            None => DEFAULT_EMBED_TIMEOUT_SECONDS,
+        };
+        let api_key = get(EMBED_API_KEY_ENV).filter(|v| !v.trim().is_empty());
+        Ok(Some(Self {
+            url,
+            api_key,
+            model,
+            dim,
+            timeout: std::time::Duration::from_secs(timeout_secs),
+        }))
+    }
+
+    /// AnnIndex directory tag — derived from model + dim so the
+    /// `ann-<tag>-v<n>` contract keeps working: same (model, dim) ⇒
+    /// same vector space ⇒ same index directory; changing either
+    /// re-tags and the fresh index lands alongside the old.
+    pub fn tag(&self) -> String {
+        format!("api-{}-{}", sanitize_tag(&self.model), self.dim)
+    }
+}
+
+/// Filesystem-safe tag fragment: keep `[A-Za-z0-9._-]`, map anything
+/// else (`/` in HF-style names, spaces, `:`) to `-`.  The tag lands
+/// verbatim in the `ann-<tag>-v<n>` directory name.
+fn sanitize_tag(raw: &str) -> String {
+    raw.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+#[derive(serde::Serialize)]
+struct EmbeddingsRequest<'a> {
+    model: &'a str,
+    input: &'a [&'a str],
+}
+
+#[derive(serde::Deserialize)]
+struct EmbeddingsResponse {
+    data: Vec<EmbeddingItem>,
+}
+
+#[derive(serde::Deserialize)]
+struct EmbeddingItem {
+    index: usize,
+    embedding: Vec<f32>,
+}
+
+/// OpenAI-compatible remote embedding backend.  See the module doc
+/// and [`RemoteEmbedderConfig`] for the env contract.
+pub struct RemoteEmbedder {
+    client: reqwest::blocking::Client,
+    config: RemoteEmbedderConfig,
+    tag: String,
+    display: String,
+}
+
+impl RemoteEmbedder {
+    /// Build the HTTP client for `config`.  No network I/O happens
+    /// here — a wrong URL or key surfaces on the first embed call as
+    /// a typed `Runtime` error, keeping construction cheap for the
+    /// lazy `OnceCell`-style init the service uses.
+    pub fn new(config: RemoteEmbedderConfig) -> Result<Self, EmbedError> {
+        let client = reqwest::blocking::Client::builder()
+            .timeout(config.timeout)
+            .build()
+            .map_err(|e| EmbedError::Load(format!("remote embedder HTTP client: {e}")))?;
+        let tag = config.tag();
+        let display = format!("remote:{} ({}d @ {})", config.model, config.dim, config.url);
+        Ok(Self {
+            client,
+            config,
+            tag,
+            display,
+        })
+    }
+
+    /// One provider round-trip for ≤ [`REMOTE_EMBED_MAX_BATCH`] texts.
+    fn embed_chunk(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, EmbedError> {
+        let body = EmbeddingsRequest {
+            model: &self.config.model,
+            input: texts,
+        };
+        let mut req = self.client.post(&self.config.url).json(&body);
+        if let Some(key) = &self.config.api_key {
+            req = req.bearer_auth(key);
+        }
+        let resp = req.send().map_err(|e| {
+            EmbedError::Runtime(format!("embeddings request to {}: {e}", self.config.url))
+        })?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            // Truncated body excerpt so a provider error message (quota,
+            // bad model, auth) reaches the operator without dumping an
+            // HTML error page into the log.
+            let body = resp.text().unwrap_or_default();
+            let excerpt: String = body.chars().take(300).collect();
+            return Err(EmbedError::Runtime(format!(
+                "embeddings endpoint returned {status}: {excerpt}",
+            )));
+        }
+
+        let parsed: EmbeddingsResponse = resp
+            .json()
+            .map_err(|e| EmbedError::Runtime(format!("embeddings response parse: {e}")))?;
+        if parsed.data.len() != texts.len() {
+            return Err(EmbedError::Runtime(format!(
+                "embeddings response carried {} vectors for {} inputs",
+                parsed.data.len(),
+                texts.len(),
+            )));
+        }
+
+        // Providers document `data` as request-ordered but also carry an
+        // explicit per-item index — trust the index.
+        let mut out: Vec<Option<Vec<f32>>> = vec![None; texts.len()];
+        for item in parsed.data {
+            if item.embedding.len() != self.config.dim {
+                return Err(EmbedError::Runtime(format!(
+                    "embeddings response dim {} != configured {} ({}={}) — \
+                     fix {} or {} so the ANN index is not built in the wrong vector space",
+                    item.embedding.len(),
+                    self.config.dim,
+                    EMBED_MODEL_ENV,
+                    self.config.model,
+                    EMBED_DIM_ENV,
+                    EMBED_MODEL_ENV,
+                )));
+            }
+            let slot = out.get_mut(item.index).ok_or_else(|| {
+                EmbedError::Runtime(format!(
+                    "embeddings response index {} out of range for {} inputs",
+                    item.index,
+                    texts.len(),
+                ))
+            })?;
+            *slot = Some(item.embedding);
+        }
+        out.into_iter()
+            .enumerate()
+            .map(|(i, v)| {
+                v.ok_or_else(|| {
+                    EmbedError::Runtime(format!("embeddings response missing vector for input {i}"))
+                })
+            })
+            .collect()
+    }
+}
+
+impl Embedder for RemoteEmbedder {
+    fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, EmbedError> {
+        if texts.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut out = Vec::with_capacity(texts.len());
+        for chunk in texts.chunks(REMOTE_EMBED_MAX_BATCH) {
+            out.extend(self.embed_chunk(chunk)?);
+        }
+        Ok(out)
+    }
+
+    fn dim(&self) -> usize {
+        self.config.dim
+    }
+
+    fn tag(&self) -> &str {
+        &self.tag
+    }
+
+    fn display_name(&self) -> &str {
+        &self.display
+    }
+}
+
 // ── Discovery helpers ─────────────────────────────────────────────
 
 /// Env var that overrides the default model directory.
@@ -325,12 +619,28 @@ pub fn resolve_model_dir(data_root: &Path) -> PathBuf {
 
 /// Best-effort embedder factory — used by the service to lazily
 /// build the embedder on first SemanticQuery.  Returns
-/// `NotAvailable` when the `semantic` feature is off or the
-/// discovery step didn't find a usable model / dylib.
+/// `NotAvailable` when no remote endpoint is configured AND the
+/// `semantic` feature is off (or its discovery step didn't find a
+/// usable model / dylib).
 ///
 /// The concrete return type is `Arc<dyn Embedder>` so tests can
 /// swap in `MockEmbedder` without a compile-time cfg.
 pub fn build_default_embedder(data_root: &Path) -> Result<Arc<dyn Embedder>, EmbedError> {
+    // #4614: a configured remote/API endpoint wins over local ONNX so
+    // deployments migrating from the pre-P12 API-embedding stack keep
+    // their embedding quality.  A PARTIALLY configured remote (URL set
+    // but model/dim missing) errors here rather than falling through —
+    // a typo must not silently reindex the corpus onto mE5-small.
+    if let Some(cfg) = RemoteEmbedderConfig::from_env()? {
+        tracing::info!(
+            model = %cfg.model,
+            dim = cfg.dim,
+            url = %cfg.url,
+            tag = %cfg.tag(),
+            "search-plugin: using remote embedding backend",
+        );
+        return Ok(Arc::new(RemoteEmbedder::new(cfg)?));
+    }
     #[cfg(feature = "semantic")]
     {
         let dir = resolve_model_dir(data_root);
@@ -348,9 +658,10 @@ pub fn build_default_embedder(data_root: &Path) -> Result<Arc<dyn Embedder>, Emb
     #[cfg(not(feature = "semantic"))]
     {
         let _ = data_root;
-        Err(EmbedError::NotAvailable(
-            "search-plugin compiled without the `semantic` feature".to_string(),
-        ))
+        Err(EmbedError::NotAvailable(format!(
+            "search-plugin compiled without the `semantic` feature and no \
+             remote embedding endpoint configured (set {EMBED_API_URL_ENV})",
+        )))
     }
 }
 
@@ -438,5 +749,255 @@ mod tests {
             Err(EmbedError::NotAvailable(msg)) => assert!(msg.contains("semantic")),
             other => panic!("expected NotAvailable, got {other:?}"),
         }
+    }
+
+    // ── RemoteEmbedder (#4614) ────────────────────────────────────
+
+    /// Injectable-lookup helper so config tests never touch
+    /// process-global env (which races across parallel test threads).
+    fn lookup(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
+        let owned: Vec<(String, String)> = pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect();
+        move |k| {
+            owned
+                .iter()
+                .find(|(key, _)| key == k)
+                .map(|(_, v)| v.clone())
+        }
+    }
+
+    #[test]
+    fn remote_config_absent_url_means_none() {
+        let cfg = RemoteEmbedderConfig::from_lookup(lookup(&[])).unwrap();
+        assert!(cfg.is_none());
+        // Empty-string URL counts as unset, not as a broken config.
+        let cfg = RemoteEmbedderConfig::from_lookup(lookup(&[(EMBED_API_URL_ENV, "  ")])).unwrap();
+        assert!(cfg.is_none());
+    }
+
+    #[test]
+    fn remote_config_url_without_model_or_dim_fails_loud() {
+        // URL set but model missing — must error, never silently fall
+        // back to the local embedder (wrong vector space on reindex).
+        let err = RemoteEmbedderConfig::from_lookup(lookup(&[
+            (EMBED_API_URL_ENV, "http://localhost:9/v1/embeddings"),
+            (EMBED_DIM_ENV, "1536"),
+        ]))
+        .unwrap_err();
+        assert!(matches!(err, EmbedError::NotAvailable(ref m) if m.contains(EMBED_MODEL_ENV)));
+
+        let err = RemoteEmbedderConfig::from_lookup(lookup(&[
+            (EMBED_API_URL_ENV, "http://localhost:9/v1/embeddings"),
+            (EMBED_MODEL_ENV, "text-embedding-3-small"),
+        ]))
+        .unwrap_err();
+        assert!(matches!(err, EmbedError::NotAvailable(ref m) if m.contains(EMBED_DIM_ENV)));
+    }
+
+    #[test]
+    fn remote_config_rejects_bad_dim_and_timeout() {
+        for bad_dim in ["abc", "0", "-3", "1.5"] {
+            let err = RemoteEmbedderConfig::from_lookup(lookup(&[
+                (EMBED_API_URL_ENV, "http://localhost:9/v1/embeddings"),
+                (EMBED_MODEL_ENV, "m"),
+                (EMBED_DIM_ENV, bad_dim),
+            ]))
+            .unwrap_err();
+            assert!(
+                matches!(err, EmbedError::NotAvailable(ref m) if m.contains(EMBED_DIM_ENV)),
+                "dim {bad_dim:?} accepted"
+            );
+        }
+        let err = RemoteEmbedderConfig::from_lookup(lookup(&[
+            (EMBED_API_URL_ENV, "http://localhost:9/v1/embeddings"),
+            (EMBED_MODEL_ENV, "m"),
+            (EMBED_DIM_ENV, "8"),
+            (EMBED_TIMEOUT_ENV, "soon"),
+        ]))
+        .unwrap_err();
+        assert!(matches!(err, EmbedError::NotAvailable(ref m) if m.contains(EMBED_TIMEOUT_ENV)));
+    }
+
+    #[test]
+    fn remote_config_full_set_parses() {
+        let cfg = RemoteEmbedderConfig::from_lookup(lookup(&[
+            (EMBED_API_URL_ENV, " https://api.openai.com/v1/embeddings "),
+            (EMBED_MODEL_ENV, "text-embedding-3-small"),
+            (EMBED_DIM_ENV, "1536"),
+            (EMBED_API_KEY_ENV, "sk-test"),
+        ]))
+        .unwrap()
+        .expect("config should be present");
+        assert_eq!(cfg.url, "https://api.openai.com/v1/embeddings");
+        assert_eq!(cfg.model, "text-embedding-3-small");
+        assert_eq!(cfg.dim, 1536);
+        assert_eq!(cfg.api_key.as_deref(), Some("sk-test"));
+        assert_eq!(cfg.timeout, std::time::Duration::from_secs(30));
+        assert_eq!(cfg.tag(), "api-text-embedding-3-small-1536");
+    }
+
+    #[test]
+    fn remote_tag_sanitizes_filesystem_hostile_model_names() {
+        // HF-style org/model names, spaces, and colons all land in the
+        // ann-<tag>-v<n> directory name — keep them path-safe.
+        assert_eq!(
+            sanitize_tag("intfloat/multilingual e5:small"),
+            "intfloat-multilingual-e5-small"
+        );
+        assert_eq!(
+            sanitize_tag("text-embedding-3-small"),
+            "text-embedding-3-small"
+        );
+    }
+
+    fn remote_test_config(url: String) -> RemoteEmbedderConfig {
+        RemoteEmbedderConfig {
+            url,
+            api_key: Some("sk-test".to_string()),
+            model: "test-embed".to_string(),
+            dim: 3,
+            timeout: std::time::Duration::from_secs(5),
+        }
+    }
+
+    /// One-request localhost HTTP server: accepts a single connection,
+    /// reads the full request (headers + Content-Length body), writes
+    /// the canned response, and returns the raw request text for
+    /// assertions.  Plain std — no dev-dep for a mock server.
+    fn spawn_one_shot_http(
+        status_line: &'static str,
+        body: String,
+    ) -> (std::net::SocketAddr, std::thread::JoinHandle<String>) {
+        use std::io::{Read, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = Vec::new();
+            let mut tmp = [0u8; 4096];
+            let header_end = loop {
+                let n = stream.read(&mut tmp).unwrap();
+                assert!(n > 0, "client closed before end of headers");
+                buf.extend_from_slice(&tmp[..n]);
+                if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                    break pos + 4;
+                }
+            };
+            let headers = String::from_utf8_lossy(&buf[..header_end]).to_string();
+            let content_length = headers
+                .lines()
+                .find_map(|l| {
+                    let (k, v) = l.split_once(':')?;
+                    k.eq_ignore_ascii_case("content-length")
+                        .then(|| v.trim().parse::<usize>().ok())
+                        .flatten()
+                })
+                .unwrap_or(0);
+            while buf.len() < header_end + content_length {
+                let n = stream.read(&mut tmp).unwrap();
+                assert!(n > 0, "client closed mid-body");
+                buf.extend_from_slice(&tmp[..n]);
+            }
+            let request = String::from_utf8_lossy(&buf).to_string();
+            let resp = format!(
+                "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\n\
+                 Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len(),
+            );
+            stream.write_all(resp.as_bytes()).unwrap();
+            request
+        });
+        (addr, handle)
+    }
+
+    #[test]
+    fn remote_embed_orders_by_index_and_sends_auth() {
+        // Response items deliberately out of order — the client must
+        // trust the per-item index, not arrival order.
+        let body = serde_json::json!({
+            "object": "list",
+            "data": [
+                {"object": "embedding", "index": 1, "embedding": [4.0, 5.0, 6.0]},
+                {"object": "embedding", "index": 0, "embedding": [1.0, 2.0, 3.0]},
+            ],
+        })
+        .to_string();
+        let (addr, handle) = spawn_one_shot_http("200 OK", body);
+        let emb = RemoteEmbedder::new(remote_test_config(format!("http://{addr}/v1/embeddings")))
+            .unwrap();
+
+        let out = emb.embed_batch(&["a", "b"]).unwrap();
+        assert_eq!(out, vec![vec![1.0, 2.0, 3.0], vec![4.0, 5.0, 6.0]]);
+        assert_eq!(emb.dim(), 3);
+        assert_eq!(emb.tag(), "api-test-embed-3");
+
+        let request = handle.join().unwrap().to_lowercase();
+        assert!(
+            request.contains("authorization: bearer sk-test"),
+            "missing bearer auth"
+        );
+        assert!(
+            request.contains("\"model\":\"test-embed\""),
+            "missing model in body"
+        );
+        assert!(
+            request.contains("\"input\":[\"a\",\"b\"]"),
+            "missing input in body"
+        );
+    }
+
+    #[test]
+    fn remote_embed_surfaces_provider_error_status() {
+        let body = r#"{"error": {"message": "quota exceeded"}}"#.to_string();
+        let (addr, handle) = spawn_one_shot_http("429 Too Many Requests", body);
+        let emb = RemoteEmbedder::new(remote_test_config(format!("http://{addr}/v1/embeddings")))
+            .unwrap();
+
+        let err = emb.embed_batch(&["a"]).unwrap_err();
+        match err {
+            EmbedError::Runtime(m) => {
+                assert!(m.contains("429"), "status missing from {m:?}");
+                assert!(
+                    m.contains("quota exceeded"),
+                    "body excerpt missing from {m:?}"
+                );
+            }
+            other => panic!("expected Runtime, got {other:?}"),
+        }
+        let _ = handle.join().unwrap();
+    }
+
+    #[test]
+    fn remote_embed_rejects_dim_mismatch() {
+        // Provider answers with 2-dim vectors for a 3-dim config —
+        // must error loud, never write into the ANN index.
+        let body = serde_json::json!({
+            "object": "list",
+            "data": [{"object": "embedding", "index": 0, "embedding": [1.0, 2.0]}],
+        })
+        .to_string();
+        let (addr, handle) = spawn_one_shot_http("200 OK", body);
+        let emb = RemoteEmbedder::new(remote_test_config(format!("http://{addr}/v1/embeddings")))
+            .unwrap();
+
+        let err = emb.embed_batch(&["a"]).unwrap_err();
+        assert!(
+            matches!(err, EmbedError::Runtime(ref m) if m.contains("dim 2 != configured 3")),
+            "got {err:?}"
+        );
+        let _ = handle.join().unwrap();
+    }
+
+    #[test]
+    fn remote_embed_empty_batch_skips_network() {
+        // Unroutable URL — an empty batch must return without dialing.
+        let emb = RemoteEmbedder::new(remote_test_config(
+            "http://127.0.0.1:9/v1/embeddings".to_string(),
+        ))
+        .unwrap();
+        assert!(emb.embed_batch(&[]).unwrap().is_empty());
     }
 }

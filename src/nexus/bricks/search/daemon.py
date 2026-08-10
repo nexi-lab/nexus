@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 import grpc
 
 from nexus.bricks.search.results import BaseSearchResult
+from nexus.contracts.search_types import BatchQueryFailure
 from nexus.grpc.search.v1 import search_pb2, search_pb2_grpc
 
 if TYPE_CHECKING:
@@ -84,24 +85,7 @@ class SearchDaemon:
 
     async def search(self, request: "SearchRequest") -> list[BaseSearchResult]:
         """Forward a SearchRequest to the Rust plugin's Query RPC."""
-        req = search_pb2.QueryRequest(
-            q=request.query,
-            zone_id=request.zone_id or "",
-            limit=request.limit,
-            path_filter=request.path_filter or "",
-            query_type=_QUERY_TYPE_MAP.get(request.search_type, search_pb2.QUERY_TYPE_UNSPECIFIED),
-            alpha=request.alpha,
-            fusion_method=_FUSION_METHOD_MAP.get(
-                request.fusion_method, search_pb2.FUSION_METHOD_UNSPECIFIED
-            ),
-            rrf_k=request.rrf_k,
-            expand=request.expand or "",
-            recency_mode=request.recency or "",
-            recency_weight=request.recency_weight or 0.0,
-            recency_half_life_days=request.recency_half_life_days or 0.0,
-            path_prefix_boosts=request.path_prefix_boosts or {},
-        )
-        resp = await self._get_stub().Query(req)
+        resp = await self._get_stub().Query(_request_to_pb(request))
         if resp.HasField("error"):
             logger.warning("rust search returned error: %s", resp.error)
             return []
@@ -110,22 +94,25 @@ class SearchDaemon:
     async def batch_search(
         self,
         requests: list["SearchRequest"],
-    ) -> list[list[BaseSearchResult]]:
-        """Forward a batch of queries to the Rust plugin."""
-        pb_queries = [
-            search_pb2.QueryRequest(
-                q=r.query,
-                zone_id=r.zone_id or "",
-                limit=r.limit,
-                path_filter=r.path_filter or "",
-                query_type=_QUERY_TYPE_MAP.get(r.search_type, search_pb2.QUERY_TYPE_UNSPECIFIED),
-                path_prefix_boosts=r.path_prefix_boosts or {},
-            )
-            for r in requests
-        ]
-        req = search_pb2.BatchQueryRequest(queries=pb_queries)
+    ) -> list[list[BaseSearchResult] | BatchQueryFailure]:
+        """Forward a batch of queries to the Rust plugin.
+
+        Positional with ``requests``.  An inner query the plugin failed
+        (embedder unavailable, per-query timeout, backend error) comes
+        back as :class:`BatchQueryFailure` — NOT an empty list — so the
+        batch endpoint can emit its per-entry additive ``error`` field
+        and fail-closed consumers can tell "searched, no matches" from
+        "search failed" (#4612).
+        """
+        req = search_pb2.BatchQueryRequest(queries=[_request_to_pb(r) for r in requests])
         resp = await self._get_stub().BatchQuery(req)
-        return [[_result_to_base(hit) for hit in sub.results] for sub in resp.responses]
+        out: list[list[BaseSearchResult] | BatchQueryFailure] = []
+        for sub in resp.responses:
+            if sub.HasField("error"):
+                out.append(BatchQueryFailure(error=sub.error))
+            else:
+                out.append([_result_to_base(hit) for hit in sub.results])
+        return out
 
     async def locate(
         self,
@@ -235,6 +222,31 @@ class SearchDaemon:
             "ann_chunk_count": resp.ann_chunk_count,
             "parked_count": resp.parked_count,
         }
+
+
+def _request_to_pb(request: "SearchRequest") -> search_pb2.QueryRequest:
+    """Map a SearchRequest onto the plugin's QueryRequest proto.
+
+    Shared by ``search`` and ``batch_search`` so the batch path can
+    never silently drop a tuning knob the single path forwards.
+    """
+    return search_pb2.QueryRequest(
+        q=request.query,
+        zone_id=request.zone_id or "",
+        limit=request.limit,
+        path_filter=request.path_filter or "",
+        query_type=_QUERY_TYPE_MAP.get(request.search_type, search_pb2.QUERY_TYPE_UNSPECIFIED),
+        alpha=request.alpha,
+        fusion_method=_FUSION_METHOD_MAP.get(
+            request.fusion_method, search_pb2.FUSION_METHOD_UNSPECIFIED
+        ),
+        rrf_k=request.rrf_k,
+        expand=request.expand or "",
+        recency_mode=request.recency or "",
+        recency_weight=request.recency_weight or 0.0,
+        recency_half_life_days=request.recency_half_life_days or 0.0,
+        path_prefix_boosts=request.path_prefix_boosts or {},
+    )
 
 
 def _result_to_base(pb: search_pb2.QueryResult) -> BaseSearchResult:

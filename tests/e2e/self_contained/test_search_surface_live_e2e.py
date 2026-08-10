@@ -40,11 +40,38 @@ def _resolve_cluster_binary() -> Path | None:
     return None
 
 
+def _resolve_search_plugin_dylib() -> Path | None:
+    """Worktree build of the Rust search plugin, if present.
+
+    When found, the fixture loads it into the spawned kernel via
+    ``NEXUS_PLUGIN_DIR`` and points the app's SearchDaemon at the
+    kernel's gRPC listener — the /search surface then runs against the
+    REAL plugin instead of 503ing. Build with
+    ``cargo build -p nexus-search-plugin``.
+    """
+    root = _repo_root()
+    for directory in (
+        root / "rust" / "target" / "release",
+        root / "rust" / "target" / "debug",
+        root / "target" / "release",
+        root / "target" / "debug",
+    ):
+        for name in ("libnexus_search_plugin.dylib", "libnexus_search_plugin.so"):
+            candidate = directory / name
+            if candidate.exists():
+                return candidate
+    return None
+
+
 @dataclass
 class LiveSearchApp:
     client: TestClient
     nx: Any
     headers: dict[str, str]
+    # True when the worktree search-plugin dylib was loaded into the
+    # spawned kernel — tests that need real plugin-backed /search
+    # endpoints skip when False instead of asserting into 503s.
+    plugin_loaded: bool = False
 
 
 @pytest.fixture()
@@ -62,6 +89,37 @@ def live_search_app(
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "nexus-cluster").symlink_to(cluster)
+
+    # Load the worktree search-plugin dylib into the spawned kernel when
+    # available (#4620). Must be set BEFORE nexus.connect — the kernel
+    # scans NEXUS_PLUGIN_DIR at boot. The kernel refuses unsigned
+    # plugins, so detach-sign the dylib with an ephemeral test-local
+    # Ed25519 key and trust it via NEXUS_LOCAL_TRUSTED_KEYS_DIR (the
+    # loader's documented local-trust extension point; format contract
+    # matches scripts/sign_plugin.py).
+    plugin_dylib = _resolve_search_plugin_dylib()
+    if plugin_dylib is not None:
+        import base64
+
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+        plugins_dir = tmp_path / "plugins"
+        plugins_dir.mkdir()
+        (plugins_dir / plugin_dylib.name).symlink_to(plugin_dylib)
+        signing_key = Ed25519PrivateKey.generate()
+        (plugins_dir / (plugin_dylib.name + ".sig")).write_bytes(
+            signing_key.sign(plugin_dylib.read_bytes())
+        )
+        trust_dir = tmp_path / "trusted_keys"
+        trust_dir.mkdir()
+        pub_raw = signing_key.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+        (trust_dir / "live-e2e.pub").write_text(base64.b64encode(pub_raw).decode() + "\n")
+        monkeypatch.setenv("NEXUS_PLUGIN_DIR", str(plugins_dir))
+        monkeypatch.setenv("NEXUS_LOCAL_TRUSTED_KEYS_DIR", str(trust_dir))
 
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
     monkeypatch.setenv("NEXUS_ENFORCE_PERMISSIONS", "false")
@@ -85,6 +143,18 @@ def live_search_app(
             "enforce_permissions": False,
         }
     )
+
+    # The plugin's SearchService rides the kernel's own gRPC listener
+    # (Phase P routing), which binds a RANDOM free port locally — not the
+    # 2126 the SearchDaemon dials by default. Point the daemon at the
+    # spawned kernel before create_app's lifespan probes it.
+    plugin_loaded = False
+    if plugin_dylib is not None:
+        kernel_addr = getattr(getattr(nx, "_kernel", None), "_server_address", None)
+        if kernel_addr:
+            monkeypatch.setenv("NEXUS_SEARCH_PLUGIN_TARGET", str(kernel_addr))
+            plugin_loaded = True
+
     app = create_app(
         nexus_fs=nx,
         api_key="live-search-secret",
@@ -95,7 +165,13 @@ def live_search_app(
 
     try:
         with TestClient(app, raise_server_exceptions=False) as client:
-            yield LiveSearchApp(client=client, nx=nx, headers=headers)
+            # Decision #17 file-level ReBAC would deny every search hit for
+            # the test API key (no permission tuples are seeded), silently
+            # emptying /search/query responses. NEXUS_ENFORCE_PERMISSIONS
+            # only governs VFS ops, so null the search-path enforcer — this
+            # suite tests the search surface, not ReBAC.
+            app.state.permission_enforcer = None
+            yield LiveSearchApp(client=client, nx=nx, headers=headers, plugin_loaded=plugin_loaded)
     finally:
         close = getattr(nx, "close", None)
         if callable(close):
@@ -458,3 +534,122 @@ def test_live_batch_search_contract(live_search_app: LiveSearchApp) -> None:
         json={"queries": [{"q": f"q{i}"} for i in range(501)]},
     )
     assert oversize_response.status_code == 400
+
+
+def test_live_path_context_weight_moves_ranking(live_search_app: LiveSearchApp) -> None:
+    """A weighted path-context row must move ranking through the HTTP surface (#4620).
+
+    The exact differential-probe shape that caught the regression: two docs
+    matching the same rare term under different prefixes (one keyword-stronger
+    via repetition), then a ``weight: 10.0`` row upserted on the LOSER's
+    prefix must flip the order on the next query. Pre-fix the rows persisted
+    via CRUD but never reached ``QueryRequest.path_prefix_boosts``, so the
+    order (and scores) stayed identical.
+    """
+    live = live_search_app
+    if not live.plugin_loaded:
+        pytest.skip(
+            "requires the worktree search-plugin dylib; build it with "
+            "`cargo build -p nexus-search-plugin`"
+        )
+
+    live.nx.mkdir("/workspace", exist_ok=True)
+    live.nx.mkdir("/workspace/win", exist_ok=True)
+    live.nx.mkdir("/workspace/lose", exist_ok=True)
+    live.nx.write(
+        "/workspace/win/win.md",
+        b"zebrafly zebrafly zebrafly zebrafly keyword-strong doc\n",
+    )
+    live.nx.write("/workspace/lose/lose.md", b"zebrafly keyword-weak doc\n")
+
+    index_response, index_body = _request(
+        live,
+        "post",
+        "/api/v2/search/index",
+        max_wall_ms=15_000.0,
+        json={
+            "documents": [
+                {
+                    "id": "/workspace/win/win.md",
+                    "path": "/workspace/win/win.md",
+                    "text": "zebrafly zebrafly zebrafly zebrafly keyword-strong doc",
+                },
+                {
+                    "id": "/workspace/lose/lose.md",
+                    "path": "/workspace/lose/lose.md",
+                    "text": "zebrafly keyword-weak doc",
+                },
+            ]
+        },
+    )
+    assert index_response.status_code == 200
+    # Tolerate the count-shape drift tracked in #4617 (int pre-P12,
+    # {"indexed": …, "skipped": …} from the P12 proxy) — this test is
+    # about ranking, not the index response contract.
+    raw_count = index_body["count"]
+    indexed = raw_count["indexed"] if isinstance(raw_count, dict) else raw_count
+    assert indexed == 2, index_body
+
+    # Index visibility is eventually-consistent (#4623) — poll until both
+    # docs are queryable before asserting on order.
+    deadline = time.monotonic() + 5.0
+    before_paths: list[str] = []
+    while time.monotonic() < deadline:
+        before_response, before_body = _request(
+            live,
+            "get",
+            "/api/v2/search/query",
+            params={"q": "zebrafly", "type": "keyword", "limit": 5},
+        )
+        assert before_response.status_code == 200
+        before_paths = [r["path"] for r in before_body["results"]]
+        if len(before_paths) >= 2:
+            break
+        time.sleep(0.1)
+    assert before_paths[:2] == ["/workspace/win/win.md", "/workspace/lose/lose.md"], before_paths
+
+    put_response, _ = _request(
+        live,
+        "put",
+        "/api/v2/path-contexts/",
+        json={
+            "zone_id": "root",
+            "path_prefix": "workspace/lose",
+            "description": "tier-boosted loser prefix",
+            "weight": 10.0,
+        },
+    )
+    assert put_response.status_code == 200
+
+    after_response, after_body = _request(
+        live,
+        "get",
+        "/api/v2/search/query",
+        params={"q": "zebrafly", "type": "keyword", "limit": 5},
+    )
+    assert after_response.status_code == 200
+    after_paths = [r["path"] for r in after_body["results"]]
+    assert after_paths[:2] == ["/workspace/lose/lose.md", "/workspace/win/win.md"], (
+        f"weight 10.0 on the loser prefix must flip the order: "
+        f"before={before_paths} after={after_paths}"
+    )
+
+    # And deleting the row must restore the raw BM25 order — the boost is
+    # config, not index state.
+    delete_response, _ = _request(
+        live,
+        "delete",
+        "/api/v2/path-contexts/",
+        params={"zone_id": "root", "path_prefix": "workspace/lose"},
+    )
+    assert delete_response.status_code == 200
+
+    reset_response, reset_body = _request(
+        live,
+        "get",
+        "/api/v2/search/query",
+        params={"q": "zebrafly", "type": "keyword", "limit": 5},
+    )
+    assert reset_response.status_code == 200
+    reset_paths = [r["path"] for r in reset_body["results"]]
+    assert reset_paths[:2] == ["/workspace/win/win.md", "/workspace/lose/lose.md"], reset_paths

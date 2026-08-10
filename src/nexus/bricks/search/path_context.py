@@ -237,6 +237,41 @@ def lookup_in_records(records: builtins.list[PathContextRecord], path: str) -> s
     return record.description if record is not None else None
 
 
+def prefix_boosts_from_records(
+    records: builtins.list[PathContextRecord],
+) -> dict[str, float]:
+    """Map a zone's path_contexts rows onto ``QueryRequest.path_prefix_boosts`` (#4620).
+
+    The P12 plugin applies the longest plain-``starts_with``-matching key's
+    multiplier post-fusion (``scoring.rs``). Stored prefixes are slash-free
+    canonical (``_normalize_prefix``) while plugin hit paths arrive
+    slash-prefixed, so keys are rewrapped as ``/{prefix}/`` to keep matches
+    on directory boundaries (``docs`` must not boost ``/docs-v2/…``). The
+    empty prefix stays ``""`` — it matches every path, the zone-wide row.
+
+    Pre-P12 parity notes:
+
+    - The longest matching RECORD won even when it carried no weight (the
+      multiplier defaulted to 1.0), shadowing shorter weighted prefixes.
+      When any row carries an effective weight != 1.0 the whole zone's rows
+      are emitted (weightless rows as explicit 1.0) so a description-only
+      child subtree keeps exempting itself from a weighted parent. A zone
+      with no effective weights returns ``{}`` so the plugin skips its
+      boost-and-resort pass entirely.
+    - Known gap: a row whose prefix names an exact FILE path used to boost
+      that file via ``path == prefix`` equality; ``/{p}/`` cannot express
+      that without un-bounded ``starts_with`` leaks, so file-exact rows do
+      not boost under P12.
+    """
+    if not any(r.weight is not None and r.weight != 1.0 for r in records):
+        return {}
+    boosts: dict[str, float] = {}
+    for record in records:
+        key = "" if record.path_prefix == "" else f"/{record.path_prefix}/"
+        boosts[key] = float(record.weight) if record.weight is not None else 1.0
+    return boosts
+
+
 def _coerce_datetime(value: Any) -> datetime:
     """SQLite + aiosqlite can return datetimes as ISO strings; normalize to datetime."""
     if isinstance(value, datetime):

@@ -769,6 +769,7 @@ fn enrich_ann_hit(
         zone_id: zone_id.to_string(),
         mtime_ms,
         expanded_context: String::new(),
+        title_score: None,
     }
 }
 
@@ -796,6 +797,7 @@ fn fts_hit_to_result(hit: FtsHit, zone_id: &str) -> QueryResult {
         zone_id: zone_id.to_string(),
         mtime_ms: hit.mtime_ms,
         expanded_context: String::new(),
+        title_score: None,
     }
 }
 

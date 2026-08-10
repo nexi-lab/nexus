@@ -259,6 +259,7 @@ mod tests {
             zone_id: "root".to_string(),
             mtime_ms: None,
             expanded_context: String::new(),
+            title_score: None,
         }
     }
 

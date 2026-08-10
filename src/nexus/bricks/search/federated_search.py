@@ -284,12 +284,18 @@ class FederatedSearchDispatcher:
         *,
         registry: Any | None = None,
         enable_per_file_rebac: bool = False,
+        path_prefix_boosts_resolver: Any | None = None,
     ):
         self._daemon = daemon  # Default/fallback daemon
         self._rebac = rebac
         self._config = config or FederatedSearchConfig()
         self._registry = registry  # Phase 2: ZoneSearchRegistry
         self._enable_per_file_rebac = enable_per_file_rebac  # Phase 2: per-file filtering
+        # #4620: async callable ``zone_id -> dict[prefix_key, weight]``
+        # supplying each LOCAL leg's path-context tier weights (the
+        # caller owns store access; the router passes
+        # ``_resolve_path_prefix_boosts``). None = legs run unboosted.
+        self._path_prefix_boosts_resolver = path_prefix_boosts_resolver
         # Zone discovery cache: subject_key -> (zones, expiry_time)
         self._zone_cache: dict[str, tuple[list[str], float]] = {}
         # Phase 3: Result cache: cache_key -> (response, expiry_time)
@@ -437,7 +443,23 @@ class FederatedSearchDispatcher:
                 subject=subject,
             )
 
-        # Local zone: call daemon.search() directly
+        # Local zone: call daemon.search() directly.
+        # #4620: each local leg carries ITS zone's path-context tier
+        # weights. Remote legs stay unboosted — the remote RPC surface
+        # drops every search param today (#4556 above), and the remote
+        # node's own rows belong to the remote deployment anyway.
+        # Fail-open: a resolver error costs the boost, never the leg.
+        path_prefix_boosts: dict[str, float] | None = None
+        if self._path_prefix_boosts_resolver is not None:
+            try:
+                path_prefix_boosts = await self._path_prefix_boosts_resolver(zone_id) or None
+            except Exception:
+                logger.warning(
+                    "path-prefix boost resolution failed for zone %r; leg runs unboosted",
+                    zone_id,
+                    exc_info=True,
+                )
+
         daemon = self._get_daemon_for_zone(zone_id)
         results = await daemon.search(
             SearchRequest(
@@ -452,6 +474,7 @@ class FederatedSearchDispatcher:
                 recency_weight=recency_weight,
                 recency_half_life_days=recency_half_life_days,
                 zone_id=zone_id,
+                path_prefix_boosts=path_prefix_boosts,
             )
         )
 

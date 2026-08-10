@@ -170,7 +170,7 @@ graph TD
 
     sw -->|"gRPC &lpar;VFS port&rpar;"| grpc
 
-    subgraph host["sudocode-host — one process per host"]
+    subgraph host["sudocode binary — one process per host (embeds the kernel)"]
         grpc["gRPC server &lpar;VFS port&rpar;<br/>NexusVFSService.Call routes managed_agent<br/>+ ACP methods + sys_* for external clients"]
 
         subgraph kernel["Embedded Rust Kernel &lpar;one kernel::Kernel per host&rpar;"]
@@ -211,11 +211,11 @@ graph TD
 
 <h3>Constraints</h3>
 <ul>
-  <li><strong>One nexus per host.</strong> A host that runs sudocode agents runs one <code>sudocode-host</code> process, and its embedded <code>kernel::Kernel</code> is that host's nexus. A host without sudocode agents runs the standalone <code>nexusd-cluster</code> binary. The <code>nexus-bootstrap</code> launcher protocol owns discover-or-launch, so both shapes converge on one kernel per host (&sect;8).</li>
-  <li><strong>Pure-infra nexus.</strong> The kernel and the service-tier crates (<code>services</code>, <code>raft</code>, <code>lib</code>, <code>contracts</code>) compile with zero knowledge of any agent runtime; the dependency edge runs <code>sudocode &rarr; nexus</code>. <code>sudocode-host</code> (sudocode repo) is the one binary that links both source trees and monomorphises <code>SpawnTask&lt;Kernel&gt;</code> (&sect;2.3).</li>
+  <li><strong>One nexus per host.</strong> A host that runs sudocode agents runs one <strong>sudocode binary</strong> process &mdash; the sudocode binary already links the nexus <code>kernel</code> crate, so it embeds one <code>kernel::Kernel</code> in-process, and that kernel is the host's nexus. A host without sudocode agents runs the standalone <code>nexusd-cluster</code> binary. The <code>nexus-bootstrap</code> launcher protocol owns discover-or-launch, so both shapes converge on one kernel per host (&sect;8).</li>
+  <li><strong>Pure-infra nexus.</strong> The kernel and the service-tier crates (<code>services</code>, <code>raft</code>, <code>lib</code>, <code>contracts</code>) compile with zero knowledge of any agent runtime; the dependency edge runs <code>sudocode &rarr; nexus</code>. The <strong>sudocode binary</strong> (sudocode repo) is where both source trees link and <code>SpawnTask&lt;Kernel&gt;</code> monomorphises (&sect;2.3).</li>
   <li><strong>State SSOT.</strong> Agent runtime state (<code>pid &rarr; AgentState</code>, condvar wakeup, signal semantics, parent/child links, transition validation) lives in <code>kernel::core::agents::registry::AgentRegistry</code>. In-process Rust callers reach it directly; external callers reach it through the gRPC surface.</li>
   <li><strong>gRPC is the external surface.</strong> External clients (sudowork UI, orchestrator) reach the kernel over the VFS gRPC port; the agent&harr;kernel hot path stays in-process Rust.</li>
-  <li><strong>Cluster profile.</strong> <code>sudocode-host</code> and <code>nexusd-cluster</code> both run Nexus's cluster profile &mdash; bricks: IPC, FEDERATION.</li>
+  <li><strong>Cluster profile.</strong> The <strong>sudocode binary</strong> and <code>nexusd-cluster</code> both run Nexus's cluster profile &mdash; bricks: IPC, FEDERATION.</li>
   <li><strong>Zone = VFS path mount point.</strong> A zone's visibility boundary is its mount path. ReBAC governs sub-path access within a zone.</li>
 </ul>
 
@@ -293,13 +293,13 @@ sequenceDiagram
     Registry->>Registry: reap /proc/{pid}/
 </pre>
 
-<p>A managed agent runs as one in-process tokio task inside <code>sudocode-host</code>, reaching the kernel through direct Rust syscalls (<code>kernel.sys_read</code>, <code>sys_write</code>, <code>sys_watch</code>) and the dispatch hooks through the same in-process channel every kernel observer uses. External ACP agents (claude / codex / codebuddy / nanobot) run as subprocesses over stdio, because JSON-RPC over stdio is the only protocol those binaries speak; that path lives in <code>AcpService</code> (&sect;1).</p>
+<p>A managed agent runs as one in-process agent loop inside the <strong>sudocode binary</strong>, reaching the kernel through direct Rust syscalls (<code>kernel.sys_read</code>, <code>sys_write</code>, <code>sys_watch</code>) and the dispatch hooks through the same in-process channel every kernel observer uses. External ACP agents (claude / codex / codebuddy / nanobot) run as subprocesses over stdio, because JSON-RPC over stdio is the only protocol those binaries speak; that path lives in <code>AcpService</code> (&sect;1).</p>
 
 <p>Three identity layers, durable vs ephemeral: <code>agent-name</code> (durable principal), <code>session-id</code> (durable UUID &mdash; the transcript key you <code>--resume</code>, spanning many pids), and <code>pid</code> (ephemeral &mdash; one boot/run of a worker, the AgentRegistry handle). <strong>session-id &ne; pid</strong>: a session outlives any single process, so the two cannot be the same value. On <code>start_session</code>, <code>ManagedAgentService</code> mints a new session-id (or echoes the resumed one), registers a pid, plants the per-pid <code>AgentDescriptor</code> &mdash; the spawn-time SSOT (<code>agent_id</code> &rarr; <code>desc.name</code>, <code>model</code> &rarr; <code>desc.labels["model"]</code>, workspace list &rarr; <code>desc.repos</code>) &mdash; stamps the <code>/proc/{pid}/</code> entries (&sect;2.2), and returns <code>{session_id, pid, workspace_path}</code> to the caller.</p>
 
-<p><code>ManagedAgentService</code> hands off to the runtime through the <code>SpawnTask&lt;K: KernelAbi&gt;</code> DI seam &mdash; one indirect call per session start. The binary edge, <code>sudocode-host</code> in the sudocode repo, constructs a concrete <code>SpawnTask&lt;Kernel&gt;</code> adapter wrapping <code>sudocode_runtime::spawn_task</code> and registers it via <code>install_managed_agent_with_spawn(kernel, adapter)</code>. <code>start_session</code> calls <code>provider.spawn(kernel, desc, observer)</code> through <code>Arc&lt;dyn SpawnTask&lt;K&gt;&gt;</code>: exactly one vtable dispatch per session, and the returned <code>Box&lt;dyn SpawnHandle&gt;</code> lands in the service's <code>spawn_handles</code> sidecar. Inside the spawn body the surface is plain monomorphic Rust: <code>spawn_task::&lt;Kernel&gt;</code> and its inner <code>run_loop</code> are generic over <code>K: KernelAbi</code>, specialised against the concrete <code>Kernel</code> at the binary edge, so every <code>sys_read</code> / <code>sys_write</code> / <code>sys_watch</code> in the mailbox loop is an inline direct call. The services rlib depends on the <code>SpawnTask</code> trait only; pure-Rust slim builds call <code>install_managed_agent</code> (no spawn provider, no per-pid task).</p>
+<p><code>ManagedAgentService</code> hands off to the runtime through the <code>SpawnTask&lt;K: KernelAbi&gt;</code> DI seam &mdash; one indirect call per session start. The binary edge is the <strong>sudocode binary</strong> itself (sudocode repo): it constructs a concrete <code>SpawnTask&lt;Kernel&gt;</code> adapter wrapping <code>sudocode_runtime::spawn_task</code> and registers it via <code>install_managed_agent_with_spawn(kernel, adapter)</code>. <code>start_session</code> calls <code>provider.spawn(kernel, desc, observer)</code> through <code>Arc&lt;dyn SpawnTask&lt;K&gt;&gt;</code>: exactly one vtable dispatch per session, and the returned <code>Box&lt;dyn SpawnHandle&gt;</code> lands in the service's <code>spawn_handles</code> sidecar. Inside the spawn body the surface is plain monomorphic Rust: <code>spawn_task::&lt;Kernel&gt;</code> and its inner <code>run_loop</code> are generic over <code>K: KernelAbi</code>, specialised against the concrete <code>Kernel</code> at the binary edge, so every <code>sys_read</code> / <code>sys_write</code> / <code>sys_watch</code> in the mailbox loop is an inline direct call. The services rlib depends on the <code>SpawnTask</code> trait only; pure-Rust slim builds call <code>install_managed_agent</code> (no spawn provider, no per-pid task).</p>
 
-<p><code>sudocode-host</code> is the single binary-edge where the nexus and sudocode source trees link: it consumes <code>sudocode_runtime</code> as a library and the nexus <code>kernel</code> / <code>services</code> crates as git deps pinned to one nexus rev (so <code>SpawnTask&lt;Kernel&gt;</code> monomorphises), and the dependency edge stays <code>sudocode &rarr; nexus</code> (&sect;8).</p>
+<p>The <strong>sudocode binary</strong> is the single binary-edge where the nexus and sudocode source trees link: it builds on <code>sudocode_runtime</code> and pulls the nexus <code>kernel</code> / <code>services</code> crates as git deps pinned to one nexus rev (so <code>SpawnTask&lt;Kernel&gt;</code> monomorphises), and the dependency edge stays <code>sudocode &rarr; nexus</code> (&sect;8). No separate host binary is needed &mdash; sudocode already links the kernel in-process.</p>
 
 <p>A worker boots by reading its profile from <code>/agents/{name}/</code> and the requested <code>--session-id</code> transcript from <code>/sessions/&lt;session-id&gt;/</code> (&sect;2.1), works (appending to the transcript and the mailbox), and exits; the <code>/proc/{pid}/</code> subtree is reaped. Resuming re-reads the same session-id under a fresh pid &mdash; persistent state lives in <code>/agents/{name}/</code> and <code>/sessions/</code>, not in a long-running process. Out-of-band termination (SIGTERM / SIGKILL / orphan reap) flows through <code>AgentRegistry::on_terminate</code>, which reaps <code>/proc/{pid}/</code> and aborts the worker via its <code>SpawnHandle</code>; <code>cancel(pid)</code> calls <code>AgentRegistry::kill(pid, 0)</code> for the same outcome.</p>
 
@@ -323,13 +323,13 @@ sequenceDiagram
 <table>
   <thead><tr><th>Backend</th><th>Used by</th><th>Reaches files via</th></tr></thead>
   <tbody>
-    <tr><td><code>KernelFsBackend&lt;Kernel&gt;</code></td><td><code>sudocode-host</code> (production)</td><td>in-process kernel syscalls</td></tr>
+    <tr><td><code>KernelFsBackend&lt;Kernel&gt;</code></td><td>the sudocode binary (production)</td><td>in-process kernel syscalls</td></tr>
     <tr><td><code>StdFsBackend</code></td><td>standalone CLI</td><td>host <code>std::fs</code></td></tr>
     <tr><td><code>NexusVfsFsBackend</code></td><td>edge / dev CLI</td><td>gRPC to a remote kernel</td></tr>
   </tbody>
 </table>
 
-<p>Inside <code>sudocode-host</code> the agent task runs on <code>KernelFsBackend&lt;Kernel&gt;</code>, so <code>SessionStore</code>, <code>ConfigLoader</code>, and the workspace-bounded <code>file_ops</code> helpers all issue kernel syscalls against nexus VFS paths:</p>
+<p>Inside the <strong>sudocode binary</strong> the agent loop runs on <code>KernelFsBackend&lt;Kernel&gt;</code>, so <code>SessionStore</code>, <code>ConfigLoader</code>, and the workspace-bounded <code>file_ops</code> helpers all issue kernel syscalls against nexus VFS paths:</p>
 
 <p>Sessions are <strong>not</strong> partitioned by a workspace hash: a session lives flat at <code>/sessions/&lt;session-id&gt;/</code> and records the repos it touched as DT_LINKs under <code>repos/</code> (&sect;2.1), so one profile talking to multiple repos needs no per-repo path partition. Static prompt sections embed as <code>&amp;'static str</code> and need no IO.</p>
 
@@ -602,15 +602,15 @@ graph TB
 
 <h3>8.2 Isolation</h3>
 
-<p>Agent loops share <code>sudocode-host</code>'s address space as tokio tasks. Isolation floor is <code>catch_unwind</code> per task plus <code>SpawnHandle::abort</code> on reap. Workers are cattle: persistent state lives in <code>/agents/{name}/</code>, so a host that dies is restarted and each worker resumes from its <code>--session-id</code> transcript.</p>
+<p>Agent loops share the <strong>sudocode binary</strong>'s address space as in-process loops. Isolation floor is <code>catch_unwind</code> per loop plus <code>SpawnHandle::abort</code> on reap. Workers are cattle: persistent state lives in <code>/agents/{name}/</code>, so a host that dies is restarted and each worker resumes from its <code>--session-id</code> transcript.</p>
 
 <h3>8.3 One nexus per host</h3>
 
 <p>A host runs exactly one kernel. The <code>nexus-bootstrap</code> launcher protocol owns discover-or-launch (PID file, ready file, socket path, health check).</p>
 
-<h3>8.4 sudocode-host placement</h3>
+<h3>8.4 Binary-edge placement</h3>
 
-<p><code>sudocode-host</code> lives in the sudocode repo, peer to the standalone <code>rusty-sudocode-cli</code>. Keeping it there holds the dependency edge at <code>sudocode &rarr; nexus</code>.</p>
+<p>The binary that links the nexus <code>kernel</code> / <code>services</code> crates in-process lives in the sudocode repo &mdash; it <em>is</em> the sudocode binary, which already depends on the nexus <code>kernel</code> crate. Keeping the link on the sudocode side holds the dependency edge at <code>sudocode &rarr; nexus</code>: nexus infra never depends on any agent runtime.</p>
 
 <hr>
 

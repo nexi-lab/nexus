@@ -73,7 +73,7 @@ graph TD
     end
 
     subgraph Agent_Harness ["Agent Harness (open ecosystem, hook-compatible)"]
-        SC[sudocode / sudocode-host]
+        SC[sudocode]
         GC[Gemini CLI]
         CX[Codex CLI]
         AH[any agent]

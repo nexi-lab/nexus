@@ -69,6 +69,70 @@ def _make_rebac(zones: list[str]) -> AsyncMock:
 
 
 # =============================================================================
+# Per-zone path-prefix boosts (#4620)
+# =============================================================================
+
+
+def _make_capturing_daemon(captured: dict[str, Any]) -> AsyncMock:
+    daemon = AsyncMock()
+    daemon.is_initialized = True
+
+    async def capture_search(request: Any) -> list[MockSearchResult]:
+        captured[request.zone_id] = request
+        return []
+
+    daemon.search = capture_search
+    return daemon
+
+
+class TestPerZoneBoosts:
+    @pytest.mark.asyncio
+    async def test_resolver_boosts_stamped_per_zone(self) -> None:
+        captured: dict[str, Any] = {}
+        daemon = _make_capturing_daemon(captured)
+        rebac = _make_rebac(["zone_a", "zone_b"])
+
+        async def resolver(zone_id: str) -> dict[str, float]:
+            return {"/docs/": 5.0} if zone_id == "zone_a" else {}
+
+        dispatcher = FederatedSearchDispatcher(
+            daemon=daemon, rebac=rebac, path_prefix_boosts_resolver=resolver
+        )
+        await dispatcher.search("q", subject=("user", "alice"))
+
+        assert captured["zone_a"].path_prefix_boosts == {"/docs/": 5.0}
+        assert not captured["zone_b"].path_prefix_boosts
+
+    @pytest.mark.asyncio
+    async def test_no_resolver_leaves_legs_unboosted(self) -> None:
+        captured: dict[str, Any] = {}
+        daemon = _make_capturing_daemon(captured)
+        rebac = _make_rebac(["zone_a"])
+
+        dispatcher = FederatedSearchDispatcher(daemon=daemon, rebac=rebac)
+        await dispatcher.search("q", subject=("user", "alice"))
+
+        assert not captured["zone_a"].path_prefix_boosts
+
+    @pytest.mark.asyncio
+    async def test_resolver_error_fails_open_to_unboosted_leg(self) -> None:
+        captured: dict[str, Any] = {}
+        daemon = _make_capturing_daemon(captured)
+        rebac = _make_rebac(["zone_a"])
+
+        async def broken_resolver(zone_id: str) -> dict[str, float]:
+            raise RuntimeError("store down")
+
+        dispatcher = FederatedSearchDispatcher(
+            daemon=daemon, rebac=rebac, path_prefix_boosts_resolver=broken_resolver
+        )
+        resp = await dispatcher.search("q", subject=("user", "alice"))
+
+        assert "zone_a" in resp.zones_searched
+        assert not captured["zone_a"].path_prefix_boosts
+
+
+# =============================================================================
 # Zone discovery
 # =============================================================================
 

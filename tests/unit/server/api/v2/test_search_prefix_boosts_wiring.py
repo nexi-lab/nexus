@@ -155,6 +155,42 @@ def test_missing_store_fails_open_to_unboosted_search() -> None:
 
 
 @pytest.mark.asyncio
+async def test_federated_legs_carry_per_zone_boosts(store: PathContextStore) -> None:
+    # Multi-zone token auto-promotes to federated; each local leg must
+    # carry ITS zone's weight rows — and only its own.
+    await store.upsert("eng", "docs", "tier-1 docs", weight=5.0)
+    daemon = _make_daemon()
+    captured: dict[str, Any] = {}
+
+    async def capture_search(request: Any) -> list[Any]:
+        captured[request.zone_id] = request
+        return []
+
+    daemon.search = capture_search
+
+    app = _build_app(daemon, store)
+    rebac = MagicMock()
+    rebac.list_accessible_zones = AsyncMock(return_value=["eng", "ops"])
+    app.state.rebac_service = rebac
+    app.state.federated_per_file_rebac = False
+
+    from nexus.server.dependencies import require_auth
+
+    app.dependency_overrides[require_auth] = lambda: {
+        **_AUTH,
+        "zone_set": ["eng", "ops"],
+        "zone_perms": [["eng", "r"], ["ops", "r"]],
+    }
+
+    with TestClient(app) as client:
+        response = client.get("/api/v2/search/query", params={"q": "needle"})
+
+    assert response.status_code == 200, response.text
+    assert captured["eng"].path_prefix_boosts == {"/docs/": 5.0}
+    assert not captured["ops"].path_prefix_boosts
+
+
+@pytest.mark.asyncio
 async def test_weight_update_visible_on_next_query(store: PathContextStore) -> None:
     # The resolver caches per zone with a DB fingerprint check — an
     # upsert between queries must be reflected, not served stale.

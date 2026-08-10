@@ -258,10 +258,12 @@ def prefix_boosts_from_records(
       child subtree keeps exempting itself from a weighted parent. A zone
       with no effective weights returns ``{}`` so the plugin skips its
       boost-and-resort pass entirely.
-    - Known gap: a row whose prefix names an exact FILE path used to boost
-      that file via ``path == prefix`` equality; ``/{p}/`` cannot express
-      that without un-bounded ``starts_with`` leaks, so file-exact rows do
-      not boost under P12.
+    - File-exact rows: a row whose prefix names an exact FILE path boosts
+      it via the plugin's trailing-slash rule (#4620) — a key ending in
+      ``/`` also matches the path equal to the key minus that slash, so
+      ``/{p}/`` covers both the subtree and the exact-path case without
+      un-bounded ``starts_with`` leaks. (Plugins older than that rule
+      simply miss exact-file boosts — same as before the fix.)
     """
     if not any(r.weight is not None and r.weight != 1.0 for r in records):
         return {}

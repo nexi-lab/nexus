@@ -674,11 +674,18 @@ async def _handle_federated_search(
 
     registry = getattr(request.app.state, "zone_search_registry", None)
     per_file_rebac = getattr(request.app.state, "federated_per_file_rebac", True)
+
+    # #4620: each local federated leg gets its zone's path-context tier
+    # weights, resolved through the same cache the single-zone path uses.
+    async def _boosts_for_zone(zone_id: str) -> dict[str, float]:
+        return await _resolve_path_prefix_boosts(request, zone_id)
+
     dispatcher = FederatedSearchDispatcher(
         daemon=search_daemon,
         rebac=rebac,
         registry=registry,
         enable_per_file_rebac=per_file_rebac,
+        path_prefix_boosts_resolver=_boosts_for_zone,
     )
     fed_response = await dispatcher.search(
         query=q,

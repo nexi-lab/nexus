@@ -961,6 +961,11 @@ struct IndexSinks<'a> {
     /// every doc indexed this pass must stay ANN-retryable (mtime
     /// None) so vectors land once the embedder recovers.
     embed_broken: bool,
+    /// Does the zone have any `ann-*` directory on disk?  Content
+    /// skips and the sweep consult this to tell "no vectors exist"
+    /// (safe to finalize) from "vectors exist but the ANN sink is
+    /// unreachable" (keep a retry tombstone) — review R6.
+    zone_has_ann: bool,
 }
 
 /// Walk `root_path` and index every regular file.  Same walker Glob +
@@ -1018,6 +1023,7 @@ fn do_index(
         embedder,
         state: &state,
         embed_broken,
+        zone_has_ann: zone_has_ann_dir(manager, zone_id),
     };
 
     let mut indexed: u32 = 0;
@@ -1104,7 +1110,28 @@ enum IndexOne {
 /// mtime ⇒ Unchanged) instead of re-reading + re-skipping it on every
 /// pass — with max_docs stable content-skips ahead of the tail, the
 /// old behaviour starved the repair budget forever (review R5).
+///
+/// A skip is also a CONTENT TRANSITION (review R6): a previously
+/// indexed file that became empty/oversize/binary must have its old
+/// chunks PURGED, or deleted text stays searchable forever.  FTS
+/// purges idempotently; ANN purges when the sink is open, else the
+/// entry keeps a retry tombstone (mtime None) so a later pass with a
+/// working ANN sink finishes the cleanup — unless the zone has no
+/// ANN directory at all, in which case there is nothing to purge and
+/// the real mtime finalizes the skip.
 fn record_content_skip(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> IndexOne {
+    sinks.fts.delete_all_chunks(vfs_path);
+    match sinks.ann {
+        Some(ann) => {
+            ann.delete_all_chunks(vfs_path);
+        }
+        None if sinks.zone_has_ann => {
+            // Vectors may exist but are unreachable — retry tombstone.
+            sinks.state.record(vfs_path, None);
+            return IndexOne::Skipped;
+        }
+        None => {}
+    }
     let mtime_ms = kernel_io::sys_stat(handle, vfs_path)
         .ok()
         .and_then(|info| info.modified_at_ms);
@@ -1152,9 +1179,9 @@ fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> I
     // and keeps each chunk under the embedder's soft budget.
     let chunks = crate::chunker::chunk_document(text);
     if chunks.is_empty() {
-        // Whitespace-only file — nothing to index.
-        sinks.state.record(vfs_path, mtime_ms);
-        return IndexOne::Skipped;
+        // Whitespace-only file — nothing to index; purge any prior
+        // chunks + record per ANN reachability (review R6).
+        return record_content_skip(handle, sinks, vfs_path);
     }
 
     // FTS side: drop the file's old chunk set, add the fresh one.
@@ -1354,6 +1381,7 @@ fn do_refresh(
         embedder,
         state: &state,
         embed_broken,
+        zone_has_ann: zone_has_ann_dir(manager, zone_id),
     };
 
     let mut counts = RefreshCounts::default();
@@ -1447,17 +1475,18 @@ fn do_refresh(
     }
     if visit_result.is_ok() && !truncated {
         let scope = root_path.trim_end_matches('/');
-        let has_ann_dir = zone_has_ann_dir(manager, zone_id);
+        let has_ann_dir = sinks.zone_has_ann;
         for cached_path in sinks.state.known_paths() {
             let in_scope = scope.is_empty()
                 || scope == "/"
                 || cached_path == scope
                 || cached_path.starts_with(&format!("{scope}/"));
-            if in_scope
-                && !seen.contains(&cached_path)
-                && remove_one(&sinks, &cached_path, has_ann_dir)
-            {
-                counts.removed += 1;
+            if in_scope && !seen.contains(&cached_path) {
+                if remove_one(&sinks, &cached_path, has_ann_dir) {
+                    counts.removed += 1;
+                } else {
+                    counts.tombstoned += 1;
+                }
             }
         }
     }
@@ -1542,13 +1571,36 @@ fn do_index_documents(
         // cheap per-doc.
         let mut docs_since_commit: usize = 0;
 
+        let zone_has_ann = zone_has_ann_dir(manager, &zone_id);
+        // Content transition on explicit indexing (review R6): a doc
+        // re-posted with empty/whitespace text must PURGE its prior
+        // chunks, not leave stale text searchable behind a skip.
+        let mut content_skip = |path: &str| {
+            fts.delete_all_chunks(path);
+            match ann.as_ref() {
+                Some(a) => {
+                    a.delete_all_chunks(path);
+                    state.forget(path);
+                }
+                None if zone_has_ann => {
+                    // Vectors may exist but are unreachable — retry
+                    // tombstone so a later pass finishes the purge.
+                    state.record(path, None);
+                }
+                None => {
+                    state.forget(path);
+                }
+            }
+        };
         for doc in docs {
             if doc.text.trim().is_empty() {
+                content_skip(&doc.path);
                 total_skipped += 1;
                 continue;
             }
             let chunks = crate::chunker::chunk_document(&doc.text);
             if chunks.is_empty() {
+                content_skip(&doc.path);
                 total_skipped += 1;
                 continue;
             }
@@ -2231,7 +2283,11 @@ impl SearchService for SearchServiceImpl {
                 // (all cached unchanged) leaves the cache intact —
                 // avoids gratuitously blowing away hot entries when
                 // an operator polls Refresh on a quiet corpus.
-                if counts.reindexed > 0 || counts.removed > 0 || counts.tombstoned > 0 {
+                if counts.reindexed > 0
+                    || counts.removed > 0
+                    || counts.tombstoned > 0
+                    || counts.skipped > 0
+                {
                     self.query_cache.invalidate_zone(&zone_for_invalidate);
                 }
                 Ok(Response::new(RefreshResponse {

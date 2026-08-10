@@ -849,54 +849,58 @@ jobs:
             docker buildx imagetools create "${tag_args[@]}" "$source"
           }
 
-          rollback_cluster() {
-            local base="${CLUSTER_SOURCE%%:*}"
-            for tag in "${!prior_cluster[@]}"; do
-              docker buildx imagetools create -t "$tag" "${base}@${prior_cluster[$tag]}" || \
-                echo "::error::rollback of $tag failed — pair is split; repair manually"
-            done
-            local pkg="${CLUSTER_SOURCE%%:*}"
-            pkg="${pkg##*/}"
-            local org="${GITHUB_REPOSITORY_OWNER}"
-            for tag in "${new_cluster_tags[@]}"; do
-              local tagname="${tag##*:}"
-              local version_id
-              version_id=$(gh api "/orgs/${org}/packages/container/${pkg}/versions" --paginate \
-                --jq ".[] | select(.metadata.container.tags[]? == \"${tagname}\") | .id" 2>/dev/null | head -1 || true)
-              if [ -n "$version_id" ]; then
-                gh api -X DELETE "/orgs/${org}/packages/container/${pkg}/versions/${version_id}" \
-                  && echo "deleted freshly minted tag ${tagname}" \
-                  || echo "::error::could not delete new tag ${tagname} — remove manually"
-              else
-                echo "::error::could not locate new tag ${tagname} for deletion — remove manually"
-              fi
-            done
+          # Symmetric snapshot + rollback for ONE image repo (review
+          # R6): restore tags that had a prior digest, DELETE tags
+          # that were freshly minted (a multi-tag imagetools create is
+          # not transactional — a partial failure may have applied
+          # some tags).
+          snapshot() {
+            # $1 = tags_json; echoes "tag digest" lines (digest empty = new)
+            while IFS= read -r tag; do
+              digest=$(docker buildx imagetools inspect "$tag" --format '{{.Manifest.Digest}}' 2>/dev/null || true)
+              printf '%s %s\n' "$tag" "$digest"
+            done < <(jq -r '.tags[]' <<< "$1")
           }
 
-          # Snapshot the cluster tags' current digests for rollback —
-          # tags with NO prior digest (first semver push) are tracked
-          # too, so rollback DELETES them instead of leaving a public
-          # cluster-only release tag behind (review R4).
-          declare -A prior_cluster
-          new_cluster_tags=()
-          while IFS= read -r tag; do
-            digest=$(docker buildx imagetools inspect "$tag" --format '{{.Manifest.Digest}}' 2>/dev/null || true)
-            if [ -n "$digest" ]; then
-              prior_cluster["$tag"]="$digest"
-            else
-              new_cluster_tags+=("$tag")
-            fi
-          done < <(jq -r '.tags[]' <<< "$CLUSTER_TAGS_JSON")
+          rollback_image() {
+            # $1 = source ref (for base repo), $2 = snapshot lines
+            local base="${1%%:*}"
+            local pkg="${base##*/}"
+            local org="${GITHUB_REPOSITORY_OWNER}"
+            while IFS=' ' read -r tag digest; do
+              [ -z "$tag" ] && continue
+              if [ -n "$digest" ]; then
+                docker buildx imagetools create -t "$tag" "${base}@${digest}" || \
+                  echo "::error::rollback of $tag failed — repair manually"
+              else
+                local tagname="${tag##*:}"
+                local version_id
+                version_id=$(gh api "/orgs/${org}/packages/container/${pkg}/versions" --paginate \
+                  --jq ".[] | select(.metadata.container.tags[]? == \"${tagname}\") | .id" 2>/dev/null | head -1 || true)
+                if [ -n "$version_id" ]; then
+                  gh api -X DELETE "/orgs/${org}/packages/container/${pkg}/versions/${version_id}" \
+                    && echo "deleted freshly minted tag ${tagname}" \
+                    || echo "::error::could not delete new tag ${tagname} — remove manually"
+                else
+                  echo "note: new tag ${tagname} not found (promotion likely never applied it)"
+                fi
+              fi
+            done <<< "$2"
+          }
+
+          cluster_snapshot=$(snapshot "$CLUSTER_TAGS_JSON")
+          server_snapshot=$(snapshot "$SERVER_TAGS_JSON")
 
           if ! promote "$CLUSTER_SOURCE" "$CLUSTER_TAGS_JSON"; then
-            echo "::error::cluster tag promotion failed — rolling back any partial cluster tags"
-            rollback_cluster
+            echo "::error::cluster tag promotion failed — rolling back partial cluster tags"
+            rollback_image "$CLUSTER_SOURCE" "$cluster_snapshot"
             exit 1
           fi
 
           if ! promote "$SERVER_SOURCE" "$SERVER_TAGS_JSON"; then
-            echo "::error::server tag promotion failed — rolling cluster tags back"
-            rollback_cluster
+            echo "::error::server tag promotion failed — rolling back BOTH image repos (a multi-tag promote may have partially applied)"
+            rollback_image "$SERVER_SOURCE" "$server_snapshot"
+            rollback_image "$CLUSTER_SOURCE" "$cluster_snapshot"
             exit 1
           fi
 

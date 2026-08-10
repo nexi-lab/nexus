@@ -786,8 +786,6 @@ fn do_semantic_query(
     // Materialise chunk_text + mtime via the FTS index — the ANN
     // stores only vectors + paths, but the RPC contract carries the
     // full QueryResult shape so callers don't need a follow-up read.
-    // A missing FTS row (drift scenario) leaves chunk_text empty;
-    // the path itself is still meaningful.
     let fts = manager.get_or_open(zone_id).ok();
 
     let mut out = Vec::with_capacity(limit);
@@ -795,27 +793,49 @@ fn do_semantic_query(
         if !path_filter.is_empty() && !hit.path.starts_with(path_filter) {
             continue;
         }
-        out.push(enrich_ann_hit(fts.as_deref(), hit, zone_id));
-        if out.len() >= limit {
-            break;
+        // Orphan guard (review residual, follow-up landed): an ANN
+        // hit whose path has NO FTS row is drift — a deleted or
+        // content-transitioned doc whose vectors outlived it (the
+        // write-side lifecycle closes the known paths; this closes
+        // the unknown ones at read time).  Dropped, not served.
+        // When FTS itself is unavailable the hit is UNVERIFIABLE and
+        // kept — availability over a drift-window false negative.
+        if let Some(result) = enrich_ann_hit(fts.as_deref(), hit, zone_id) {
+            out.push(result);
+            if out.len() >= limit {
+                break;
+            }
         }
     }
     Ok(out)
 }
 
+/// Enrich an ANN hit with FTS-side text/mtime.  Returns None when the
+/// FTS index is OPEN but has no row for the path — the orphan-vector
+/// read guard; see the caller comment.
 fn enrich_ann_hit(
     fts: Option<&crate::fts_index::FtsIndex>,
     hit: AnnHit,
     zone_id: &str,
-) -> QueryResult {
+) -> Option<QueryResult> {
     // Score = 1 - cosine distance so higher = closer, matching the
     // BM25 "higher is better" convention keyword callers already
     // rely on.  ANN returns distance in [0, 2]; score falls in [-1, 1].
     let score = 1.0 - hit.distance;
-    let (chunk_text, mtime_ms) = fts
-        .and_then(|f| lookup_fts_by_path(f, &hit.path))
-        .unwrap_or((String::new(), None));
-    QueryResult {
+    let (chunk_text, mtime_ms) = match fts {
+        Some(f) => match lookup_fts_by_path(f, &hit.path) {
+            Some(pair) => pair,
+            None => {
+                tracing::debug!(
+                    path = %hit.path,
+                    "semantic hit dropped: ANN vector has no FTS row (orphan guard)",
+                );
+                return None;
+            }
+        },
+        None => (String::new(), None),
+    };
+    Some(QueryResult {
         path: hit.path,
         chunk_index: hit.chunk_index,
         chunk_text,
@@ -824,7 +844,7 @@ fn enrich_ann_hit(
         mtime_ms,
         expanded_context: String::new(),
         title_score: None,
-    }
+    })
 }
 
 /// Look up an FTS row by exact path via the STRING-indexed `path`

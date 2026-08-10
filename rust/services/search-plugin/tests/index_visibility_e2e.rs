@@ -232,6 +232,55 @@ async fn stats_identity_fields_present_and_idle() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn semantic_query_drops_ann_hits_without_fts_rows() {
+    // Orphan guard: a vector whose FTS row is gone (drift — deleted /
+    // content-transitioned doc) must not surface in semantic results.
+    let dir = TempDir::new().unwrap();
+    let manager = Arc::new(IndexManager::with_root(dir.path().to_path_buf()));
+    let svc = SearchServiceImpl::builder(Arc::new(handle_for(leak_kernel())))
+        .manager(Arc::clone(&manager))
+        .embedder(Arc::new(MockEmbedder::with_dim(16)))
+        .build();
+
+    svc.index_documents(Request::new(IndexDocumentsRequest {
+        documents: vec![
+            doc("/ws/intact.md", "quantum widget assembly manual"),
+            doc("/ws/orphaned.md", "quantum widget assembly notes"),
+        ],
+        zone_id: String::new(),
+        auth_token: String::new(),
+    }))
+    .await
+    .expect("index rpc");
+
+    // Simulate drift: drop ONE doc's FTS rows while its vectors stay.
+    let fts = manager.get_or_open("root").expect("fts open");
+    fts.delete_all_chunks("/ws/orphaned.md");
+    fts.commit().expect("fts commit");
+
+    let resp = svc
+        .query(Request::new(QueryRequest {
+            q: "quantum widget assembly".to_string(),
+            limit: 10,
+            query_type: QueryType::Semantic as i32,
+            ..Default::default()
+        }))
+        .await
+        .expect("query rpc")
+        .into_inner();
+    assert!(resp.error.is_none(), "query error: {:?}", resp.error);
+    let paths: Vec<&str> = resp.results.iter().map(|r| r.path.as_str()).collect();
+    assert!(
+        paths.contains(&"/ws/intact.md"),
+        "intact doc must still surface: {paths:?}"
+    );
+    assert!(
+        !paths.contains(&"/ws/orphaned.md"),
+        "orphaned vector must be dropped by the read guard: {paths:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn prefix_boost_promotes_doc_from_below_the_requested_limit() {
     // Review R3: score adjustments must act on an OVER-FETCHED pool.
     // Pre-fix, a keyword query with limit=1 fetched exactly one hit,

@@ -371,6 +371,40 @@ impl FtsIndex {
         Ok(hits)
     }
 
+    /// Current searcher generation — bumps on every commit + reader
+    /// reload.  The per-zone skeleton cache (#4628) keys on this so
+    /// index mutations invalidate the skeleton automatically, with
+    /// no invalidation call sites to keep in sync.
+    pub fn generation_id(&self) -> u64 {
+        self.reader.searcher().generation().generation_id()
+    }
+
+    /// Visit every alive chunk-0 stored doc as `(path, chunk_text)`.
+    /// Full stored-doc scan — the skeleton build (#4628) is the only
+    /// caller, and it runs at most once per index generation per
+    /// zone, off the async runtime on the blocking pool.  Returns
+    /// the generation of the searcher the scan used, so the caller
+    /// can tag derived data with a scan-consistent version.
+    pub fn for_each_chunk0<F: FnMut(&str, &str)>(&self, mut f: F) -> Result<u64, IndexError> {
+        let searcher = self.reader.searcher();
+        let gen = searcher.generation().generation_id();
+        for seg in searcher.segment_readers() {
+            let store = seg
+                .get_store_reader(1)
+                .map_err(|e| IndexError::Search(e.to_string()))?;
+            for doc_id in seg.doc_ids_alive() {
+                let stored: TantivyDocument = store
+                    .get(doc_id)
+                    .map_err(|e| IndexError::Search(e.to_string()))?;
+                let hit = self.decode(stored, 0.0);
+                if hit.chunk_index == 0 {
+                    f(&hit.path, &hit.chunk_text);
+                }
+            }
+        }
+        Ok(gen)
+    }
+
     fn decode(&self, stored: TantivyDocument, score: f32) -> FtsHit {
         // Access stored fields by handle.  If a field is missing (a
         // schema-drift bug), we surface a blank rather than panicking
@@ -637,5 +671,38 @@ mod tests {
 
         let hits = idx.search("word", 5, None).expect("search");
         assert_eq!(hits.len(), 5);
+    }
+
+    #[test]
+    fn for_each_chunk0_scans_only_chunk_zero_and_generation_bumps() {
+        let dir = tempdir().join("fts");
+        let idx = FtsIndex::open_or_create(dir).expect("open");
+        idx.add_document("/a.md", 0, "# Alpha\nbody a", Some(1)).expect("add");
+        idx.add_document("/a.md", 1, "body a continued", Some(1)).expect("add");
+        idx.add_document("/b.md", 0, "# Beta\nbody b", Some(2)).expect("add");
+        idx.commit().expect("commit");
+        let gen_before = idx.generation_id();
+
+        let mut seen: Vec<(String, String)> = Vec::new();
+        let scan_gen = idx
+            .for_each_chunk0(|path, text| seen.push((path.to_string(), text.to_string())))
+            .expect("scan");
+        seen.sort();
+        assert_eq!(scan_gen, gen_before, "scan reports the generation it observed");
+        assert_eq!(
+            seen,
+            vec![
+                ("/a.md".to_string(), "# Alpha\nbody a".to_string()),
+                ("/b.md".to_string(), "# Beta\nbody b".to_string()),
+            ],
+            "chunk 1 must not appear"
+        );
+
+        // A commit (even after a delete+re-add) bumps the generation —
+        // this is the skeleton cache's staleness signal.
+        idx.delete_all_chunks("/b.md");
+        idx.add_document("/b.md", 0, "# Beta2\nbody", Some(3)).expect("add");
+        idx.commit().expect("commit");
+        assert_ne!(idx.generation_id(), gen_before, "commit must change the generation");
     }
 }

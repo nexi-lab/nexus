@@ -964,33 +964,44 @@ const TITLE_ARM_MAX_HYDRATION_FETCH: usize = 32;
 /// first use per index generation) + evidence gate.  Fail-soft —
 /// a skeleton build error degrades to an empty arm with a debug
 /// log; the search itself must never fail on the arm's account.
+///
+/// The second tuple element is FRESHNESS (#4628 review R2): `true`
+/// only when the hits came from the current-generation skeleton.
+/// A ranking computed from a stale snapshot, a mid-build cold
+/// start, or a failed build must NOT enter the query cache — it
+/// would outlive the rebuild for the whole cache TTL.
 fn do_title_locate(
     manager: &IndexManager,
     q: &str,
     zone_id: &str,
     limit: usize,
     path_filter: &str,
-) -> Vec<crate::title_index::TitleHit> {
+) -> (Vec<crate::title_index::TitleHit>, bool) {
+    let locate = |skeleton: &crate::title_index::ZoneSkeleton| {
+        let prefix = (!path_filter.is_empty()).then_some(path_filter);
+        let mut hits = skeleton.locate(q, limit, prefix);
+        // Evidence gate: a lone incidental path-token overlap
+        // (score 1.0) must not earn rank-based RRF votes;
+        // require at least one real title-token match (2.0).
+        hits.retain(|h| h.score >= crate::title_index::TITLE_ARM_MIN_SCORE);
+        hits
+    };
     match manager.get_or_build_skeleton(zone_id) {
-        Ok(Some(skeleton)) => {
-            let prefix = (!path_filter.is_empty()).then_some(path_filter);
-            let mut hits = skeleton.locate(q, limit, prefix);
-            // Evidence gate: a lone incidental path-token overlap
-            // (score 1.0) must not earn rank-based RRF votes;
-            // require at least one real title-token match (2.0).
-            hits.retain(|h| h.score >= crate::title_index::TITLE_ARM_MIN_SCORE);
-            hits
+        Ok(crate::index_manager::SkeletonAccess::Fresh(skeleton)) => (locate(&skeleton), true),
+        Ok(crate::index_manager::SkeletonAccess::Stale(skeleton)) => {
+            tracing::debug!(zone = %zone_id, "title arm: rebuild in flight — stale snapshot, uncacheable");
+            (locate(&skeleton), false)
         }
         // Cold start while another query is building the skeleton —
         // single-flight served no snapshot; run this query with an
         // empty arm rather than duplicating the corpus scan.
-        Ok(None) => {
-            tracing::debug!(zone = %zone_id, "title arm: skeleton build in flight — empty arm");
-            Vec::new()
+        Ok(crate::index_manager::SkeletonAccess::Building) => {
+            tracing::debug!(zone = %zone_id, "title arm: skeleton build in flight — empty arm, uncacheable");
+            (Vec::new(), false)
         }
         Err(e) => {
-            tracing::debug!(err = %e, zone = %zone_id, "title arm: skeleton unavailable — degrading");
-            Vec::new()
+            tracing::debug!(err = %e, zone = %zone_id, "title arm: skeleton unavailable — degrading, uncacheable");
+            (Vec::new(), false)
         }
     }
 }
@@ -2215,6 +2226,12 @@ impl SearchService for SearchServiceImpl {
         // avoids threading them back).
         let manager_for_expand = Arc::clone(&self.manager);
         let zone_for_expand = zone_id.clone();
+        // #4628 review R2: hybrid results computed while the title
+        // arm ran DEGRADED (stale/absent skeleton, failed build) must
+        // not enter the query cache — the cached ranking would
+        // outlive the rebuild for the whole TTL.  Non-hybrid modes
+        // and arm-off queries stay cacheable.
+        let mut results_cacheable = true;
 
         let outcome = match query_type {
             QueryType::Unspecified | QueryType::Keyword => tokio::task::spawn_blocking(move || {
@@ -2314,7 +2331,9 @@ impl SearchService for SearchServiceImpl {
                         }),
                         tokio::task::spawn_blocking(move || {
                             if !title_arm_on {
-                                return Vec::new();
+                                // Arm off is a deterministic state —
+                                // cacheable.
+                                return (Vec::new(), true);
                             }
                             // limit * 2 mirrors Python's locate
                             // over-fetch (fusion headroom).
@@ -2335,8 +2354,10 @@ impl SearchService for SearchServiceImpl {
                     .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
                 // A panicked title task degrades to an empty arm —
                 // the arm is additive evidence, never a failure
-                // source (fail-soft parity with Python).
-                let title_hits = title_join.unwrap_or_default();
+                // source (fail-soft parity with Python).  Degraded
+                // ⇒ uncacheable, same as stale/absent skeletons.
+                let (title_hits, title_fresh) = title_join.unwrap_or((Vec::new(), false));
+                results_cacheable = title_fresh;
                 match (kw, sem) {
                     (Ok(keyword), Ok(semantic)) => {
                         // Keyword-lane sub-fusion (#4628).  Empty
@@ -2452,8 +2473,15 @@ impl SearchService for SearchServiceImpl {
                 // NOT cached — a stale FTS index / missing zone
                 // may resolve on retry, and we don't want the
                 // cache to sticky-fail those.
-                self.query_cache
-                    .insert(&req_for_cache, title_arm_on, results.clone());
+                if results_cacheable {
+                    self.query_cache
+                        .insert(&req_for_cache, title_arm_on, results.clone());
+                } else {
+                    tracing::debug!(
+                        "skipping query-cache insert — title arm ran degraded \
+                         (stale or absent skeleton)",
+                    );
+                }
                 Ok(Response::new(QueryResponse {
                     results,
                     error: None,

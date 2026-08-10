@@ -351,15 +351,28 @@ async fn title_shaped_query_surfaces_weak_body_doc_with_attribution() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn arm_off_no_attribution_and_no_title_benefit() {
-    let on = Harness::start(true);
-    seed_corpus(on.mock_mut());
-    index_root(&on.svc).await;
-    let off = Harness::start(false);
-    seed_corpus(off.mock_mut());
-    index_root(&off.svc).await;
+    // Shared IndexManager (same FTS + ANN graph) — see the parity
+    // test below for why per-instance ANN builds would add hnsw_rs
+    // RNG variance unrelated to the arm.
+    let dir = TempDir::new().expect("tempdir");
+    let mock = Box::into_raw(Box::new(MockKernel::new()));
+    seed_corpus(unsafe { &mut *mock });
+    let manager = Arc::new(IndexManager::with_root(dir.path().to_path_buf()));
+    let embedder = Arc::new(MockEmbedder::with_dim(16));
+    let svc_on = SearchServiceImpl::builder(Arc::new(handle_for(mock)))
+        .manager(Arc::clone(&manager))
+        .embedder(embedder.clone())
+        .title_arm(true)
+        .build();
+    let svc_off = SearchServiceImpl::builder(Arc::new(handle_for(mock)))
+        .manager(manager)
+        .embedder(embedder)
+        .title_arm(false)
+        .build();
+    index_root(&svc_on).await;
 
-    let res_on = hybrid_query(&on.svc, "atlas design doc").await;
-    let res_off = hybrid_query(&off.svc, "atlas design doc").await;
+    let res_on = hybrid_query(&svc_on, "atlas design doc").await;
+    let res_off = hybrid_query(&svc_off, "atlas design doc").await;
 
     assert!(res_off.iter().all(|r| r.title_score.is_none()));
     let rank = |rs: &[nexus_search_plugin::search_proto::QueryResult]| {
@@ -377,6 +390,7 @@ async fn arm_off_no_attribution_and_no_title_benefit() {
             "title arm must never worsen the target's rank (on={rank_on}, off={rank_off})"
         ),
     }
+    unsafe { drop(Box::from_raw(mock)) };
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -385,14 +399,32 @@ async fn non_title_query_is_byte_identical_with_arm_on_and_off() {
     // MIN_SCORE) → the keyword lane passes through untouched and
     // the responses must match EXACTLY — the pass-through parity
     // guarantee that keeps the arm invisible off its target.
-    let on = Harness::start(true);
-    seed_corpus(on.mock_mut());
-    index_root(&on.svc).await;
-    let off = Harness::start(false);
-    seed_corpus(off.mock_mut());
-    index_root(&off.svc).await;
+    //
+    // Both services SHARE one IndexManager (same FTS + same ANN
+    // graph): the guarantee under test is that the fusion pipeline
+    // is arm-invariant GIVEN identical leg inputs.  Two separately
+    // built ANN graphs would differ by hnsw_rs's per-instance RNG
+    // (level assignment), which is ANN recall variance, not an arm
+    // effect.
+    let dir = TempDir::new().expect("tempdir");
+    let mock = Box::into_raw(Box::new(MockKernel::new()));
+    seed_corpus(unsafe { &mut *mock });
+    let manager = Arc::new(IndexManager::with_root(dir.path().to_path_buf()));
+    let embedder = Arc::new(MockEmbedder::with_dim(16));
+    let svc_on = SearchServiceImpl::builder(Arc::new(handle_for(mock)))
+        .manager(Arc::clone(&manager))
+        .embedder(embedder.clone())
+        .title_arm(true)
+        .build();
+    let svc_off = SearchServiceImpl::builder(Arc::new(handle_for(mock)))
+        .manager(manager)
+        .embedder(embedder)
+        .title_arm(false)
+        .build();
+    index_root(&svc_on).await;
 
-    let res_on = hybrid_query(&on.svc, "rollout topology overview").await;
-    let res_off = hybrid_query(&off.svc, "rollout topology overview").await;
+    let res_on = hybrid_query(&svc_on, "rollout topology overview").await;
+    let res_off = hybrid_query(&svc_off, "rollout topology overview").await;
     assert_eq!(res_on, res_off);
+    unsafe { drop(Box::from_raw(mock)) };
 }

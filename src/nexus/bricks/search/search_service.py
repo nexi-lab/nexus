@@ -4569,6 +4569,14 @@ class SearchService:
         if daemon is not None and (
             _has_legacy_backend or _has_new_backends or _has_plugin_transport
         ):
+            # Fail closed (#4628 review R2): the post-search ReBAC
+            # filter below only runs when a context is present, so an
+            # enforcing deployment serving a context-less call would
+            # return unfiltered paths + chunk text.  The SQL fallback
+            # already fails closed in this state
+            # (see ``_sql_chunk_search``); the daemon path must match.
+            if self._enforce_permissions and self._permission_enforcer and context is None:
+                return []
             # Over-fetch to compensate for permission filtering
             fetch_limit = (
                 limit * 3 if self._enforce_permissions and self._permission_enforcer else limit

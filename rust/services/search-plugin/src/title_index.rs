@@ -171,6 +171,48 @@ fn round4(x: f32) -> f32 {
     (x * 10_000.0).round() / 10_000.0
 }
 
+/// Truncate `s` to at most `max` bytes on a char boundary.
+fn truncate_at_boundary(s: &str, max: usize) -> &str {
+    let mut end = max.min(s.len());
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
+/// Insert one chunk into a doc's head-collection map, keeping the
+/// AGGREGATE retained bytes ≤ [`SKELETON_HEAD_BYTES`] regardless of
+/// chunk arrival order (#4628 review R2: per-chunk truncation alone
+/// retained up to `HEAD_CHUNKS_PER_DOC × 2 KiB` per doc during the
+/// corpus scan).  After each insert the map is re-pruned in
+/// ascending chunk order: entries are kept whole while budget
+/// remains, the crossing entry is truncated, everything after it is
+/// dropped.  Order-independence: a later-arriving LOWER index only
+/// ever shrinks what higher indices may keep, so pruning never needs
+/// bytes it already discarded.
+fn push_head_chunk(entry: &mut BTreeMap<u32, String>, chunk_index: u32, text: &str) {
+    entry.insert(
+        chunk_index,
+        truncate_at_boundary(text, SKELETON_HEAD_BYTES).to_string(),
+    );
+    let mut budget = SKELETON_HEAD_BYTES;
+    let mut drop_from: Option<u32> = None;
+    for (idx, chunk) in entry.iter_mut() {
+        if budget == 0 {
+            drop_from = Some(*idx);
+            break;
+        }
+        if chunk.len() > budget {
+            let kept = truncate_at_boundary(chunk, budget).to_string();
+            *chunk = kept;
+        }
+        budget -= chunk.len();
+    }
+    if let Some(from) = drop_from {
+        entry.retain(|idx, _| *idx < from);
+    }
+}
+
 impl ZoneSkeleton {
     /// Build from a full stored-doc scan of the zone's FTS index.
     /// Runs on the blocking pool (caller's job); cost is one store
@@ -190,11 +232,7 @@ impl ZoneSkeleton {
         let generation_id = fts.for_each_chunk(|path, chunk_index, text| {
             let entry = heads.entry(path.to_string()).or_default();
             if (chunk_index as usize) < HEAD_CHUNKS_PER_DOC {
-                let mut end = SKELETON_HEAD_BYTES.min(text.len());
-                while end > 0 && !text.is_char_boundary(end) {
-                    end -= 1;
-                }
-                entry.insert(chunk_index, text[..end].to_string());
+                push_head_chunk(entry, chunk_index, text);
             }
         })?;
         let mut docs: BTreeMap<String, SkeletonDoc> = BTreeMap::new();
@@ -630,6 +668,44 @@ mod tests {
         ]);
         let sk = ZoneSkeleton::build(&fts).expect("build");
         assert_eq!(sk.locate("widget", 2, None).len(), 2);
+    }
+
+    #[test]
+    fn push_head_chunk_bounds_aggregate_retention_out_of_order() {
+        // Review R2 (#4628): retention must stay ≤ SKELETON_HEAD_BYTES
+        // per doc DURING the scan, for any chunk arrival order.
+        let total = |m: &BTreeMap<u32, String>| m.values().map(String::len).sum::<usize>();
+
+        // High index first: fills the budget alone.
+        let mut m = BTreeMap::new();
+        push_head_chunk(&mut m, 3, &"x".repeat(SKELETON_HEAD_BYTES * 2));
+        assert_eq!(total(&m), SKELETON_HEAD_BYTES);
+
+        // A later-arriving LOWER index displaces the higher one's
+        // bytes — final state is order-independent.
+        push_head_chunk(&mut m, 0, &"y".repeat(100));
+        assert_eq!(total(&m), SKELETON_HEAD_BYTES);
+        assert_eq!(m.get(&0).map(String::len), Some(100));
+        assert_eq!(
+            m.get(&3).map(String::len),
+            Some(SKELETON_HEAD_BYTES - 100),
+            "higher chunk shrinks to the remaining budget"
+        );
+
+        // A chunk entirely past the budget is dropped.
+        push_head_chunk(&mut m, 1, &"z".repeat(SKELETON_HEAD_BYTES));
+        assert_eq!(total(&m), SKELETON_HEAD_BYTES);
+        assert!(
+            m.get(&3).is_none_or(String::is_empty),
+            "fully out-of-budget tail must be dropped or empty"
+        );
+
+        // Never exceeds the cap across many pushes.
+        let mut big = BTreeMap::new();
+        for i in (0..8u32).rev() {
+            push_head_chunk(&mut big, i, &"a".repeat(1024));
+            assert!(total(&big) <= SKELETON_HEAD_BYTES, "cap violated at i={i}");
+        }
     }
 
     #[test]

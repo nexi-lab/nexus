@@ -89,3 +89,23 @@ class TestPluginShimGate:
         svc = _make_service(daemon=None)
         with pytest.raises(ValueError, match="not available"):
             await svc.semantic_search(query="anything", search_mode="hybrid")
+
+    @pytest.mark.asyncio
+    async def test_enforcing_without_context_fails_closed(self) -> None:
+        """#4628 review R2: an enforcing deployment must not serve a
+        context-less call through the daemon path — the post-search
+        ReBAC filter only runs with a context, so delegation would
+        return unfiltered paths and chunk text.  The SQL fallback
+        fails closed here; the daemon path must match."""
+        shim = _FakePluginShim(
+            [_DaemonRow(path="/private/secret.md", chunk_text="secret body", score=0.9)]
+        )
+        svc = SearchService(
+            metadata_store=MagicMock(),
+            permission_enforcer=MagicMock(),
+            enforce_permissions=True,
+        )
+        setattr(svc, "_search_daemon", shim)  # noqa: B010
+        hits = await svc.semantic_search(query="secret", search_mode="hybrid", context=None)
+        assert hits == [], "enforcing + no context must return nothing"
+        assert not shim.requests, "the daemon must not even be consulted"

@@ -39,6 +39,11 @@
 //!                          +--- backends     (peer; never crosses to services)
 //! ```
 
+// Cross-service helpers — small feature-free primitives usable by
+// any service impl (in-tree or downstream cdylib plugin) without
+// pulling a per-service feature gate.
+pub mod ops;
+
 // Generic hosted-subprocess primitive: launch an argv + surface its
 // stdio as VFS DT_PIPEs. Shared by `acp` (config-driven ACP one-shot)
 // and `managed_agent` (raw control-plane tunnel); knows nothing about

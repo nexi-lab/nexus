@@ -1127,15 +1127,19 @@ fn hydrate_title_hits(
             let (chunk_index, chunk_text, mtime_ms) = if let Some(leg) = best_kw.get(path) {
                 (leg.chunk_index, leg.chunk_text.clone(), leg.mtime_ms)
             } else if let Some(row) = fetched.get(path) {
-                // FTS-live.  Prefer the dense row's identity when
-                // one exists so the title vote merges with the
-                // dense vote on one fused entry (Python round-5
-                // rationale) — the FTS row is the liveness proof
-                // and the fallback representative.
-                if let Some(dense) = best_dense.get(path) {
-                    (dense.chunk_index, dense.chunk_text.clone(), dense.mtime_ms)
-                } else {
-                    (row.chunk_index, row.chunk_text.clone(), row.mtime_ms)
+                // FTS-live path.  Merge with the dense vote's
+                // identity ONLY when that exact (path, chunk_index)
+                // is confirmed live (review R8): after a re-chunk
+                // with a failed re-embed, the path can be live while
+                // the dense row's chunk identity is an ANN orphan —
+                // borrowing it would boost a chunk the index no
+                // longer holds.  The fetched FTS row is the
+                // confirmation instrument and the safe fallback.
+                match best_dense.get(path) {
+                    Some(dense) if dense.chunk_index == row.chunk_index => {
+                        (dense.chunk_index, dense.chunk_text.clone(), dense.mtime_ms)
+                    }
+                    _ => (row.chunk_index, row.chunk_text.clone(), row.mtime_ms),
                 }
             } else {
                 // No live FTS row: the skeleton (fresh: drift;
@@ -1321,6 +1325,9 @@ fn do_index(
 
     let mut indexed: u32 = 0;
     let mut skipped: u32 = 0;
+    // Files whose sinks did NOT verifiably converge this pass
+    // (review R8) — any non-zero count blocks the dirty-mark clear.
+    let mut transient: u32 = 0;
 
     let visit_result = if recursive {
         walk_recursive(handle, root_path, &mut |vfs_path, entry_type| {
@@ -1332,7 +1339,15 @@ fn do_index(
             }
             match index_one(handle, &sinks, vfs_path) {
                 IndexOne::Added => indexed += 1,
+                IndexOne::AddedAnnRetry => {
+                    indexed += 1;
+                    transient += 1;
+                }
                 IndexOne::Skipped => skipped += 1,
+                IndexOne::SkippedTransient => {
+                    skipped += 1;
+                    transient += 1;
+                }
             }
             WalkAction::Continue
         })
@@ -1352,7 +1367,15 @@ fn do_index(
                     let child = kernel_io::join_vfs_path(root_path, &entry.name);
                     match index_one(handle, &sinks, &child) {
                         IndexOne::Added => indexed += 1,
+                        IndexOne::AddedAnnRetry => {
+                            indexed += 1;
+                            transient += 1;
+                        }
                         IndexOne::Skipped => skipped += 1,
+                        IndexOne::SkippedTransient => {
+                            skipped += 1;
+                            transient += 1;
+                        }
                     }
                 }
                 Ok(())
@@ -1386,12 +1409,13 @@ fn do_index(
     };
 
     visit_result?;
-    // Clear only dirt THIS write created, and only when every sink
-    // (including the state file) persisted (review R7).  Pre-
+    // Clear only dirt THIS write created, only when every sink
+    // (including the state file) persisted, AND only when every
+    // file it touched verifiably converged (reviews R7/R8).  Pre-
     // existing dirt marks unreconciled cross-sink drift from a
     // FAILED earlier write — a scoped success here didn't repair
     // it; a full Refresh does.
-    if state_saved && !zone_was_dirty {
+    if state_saved && !zone_was_dirty && transient == 0 {
         manager.clear_zone_dirty(zone_id);
     }
     Ok((indexed, skipped))
@@ -1405,10 +1429,20 @@ enum IndexOne {
     // bytes (empty, oversize, binary, whitespace-only) — they record
     // their mtime in state so a Refresh dedups them like indexed
     // files and they stop consuming the repair budget every pass.
-    // Transient skips (read errors, FTS write errors) record nothing
-    // and are retried.
+    // Transient outcomes (read errors, FTS write errors, retryable
+    // ANN state) carry their own variants (review R8): they mean the
+    // pass did NOT fully converge this file's sinks, so dirty-mark
+    // clearing must not treat the pass as a completed reconciliation.
     Added,
+    /// FTS fully indexed, but the ANN side stayed retryable (embed
+    /// failure / embedder down with live ann-* dirs) — recorded with
+    /// mtime None so a later pass finishes the vectors.
+    AddedAnnRetry,
     Skipped,
+    /// Transient failure (read error, FTS write error, unreachable
+    /// ANN purge) — nothing recorded (or a retry tombstone kept);
+    /// the file's sink state is NOT verified-converged.
+    SkippedTransient,
 }
 
 /// Record a deterministic content-skip so Refresh dedups it (same
@@ -1433,7 +1467,7 @@ fn record_content_skip(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: 
         None if sinks.zone_has_ann => {
             // Vectors may exist but are unreachable — retry tombstone.
             sinks.state.record(vfs_path, None);
-            return IndexOne::Skipped;
+            return IndexOne::SkippedTransient;
         }
         None => {}
     }
@@ -1449,7 +1483,7 @@ fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> I
         Ok(b) => b,
         Err(e) => {
             tracing::debug!(path = %vfs_path, err = ?e, "index: sys_read failed — skipping");
-            return IndexOne::Skipped;
+            return IndexOne::SkippedTransient;
         }
     };
     if bytes.is_empty() {
@@ -1505,7 +1539,7 @@ fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> I
                 err = %e,
                 "index: fts add_document failed — skipping remaining chunks",
             );
-            return IndexOne::Skipped;
+            return IndexOne::SkippedTransient;
         }
     }
 
@@ -1573,11 +1607,11 @@ fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> I
     // re-add is idempotent, so the retry costs a re-chunk only.
     if ann_complete {
         sinks.state.record(vfs_path, mtime_ms);
+        IndexOne::Added
     } else {
         sinks.state.record(vfs_path, None);
+        IndexOne::AddedAnnRetry
     }
-
-    IndexOne::Added
 }
 
 /// Drop `path` from every sink — used by the Refresh stale-sweep
@@ -1732,6 +1766,9 @@ fn do_refresh(
     };
 
     let mut counts = RefreshCounts::default();
+    // Files whose sinks did NOT verifiably converge this pass
+    // (review R8) — any non-zero count blocks the dirty-mark clear.
+    let mut transient: u32 = 0;
     // Track every path we visit so the stale-sweep at the end knows
     // which cached entries no longer exist in the corpus.
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -1766,7 +1803,15 @@ fn do_refresh(
             crate::index_state::RefreshVerdict::Changed => {
                 match index_one(handle, &sinks, vfs_path) {
                     IndexOne::Added => counts.reindexed += 1,
+                    IndexOne::AddedAnnRetry => {
+                        counts.reindexed += 1;
+                        transient += 1;
+                    }
                     IndexOne::Skipped => counts.skipped += 1,
+                    IndexOne::SkippedTransient => {
+                        counts.skipped += 1;
+                        transient += 1;
+                    }
                 }
             }
         }
@@ -1856,12 +1901,16 @@ fn do_refresh(
 
     visit_result?;
     counts.truncated = truncated;
-    // Refresh IS the reconciliation op: a FULL, un-truncated walk
-    // from the zone root re-verified every path (tombstone sweep
-    // included), so it may clear PRE-EXISTING dirt too.  A scoped
-    // or truncated refresh clears only its own mark (review R7).
-    let full_reconciliation = root_path == "/" && recursive && !truncated;
-    if state_saved && (!zone_was_dirty || full_reconciliation) {
+    // Refresh IS the reconciliation op — but only a walk that
+    // actually CONVERGED every sink counts as one (reviews R7/R8):
+    // full recursive root coverage, un-truncated, zero transient
+    // failures (read/FTS errors, retryable ANN state), and zero
+    // kept deletion tombstones (deferred ANN purges).  A scoped,
+    // truncated, or partially-failed refresh clears only its own
+    // mark, and only when nothing it touched stayed unconverged.
+    let converged = transient == 0 && counts.tombstoned == 0;
+    let full_reconciliation = root_path == "/" && recursive && !truncated && converged;
+    if state_saved && ((!zone_was_dirty && converged) || full_reconciliation) {
         manager.clear_zone_dirty(zone_id);
     }
     Ok(counts)
@@ -1947,32 +1996,45 @@ fn do_index_documents(
         // Content transition on explicit indexing (review R6): a doc
         // re-posted with empty/whitespace text must PURGE its prior
         // chunks, not leave stale text searchable behind a skip.
-        let content_skip = |path: &str| {
+        // Returns true when the purge stayed TRANSIENT (unreachable
+        // ANN → retry tombstone kept) — the zone did not converge
+        // this pass (review R8).
+        let content_skip = |path: &str| -> bool {
             fts.delete_all_chunks(path);
             match ann.as_ref() {
                 Some(a) => {
                     a.delete_all_chunks(path);
                     state.forget(path);
+                    false
                 }
                 None if zone_has_ann => {
                     // Vectors may exist but are unreachable — retry
                     // tombstone so a later pass finishes the purge.
                     state.record(path, None);
+                    true
                 }
                 None => {
                     state.forget(path);
+                    false
                 }
             }
         };
+        // Docs whose sinks did NOT verifiably converge this pass
+        // (review R8) — blocks the zone's dirty-mark clear below.
+        let mut zone_transient: u32 = 0;
         for doc in docs {
             if doc.text.trim().is_empty() {
-                content_skip(&doc.path);
+                if content_skip(&doc.path) {
+                    zone_transient += 1;
+                }
                 total_skipped += 1;
                 continue;
             }
             let chunks = crate::chunker::chunk_document(&doc.text);
             if chunks.is_empty() {
-                content_skip(&doc.path);
+                if content_skip(&doc.path) {
+                    zone_transient += 1;
+                }
                 total_skipped += 1;
                 continue;
             }
@@ -1990,6 +2052,7 @@ fn do_index_documents(
             }
             if !fts_ok {
                 total_skipped += 1;
+                zone_transient += 1;
                 continue;
             }
 
@@ -2051,6 +2114,7 @@ fn do_index_documents(
                 state.record(&doc.path, doc.mtime_ms);
             } else {
                 state.record(&doc.path, None);
+                zone_transient += 1;
             }
             total_indexed += 1;
             docs_since_commit += 1;
@@ -2082,9 +2146,10 @@ fn do_index_documents(
             }
         };
         cache.invalidate_zone(&zone_id);
-        // Clear only dirt this write created, and only when the
-        // state file persisted too (review R7).
-        if state_saved && !zone_was_dirty {
+        // Clear only dirt this write created, only when the state
+        // file persisted, and only when every doc it touched
+        // verifiably converged (reviews R7/R8).
+        if state_saved && !zone_was_dirty && zone_transient == 0 {
             manager.clear_zone_dirty(&zone_id);
         }
     }
@@ -3651,5 +3716,51 @@ mod tests {
             ["/live/doc.md"],
             "ANN-orphaned path must be dropped; FTS-live path survives"
         );
+    }
+
+    #[test]
+    fn hydration_does_not_merge_into_orphaned_dense_chunk_of_live_path() {
+        // Review R8 (#4628): a doc re-chunked from many chunks to
+        // one, with the re-embed failed, leaves the PATH live in FTS
+        // while the dense row still carries the old chunk identity.
+        // The title vote must hydrate from the live FTS row, not the
+        // orphaned dense chunk.
+        let root = tempfile::tempdir().expect("tempdir").keep();
+        let manager = IndexManager::with_root(root);
+        let fts = manager.get_or_open("zoneA").expect("open");
+        // Live doc now has ONLY chunk 0.
+        fts.add_document("/docs/reworked.md", 0, "# Reworked\nnew body", Some(9))
+            .expect("add");
+        fts.commit().expect("commit");
+
+        // Stale dense row referencing the doc's OLD chunk 7.
+        let stale_dense = QueryResult {
+            path: "/docs/reworked.md".into(),
+            chunk_index: 7,
+            chunk_text: "old pre-rework text".into(),
+            score: 0.8,
+            zone_id: "zoneA".into(),
+            mtime_ms: Some(1),
+            expanded_context: String::new(),
+            title_score: None,
+        };
+        let hits = vec![crate::title_index::TitleHit {
+            path: "/docs/reworked.md".into(),
+            score: 4.0,
+            title: Some("Reworked".into()),
+        }];
+        let hydrated = hydrate_title_hits(
+            Some(&fts),
+            &hits,
+            &[],
+            std::slice::from_ref(&stale_dense),
+            "zoneA",
+        );
+        assert_eq!(hydrated.len(), 1);
+        assert_eq!(
+            hydrated[0].chunk_index, 0,
+            "must hydrate from the live FTS row, not the orphaned dense chunk"
+        );
+        assert_eq!(hydrated[0].chunk_text, "# Reworked\nnew body");
     }
 }

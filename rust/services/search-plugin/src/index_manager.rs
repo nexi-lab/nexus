@@ -63,6 +63,22 @@ const FTS_SUBDIR: &str = "fts-v2";
 /// relocates all plugin state to a data volume.
 const DATA_DIR_ENV: &str = "NEXUS_DATA_DIR";
 
+/// fsync a directory so freshly created entries survive a power
+/// cut (#4628 review R8).  On non-Unix targets directories cannot
+/// be opened for sync — degrade to a no-op there (the deployed
+/// plugin targets are Unix).
+fn sync_dir(dir: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        std::fs::File::open(dir)?.sync_all()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = dir;
+        Ok(())
+    }
+}
+
 /// Resolve the default per-node storage root — `$NEXUS_DATA_DIR` if
 /// set, `./nexus-data` otherwise.  Matches vault's exact fallback so
 /// a fresh dev checkout puts vault + search state under the same
@@ -184,12 +200,15 @@ impl IndexManager {
         let sentinel = self.zone_dirty_sentinel(zone_id);
         std::fs::create_dir_all(self.zone_root(zone_id))
             .and_then(|_| std::fs::File::create(&sentinel))
-            // sync_all pins the (empty) file itself; the directory
-            // entry is not separately fsynced — a hard power cut in
-            // that window loses at most the marker for a write that
-            // also lost its own sink data, which the index-state
-            // repair path already covers.
             .and_then(|f| f.sync_all())
+            // Directory-entry durability (review R8): the file's own
+            // sync_all does not pin the NEW directory entry — a
+            // power cut could drop `.write-dirty` while surviving
+            // independently-committed sink state.  fsync the zone
+            // dir (covers the sentinel entry) and the manager root
+            // (covers a zone dir create_dir_all just made).
+            .and_then(|_| sync_dir(&self.zone_root(zone_id)))
+            .and_then(|_| sync_dir(&self.root))
             .map_err(|e| {
                 format!("dirty sentinel create failed for zone {zone_id:?}: {e} — write aborted")
             })?;

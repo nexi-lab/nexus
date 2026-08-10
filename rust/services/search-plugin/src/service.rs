@@ -1339,11 +1339,11 @@ fn remove_one(sinks: &IndexSinks<'_>, vfs_path: &str, zone_has_ann: bool) -> boo
 /// The zone root not existing at all is a positive absence (fresh
 /// zone) and safely reads false.
 fn zone_has_ann_dir(manager: &IndexManager, zone_id: &str) -> bool {
-    let root = manager.zone_root(zone_id);
-    if !root.exists() {
-        return false;
-    }
-    match std::fs::read_dir(&root) {
+    // No exists() preflight (review R9): Path::exists() returns false
+    // for BOTH a genuinely absent root and a failed metadata call, so
+    // it would reopen the error-to-absence hole read_dir handling
+    // closes.  Only ErrorKind::NotFound is positive absence.
+    match std::fs::read_dir(manager.zone_root(zone_id)) {
         Ok(rd) => rd.into_iter().any(|entry| match entry {
             Ok(e) => e.file_name().to_string_lossy().starts_with("ann-"),
             Err(e) => {
@@ -1351,6 +1351,7 @@ fn zone_has_ann_dir(manager: &IndexManager, zone_id: &str) -> bool {
                 true
             }
         }),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
         Err(e) => {
             tracing::warn!(err = %e, zone = %zone_id, "ann-dir scan failed — assuming ANN present");
             true
@@ -2969,6 +2970,41 @@ mod tests {
         assert_eq!(strip_root("/", "/foo/bar"), "foo/bar");
         assert_eq!(strip_root("/root", "/root/a/b"), "a/b");
         assert_eq!(strip_root("/root/", "/root/a/b"), "a/b");
+    }
+
+    #[test]
+    fn zone_has_ann_dir_fails_closed_on_inspection_errors() {
+        // Review R9: only positive absence (NotFound) may read false —
+        // a permission/metadata failure must read "ANN may exist" so
+        // outage-time indexing keeps documents retryable instead of
+        // finalizing over vectors it merely could not see.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let manager = IndexManager::with_root(tmp.path().to_path_buf());
+
+        // Absent zone root: positive absence.
+        assert!(!zone_has_ann_dir(&manager, "fresh-zone"));
+
+        // Present with an ann dir: present.
+        std::fs::create_dir_all(manager.zone_root("z").join("ann-mock-v2")).unwrap();
+        assert!(zone_has_ann_dir(&manager, "z"));
+
+        // Present without ann dirs: absent.
+        std::fs::create_dir_all(manager.zone_root("kw-only")).unwrap();
+        assert!(!zone_has_ann_dir(&manager, "kw-only"));
+
+        // Unreadable zone root (unix): inspection failure ⇒ assume present.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let locked = manager.zone_root("locked");
+            std::fs::create_dir_all(&locked).unwrap();
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+            let verdict = zone_has_ann_dir(&manager, "locked");
+            // Restore perms BEFORE asserting so tempdir cleanup works
+            // even on failure.
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+            assert!(verdict, "permission failure must read as ANN-present");
+        }
     }
 
     #[test]

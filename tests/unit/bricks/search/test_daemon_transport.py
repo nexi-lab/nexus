@@ -62,20 +62,27 @@ def test_loopback_plaintext_is_allowed(channel_spies):
     assert channel_spies["mode"] == "insecure"
 
 
-@pytest.mark.parametrize(
-    "target", ["plugin-host:2126", "10.0.0.7:2126", "host.docker.internal:2126"]
-)
+@pytest.mark.parametrize("target", ["plugin-host:2126", "10.0.0.7:2126"])
 def test_non_loopback_plaintext_refused_by_default(channel_spies, target):
     with pytest.raises(RuntimeError, match="refusing PLAINTEXT"):
         daemon_mod._build_channel(target)
     assert "mode" not in channel_spies
 
 
+def test_docker_host_gateway_counts_as_same_machine(channel_spies):
+    # host.docker.internal resolves to the machine RUNNING the
+    # container — same-machine by construction (review R5), so the
+    # dev default target needs no blanket insecure opt-in that would
+    # also waive protection for genuinely remote hosts.
+    daemon_mod._build_channel("host.docker.internal:2126")
+    assert channel_spies["mode"] == "insecure"
+
+
 def test_non_loopback_plaintext_allowed_with_explicit_opt_in(
     channel_spies, monkeypatch: pytest.MonkeyPatch
 ):
     monkeypatch.setenv(daemon_mod._ALLOW_INSECURE_ENV, "true")
-    daemon_mod._build_channel("host.docker.internal:2126")
+    daemon_mod._build_channel("plugin-host:2126")
     assert channel_spies["mode"] == "insecure"
 
 

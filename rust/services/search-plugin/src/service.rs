@@ -973,6 +973,10 @@ struct IndexSinks<'a> {
 /// the file's text and adds it to the vector index — semantic +
 /// keyword stay in sync from one call.  Missing embedder ⇒ FTS-only
 /// (log a debug once per Index call so operators see it).
+// 8 args: the R2 embed_broken flag pushed this over clippy's 7-arg
+// default.  The alternatives (params struct for two call sites, or
+// folding embed_broken into the Option) obscure more than they help.
+#[allow(clippy::too_many_arguments)]
 fn do_index(
     handle: &KernelHandle,
     manager: &IndexManager,
@@ -1086,8 +1090,26 @@ fn do_index(
 /// `do_index` can tally added vs skipped without a per-call error
 /// return (a skip is not an error).
 enum IndexOne {
+    // NOTE (review R5): content skips are DETERMINISTIC on the same
+    // bytes (empty, oversize, binary, whitespace-only) — they record
+    // their mtime in state so a Refresh dedups them like indexed
+    // files and they stop consuming the repair budget every pass.
+    // Transient skips (read errors, FTS write errors) record nothing
+    // and are retried.
     Added,
     Skipped,
+}
+
+/// Record a deterministic content-skip so Refresh dedups it (same
+/// mtime ⇒ Unchanged) instead of re-reading + re-skipping it on every
+/// pass — with max_docs stable content-skips ahead of the tail, the
+/// old behaviour starved the repair budget forever (review R5).
+fn record_content_skip(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> IndexOne {
+    let mtime_ms = kernel_io::sys_stat(handle, vfs_path)
+        .ok()
+        .and_then(|info| info.modified_at_ms);
+    sinks.state.record(vfs_path, mtime_ms);
+    IndexOne::Skipped
 }
 
 fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> IndexOne {
@@ -1099,7 +1121,7 @@ fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> I
         }
     };
     if bytes.is_empty() {
-        return IndexOne::Skipped;
+        return record_content_skip(handle, sinks, vfs_path);
     }
     if bytes.len() > INDEX_MAX_FILE_BYTES {
         tracing::debug!(
@@ -1108,7 +1130,7 @@ fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> I
             cap = INDEX_MAX_FILE_BYTES,
             "index: file over size cap — skipping",
         );
-        return IndexOne::Skipped;
+        return record_content_skip(handle, sinks, vfs_path);
     }
     // Non-UTF8 files are treated as binary and skipped rather than
     // indexed as gibberish.  A future phase may want to add a
@@ -1118,7 +1140,7 @@ fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> I
         Ok(s) => s,
         Err(_) => {
             tracing::debug!(path = %vfs_path, "index: non-utf8 payload — skipping");
-            return IndexOne::Skipped;
+            return record_content_skip(handle, sinks, vfs_path);
         }
     };
     let mtime_ms = kernel_io::sys_stat(handle, vfs_path)
@@ -1131,6 +1153,7 @@ fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> I
     let chunks = crate::chunker::chunk_document(text);
     if chunks.is_empty() {
         // Whitespace-only file — nothing to index.
+        sinks.state.record(vfs_path, mtime_ms);
         return IndexOne::Skipped;
     }
 
@@ -1277,6 +1300,12 @@ struct RefreshCounts {
     removed: u32,
     unchanged: u32,
     skipped: u32,
+    /// Sweep entries whose FTS chunks dropped but whose ANN cleanup
+    /// is deferred behind a kept tombstone (ANN sink unavailable).
+    /// Counted separately from `removed` (review R5): the INDEX still
+    /// changed, so the query cache must invalidate even when
+    /// `removed == 0`.
+    tombstoned: u32,
     /// Walk stopped at the max_docs repair budget (review R4) — the
     /// caller should refresh again; the stale sweep was skipped.
     truncated: bool,
@@ -1287,6 +1316,7 @@ struct RefreshCounts {
 /// Same walker + sink shape as do_index; the diff is just the
 /// per-file verdict before calling `index_one` and a post-walk
 /// pass for cache-vs-corpus deletions.
+#[allow(clippy::too_many_arguments)] // same rationale as do_index
 fn do_refresh(
     handle: &KernelHandle,
     manager: &IndexManager,
@@ -2201,7 +2231,7 @@ impl SearchService for SearchServiceImpl {
                 // (all cached unchanged) leaves the cache intact —
                 // avoids gratuitously blowing away hot entries when
                 // an operator polls Refresh on a quiet corpus.
-                if counts.reindexed > 0 || counts.removed > 0 {
+                if counts.reindexed > 0 || counts.removed > 0 || counts.tombstoned > 0 {
                     self.query_cache.invalidate_zone(&zone_for_invalidate);
                 }
                 Ok(Response::new(RefreshResponse {

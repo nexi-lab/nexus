@@ -461,22 +461,40 @@ class FederatedSearchDispatcher:
                 )
 
         daemon = self._get_daemon_for_zone(zone_id)
-        results = await daemon.search(
-            SearchRequest(
-                query=query,
-                search_type=effective_type,
-                limit=limit,
-                path_filter=path_filter,
-                alpha=effective_alpha,
-                fusion_method=effective_fusion,
-                rrf_k=rrf_k,
-                recency=recency,
-                recency_weight=recency_weight,
-                recency_half_life_days=recency_half_life_days,
-                zone_id=zone_id,
-                path_prefix_boosts=path_prefix_boosts,
-            )
+        leg_request = SearchRequest(
+            query=query,
+            search_type=effective_type,
+            limit=limit,
+            path_filter=path_filter,
+            alpha=effective_alpha,
+            fusion_method=effective_fusion,
+            rrf_k=rrf_k,
+            recency=recency,
+            recency_weight=recency_weight,
+            recency_half_life_days=recency_half_life_days,
+            zone_id=zone_id,
+            path_prefix_boosts=path_prefix_boosts,
         )
+        # Review R5: a backend failure on a local leg must land in
+        # zones_failed, not masquerade as a successfully searched
+        # empty zone.  ``search_with_error`` preserves the plugin's
+        # per-query error; raising here routes it through the
+        # dispatcher's existing exception→ZoneFailure plumbing.
+        # Bound-method guard: Magic/AsyncMock daemons fabricate this
+        # attribute (AsyncMock's even passes iscoroutinefunction) —
+        # only a real class-defined coroutine method (__func__) takes
+        # this path; mock daemons keep the plain search() seam.
+        import inspect as _inspect
+
+        search_with_error = getattr(daemon, "search_with_error", None)
+        if search_with_error is not None and _inspect.iscoroutinefunction(
+            getattr(search_with_error, "__func__", None)
+        ):
+            results, backend_error = await search_with_error(leg_request)
+            if backend_error:
+                raise RuntimeError(f"zone {zone_id!r} search backend failed: {backend_error}")
+        else:
+            results = await daemon.search(leg_request)
 
         # Tag results with zone provenance. Return the SearchResultList as-is
         # (it is a list subclass) rather than collapsing via list(), so its

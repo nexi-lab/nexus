@@ -49,11 +49,21 @@ _ALLOW_INSECURE_ENV = "NEXUS_SEARCH_PLUGIN_ALLOW_INSECURE"
 
 _LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1", "[::1]")
 
+# Docker's host-gateway alias resolves to the machine RUNNING the
+# container (Docker Desktop / OrbStack) — a container→host link on one
+# box, not a network hop.  Treated as same-machine so the dev default
+# target works out of the box WITHOUT a blanket ALLOW_INSECURE that
+# would also waive protection for genuinely remote targets (review
+# R5): an operator pointing NEXUS_SEARCH_PLUGIN_TARGET at another host
+# still hits the plaintext refusal.
+_SAME_MACHINE_HOSTS = _LOOPBACK_HOSTS + ("host.docker.internal",)
+
 
 def _target_is_loopback(target: str) -> bool:
-    """True when ``target``'s host part is a loopback address."""
+    """True when ``target``'s host part is same-machine (loopback or
+    Docker's host-gateway alias)."""
     host = target.rsplit(":", 1)[0] if ":" in target else target
-    return host in _LOOPBACK_HOSTS
+    return host in _SAME_MACHINE_HOSTS
 
 
 def _read_env_file(env_name: str) -> bytes | None:

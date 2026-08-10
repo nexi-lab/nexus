@@ -834,7 +834,12 @@ jobs:
           # gh packages API for the delete-new-tags rollback path.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -u
+          # Strict mode (review R5): an unguarded cluster-promotion
+          # failure previously fell through to server promotion,
+          # leaving the pair split behind a green step.  Every
+          # promotion is now explicitly branch-guarded; -e catches
+          # anything unguarded, pipefail catches jq/inspect pipes.
+          set -euo pipefail
           promote() {
             local source="$1" tags_json="$2"
             local tag_args=()
@@ -842,6 +847,30 @@ jobs:
               tag_args+=("-t" "$tag")
             done < <(jq -r '.tags[]' <<< "$tags_json")
             docker buildx imagetools create "${tag_args[@]}" "$source"
+          }
+
+          rollback_cluster() {
+            local base="${CLUSTER_SOURCE%%:*}"
+            for tag in "${!prior_cluster[@]}"; do
+              docker buildx imagetools create -t "$tag" "${base}@${prior_cluster[$tag]}" || \
+                echo "::error::rollback of $tag failed — pair is split; repair manually"
+            done
+            local pkg="${CLUSTER_SOURCE%%:*}"
+            pkg="${pkg##*/}"
+            local org="${GITHUB_REPOSITORY_OWNER}"
+            for tag in "${new_cluster_tags[@]}"; do
+              local tagname="${tag##*:}"
+              local version_id
+              version_id=$(gh api "/orgs/${org}/packages/container/${pkg}/versions" --paginate \
+                --jq ".[] | select(.metadata.container.tags[]? == \"${tagname}\") | .id" 2>/dev/null | head -1 || true)
+              if [ -n "$version_id" ]; then
+                gh api -X DELETE "/orgs/${org}/packages/container/${pkg}/versions/${version_id}" \
+                  && echo "deleted freshly minted tag ${tagname}" \
+                  || echo "::error::could not delete new tag ${tagname} — remove manually"
+              else
+                echo "::error::could not locate new tag ${tagname} for deletion — remove manually"
+              fi
+            done
           }
 
           # Snapshot the cluster tags' current digests for rollback —
@@ -859,33 +888,15 @@ jobs:
             fi
           done < <(jq -r '.tags[]' <<< "$CLUSTER_TAGS_JSON")
 
-          promote "$CLUSTER_SOURCE" "$CLUSTER_TAGS_JSON"
+          if ! promote "$CLUSTER_SOURCE" "$CLUSTER_TAGS_JSON"; then
+            echo "::error::cluster tag promotion failed — rolling back any partial cluster tags"
+            rollback_cluster
+            exit 1
+          fi
 
           if ! promote "$SERVER_SOURCE" "$SERVER_TAGS_JSON"; then
             echo "::error::server tag promotion failed — rolling cluster tags back"
-            base="${CLUSTER_SOURCE%%:*}"
-            for tag in "${!prior_cluster[@]}"; do
-              docker buildx imagetools create -t "$tag" "${base}@${prior_cluster[$tag]}" || \
-                echo "::error::rollback of $tag failed — pair is split; repair manually"
-            done
-            # Freshly minted tags have nothing to roll back TO —
-            # delete them via the packages API (best-effort; registry
-            # protocol has no tag-delete verb).
-            pkg="${CLUSTER_SOURCE%%:*}"
-            pkg="${pkg##*/}"
-            org="${GITHUB_REPOSITORY_OWNER}"
-            for tag in "${new_cluster_tags[@]}"; do
-              tagname="${tag##*:}"
-              version_id=$(gh api "/orgs/${org}/packages/container/${pkg}/versions" --paginate \
-                --jq ".[] | select(.metadata.container.tags[]? == \"${tagname}\") | .id" 2>/dev/null | head -1)
-              if [ -n "$version_id" ]; then
-                gh api -X DELETE "/orgs/${org}/packages/container/${pkg}/versions/${version_id}" \
-                  && echo "deleted freshly minted tag ${tagname}" \
-                  || echo "::error::could not delete new tag ${tagname} — remove manually"
-              else
-                echo "::error::could not locate new tag ${tagname} for deletion — remove manually"
-              fi
-            done
+            rollback_cluster
             exit 1
           fi
 

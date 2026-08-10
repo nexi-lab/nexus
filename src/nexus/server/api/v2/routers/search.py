@@ -606,10 +606,14 @@ async def _handle_single_zone_search(
         # the plain degrade-to-empty path.
         backend_error: str | None = None
         search_with_error = getattr(search_daemon, "search_with_error", None)
-        # iscoroutinefunction guard: a MagicMock daemon fabricates a
-        # non-awaitable attribute here — only the real proxy (or an
-        # async test double) takes the error-preserving path.
-        if inspect.iscoroutinefunction(search_with_error):
+        # Bound-method guard (review R5): Magic/AsyncMock daemons
+        # fabricate this attribute (AsyncMock's even passes
+        # iscoroutinefunction), so only a REAL class-defined coroutine
+        # method — bound, with __func__ — takes the error-preserving
+        # path; every mock shape falls back to plain search().
+        if search_with_error is not None and inspect.iscoroutinefunction(
+            getattr(search_with_error, "__func__", None)
+        ):
             results, backend_error = await search_with_error(search_request)
         else:
             results = await search_daemon.search(search_request)
@@ -1813,7 +1817,7 @@ async def search_refresh_notify(
 
     from nexus.server.api.v2.routers._search_indexed_dirs import _require_admin_or_path_write
 
-    await _require_admin_or_path_write(request, auth_result, target_zone, path or "/")
+    await _require_admin_or_path_write(request, auth_result, target_zone or "", path or "/")
 
     async def _work() -> dict[str, Any]:
         try:

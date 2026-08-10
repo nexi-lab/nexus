@@ -98,14 +98,17 @@ And on the **server**:
 | `NEXUS_SEARCH_PLUGIN_TLS_CERT` / `_KEY` | *(unset)* | Client cert+key pair for mTLS |
 | `NEXUS_SEARCH_PLUGIN_ALLOW_INSECURE` | *(unset)* | Explicit opt-in for **plaintext to a non-loopback** target (trusted network only) — without it the server refuses the channel and boots with search disabled |
 
-**Transport security**: plaintext is only accepted to loopback targets
-by default. A cross-host deployment must either terminate TLS on the
-plugin host (`nexusd-cluster` supports TLS natively; pair with
-`NEXUS_SEARCH_PLUGIN_TLS*` on the server) or explicitly set
-`NEXUS_SEARCH_PLUGIN_ALLOW_INSECURE=true` and accept that anyone on
-the network path can read queries and index content. The dev compose
-template sets the opt-in because its default target
-(`host.docker.internal`) crosses the container boundary on one machine.
+**Transport security**: plaintext is only accepted to same-machine
+targets — loopback addresses and Docker's `host.docker.internal`
+alias (which by construction resolves to the machine running the
+container). A cross-host deployment must either terminate TLS on the
+plugin host (pair with `NEXUS_SEARCH_PLUGIN_TLS*` on the server) or
+explicitly set `NEXUS_SEARCH_PLUGIN_ALLOW_INSECURE=true` and accept
+that anyone on the network path can read queries and index content.
+There is NO blanket default for the opt-in: changing
+`NEXUS_SEARCH_PLUGIN_TARGET` to a remote host fails closed (search
+disabled with a loud boot warning) until you choose TLS or plaintext
+deliberately.
 
 ## Plugin signing
 

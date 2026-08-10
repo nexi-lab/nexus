@@ -1017,6 +1017,19 @@ fn do_index(
     let state = crate::index_state::IndexState::open_or_create(manager.zone_root(zone_id))
         .map_err(|e| format!("open state for zone {zone_id:?}: {e}"))?;
 
+    // Embedder-generation alignment (review R8): a model swap keys a
+    // FRESH ann-<tag> directory; mtimes completed under another tag
+    // must not verdict Unchanged against it.
+    if let Some(e) = embedder {
+        if state.ensure_embedder_generation(e.tag()) {
+            tracing::warn!(
+                zone = %zone_id,
+                tag = %e.tag(),
+                "embedder generation changed — invalidated mtime cache; full re-embed",
+            );
+        }
+    }
+
     let sinks = IndexSinks {
         fts: &fts,
         ann: ann.as_ref(),
@@ -1315,15 +1328,34 @@ fn remove_one(sinks: &IndexSinks<'_>, vfs_path: &str, zone_has_ann: bool) -> boo
 }
 
 /// Does the zone root contain any `ann-*` directory?  Cheap readdir;
-/// used by the sweep to decide whether an unopened ANN sink means
-/// "no vectors exist" or "vectors exist but are unreachable".
+/// used by the sweep and the completion invariant to decide whether
+/// an unopened ANN sink means "no vectors exist" or "vectors exist
+/// but are unreachable".
+///
+/// FAIL-CLOSED on inspection errors (review R8): a read_dir or
+/// entry-level I/O failure is treated as "vectors MAY exist" — the
+/// conservative answer keeps documents ANN-retryable (mtime None)
+/// instead of finalizing them over vectors we merely could not see.
+/// The zone root not existing at all is a positive absence (fresh
+/// zone) and safely reads false.
 fn zone_has_ann_dir(manager: &IndexManager, zone_id: &str) -> bool {
-    std::fs::read_dir(manager.zone_root(zone_id))
-        .map(|rd| {
-            rd.flatten()
-                .any(|e| e.file_name().to_string_lossy().starts_with("ann-"))
-        })
-        .unwrap_or(false)
+    let root = manager.zone_root(zone_id);
+    if !root.exists() {
+        return false;
+    }
+    match std::fs::read_dir(&root) {
+        Ok(rd) => rd.into_iter().any(|entry| match entry {
+            Ok(e) => e.file_name().to_string_lossy().starts_with("ann-"),
+            Err(e) => {
+                tracing::warn!(err = %e, zone = %zone_id, "ann-dir scan entry error — assuming ANN present");
+                true
+            }
+        }),
+        Err(e) => {
+            tracing::warn!(err = %e, zone = %zone_id, "ann-dir scan failed — assuming ANN present");
+            true
+        }
+    }
 }
 
 /// Result counts from `do_refresh` — one number per RefreshResponse
@@ -1381,6 +1413,19 @@ fn do_refresh(
 
     let state = crate::index_state::IndexState::open_or_create(manager.zone_root(zone_id))
         .map_err(|e| format!("open state for zone {zone_id:?}: {e}"))?;
+
+    // Embedder-generation alignment (review R8): a model swap keys a
+    // FRESH ann-<tag> directory; mtimes completed under another tag
+    // must not verdict Unchanged against it.
+    if let Some(e) = embedder {
+        if state.ensure_embedder_generation(e.tag()) {
+            tracing::warn!(
+                zone = %zone_id,
+                tag = %e.tag(),
+                "embedder generation changed — invalidated mtime cache; full re-embed",
+            );
+        }
+    }
 
     let sinks = IndexSinks {
         fts: &fts,
@@ -1566,6 +1611,17 @@ fn do_index_documents(
         let state = crate::index_state::IndexState::open_or_create(manager.zone_root(&zone_id))
             .map_err(|e| format!("open state for zone {zone_id:?}: {e}"))?;
 
+        // Embedder-generation alignment — same rationale as do_index.
+        if let Some(e) = embedder {
+            if state.ensure_embedder_generation(e.tag()) {
+                tracing::warn!(
+                    zone = %zone_id,
+                    tag = %e.tag(),
+                    "embedder generation changed — invalidated mtime cache; full re-embed",
+                );
+            }
+        }
+
         // #4623: incremental FTS visibility.  Embedding dominates a
         // large explicit batch (tens of seconds of CPU), and a single
         // end-of-batch commit left keyword queries answering
@@ -1582,7 +1638,7 @@ fn do_index_documents(
         // Content transition on explicit indexing (review R6): a doc
         // re-posted with empty/whitespace text must PURGE its prior
         // chunks, not leave stale text searchable behind a skip.
-        let mut content_skip = |path: &str| {
+        let content_skip = |path: &str| {
             fts.delete_all_chunks(path);
             match ann.as_ref() {
                 Some(a) => {

@@ -92,6 +92,13 @@ struct Persisted {
     version: u32,
     #[serde(default)]
     files: HashMap<String, FileEntry>,
+    /// Embedder generation the recorded mtimes were completed under
+    /// (review R8).  ANN storage is keyed by embedder tag, so a model
+    /// swap opens a FRESH ann directory — mtimes recorded under the
+    /// old tag must not read Unchanged against it, or the new index
+    /// never populates.  None on legacy files / keyword-only zones.
+    #[serde(default)]
+    embedder_tag: Option<String>,
 }
 
 /// Zone-scoped mtime cache.  Cheap to clone through Arc for
@@ -99,6 +106,7 @@ struct Persisted {
 pub struct IndexState {
     dir: PathBuf,
     inner: RwLock<HashMap<String, FileEntry>>,
+    embedder_tag: RwLock<Option<String>>,
 }
 
 impl IndexState {
@@ -109,11 +117,13 @@ impl IndexState {
         std::fs::create_dir_all(&zone_root)
             .map_err(|e| StateError::CreateDir(zone_root.display().to_string(), e.to_string()))?;
         let path = zone_root.join(STATE_FILE);
+        let mut persisted_tag: Option<String> = None;
         let inner = if path.exists() {
             let bytes = std::fs::read(&path)
                 .map_err(|e| StateError::Read(path.display().to_string(), e.to_string()))?;
             let persisted: Persisted = serde_json::from_slice(&bytes)
                 .map_err(|e| StateError::Parse(path.display().to_string(), e.to_string()))?;
+            persisted_tag = persisted.embedder_tag.clone();
             if persisted.version != STATE_VERSION {
                 // Stale layout generation (see STATE_VERSION doc).
                 // KEEP the path keys but null every mtime instead of
@@ -150,7 +160,37 @@ impl IndexState {
         Ok(Self {
             dir: zone_root,
             inner: RwLock::new(inner),
+            embedder_tag: RwLock::new(persisted_tag),
         })
+    }
+
+    /// Align the state with the ACTIVE embedder generation (review
+    /// R8).  When the recorded tag differs from `tag`, every cached
+    /// mtime is nulled in memory — the ANN directory for the new tag
+    /// starts empty (or stale relative to edits made under another
+    /// tag), so every file must verdict Changed and re-embed into it.
+    /// Records `tag` as the current generation either way.  Returns
+    /// true when an invalidation happened.
+    pub fn ensure_embedder_generation(&self, tag: &str) -> bool {
+        let mut current = self.embedder_tag.write();
+        if current.as_deref() == Some(tag) {
+            return false;
+        }
+        let had_prior = current.is_some();
+        *current = Some(tag.to_string());
+        drop(current);
+        if had_prior {
+            let mut files = self.inner.write();
+            for entry in files.values_mut() {
+                entry.mtime_ms = None;
+            }
+            true
+        } else {
+            // First generation stamp (legacy state / fresh zone):
+            // nothing was completed under a DIFFERENT tag, so the
+            // recorded mtimes stay valid.
+            false
+        }
     }
 
     /// Snapshot of every recorded path.  Callers use this to detect
@@ -220,6 +260,7 @@ impl IndexState {
         let persisted = Persisted {
             version: STATE_VERSION,
             files: self.inner.read().clone(),
+            embedder_tag: self.embedder_tag.read().clone(),
         };
         let bytes =
             serde_json::to_vec_pretty(&persisted).map_err(|e| StateError::Encode(e.to_string()))?;
@@ -406,6 +447,44 @@ mod tests {
             s.verdict("/a.md", Some(123)),
             RefreshVerdict::Changed
         ));
+    }
+
+    #[test]
+    fn embedder_generation_change_invalidates_mtimes() {
+        // Review R8: ANN storage is keyed by embedder tag — a model
+        // swap must null the mtime cache or the fresh ann-<new-tag>
+        // directory never populates (everything reads Unchanged).
+        let dir = tempdir();
+        let s = IndexState::open_or_create(dir.clone()).expect("open");
+        s.record("/a.md", Some(100));
+        assert!(
+            !s.ensure_embedder_generation("tag-a"),
+            "first stamp keeps mtimes"
+        );
+        assert_eq!(s.cached_mtime("/a.md"), Some(Some(100)));
+        s.save().expect("save");
+
+        // Same tag on reopen: no invalidation.
+        let s = IndexState::open_or_create(dir.clone()).expect("reopen");
+        assert!(!s.ensure_embedder_generation("tag-a"));
+        assert_eq!(s.cached_mtime("/a.md"), Some(Some(100)));
+
+        // Different tag: every mtime nulls -> always Changed.
+        assert!(
+            s.ensure_embedder_generation("tag-b"),
+            "tag change must invalidate"
+        );
+        assert_eq!(s.cached_mtime("/a.md"), Some(None));
+        assert!(matches!(
+            s.verdict("/a.md", Some(100)),
+            RefreshVerdict::Changed
+        ));
+        s.save().expect("save-2");
+
+        // Persisted: reopen under tag-b is quiet, back to tag-a invalidates again.
+        let s = IndexState::open_or_create(dir).expect("reopen-2");
+        assert!(!s.ensure_embedder_generation("tag-b"));
+        assert!(s.ensure_embedder_generation("tag-a"));
     }
 
     #[test]

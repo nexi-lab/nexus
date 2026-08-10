@@ -42,6 +42,7 @@
 // Cross-service helpers — small feature-free primitives usable by
 // any service impl (in-tree or downstream cdylib plugin) without
 // pulling a per-service feature gate.
+pub mod locks;
 pub mod ops;
 
 // Generic hosted-subprocess primitive: launch an argv + surface its

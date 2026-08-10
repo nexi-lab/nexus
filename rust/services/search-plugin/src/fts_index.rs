@@ -4,7 +4,7 @@
 //! # Storage layout
 //!
 //! Each zone has its own tantivy directory rooted at
-//! `~/.nexus/plugins/search/<zone_id>/fts/`.  The directory is
+//! `~/.nexus/plugins/search/<zone_id>/fts-v2/`.  The directory is
 //! plugin-owned, per-node, and NOT replicated — the SSOT for
 //! "what belongs in the index" is the kernel VFS itself, and the
 //! MetaStore `search.indexed_gen` sidecar (added in Phase 5)
@@ -18,9 +18,19 @@
 //! ```text
 //! path         STRING | STORED   exact match + retrievable
 //! chunk_index  I64    | STORED   integer, 0 in P1 (one chunk per file)
-//! chunk_text   TEXT   | STORED   BM25-analysed
+//! chunk_text   TEXT(en_stem) | STORED   BM25-analysed, English-stemmed
 //! mtime_ms     I64    | STORED   millisecond-resolution mtime
 //! ```
+//!
+//! `chunk_text` runs through tantivy's built-in `en_stem` analyzer
+//! (simple tokenizer + lowercase + English Porter stemmer) so
+//! morphological query variants match — `authorization` finds
+//! "authorized", matching the pre-P12 Postgres FTS behaviour that
+//! stemmed both sides (#4618).  The query parser resolves the same
+//! analyzer from the field config, so index and query time agree.
+//! This is an index-schema property: indices built with the
+//! pre-stemmer schema live under the old `fts/` directory and the
+//! manager opens `fts-v2/` instead — rebuild to populate.
 //!
 //! `mtime_ms` is STORED only in P1 (no INDEXED).  P6 flips it to
 //! `STORED | INDEXED` when recency queries land; INDEXED today would
@@ -57,7 +67,9 @@ use tantivy::collector::TopDocs;
 use tantivy::directory::MmapDirectory;
 use tantivy::query::QueryParser;
 use tantivy::query::TermQuery;
-use tantivy::schema::{Field, IndexRecordOption, Schema, Value, STORED, STRING, TEXT};
+use tantivy::schema::{
+    Field, IndexRecordOption, Schema, TextFieldIndexing, TextOptions, Value, STORED, STRING,
+};
 use tantivy::{doc, Index, IndexReader, IndexWriter, ReloadPolicy, TantivyDocument, Term};
 
 /// tantivy writer heap — 50 MiB is the conventional per-index budget
@@ -119,9 +131,20 @@ pub fn build_schema() -> Schema {
     // P4's chunker flips to `STORED | INDEXED` when composite-key
     // dedupe by (path, chunk_index) lands.
     sb.add_i64_field("chunk_index", STORED);
-    // chunk_text — BM25-analysed.  Default TEXT = lowercase + simple
-    // tokeniser; P4 replaces this with a language-aware chain.
-    sb.add_text_field("chunk_text", TEXT | STORED);
+    // chunk_text — BM25-analysed through `en_stem` (simple tokenizer
+    // + lowercase + English Porter stemmer; pre-registered in
+    // tantivy's default TokenizerManager).  The default TEXT chain
+    // has no stemmer, which cost the keyword lane every
+    // morphological-variant query vs the pre-P12 Postgres stack
+    // (#4618: `authorization` vs "authorized" → 0 hits).
+    let chunk_text_opts = TextOptions::default()
+        .set_indexing_options(
+            TextFieldIndexing::default()
+                .set_tokenizer("en_stem")
+                .set_index_option(IndexRecordOption::WithFreqsAndPositions),
+        )
+        .set_stored();
+    sb.add_text_field("chunk_text", chunk_text_opts);
     // mtime_ms — STORED only in P1.  P6 lifts to `STORED | INDEXED`
     // when recency range queries land; indexing today would build a
     // range structure nothing queries.
@@ -452,6 +475,43 @@ mod tests {
         assert_eq!(hits[0].chunk_index, 0);
         assert_eq!(hits[0].mtime_ms, Some(1_700_000_000_000));
         assert!(hits[0].score > 0.0);
+    }
+
+    #[test]
+    fn morphological_query_variants_match_stemmed_corpus_terms() {
+        // #4618: the pre-P12 Postgres FTS stack stems both sides
+        // (`authorization` → `authoriz` → matches "authorized"); the
+        // tantivy default tokenizer does not, so natural-language
+        // morphological variants of corpus terms returned 0 hits.
+        // `chunk_text` uses the `en_stem` analyzer — same lowercase +
+        // simple-tokenize chain plus an English stemmer, applied at
+        // index AND query time via the field's tokenizer config.
+        let dir = tempdir().join("fts");
+        let idx = FtsIndex::open_or_create(dir).expect("open");
+        idx.add_document("/d09.md", 0, "access was authorized by the admin", Some(1))
+            .expect("add");
+        idx.add_document("/d05.md", 0, "the engineering team shipped it", Some(2))
+            .expect("add");
+        idx.add_document("/d13.md", 0, "swap the battery pack first", Some(3))
+            .expect("add");
+        idx.commit().expect("commit");
+
+        for (query, want_path) in [
+            ("authorization", "/d09.md"),
+            ("engineers", "/d05.md"),
+            ("batteries", "/d13.md"),
+            // Exact-form controls — must keep matching post-stemmer.
+            ("authorized", "/d09.md"),
+            ("engineering", "/d05.md"),
+        ] {
+            let hits = idx.search(query, 10, None).expect("search");
+            assert_eq!(
+                hits.len(),
+                1,
+                "query {query:?}: expected 1 hit, got {hits:?}"
+            );
+            assert_eq!(hits[0].path, want_path, "query {query:?}");
+        }
     }
 
     #[test]

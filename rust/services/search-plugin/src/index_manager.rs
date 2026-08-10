@@ -23,7 +23,7 @@
 //!
 //! # Storage roots
 //!
-//! The directory layout is `<root>/<zone_id>/fts/`.  Root resolves
+//! The directory layout is `<root>/<zone_id>/fts-v2/`.  Root resolves
 //! from the `NEXUS_DATA_DIR` env var (same convention as
 //! [`nexus-vault`]'s per-node state), falling back to `./nexus-data`
 //! when unset — one SSOT lets operators relocate ALL plugins by
@@ -49,7 +49,14 @@ use crate::fts_index::{FtsIndex, IndexError};
 /// Directory name inside a per-zone index root for the FTS store.
 /// Sibling directories (Phase 2's `ann/` for HNSW, etc.) land next
 /// to this one under the same zone root.
-const FTS_SUBDIR: &str = "fts";
+///
+/// The `v2` bump marks the #4618 schema change (`chunk_text` moved
+/// from the default tokenizer to `en_stem`) — same convention as
+/// `ann-<tag>-v2`: pre-stemmer `fts/` dirs stay on disk untouched
+/// while callers converge on v2.  Reindex to populate (the
+/// `index_state` version bump forces exactly that on the next
+/// Refresh).
+const FTS_SUBDIR: &str = "fts-v2";
 
 /// Environment variable that names the per-node state root.  Same
 /// SSOT the sibling `nexus-vault` plugin honours — one variable
@@ -213,8 +220,8 @@ mod tests {
         let _ = mgr.get_or_open("zone-a").expect("open a");
         let _ = mgr.get_or_open("zone-b").expect("open b");
 
-        assert!(root.join("zone-a/fts").exists(), "za dir not created");
-        assert!(root.join("zone-b/fts").exists(), "zb dir not created");
+        assert!(root.join("zone-a/fts-v2").exists(), "za dir not created");
+        assert!(root.join("zone-b/fts-v2").exists(), "zb dir not created");
     }
 
     // NEXUS_DATA_DIR resolution regression tests.  Use `unsafe { set_var }`
@@ -252,6 +259,17 @@ mod tests {
             Some(v) => unsafe { std::env::set_var(DATA_DIR_ENV, v) },
             None => unsafe { std::env::remove_var(DATA_DIR_ENV) },
         }
+    }
+
+    #[test]
+    fn fts_dir_versioned_v2() {
+        // #4618's en_stem tokenizer is an index-schema change — same
+        // convention as ann-<tag>-v2: new dir alongside the old one,
+        // pre-stemmer `fts/` dirs stay on disk untouched, a reindex
+        // populates v2.
+        let root = tempdir();
+        let mgr = IndexManager::with_root(root.clone());
+        assert_eq!(mgr.index_dir("za"), root.join("za/fts-v2"));
     }
 
     #[test]

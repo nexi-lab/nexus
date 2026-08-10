@@ -1276,8 +1276,16 @@ fn do_refresh(
     // which cached entries no longer exist in the corpus.
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
+    // Set when the walk stops early at `max_docs` — the sweep below
+    // must NOT run then, or every cached path beyond the cap would be
+    // falsely treated as deleted (review R3: on a >max_docs corpus the
+    // first post-migration Refresh would discard the tail's deletion
+    // set and its indexed docs).
+    let mut truncated = false;
+
     let mut visit_file = |vfs_path: &str| -> WalkAction {
         if (counts.reindexed as usize + counts.unchanged as usize) >= max_docs {
+            truncated = true;
             return WalkAction::Stop;
         }
         seen.insert(vfs_path.to_string());
@@ -1328,14 +1336,24 @@ fn do_refresh(
     // walk didn't see, drop it from FTS + ANN + state.  Guarded by
     //
     //   (a) visit_result.is_ok() — a mid-walk crash would falsely
-    //       report un-visited paths as deleted, and
-    //   (b) path is under the caller's `root_path` scope — a
+    //       report un-visited paths as deleted,
+    //   (b) !truncated — a walk stopped at `max_docs` did not SEE the
+    //       tail, so "not seen" proves nothing (review R3), and
+    //   (c) path is under the caller's `root_path` scope — a
     //       Refresh scoped to /a/ must NOT wipe cached paths under
     //       /b/.  Without this guard, a scoped Refresh silently
     //       reindexes-with-drops for the WHOLE zone and any file
     //       that lives outside the caller's scope gets flagged as
     //       deleted.
-    if visit_result.is_ok() {
+    if truncated {
+        tracing::warn!(
+            max_docs,
+            root = %root_path,
+            "refresh walk truncated at max_docs — stale sweep skipped; \
+             raise max_docs or refresh in narrower scopes to sweep deletions",
+        );
+    }
+    if visit_result.is_ok() && !truncated {
         let scope = root_path.trim_end_matches('/');
         for cached_path in sinks.state.known_paths() {
             let in_scope = scope.is_empty()
@@ -1572,10 +1590,15 @@ fn do_notify_file_change(
             // Only open ANN if it happens to already be there —
             // creating an empty ANN dir on a delete is
             // counterproductive.  We'd need the embedder tag to
-            // open; the cheap approach is to leave ANN cleanup
-            // for the next Refresh, which already sweeps orphan
-            // vectors via the shadow-set contract.
-            state.forget(path);
+            // open; ANN cleanup is deferred to the next Refresh's
+            // stale sweep.  That sweep is driven by known_paths(),
+            // so the path must stay KNOWN as a tombstone (mtime
+            // None) — forgetting it here would make the orphaned
+            // vectors undiscoverable forever and semantic queries
+            // would keep returning the deleted path (review R3).
+            // Refresh sees the tombstone, misses the path in the
+            // walk, and removes FTS remnants + ANN + state together.
+            state.record(path, None);
             if let Err(e) = fts.commit() {
                 return Err(format!("fts commit: {e}"));
             }
@@ -1765,6 +1788,20 @@ impl SearchService for SearchServiceImpl {
         } else {
             req.limit as usize
         };
+        // Post-fusion score adjustments (recency, prefix boosts) can
+        // PROMOTE a hit from below the requested limit — so the pool
+        // they act on must be over-fetched, or a heavily boosted doc
+        // initially ranked at limit+1 is unreachable (review R3).
+        // Final truncation to `limit` happens after apply_all+re-sort.
+        let adjustments_active = matches!(
+            recency_mode,
+            crate::scoring::RecencyMode::On | crate::scoring::RecencyMode::Auto
+        ) || !prefix_boosts.is_empty();
+        let fetch_limit = if adjustments_active {
+            limit.saturating_mul(HYBRID_OVER_FETCH_MULT).max(limit)
+        } else {
+            limit
+        };
         let zone_id = resolve_zone(&req.zone_id).to_string();
         // Now safe to move fields out.
         let q = req.q;
@@ -1784,7 +1821,7 @@ impl SearchService for SearchServiceImpl {
 
         let outcome = match query_type {
             QueryType::Unspecified | QueryType::Keyword => tokio::task::spawn_blocking(move || {
-                do_keyword_query(&manager, &q, &zone_id, limit, &path_filter)
+                do_keyword_query(&manager, &q, &zone_id, fetch_limit, &path_filter)
             })
             .await
             .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?,
@@ -1810,7 +1847,7 @@ impl SearchService for SearchServiceImpl {
                         &embed_cache,
                         &q,
                         &zone_id,
-                        limit,
+                        fetch_limit,
                         &path_filter,
                     )
                 })
@@ -1873,7 +1910,11 @@ impl SearchService for SearchServiceImpl {
                     .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
                 match (kw, sem) {
                     (Ok(keyword), Ok(semantic)) => {
-                        Ok(fuse_hybrid(keyword, semantic, limit, fusion_opts))
+                        // Keep the over-fetched pool through fusion
+                        // when adjustments still need to reorder it;
+                        // the final truncate-to-limit happens post-
+                        // adjustment below.
+                        Ok(fuse_hybrid(keyword, semantic, fetch_limit, fusion_opts))
                     }
                     // A source-side error on either leg — surface it
                     // as the response's `error` field rather than a
@@ -1930,9 +1971,11 @@ impl SearchService for SearchServiceImpl {
                 // pooled + truncated) so it's cheap to always run.
                 if fusion_opts.chunks_per_page > 0 {
                     results = fusion::pool_by_document(results, fusion_opts.chunks_per_page);
-                    if results.len() > limit {
-                        results.truncate(limit);
-                    }
+                }
+                // Final caller-visible truncation — unconditional, so
+                // the adjustment over-fetch never leaks past `limit`.
+                if results.len() > limit {
+                    results.truncate(limit);
                 }
                 // Post-outcome enrichment.  Runs inside the async
                 // handler (no spawn_blocking) because expand-macro's

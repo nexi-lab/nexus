@@ -24,13 +24,17 @@ except ImportError:
 
 pytestmark = pytest.mark.skipif(not _HAS_FASTAPI, reason="fastapi test client unavailable")
 
+# Admin principal: /search/index now enforces the same
+# admin-or-path-WRITE gate as the index-directory mutation routes
+# (review R3); these tests pin the RESPONSE contract, so they run as
+# admin.  The gate itself is pinned in test_search_response_contracts.
 _AUTH = {
     "authenticated": True,
     "subject_type": "user",
     "subject_id": "alice",
     "zone_id": "eng",
     "zone_perms": [["eng", "rw"]],
-    "is_admin": False,
+    "is_admin": True,
 }
 
 

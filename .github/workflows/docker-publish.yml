@@ -28,6 +28,28 @@ env:
   CLUSTER_IMAGE_NAME: ${{ github.repository_owner }}/nexusd-cluster
 
 jobs:
+  # Review R3: a workflow_dispatch custom tag is pushed as the
+  # immutable staging reference BEFORE the smoke — so it must never be
+  # allowed to name a public release tag, or the smoke gate is
+  # bypassed by typing "edge" into the dispatch box.
+  validate-inputs:
+    name: Validate dispatch inputs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject reserved release tags as custom dispatch tags
+        env:
+          CUSTOM_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          if [ -z "$CUSTOM_TAG" ]; then
+            echo "no custom tag — nothing to validate"
+            exit 0
+          fi
+          if printf '%s' "$CUSTOM_TAG" | grep -qE '^(edge|stable|latest|v?[0-9]+(\.[0-9]+)*.*)$'; then
+            echo "::error::custom tag '$CUSTOM_TAG' is a reserved release tag — release tags are only applied by promote-tags AFTER the e2e smoke passes"
+            exit 1
+          fi
+          echo "custom tag '$CUSTOM_TAG' accepted"
+
   # Fan out amd64 and arm64 onto native GitHub-hosted runners; emit one
   # push-by-digest image per platform. QEMU-emulated multi-arch on a
   # single ubuntu-latest runner is 5-10x slower than native and times
@@ -36,6 +58,7 @@ jobs:
   # See docs: https://docs.docker.com/build/ci/github-actions/multi-platform/
   build-platform:
     name: Build ${{ matrix.platform }}
+    needs: [validate-inputs]
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -162,6 +185,7 @@ jobs:
   # ---------------------------------------------------------------------------
   build-cluster-platform:
     name: Build cluster ${{ matrix.platform }}
+    needs: [validate-inputs]
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -790,32 +814,54 @@ jobs:
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
             type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/tags/v') }}
 
-      # NOTE: DOCKER_METADATA_OUTPUT_JSON holds the LAST metadata-action
-      # invocation (the cluster one) — each step below pins its own
-      # meta output explicitly to avoid promoting the wrong image's tags.
-      - name: Promote server image tags
+      # Paired promotion (review R3): the server/plugin-host pair must
+      # move in lockstep.  Registries offer no cross-repo transaction,
+      # so: capture the cluster tags' PRIOR digests, promote cluster
+      # first, then server; if the server promotion fails, restore the
+      # cluster tags to their prior digests so the public pair never
+      # stays split.  (A pull landing inside the small promote window
+      # can still observe a mismatch — deployments needing a hard
+      # guarantee pin both images by digest per
+      # docs/deployment/search-plugin.md.)
+      # DOCKER_METADATA_OUTPUT_JSON holds the LAST metadata-action
+      # invocation — both tag sets are pinned explicitly instead.
+      - name: Promote paired release tags (rollback on partial failure)
         env:
-          SOURCE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-and-push.outputs.version }}
+          SERVER_SOURCE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-and-push.outputs.version }}
+          CLUSTER_SOURCE: ${{ env.REGISTRY }}/${{ env.CLUSTER_IMAGE_NAME }}:${{ needs.push-cluster-manifest.outputs.version }}
           SERVER_TAGS_JSON: ${{ steps.meta.outputs.json }}
-        run: |
-          mapfile -t image_tags < <(jq -r '.tags[]' <<< "$SERVER_TAGS_JSON")
-          tag_args=()
-          for tag in "${image_tags[@]}"; do
-            tag_args+=("-t" "$tag")
-          done
-          docker buildx imagetools create "${tag_args[@]}" "$SOURCE"
-
-      - name: Promote cluster image tags
-        env:
-          SOURCE: ${{ env.REGISTRY }}/${{ env.CLUSTER_IMAGE_NAME }}:${{ needs.push-cluster-manifest.outputs.version }}
           CLUSTER_TAGS_JSON: ${{ steps.cluster_meta.outputs.json }}
         run: |
-          mapfile -t image_tags < <(jq -r '.tags[]' <<< "$CLUSTER_TAGS_JSON")
-          tag_args=()
-          for tag in "${image_tags[@]}"; do
-            tag_args+=("-t" "$tag")
-          done
-          docker buildx imagetools create "${tag_args[@]}" "$SOURCE"
+          set -u
+          promote() {
+            local source="$1" tags_json="$2"
+            local tag_args=()
+            while IFS= read -r tag; do
+              tag_args+=("-t" "$tag")
+            done < <(jq -r '.tags[]' <<< "$tags_json")
+            docker buildx imagetools create "${tag_args[@]}" "$source"
+          }
+
+          # Snapshot the cluster tags' current digests for rollback.
+          declare -A prior_cluster
+          while IFS= read -r tag; do
+            digest=$(docker buildx imagetools inspect "$tag" --format '{{.Manifest.Digest}}' 2>/dev/null || true)
+            if [ -n "$digest" ]; then
+              prior_cluster["$tag"]="$digest"
+            fi
+          done < <(jq -r '.tags[]' <<< "$CLUSTER_TAGS_JSON")
+
+          promote "$CLUSTER_SOURCE" "$CLUSTER_TAGS_JSON"
+
+          if ! promote "$SERVER_SOURCE" "$SERVER_TAGS_JSON"; then
+            echo "::error::server tag promotion failed — rolling cluster tags back to their prior digests"
+            base="${CLUSTER_SOURCE%%:*}"
+            for tag in "${!prior_cluster[@]}"; do
+              docker buildx imagetools create -t "$tag" "${base}@${prior_cluster[$tag]}" || \
+                echo "::error::rollback of $tag failed — pair is split; repair manually"
+            done
+            exit 1
+          fi
 
       - name: Inspect promoted tags
         run: |

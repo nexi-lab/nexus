@@ -232,6 +232,67 @@ async fn stats_identity_fields_present_and_idle() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn prefix_boost_promotes_doc_from_below_the_requested_limit() {
+    // Review R3: score adjustments must act on an OVER-FETCHED pool.
+    // Pre-fix, a keyword query with limit=1 fetched exactly one hit,
+    // so a ×10 boost on a doc ranked #2 could never promote it.
+    let dir = TempDir::new().unwrap();
+    let svc = SearchServiceImpl::builder(Arc::new(handle_for(leak_kernel())))
+        .manager(Arc::new(IndexManager::with_root(dir.path().to_path_buf())))
+        .embedder(Arc::new(MockEmbedder::with_dim(16)))
+        .build();
+
+    // doc-plain matches "target" three times (BM25 rank #1);
+    // doc-boosted matches once but lives under the boosted prefix.
+    svc.index_documents(Request::new(IndexDocumentsRequest {
+        documents: vec![
+            doc("/plain/doc.md", "target target target filler body"),
+            doc("/boosted/doc.md", "target mentioned once in passing"),
+        ],
+        zone_id: String::new(),
+        auth_token: String::new(),
+    }))
+    .await
+    .expect("index rpc");
+
+    let unboosted = svc
+        .query(Request::new(QueryRequest {
+            q: "target".to_string(),
+            limit: 1,
+            query_type: QueryType::Keyword as i32,
+            ..Default::default()
+        }))
+        .await
+        .expect("query rpc")
+        .into_inner();
+    assert_eq!(
+        unboosted.results[0].path, "/plain/doc.md",
+        "sanity: BM25 alone ranks the triple-match first"
+    );
+
+    let boosted = svc
+        .query(Request::new(QueryRequest {
+            q: "target".to_string(),
+            limit: 1,
+            query_type: QueryType::Keyword as i32,
+            path_prefix_boosts: std::collections::HashMap::from([("/boosted/".to_string(), 10.0)]),
+            ..Default::default()
+        }))
+        .await
+        .expect("query rpc")
+        .into_inner();
+    assert_eq!(
+        boosted.results.len(),
+        1,
+        "limit must still cap the response"
+    );
+    assert_eq!(
+        boosted.results[0].path, "/boosted/doc.md",
+        "a ×10 boost must promote the doc that started below the limit"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn keyword_hits_visible_while_batch_still_embedding() {
     let dir = TempDir::new().unwrap();
     let release = Arc::new(AtomicBool::new(false));

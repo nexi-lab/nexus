@@ -54,12 +54,16 @@ def _build_app(daemon):
 
     from nexus.server.dependencies import require_auth
 
+    # Admin principal: /search/index enforces admin-or-path-WRITE
+    # (review R3); the read-only case is pinned by
+    # test_read_only_principal_cannot_index below.
     app.dependency_overrides[require_auth] = lambda: {
         "authenticated": True,
         "user_id": "u",
         "zone_id": "eng",
         "zone_set": ["eng"],
         "zone_perms": [["eng", "r"], ["eng", "w"]],
+        "is_admin": True,
     }
     return app
 
@@ -180,6 +184,35 @@ class TestIndexResponseContract:
                     {"path": "/ws/a.md", "text": "alpha", "zone_id": "victim-zone"},
                 ]
             },
+        )
+
+        assert resp.status_code == 403, resp.text
+        assert stub.requests == []
+
+    def test_read_only_principal_cannot_index(self):
+        from nexus.grpc.search.v1 import search_pb2
+        from nexus.server.dependencies import require_auth
+
+        daemon, stub = _daemon_with_stub(
+            IndexDocuments=search_pb2.IndexDocumentsResponse(indexed_count=1)
+        )
+        app = _build_app(daemon)
+        # Non-admin principal + no permission enforcer wired ⇒ the
+        # WRITE gate fails CLOSED (review R3): explicit indexing
+        # replaces content other readers see, so a read-only token
+        # must not reach the daemon.
+        app.dependency_overrides[require_auth] = lambda: {
+            "authenticated": True,
+            "user_id": "reader",
+            "zone_id": "eng",
+            "zone_set": ["eng"],
+            "zone_perms": [["eng", "r"]],
+            "is_admin": False,
+        }
+
+        resp = TestClient(app).post(
+            "/api/v2/search/index",
+            json={"documents": [{"path": "/ws/a.md", "text": "poison"}]},
         )
 
         assert resp.status_code == 403, resp.text

@@ -1705,6 +1705,17 @@ async def search_index_documents(
                 ),
             )
 
+    # WRITE authorization (review R3): explicit indexing REPLACES the
+    # searchable content other readers see at these paths — a read-only
+    # principal must not be able to poison results.  Same
+    # admin-bypass / per-path ReBAC WRITE / fail-closed-without-enforcer
+    # gate the sibling index-directory mutation routes use.
+    from nexus.server.api.v2.routers._search_indexed_dirs import _require_admin_or_path_write
+
+    for doc in documents:
+        doc_path = doc.get("path", "") if isinstance(doc, dict) else ""
+        await _require_admin_or_path_write(request, auth_result, zone_id, doc_path or "/")
+
     async def _work() -> dict[str, Any]:
         try:
             result = await search_daemon.index_documents(documents, zone_id=zone_id)

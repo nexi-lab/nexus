@@ -87,6 +87,15 @@ pub enum EmbedError {
     #[error("embedder not available: {0}")]
     NotAvailable(String),
 
+    /// An embedder IS configured but the configuration is invalid
+    /// (e.g. remote URL set without model/dim).  Distinct from
+    /// `NotAvailable` (review R3): indexing paths must treat this as
+    /// a BROKEN embedder — documents indexed while misconfigured stay
+    /// ANN-retryable so vectors backfill once the config is repaired,
+    /// instead of being recorded complete in keyword-only form.
+    #[error("embedder misconfigured: {0}")]
+    Misconfigured(String),
+
     /// The model file / tokenizer file was found but failed to
     /// load.  Bad ONNX opset, corrupt bytes, tokenizer format
     /// mismatch, etc.  Distinct from `NotAvailable` so operators
@@ -342,6 +351,15 @@ pub const EMBED_MODEL_ENV: &str = "NEXUS_SEARCH_EMBED_MODEL";
 pub const EMBED_DIM_ENV: &str = "NEXUS_SEARCH_EMBED_DIM";
 /// Per-request timeout in seconds (default 30).
 pub const EMBED_TIMEOUT_ENV: &str = "NEXUS_SEARCH_EMBED_TIMEOUT_SECONDS";
+/// Optional EXPLICIT vector-space identity for the AnnIndex tag
+/// (review R3).  The derived `api-<model>-<dim>` tag is a lossy
+/// sanitization ("org/model" and "org-model" collide) and carries no
+/// provider identity — deployments whose provider aliases model names
+/// (or that migrate endpoints serving DIFFERENT spaces under the same
+/// model string) set this to a value THEY guarantee is 1:1 with the
+/// embedding space, e.g. "api-prod-embed-r2".  Changing it forces a
+/// fresh ANN directory.
+pub const EMBED_TAG_ENV: &str = "NEXUS_SEARCH_EMBED_TAG";
 
 const DEFAULT_EMBED_TIMEOUT_SECONDS: u64 = 30;
 
@@ -363,6 +381,8 @@ pub struct RemoteEmbedderConfig {
     pub model: String,
     pub dim: usize,
     pub timeout: std::time::Duration,
+    /// Explicit vector-space tag override — see [`EMBED_TAG_ENV`].
+    pub tag_override: Option<String>,
 }
 
 impl RemoteEmbedderConfig {
@@ -382,7 +402,7 @@ impl RemoteEmbedderConfig {
             .filter(|v| !v.trim().is_empty())
             .map(|v| v.trim().to_string())
             .ok_or_else(|| {
-                EmbedError::NotAvailable(format!(
+                EmbedError::Misconfigured(format!(
                     "{EMBED_API_URL_ENV} is set but {EMBED_MODEL_ENV} is not — \
                      the remote embedder needs an explicit model name",
                 ))
@@ -390,7 +410,7 @@ impl RemoteEmbedderConfig {
         let dim_raw = get(EMBED_DIM_ENV)
             .filter(|v| !v.trim().is_empty())
             .ok_or_else(|| {
-                EmbedError::NotAvailable(format!(
+                EmbedError::Misconfigured(format!(
                     "{EMBED_API_URL_ENV} is set but {EMBED_DIM_ENV} is not — \
                      the remote embedder needs the embedding dimensionality \
                      to pin the ANN index without a boot-time network probe",
@@ -402,7 +422,7 @@ impl RemoteEmbedderConfig {
             .ok()
             .filter(|d| *d > 0)
             .ok_or_else(|| {
-                EmbedError::NotAvailable(format!(
+                EmbedError::Misconfigured(format!(
                     "{EMBED_DIM_ENV}={dim_raw:?} is not a positive integer",
                 ))
             })?;
@@ -413,27 +433,39 @@ impl RemoteEmbedderConfig {
                 .ok()
                 .filter(|s| *s > 0)
                 .ok_or_else(|| {
-                    EmbedError::NotAvailable(format!(
+                    EmbedError::Misconfigured(format!(
                         "{EMBED_TIMEOUT_ENV}={t:?} is not a positive integer",
                     ))
                 })?,
             None => DEFAULT_EMBED_TIMEOUT_SECONDS,
         };
         let api_key = get(EMBED_API_KEY_ENV).filter(|v| !v.trim().is_empty());
+        let tag_override = get(EMBED_TAG_ENV)
+            .map(|v| sanitize_tag(v.trim()))
+            .filter(|v| !v.is_empty());
         Ok(Some(Self {
             url,
             api_key,
             model,
             dim,
             timeout: std::time::Duration::from_secs(timeout_secs),
+            tag_override,
         }))
     }
 
-    /// AnnIndex directory tag — derived from model + dim so the
+    /// AnnIndex directory tag — the explicit [`EMBED_TAG_ENV`]
+    /// override when set, else derived from model + dim so the
     /// `ann-<tag>-v<n>` contract keeps working: same (model, dim) ⇒
     /// same vector space ⇒ same index directory; changing either
     /// re-tags and the fresh index lands alongside the old.
+    ///
+    /// CAVEAT (review R3): the derived form is a lossy sanitization
+    /// ("org/model" vs "org-model" collide) and encodes no provider
+    /// identity — when either could bite, set the explicit override.
     pub fn tag(&self) -> String {
+        if let Some(t) = &self.tag_override {
+            return t.clone();
+        }
         format!("api-{}-{}", sanitize_tag(&self.model), self.dim)
     }
 }
@@ -817,14 +849,14 @@ mod tests {
             (EMBED_DIM_ENV, "1536"),
         ]))
         .unwrap_err();
-        assert!(matches!(err, EmbedError::NotAvailable(ref m) if m.contains(EMBED_MODEL_ENV)));
+        assert!(matches!(err, EmbedError::Misconfigured(ref m) if m.contains(EMBED_MODEL_ENV)));
 
         let err = RemoteEmbedderConfig::from_lookup(lookup(&[
             (EMBED_API_URL_ENV, "http://localhost:9/v1/embeddings"),
             (EMBED_MODEL_ENV, "text-embedding-3-small"),
         ]))
         .unwrap_err();
-        assert!(matches!(err, EmbedError::NotAvailable(ref m) if m.contains(EMBED_DIM_ENV)));
+        assert!(matches!(err, EmbedError::Misconfigured(ref m) if m.contains(EMBED_DIM_ENV)));
     }
 
     #[test]
@@ -837,7 +869,7 @@ mod tests {
             ]))
             .unwrap_err();
             assert!(
-                matches!(err, EmbedError::NotAvailable(ref m) if m.contains(EMBED_DIM_ENV)),
+                matches!(err, EmbedError::Misconfigured(ref m) if m.contains(EMBED_DIM_ENV)),
                 "dim {bad_dim:?} accepted"
             );
         }
@@ -848,7 +880,7 @@ mod tests {
             (EMBED_TIMEOUT_ENV, "soon"),
         ]))
         .unwrap_err();
-        assert!(matches!(err, EmbedError::NotAvailable(ref m) if m.contains(EMBED_TIMEOUT_ENV)));
+        assert!(matches!(err, EmbedError::Misconfigured(ref m) if m.contains(EMBED_TIMEOUT_ENV)));
     }
 
     #[test]
@@ -890,7 +922,30 @@ mod tests {
             model: "test-embed".to_string(),
             dim: 3,
             timeout: std::time::Duration::from_secs(5),
+            tag_override: None,
         }
+    }
+
+    #[test]
+    fn explicit_tag_override_wins_over_derived_tag() {
+        let cfg = RemoteEmbedderConfig::from_lookup(lookup(&[
+            (EMBED_API_URL_ENV, "http://localhost:9/v1/embeddings"),
+            (EMBED_MODEL_ENV, "org/model"),
+            (EMBED_DIM_ENV, "8"),
+            (EMBED_TAG_ENV, "api-prod-embed-r2"),
+        ]))
+        .unwrap()
+        .expect("config present");
+        assert_eq!(cfg.tag(), "api-prod-embed-r2");
+        // Without the override the lossy derived form applies.
+        let cfg = RemoteEmbedderConfig::from_lookup(lookup(&[
+            (EMBED_API_URL_ENV, "http://localhost:9/v1/embeddings"),
+            (EMBED_MODEL_ENV, "org/model"),
+            (EMBED_DIM_ENV, "8"),
+        ]))
+        .unwrap()
+        .expect("config present");
+        assert_eq!(cfg.tag(), "api-org-model-8");
     }
 
     /// One-request localhost HTTP server: accepts a single connection,

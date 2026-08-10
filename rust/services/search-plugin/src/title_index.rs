@@ -14,10 +14,18 @@
 //! path-token overlap × 1, DF-capped candidate selection, aggregate
 //! budgets, deterministic (-score, path) ordering.
 
-/// Bytes of chunk-0 text scanned for a title — Python
+/// Bytes of doc-head text scanned for a title — Python
 /// `SKELETON_HEAD_BYTES` parity (titles live at the top of a doc;
 /// scanning further finds section headings, not titles).
 pub const SKELETON_HEAD_BYTES: usize = 2048;
+
+/// How many leading chunks per doc the skeleton build keeps while
+/// reassembling the head window.  The chunker seals frontmatter and
+/// preamble into their own chunks, so the first heading typically
+/// lives in chunk 0–2; anything past this cap is beyond the 2 KiB
+/// head window for any realistic chunk size, and the cap bounds the
+/// build's transient memory.
+const HEAD_CHUNKS_PER_DOC: usize = 8;
 
 /// Tokenize a path or title into lowercase word tokens — port of
 /// Python `text_utils.tokenize_path`.  Splits on `/ _ - .` and
@@ -164,28 +172,55 @@ fn round4(x: f32) -> f32 {
 }
 
 impl ZoneSkeleton {
-    /// Build from a full chunk-0 stored-doc scan of the zone's FTS
-    /// index.  Runs on the blocking pool (caller's job); cost is one
-    /// store pass — ms-scale for typical zones, and paid at most
-    /// once per index generation.
+    /// Build from a full stored-doc scan of the zone's FTS index.
+    /// Runs on the blocking pool (caller's job); cost is one store
+    /// pass — ms-scale for typical zones, and paid at most once per
+    /// index generation (single-flighted by the manager).
+    ///
+    /// Title source is the DOC HEAD reassembled from ordered leading
+    /// chunks, not chunk 0 alone: the chunker seals frontmatter /
+    /// preamble into its own chunk, so a doc shaped
+    /// `---\n…\n---\n# Title\n…` stores the frontmatter as chunk 0
+    /// and the heading at the START of chunk 1 (review R1 of #4628).
+    /// Reassembly is capped at [`HEAD_CHUNKS_PER_DOC`] chunks and
+    /// [`SKELETON_HEAD_BYTES`] bytes — Python read the first 2 KiB
+    /// of the FILE, and this reconstructs the same window.
     pub fn build(fts: &FtsIndex) -> Result<Self, IndexError> {
+        let mut heads: BTreeMap<String, BTreeMap<u32, String>> = BTreeMap::new();
+        let generation_id = fts.for_each_chunk(|path, chunk_index, text| {
+            let entry = heads.entry(path.to_string()).or_default();
+            if (chunk_index as usize) < HEAD_CHUNKS_PER_DOC {
+                let mut end = SKELETON_HEAD_BYTES.min(text.len());
+                while end > 0 && !text.is_char_boundary(end) {
+                    end -= 1;
+                }
+                entry.insert(chunk_index, text[..end].to_string());
+            }
+        })?;
         let mut docs: BTreeMap<String, SkeletonDoc> = BTreeMap::new();
-        let generation_id = fts.for_each_chunk0(|path, chunk0| {
-            let title = extract_title(chunk0);
+        for (path, chunks) in heads {
+            let mut head = String::new();
+            for text in chunks.into_values() {
+                if head.len() >= SKELETON_HEAD_BYTES {
+                    break;
+                }
+                head.push_str(&text);
+            }
+            let title = extract_title(&head);
             let title_tokens: BTreeSet<String> = title
                 .as_deref()
                 .map(|t| tokenize(t).into_iter().collect())
                 .unwrap_or_default();
-            let path_tokens: BTreeSet<String> = tokenize(path).into_iter().collect();
+            let path_tokens: BTreeSet<String> = tokenize(&path).into_iter().collect();
             docs.insert(
-                path.to_string(),
+                path,
                 SkeletonDoc {
                     title,
                     title_tokens,
                     path_tokens,
                 },
             );
-        })?;
+        }
         Ok(Self::from_docs(generation_id, docs))
     }
 
@@ -595,6 +630,32 @@ mod tests {
         ]);
         let sk = ZoneSkeleton::build(&fts).expect("build");
         assert_eq!(sk.locate("widget", 2, None).len(), 2);
+    }
+
+    #[test]
+    fn build_finds_heading_sealed_past_chunk0_by_real_chunker() {
+        // Review R1 (#4628): the production chunker seals frontmatter
+        // (and any preamble) into its own leading chunk, so the first
+        // heading lands at the START of chunk 1 — a chunk-0-only scan
+        // silently loses the title.  Index through the REAL chunker
+        // and assert the reassembled head still finds it.
+        let text = "---\ntitle: raw\nauthor: someone\n---\n# Atlas Design Doc\n\nbody paragraph.\n";
+        let chunks = crate::chunker::chunk_document(text);
+        assert!(
+            chunks.len() >= 2 && !chunks[0].text.contains("# Atlas"),
+            "fixture must reproduce the frontmatter-sealed shape: {chunks:?}"
+        );
+        let dir = tempfile::tempdir().expect("tempdir").keep().join("fts");
+        let idx = FtsIndex::open_or_create(dir).expect("open");
+        for c in &chunks {
+            idx.add_document("/designs/atlas.md", c.chunk_index, &c.text, Some(1))
+                .expect("add");
+        }
+        idx.commit().expect("commit");
+        let sk = ZoneSkeleton::build(&idx).expect("build");
+        let hits = sk.locate("atlas design doc", 10, None);
+        assert_eq!(hits.first().map(|h| h.path.as_str()), Some("/designs/atlas.md"));
+        assert_eq!(hits[0].title.as_deref(), Some("Atlas Design Doc"));
     }
 
     #[test]

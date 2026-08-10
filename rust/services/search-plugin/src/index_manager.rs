@@ -96,6 +96,13 @@ pub struct IndexManager {
     /// implicitly by each snapshot's FTS generation — see
     /// [`Self::get_or_build_skeleton`].
     skeletons: Mutex<HashMap<String, Arc<crate::title_index::ZoneSkeleton>>>,
+    /// Per-zone single-flight guards for skeleton builds (review
+    /// R1 of #4628's title arm).  A build is a full stored-doc scan;
+    /// without this, N concurrent cache misses after a commit would
+    /// run N simultaneous corpus scans and retain N snapshot copies.
+    /// Exactly one caller builds; the rest serve the prior snapshot
+    /// (or run with an empty arm on a cold start).
+    skeleton_build_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
 }
 
 /// Cache key for the ANN index — one entry per `(zone, embedder tag)`.
@@ -123,6 +130,7 @@ impl IndexManager {
             ann_zones: Mutex::new(HashMap::new()),
             zone_write_locks: Mutex::new(HashMap::new()),
             skeletons: Mutex::new(HashMap::new()),
+            skeleton_build_locks: Mutex::new(HashMap::new()),
         }
     }
 
@@ -195,20 +203,48 @@ impl IndexManager {
     /// IndexDocuments / NotifyFileChange mutation ends in an FTS
     /// commit, which bumps the searcher generation — so staleness
     /// detection is structural and new mutation paths can't forget
-    /// to invalidate.  The build runs OUTSIDE the cache lock; two
-    /// racing builders duplicate work and last-write-wins, which is
-    /// harmless (both snapshots are internally consistent).
+    /// to invalidate.
+    ///
+    /// Builds are SINGLE-FLIGHT per zone: a build is a full
+    /// stored-doc scan, so exactly one caller runs it while
+    /// concurrent callers get `Ok(None)`-or-stale immediately —
+    /// `None` on a cold start (empty title arm for that query,
+    /// fail-soft), the prior generation's snapshot otherwise
+    /// (slightly stale titles beat a thundering herd of scans).
+    /// The winning builder holds only the per-zone build lock during
+    /// the scan, never the snapshot-cache lock.
     pub fn get_or_build_skeleton(
         &self,
         zone_id: &str,
-    ) -> Result<Arc<crate::title_index::ZoneSkeleton>, IndexError> {
+    ) -> Result<Option<Arc<crate::title_index::ZoneSkeleton>>, IndexError> {
         let fts = self.get_or_open(zone_id)?;
         let current_gen = fts.generation_id();
+        let stale = self.skeletons.lock().get(zone_id).map(Arc::clone);
+        if let Some(sk) = &stale {
+            if sk.generation_id() == current_gen {
+                return Ok(Some(Arc::clone(sk)));
+            }
+        }
+        let build_lock = Arc::clone(
+            self.skeleton_build_locks
+                .lock()
+                .entry(zone_id.to_string())
+                .or_default(),
+        );
+        let Some(_build_guard) = build_lock.try_lock() else {
+            // Another thread is scanning this zone right now — serve
+            // the previous snapshot (or nothing on a cold start)
+            // rather than piling on a duplicate corpus scan.
+            return Ok(stale);
+        };
+        // Double-check under build exclusivity: the previous builder
+        // may have published the current generation between our cache
+        // read and lock acquisition.
         {
             let cache = self.skeletons.lock();
             if let Some(sk) = cache.get(zone_id) {
                 if sk.generation_id() == current_gen {
-                    return Ok(Arc::clone(sk));
+                    return Ok(Some(Arc::clone(sk)));
                 }
             }
         }
@@ -216,7 +252,19 @@ impl IndexManager {
         self.skeletons
             .lock()
             .insert(zone_id.to_string(), Arc::clone(&built));
-        Ok(built)
+        Ok(Some(built))
+    }
+
+    /// Test-only: hold the zone's skeleton build lock so tests can
+    /// pin the "builder busy" path deterministically.
+    #[cfg(test)]
+    pub fn skeleton_build_lock_for_test(&self, zone_id: &str) -> Arc<Mutex<()>> {
+        Arc::clone(
+            self.skeleton_build_locks
+                .lock()
+                .entry(zone_id.to_string())
+                .or_default(),
+        )
     }
 
     /// Fetch (or lazily open) the ANN index for `zone_id` under the
@@ -394,21 +442,59 @@ mod tests {
         fts.add_document("/a.md", 0, "# Alpha\nbody", Some(1)).expect("add");
         fts.commit().expect("commit");
 
-        let sk1 = mgr.get_or_build_skeleton("zoneA").expect("build");
+        let sk1 = mgr.get_or_build_skeleton("zoneA").expect("build").expect("built");
         assert_eq!(sk1.doc_count(), 1);
         // Same generation → the SAME Arc comes back (cache hit).
-        let sk1b = mgr.get_or_build_skeleton("zoneA").expect("cached");
+        let sk1b = mgr.get_or_build_skeleton("zoneA").expect("cached").expect("hit");
         assert!(std::sync::Arc::ptr_eq(&sk1, &sk1b));
 
         // Mutate + commit → generation bump → rebuild with fresh docs.
         fts.add_document("/b.md", 0, "# Beta\nbody", Some(2)).expect("add");
         fts.commit().expect("commit");
-        let sk2 = mgr.get_or_build_skeleton("zoneA").expect("rebuild");
+        let sk2 = mgr.get_or_build_skeleton("zoneA").expect("rebuild").expect("built");
         assert!(!std::sync::Arc::ptr_eq(&sk1, &sk2));
         assert_eq!(sk2.doc_count(), 2);
 
         // Zone isolation: an unrelated zone builds its own skeleton.
-        let sk_other = mgr.get_or_build_skeleton("zoneB").expect("other");
+        let sk_other = mgr.get_or_build_skeleton("zoneB").expect("other").expect("built");
         assert_eq!(sk_other.doc_count(), 0);
+    }
+
+    #[test]
+    fn skeleton_build_is_single_flight_busy_serves_stale_or_none() {
+        let root = tempfile::tempdir().expect("tempdir").keep();
+        let mgr = IndexManager::with_root(root);
+        let fts = mgr.get_or_open("zoneA").expect("open");
+        fts.add_document("/a.md", 0, "# Alpha\nbody", Some(1)).expect("add");
+        fts.commit().expect("commit");
+
+        // Cold start with the build lock held elsewhere: no snapshot
+        // exists → callers get Ok(None) (empty arm) instead of piling
+        // onto a second scan.
+        let lock = mgr.skeleton_build_lock_for_test("zoneA");
+        {
+            let _held = lock.lock();
+            let got = mgr.get_or_build_skeleton("zoneA").expect("no error");
+            assert!(got.is_none(), "cold start + busy builder must serve None");
+        }
+
+        // Build once, then stale-serve: bump the generation and hold
+        // the lock again — callers get the PRIOR snapshot, not a
+        // duplicate build of the new generation.
+        let sk1 = mgr.get_or_build_skeleton("zoneA").expect("build").expect("built");
+        fts.add_document("/b.md", 0, "# Beta\nbody", Some(2)).expect("add");
+        fts.commit().expect("commit");
+        {
+            let _held = lock.lock();
+            let got = mgr
+                .get_or_build_skeleton("zoneA")
+                .expect("no error")
+                .expect("stale snapshot");
+            assert!(std::sync::Arc::ptr_eq(&sk1, &got), "busy builder must serve the stale snapshot");
+            assert_eq!(got.doc_count(), 1);
+        }
+        // Lock released → the next call rebuilds to the new generation.
+        let sk2 = mgr.get_or_build_skeleton("zoneA").expect("rebuild").expect("built");
+        assert_eq!(sk2.doc_count(), 2);
     }
 }

@@ -972,7 +972,7 @@ fn do_title_locate(
     path_filter: &str,
 ) -> Vec<crate::title_index::TitleHit> {
     match manager.get_or_build_skeleton(zone_id) {
-        Ok(skeleton) => {
+        Ok(Some(skeleton)) => {
             let prefix = (!path_filter.is_empty()).then_some(path_filter);
             let mut hits = skeleton.locate(q, limit, prefix);
             // Evidence gate: a lone incidental path-token overlap
@@ -980,6 +980,13 @@ fn do_title_locate(
             // require at least one real title-token match (2.0).
             hits.retain(|h| h.score >= crate::title_index::TITLE_ARM_MIN_SCORE);
             hits
+        }
+        // Cold start while another query is building the skeleton —
+        // single-flight served no snapshot; run this query with an
+        // empty arm rather than duplicating the corpus scan.
+        Ok(None) => {
+            tracing::debug!(zone = %zone_id, "title arm: skeleton build in flight — empty arm");
+            Vec::new()
         }
         Err(e) => {
             tracing::debug!(err = %e, zone = %zone_id, "title arm: skeleton unavailable — degrading");
@@ -2134,20 +2141,29 @@ impl SearchService for SearchServiceImpl {
         let mut req_for_cache = req.clone();
         req_for_cache.zone_id = resolve_zone(&req.zone_id).to_string();
 
+        // Parse borrow-only fields FIRST so later `let q = req.q`
+        // moves don't leave `req` partially moved for later reads.
+        let query_type = QueryType::try_from(req.query_type).unwrap_or(QueryType::Unspecified);
+        // Effective title-arm state for THIS request (#4628 review
+        // R1): resolved BEFORE the cache lookup and folded into the
+        // cache identity, so flipping NEXUS_SEARCH_TITLE_ARM takes
+        // effect on the next query instead of being masked by
+        // cached pre-flip rankings for the TTL.  Only hybrid
+        // rankings depend on the arm, so non-hybrid requests share
+        // one identity regardless of the knob.
+        let title_arm_on = matches!(query_type, QueryType::Hybrid) && self.title_arm_enabled();
+
         // P7 cache check.  Zone is the auth boundary (D5), so a
         // hit here is safe to serve directly — we don't need to
         // re-check permission, the kernel router already did.  A
         // hit skips FTS + ANN + fusion + scoring + pooling +
         // expand entirely.
-        if let Some(cached) = self.query_cache.get(&req_for_cache) {
+        if let Some(cached) = self.query_cache.get(&req_for_cache, title_arm_on) {
             return Ok(Response::new(QueryResponse {
                 results: cached,
                 error: None,
             }));
         }
-        // Parse borrow-only fields FIRST so later `let q = req.q`
-        // moves don't leave `req` partially moved for later reads.
-        let query_type = QueryType::try_from(req.query_type).unwrap_or(QueryType::Unspecified);
         let fusion_opts = FusionOpts::from_request(&req);
         let expand_mode = ExpandMode::from_str(&req.expand);
         let recency_mode = crate::scoring::RecencyMode::parse_wire(&req.recency_mode);
@@ -2263,8 +2279,9 @@ impl SearchService for SearchServiceImpl {
                 // in-memory skeleton.  Independent of kw/sem, so it
                 // joins the same spawn_blocking fan-out.  Runs only
                 // when enabled — a disabled arm costs nothing (no
-                // skeleton is ever built).
-                let title_arm_on = self.title_arm_enabled();
+                // skeleton is ever built).  `title_arm_on` was
+                // resolved before the cache lookup so the cached
+                // identity and the computed ranking agree.
                 let (kw_task, sem_task, title_task) = {
                     let mgr_kw = Arc::clone(&manager);
                     let mgr_sem = Arc::clone(&manager);
@@ -2435,7 +2452,8 @@ impl SearchService for SearchServiceImpl {
                 // NOT cached — a stale FTS index / missing zone
                 // may resolve on retry, and we don't want the
                 // cache to sticky-fail those.
-                self.query_cache.insert(&req_for_cache, results.clone());
+                self.query_cache
+                    .insert(&req_for_cache, title_arm_on, results.clone());
                 Ok(Response::new(QueryResponse {
                     results,
                     error: None,

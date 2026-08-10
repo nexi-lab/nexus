@@ -111,11 +111,19 @@ impl QueryCache {
         }
     }
 
-    /// Fetch the cached response for `(zone_id, hash(req))` if it
-    /// exists AND hasn't expired.  Returns a clone of the results
-    /// (callers get their own copy; the cache retains ownership).
-    pub fn get(&self, req: &QueryRequest) -> Option<Vec<QueryResult>> {
-        let key = hash_request(req);
+    /// Fetch the cached response for `(zone_id, hash(req, title_arm))`
+    /// if it exists AND hasn't expired.  Returns a clone of the
+    /// results (callers get their own copy; the cache retains
+    /// ownership).
+    ///
+    /// `title_arm` is the EFFECTIVE title-arm state for this request
+    /// (arm enabled AND the request is hybrid) — it is server config,
+    /// not a wire field, but it changes hybrid rankings, so it must
+    /// be part of the cache identity or flipping the
+    /// NEXUS_SEARCH_TITLE_ARM kill-switch would keep serving
+    /// pre-flip rankings for the TTL (review R1 of #4628).
+    pub fn get(&self, req: &QueryRequest, title_arm: bool) -> Option<Vec<QueryResult>> {
+        let key = hash_request(req, title_arm);
         let zones = self.zones.lock();
         let zone = zones.get(&req.zone_id)?;
         let entry = zone.get(&key)?;
@@ -127,11 +135,12 @@ impl QueryCache {
         Some(entry.results.clone())
     }
 
-    /// Insert `results` under the cache key derived from `req`.
-    /// Evicts stale entries + the oldest entry if this zone is at
-    /// [`MAX_ENTRIES_PER_ZONE`].
-    pub fn insert(&self, req: &QueryRequest, results: Vec<QueryResult>) {
-        let key = hash_request(req);
+    /// Insert `results` under the cache key derived from
+    /// `(req, title_arm)` — see [`Self::get`] for why the arm state
+    /// is part of the identity.  Evicts stale entries + the oldest
+    /// entry if this zone is at [`MAX_ENTRIES_PER_ZONE`].
+    pub fn insert(&self, req: &QueryRequest, title_arm: bool, results: Vec<QueryResult>) {
+        let key = hash_request(req, title_arm);
         let now = Instant::now();
         let mut zones = self.zones.lock();
         let zone = zones.entry(req.zone_id.clone()).or_default();
@@ -197,8 +206,11 @@ impl Default for QueryCache {
 /// f32 impl that PartialEq'd 0.0 to -0.0, and both would collide
 /// with sign-bit variants).  `path_prefix_boosts` sorts its keys
 /// so map iteration order doesn't flap the hash.
-fn hash_request(req: &QueryRequest) -> u64 {
+fn hash_request(req: &QueryRequest, title_arm: bool) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    // Server-side title-arm state (#4628): not a wire field, but it
+    // changes hybrid rankings — see `QueryCache::get`.
+    title_arm.hash(&mut hasher);
     req.q.hash(&mut hasher);
     req.zone_id.hash(&mut hasher);
     req.limit.hash(&mut hasher);
@@ -264,17 +276,31 @@ mod tests {
     }
 
     #[test]
+    fn title_arm_state_splits_the_cache_identity() {
+        // Review R1 (#4628): flipping NEXUS_SEARCH_TITLE_ARM must not
+        // serve rankings computed under the other state for the TTL.
+        let c = QueryCache::new();
+        let req = base_req("root", "atlas design doc");
+        c.insert(&req, true, vec![hit("/designs/atlas.md", 1.0)]);
+        assert!(
+            c.get(&req, false).is_none(),
+            "arm-off lookup must not see the arm-on entry"
+        );
+        assert!(c.get(&req, true).is_some(), "same-state lookup still hits");
+    }
+
+    #[test]
     fn get_returns_none_on_miss() {
         let c = QueryCache::new();
-        assert!(c.get(&base_req("root", "widget")).is_none());
+        assert!(c.get(&base_req("root", "widget"), false).is_none());
     }
 
     #[test]
     fn insert_then_get_returns_cached_results() {
         let c = QueryCache::new();
         let req = base_req("root", "widget");
-        c.insert(&req, vec![hit("/a", 1.0)]);
-        let got = c.get(&req).expect("should hit");
+        c.insert(&req, false, vec![hit("/a", 1.0)]);
+        let got = c.get(&req, false).expect("should hit");
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].path, "/a");
     }
@@ -284,16 +310,16 @@ mod tests {
         let c = QueryCache::new();
         let r1 = base_req("root", "widget");
         let r2 = base_req("other", "widget");
-        c.insert(&r1, vec![hit("/only-in-root", 1.0)]);
-        assert!(c.get(&r1).is_some());
-        assert!(c.get(&r2).is_none(), "zones must not share");
+        c.insert(&r1, false, vec![hit("/only-in-root", 1.0)]);
+        assert!(c.get(&r1, false).is_some());
+        assert!(c.get(&r2, false).is_none(), "zones must not share");
     }
 
     #[test]
     fn different_queries_dont_share() {
         let c = QueryCache::new();
-        c.insert(&base_req("root", "alpha"), vec![hit("/a", 1.0)]);
-        assert!(c.get(&base_req("root", "beta")).is_none());
+        c.insert(&base_req("root", "alpha"), false, vec![hit("/a", 1.0)]);
+        assert!(c.get(&base_req("root", "beta"), false).is_none());
     }
 
     #[test]
@@ -306,8 +332,8 @@ mod tests {
         r1.auth_token = "token-a".into();
         let mut r2 = base_req("root", "widget");
         r2.auth_token = "token-b".into();
-        c.insert(&r1, vec![hit("/x", 1.0)]);
-        assert!(c.get(&r2).is_some(), "different tokens must share");
+        c.insert(&r1, false, vec![hit("/x", 1.0)]);
+        assert!(c.get(&r2, false).is_some(), "different tokens must share");
     }
 
     #[test]
@@ -319,8 +345,8 @@ mod tests {
         r1.path_filter = "/foo/".into();
         let mut r2 = base_req("root", "q");
         r2.path_filter = "/foo".into();
-        c.insert(&r1, vec![hit("/a", 1.0)]);
-        assert!(c.get(&r2).is_none(), "path_filter suffix must matter");
+        c.insert(&r1, false, vec![hit("/a", 1.0)]);
+        assert!(c.get(&r2, false).is_none(), "path_filter suffix must matter");
     }
 
     #[test]
@@ -330,8 +356,8 @@ mod tests {
         r1.path_prefix_boosts.insert("/docs/".to_string(), 1.5);
         let mut r2 = base_req("root", "q");
         r2.path_prefix_boosts.insert("/docs/".to_string(), 2.0);
-        c.insert(&r1, vec![hit("/x", 1.0)]);
-        assert!(c.get(&r2).is_none(), "boost value must key distinctly");
+        c.insert(&r1, false, vec![hit("/x", 1.0)]);
+        assert!(c.get(&r2, false).is_none(), "boost value must key distinctly");
     }
 
     #[test]
@@ -345,24 +371,24 @@ mod tests {
         let mut r2 = base_req("root", "q");
         r2.path_prefix_boosts.insert("/b/".to_string(), 2.0);
         r2.path_prefix_boosts.insert("/a/".to_string(), 1.0);
-        c.insert(&r1, vec![hit("/x", 1.0)]);
-        assert!(c.get(&r2).is_some(), "map-order should not flap the key");
+        c.insert(&r1, false, vec![hit("/x", 1.0)]);
+        assert!(c.get(&r2, false).is_some(), "map-order should not flap the key");
     }
 
     #[test]
     fn ttl_expiry_returns_none() {
         let c = QueryCache::with_ttl(Duration::from_millis(1));
-        c.insert(&base_req("root", "q"), vec![hit("/a", 1.0)]);
+        c.insert(&base_req("root", "q"), false, vec![hit("/a", 1.0)]);
         std::thread::sleep(Duration::from_millis(10));
-        assert!(c.get(&base_req("root", "q")).is_none(), "TTL not honoured");
+        assert!(c.get(&base_req("root", "q"), false).is_none(), "TTL not honoured");
     }
 
     #[test]
     fn invalidate_zone_drops_all_entries_for_zone() {
         let c = QueryCache::new();
-        c.insert(&base_req("root", "q1"), vec![hit("/a", 1.0)]);
-        c.insert(&base_req("root", "q2"), vec![hit("/b", 1.0)]);
-        c.insert(&base_req("other", "q1"), vec![hit("/c", 1.0)]);
+        c.insert(&base_req("root", "q1"), false, vec![hit("/a", 1.0)]);
+        c.insert(&base_req("root", "q2"), false, vec![hit("/b", 1.0)]);
+        c.insert(&base_req("other", "q1"), false, vec![hit("/c", 1.0)]);
         assert_eq!(c.zone_entries("root"), 2);
         c.invalidate_zone("root");
         assert_eq!(c.zone_entries("root"), 0);
@@ -377,17 +403,18 @@ mod tests {
         for i in 0..MAX_ENTRIES_PER_ZONE {
             c.insert(
                 &base_req("root", &format!("q{i}")),
+                false,
                 vec![hit(&format!("/p{i}"), 1.0)],
             );
         }
         assert_eq!(c.zone_entries("root"), MAX_ENTRIES_PER_ZONE);
         // The oldest entry (q0) should still be present.
-        assert!(c.get(&base_req("root", "q0")).is_some());
+        assert!(c.get(&base_req("root", "q0"), false).is_some());
         // One more insert — oldest gets evicted.
-        c.insert(&base_req("root", "q_new"), vec![hit("/p_new", 1.0)]);
+        c.insert(&base_req("root", "q_new"), false, vec![hit("/p_new", 1.0)]);
         assert_eq!(c.zone_entries("root"), MAX_ENTRIES_PER_ZONE);
         assert!(
-            c.get(&base_req("root", "q0")).is_none(),
+            c.get(&base_req("root", "q0"), false).is_none(),
             "oldest not evicted"
         );
     }
@@ -401,9 +428,9 @@ mod tests {
         r_zero.alpha = 0.0;
         let mut r_eps = base_req("root", "q");
         r_eps.alpha = 0.001;
-        c.insert(&r_zero, vec![hit("/z", 1.0)]);
+        c.insert(&r_zero, false, vec![hit("/z", 1.0)]);
         assert!(
-            c.get(&r_eps).is_none(),
+            c.get(&r_eps, false).is_none(),
             "alpha 0 vs epsilon must key distinctly"
         );
     }

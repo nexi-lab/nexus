@@ -123,3 +123,32 @@ def test_ipv6_loopback_counts_as_loopback():
     assert daemon_mod._target_is_loopback("[::1]:2126")
     assert daemon_mod._target_is_loopback("localhost:2126")
     assert not daemon_mod._target_is_loopback("plugin-host:2126")
+
+
+# ── #4628: result mapping carries title-arm attribution ──────────
+
+
+def test_result_to_base_copies_title_score_when_set() -> None:
+    """#4628: title-arm attribution must survive the proto→Base hop —
+    the HTTP, batch, and federated serializers all read
+    BaseSearchResult.title_score and omit-when-None."""
+    from nexus.grpc.search.v1 import search_pb2
+
+    pb = search_pb2.QueryResult(
+        path="/designs/atlas.md",
+        chunk_index=0,
+        chunk_text="body",
+        score=0.9,
+        zone_id="root",
+        title_score=7.0,
+    )
+    base = daemon_mod._result_to_base(pb)
+    assert base.title_score == pytest.approx(7.0)
+
+
+def test_result_to_base_title_score_none_when_unset() -> None:
+    from nexus.grpc.search.v1 import search_pb2
+
+    pb = search_pb2.QueryResult(path="/a.md", chunk_index=0, chunk_text="t", score=0.5)
+    base = daemon_mod._result_to_base(pb)
+    assert base.title_score is None

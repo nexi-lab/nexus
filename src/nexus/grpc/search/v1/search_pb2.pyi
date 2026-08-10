@@ -235,6 +235,7 @@ class QueryResult(_message.Message):
         "zone_id",
         "mtime_ms",
         "expanded_context",
+        "title_score",
     )
     PATH_FIELD_NUMBER: _ClassVar[int]
     CHUNK_INDEX_FIELD_NUMBER: _ClassVar[int]
@@ -243,6 +244,7 @@ class QueryResult(_message.Message):
     ZONE_ID_FIELD_NUMBER: _ClassVar[int]
     MTIME_MS_FIELD_NUMBER: _ClassVar[int]
     EXPANDED_CONTEXT_FIELD_NUMBER: _ClassVar[int]
+    TITLE_SCORE_FIELD_NUMBER: _ClassVar[int]
     path: str
     chunk_index: int
     chunk_text: str
@@ -250,6 +252,7 @@ class QueryResult(_message.Message):
     zone_id: str
     mtime_ms: int
     expanded_context: str
+    title_score: float
     def __init__(
         self,
         path: str | None = ...,
@@ -259,6 +262,7 @@ class QueryResult(_message.Message):
         zone_id: str | None = ...,
         mtime_ms: int | None = ...,
         expanded_context: str | None = ...,
+        title_score: float | None = ...,
     ) -> None: ...
 
 class QueryResponse(_message.Message):

@@ -78,7 +78,10 @@ def test_all_indexed_returns_200_with_count() -> None:
     body = response.json()
     assert body["status"] == "indexed"
     assert body["count"] == 2
-    assert body["zone_id"] == "eng"
+    # #4617: the 200 shape keys the zone as camelCase ``zoneId`` — the
+    # pre-P12 public wire contract (the 409 detail below keeps its
+    # post-#4566 snake_case shape, which shipped that way from day one).
+    assert body["zoneId"] == "eng"
 
 
 def test_skipped_documents_return_409_with_paths() -> None:

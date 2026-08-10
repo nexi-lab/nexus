@@ -4555,7 +4555,20 @@ class SearchService:
             getattr(daemon, "_fts_backend", None) is not None
             or getattr(daemon, "_vector_backend", None) is not None
         )
-        if daemon is not None and (_has_legacy_backend or _has_new_backends):
+        # Post-P12 (#4598) the wired daemon is the Rust-plugin gRPC shim,
+        # which has neither the legacy ``_backend`` nor the
+        # ``_fts_backend``/``_vector_backend`` pair — only a dial
+        # ``_target``.  Without this arm the gate silently dropped every
+        # gRPC ``semantic_search`` call to the ``_sql_chunk_search`` ILIKE
+        # fallback (wrong ranking, no hybrid fusion, no title_score) even
+        # though the plugin was up and serving the HTTP surface (#4628).
+        # Plugin-less deployments are unaffected: the boot probe leaves
+        # ``_search_daemon`` unset when the target is unreachable, so the
+        # fallback chain below still applies there.
+        _has_plugin_transport = getattr(daemon, "_target", None) is not None
+        if daemon is not None and (
+            _has_legacy_backend or _has_new_backends or _has_plugin_transport
+        ):
             # Over-fetch to compensate for permission filtering
             fetch_limit = (
                 limit * 3 if self._enforce_permissions and self._permission_enforcer else limit

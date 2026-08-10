@@ -19,6 +19,10 @@
 # Pinning is single-sourced in `Cargo.toml` — the plugin dylibs and
 # the cluster binary must compile against the same nexus-vfs commit
 # for ABI parity, so there is one SHA, one place to bump.
+#
+# KEEP IN SYNC: `Dockerfile.nexusd-cluster-plugins` (the published
+# plugin-host image, #4613) mirrors this file's builder + runtime
+# stages — a change here almost certainly belongs there too.
 
 FROM rust:1-slim-bookworm AS builder
 

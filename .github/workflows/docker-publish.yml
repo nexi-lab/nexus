@@ -20,6 +20,12 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository_owner }}/nexus
+  # Plugin-host image (#4613): nexusd-cluster + signed search plugin.
+  # Post-P12 the Rust plugin is the sole search backend, so a published
+  # server image without a published plugin-host image cannot serve
+  # search — the two are tagged from the same commit so deployments can
+  # pin the pairing by digest.
+  CLUSTER_IMAGE_NAME: ${{ github.repository_owner }}/nexusd-cluster
 
 jobs:
   # Fan out amd64 and arm64 onto native GitHub-hosted runners; emit one
@@ -147,6 +153,161 @@ jobs:
           docker buildx imagetools inspect "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}"
 
   # ---------------------------------------------------------------------------
+  # Plugin-host image (#4613): nexusd-cluster + signed nexus-search-plugin
+  # baked into /plugins.  Built from dockerfiles/Dockerfile.nexusd-cluster-plugins
+  # (self-contained — cluster binary from the pinned nexus-vfs rev, plugin
+  # cdylib from this repo, Ed25519 signing in-build) and published with the
+  # SAME tag set as the server image so every server tag has a matching
+  # plugin-host tag from the same commit.
+  # ---------------------------------------------------------------------------
+  build-cluster-platform:
+    name: Build cluster ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check plugin signing key availability
+        env:
+          PLUGIN_SIGNING_PRIVKEY: ${{ secrets.PLUGIN_SIGNING_PRIVKEY }}
+        run: |
+          if [ -z "$PLUGIN_SIGNING_PRIVKEY" ]; then
+            echo "::error::PLUGIN_SIGNING_PRIVKEY secret is not available — cannot sign the plugin, and an unsigned plugin would only defer the failure to daemon boot."
+            exit 1
+          fi
+
+      - name: Read NEXUS_VFS_REV from Cargo.toml
+        id: vfs_rev
+        run: |
+          sha=$(grep -oP '(?<=rev = ")[a-f0-9]{40}' Cargo.toml | sort -u | head -1)
+          if [ -z "$sha" ]; then
+            echo "::error::Could not parse nexus-vfs SHA from Cargo.toml"
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout nexus-vfs source at pinned SHA
+        uses: actions/checkout@v4
+        with:
+          repository: nexi-lab/nexus-vfs
+          ref: ${{ steps.vfs_rev.outputs.sha }}
+          path: nexus-vfs-src
+          fetch-depth: 1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Normalize platform pair (for artifact name)
+        id: pair
+        run: |
+          pair="${{ matrix.platform }}"
+          echo "value=${pair//\//-}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: dockerfiles/Dockerfile.nexusd-cluster-plugins
+          build-contexts: |
+            nexus-vfs-src=nexus-vfs-src
+          secrets: |
+            plugin_signing_key=${{ secrets.PLUGIN_SIGNING_PRIVKEY }}
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.CLUSTER_IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true,oci-mediatypes=true
+          cache-from: type=gha,scope=cluster-publish-${{ steps.pair.outputs.value }}
+          cache-to: type=gha,mode=max,scope=cluster-publish-${{ steps.pair.outputs.value }},ignore-error=true
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-cluster-publish-${{ steps.pair.outputs.value }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  push-cluster-manifest:
+    name: Push multi-arch cluster image
+    needs: [build-cluster-platform]
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-cluster-publish-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.CLUSTER_IMAGE_NAME }}
+          # Same tag rules as the server image — every server tag must
+          # have a matching plugin-host tag from the same commit.
+          tags: |
+            type=semver,pattern={{version}}
+            type=raw,value=stable,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=${{ github.event.inputs.tag }},enable=${{ github.event.inputs.tag != '' }}
+            type=sha,prefix=,enable=${{ github.event.inputs.tag == '' }}
+
+      - name: Create manifest list and push
+        working-directory: /tmp/digests
+        run: |
+          mapfile -t image_tags < <(jq -r '.tags[]' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+          tag_args=()
+          for tag in "${image_tags[@]}"; do
+            tag_args+=("-t" "$tag")
+          done
+          digest_args=()
+          for digest in *; do
+            digest_args+=("${{ env.REGISTRY }}/${{ env.CLUSTER_IMAGE_NAME }}@sha256:${digest}")
+          done
+          docker buildx imagetools create \
+            "${tag_args[@]}" \
+            "${digest_args[@]}"
+
+      - name: Inspect
+        run: |
+          docker buildx imagetools inspect "${{ env.REGISTRY }}/${{ env.CLUSTER_IMAGE_NAME }}:${{ steps.meta.outputs.version }}"
+
+  # ---------------------------------------------------------------------------
   # E2E smoke tests against the edge image (develop + tagged releases)
   # Starts a Nexus container, runs init, then exercises the permissions demo
   # and build-perf e2e scripts.  Failures block the workflow so issues are
@@ -154,7 +315,7 @@ jobs:
   # ---------------------------------------------------------------------------
   e2e-edge:
     name: E2E edge smoke tests
-    needs: build-and-push
+    needs: [build-and-push, push-cluster-manifest]
     if: github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -190,55 +351,14 @@ jobs:
       # The edge image is Python-server-only (no plugin baked in), so
       # the smoke tests that assert auto-index-on-write (sections 9+10
       # of test_build_perf_e2e.py) need a plugin process reachable at
-      # NEXUS_SEARCH_PLUGIN_TARGET.  Reuse the search-plugin-e2e
-      # compose so the plugin build + signing pipeline stays SSOT.
+      # NEXUS_SEARCH_PLUGIN_TARGET.
+      #
+      # #4613: the sidecar now runs the PUBLISHED plugin-host image
+      # (pushed by push-cluster-manifest earlier in this workflow)
+      # instead of an in-workflow build — the smoke validates the
+      # exact artifact the public pulls, so a tag can no longer pass
+      # e2e using an image that doesn't exist outside CI.
       # ---------------------------------------------------------------
-      - name: Set up Docker Buildx (for cluster image)
-        uses: docker/setup-buildx-action@v3
-
-      - name: Read NEXUS_VFS_REV from Cargo.toml
-        id: vfs_rev
-        run: |
-          sha=$(grep -oP '(?<=rev = ")[a-f0-9]{40}' Cargo.toml | sort -u | head -1)
-          if [ -z "$sha" ]; then
-            echo "::error::Could not parse nexus-vfs SHA from Cargo.toml"
-            exit 1
-          fi
-          echo "sha=$sha" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout nexus-vfs source at pinned SHA
-        uses: actions/checkout@v4
-        with:
-          repository: nexi-lab/nexus-vfs
-          ref: ${{ steps.vfs_rev.outputs.sha }}
-          path: nexus-vfs-src
-          fetch-depth: 1
-
-      - name: Build nexusd-cluster image (for plugin sidecar)
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: dockerfiles/Dockerfile.nexusd-cluster
-          build-contexts: |
-            nexus-vfs-src=nexus-vfs-src
-          load: true
-          tags: nexusd-cluster:latest
-          # Share cache scope with search-plugin-e2e so this stage
-          # comes up warm on most runs (cold build is ~10 min).
-          cache-from: type=gha,scope=search-plugin-cluster
-          cache-to: type=gha,scope=search-plugin-cluster,mode=max
-
-      - name: Build search-plugin-test image
-        env:
-          BUILDX_BUILDER: default
-          PLUGIN_SIGNING_PRIVKEY: ${{ secrets.PLUGIN_SIGNING_PRIVKEY }}
-        run: |
-          if [ -z "$PLUGIN_SIGNING_PRIVKEY" ]; then
-            echo "::error::PLUGIN_SIGNING_PRIVKEY secret is not available."
-            exit 1
-          fi
-          docker compose -f dockerfiles/docker-compose.search-plugin-e2e.yml build node
-
       - name: Prepare shared workspace volume
         run: |
           # Both containers see the same /workspace bytes.  Post-P12
@@ -250,16 +370,26 @@ jobs:
 
       - name: Start search-plugin sidecar on 127.0.0.1:2126
         run: |
-          # Compose with the edge-override so both the plugin sidecar
-          # and nexus-e2e see the same bytes at /workspace (see
-          # dockerfiles/docker-compose.search-plugin-e2e.edge-override.yml).
-          docker compose \
-            -f dockerfiles/docker-compose.search-plugin-e2e.yml \
-            -f dockerfiles/docker-compose.search-plugin-e2e.edge-override.yml \
-            up -d node
-          # Wait for the plugin's gRPC bind to be reachable from the host
-          # (compose maps 2126:2126 so --network host of nexus-e2e sees
-          # the same port).
+          # Same single-node topology + flags as the search-plugin-e2e
+          # compose's bootstrap entrypoint, but running the published
+          # image.  Reachable 0.0.0.0 bind + --no-tls trips the
+          # loopback auth invariant; this is a trusted CI smoke, so
+          # take the sanctioned escape.
+          docker run -d --name nexus-search-plugin-node \
+            -p 2126:2126 \
+            -e NEXUS_HOSTNAME=node \
+            -e NEXUS_ADVERTISE_ADDR=127.0.0.1:2126 \
+            -e RUST_LOG=info,nexus_raft=info,kernel::plugins=debug,plugins=debug \
+            -v nexus-shared-workspace:/workspace \
+            "${{ env.REGISTRY }}/${{ env.CLUSTER_IMAGE_NAME }}:${{ needs.push-cluster-manifest.outputs.version }}" \
+            --bind-addr 0.0.0.0:2126 \
+            --data-dir /app/data \
+            --no-tls \
+            --insecure-no-auth \
+            --plugin-dir /plugins
+          # Wait for the plugin's gRPC bind to be reachable from the
+          # host (2126:2126 mapping so --network host of nexus-e2e
+          # sees the same port).
           deadline=$((SECONDS + 120))
           while [ $SECONDS -lt $deadline ]; do
             if timeout 1 bash -c '</dev/tcp/127.0.0.1/2126' 2>/dev/null; then
@@ -269,10 +399,7 @@ jobs:
             sleep 2
           done
           echo "::error::Search plugin sidecar failed to bind 127.0.0.1:2126 within 120s"
-          docker compose \
-            -f dockerfiles/docker-compose.search-plugin-e2e.yml \
-            -f dockerfiles/docker-compose.search-plugin-e2e.edge-override.yml \
-            logs --tail=200 node
+          docker logs --tail=200 nexus-search-plugin-node || true
           exit 1
 
       - name: Start Nexus edge container
@@ -529,12 +656,15 @@ jobs:
           echo "Last 200 container log lines:"
           docker logs nexus-e2e 2>&1 | tail -200 || true
 
+      - name: Collect sidecar logs on failure
+        if: failure() || cancelled()
+        run: |
+          echo "Search-plugin sidecar (published image) last 200 log lines:"
+          docker logs --tail=200 nexus-search-plugin-node 2>&1 || true
+
       - name: Cleanup
         if: always()
         run: |
           docker rm -f nexus-e2e 2>/dev/null || true
-          docker compose \
-            -f dockerfiles/docker-compose.search-plugin-e2e.yml \
-            -f dockerfiles/docker-compose.search-plugin-e2e.edge-override.yml \
-            down -v --remove-orphans 2>/dev/null || true
+          docker rm -f nexus-search-plugin-node 2>/dev/null || true
           docker volume rm -f nexus-shared-workspace 2>/dev/null || true

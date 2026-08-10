@@ -7692,7 +7692,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/expand
-      source: src/nexus/server/api/v2/routers/search.py:1611
+      source: src/nexus/server/api/v2/routers/search.py:1615
   profiles:
     lite: supported
     sandbox: supported
@@ -7716,7 +7716,7 @@ operations:
       source: src/nexus/bricks/search/search_service.py:1792
     http:
       name: POST /api/v2/search/glob
-      source: src/nexus/server/api/v2/routers/search.py:1469
+      source: src/nexus/server/api/v2/routers/search.py:1473
     mcp:
       name: nexus_glob
       source: src/nexus/config/tool_profiles.yaml:1
@@ -7743,7 +7743,7 @@ operations:
       source: src/nexus/bricks/search/search_service.py:2102
     http:
       name: POST /api/v2/search/grep
-      source: src/nexus/server/api/v2/routers/search.py:1346
+      source: src/nexus/server/api/v2/routers/search.py:1350
     mcp:
       name: nexus_grep
       source: src/nexus/config/tool_profiles.yaml:1
@@ -7796,7 +7796,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/index
-      source: src/nexus/server/api/v2/routers/search.py:1531
+      source: src/nexus/server/api/v2/routers/search.py:1535
   profiles:
     lite: supported
     sandbox: supported
@@ -7848,7 +7848,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/refresh
-      source: src/nexus/server/api/v2/routers/search.py:1590
+      source: src/nexus/server/api/v2/routers/search.py:1594
   profiles:
     lite: supported
     sandbox: supported

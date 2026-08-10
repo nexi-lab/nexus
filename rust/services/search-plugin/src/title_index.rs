@@ -80,6 +80,39 @@ fn title_eligible(path: &str) -> bool {
     TITLE_EXTENSIONS.contains(&ext.as_str())
 }
 
+/// A fenced-code-block opener: marker char (`` ` `` or `~`) and run
+/// length.  Per CommonMark, a fence closes only on a run of the SAME
+/// char at least as LONG as the opener, with nothing but whitespace
+/// after it (review R4 of #4628 — a boolean toggle let tilde fences
+/// and longer openers leak `# comment` lines out as titles).
+struct Fence {
+    ch: char,
+    len: usize,
+}
+
+/// Parse a line as a code-fence marker: up to 3 leading spaces, then
+/// a run of ≥3 backticks or tildes.  Returns the marker and whether
+/// anything (info string) follows it.  4-space-indented runs are
+/// indented code, not fences.
+fn parse_fence_marker(line: &str) -> Option<(Fence, bool)> {
+    let without_newline = line.strip_suffix('\n').unwrap_or(line);
+    let leading_spaces = without_newline.len() - without_newline.trim_start_matches(' ').len();
+    if leading_spaces > 3 {
+        return None;
+    }
+    let rest = &without_newline[leading_spaces..];
+    let ch = rest.chars().next()?;
+    if ch != '`' && ch != '~' {
+        return None;
+    }
+    let len = rest.len() - rest.trim_start_matches(ch).len();
+    if len < 3 {
+        return None;
+    }
+    let has_info = !rest[len..].trim().is_empty();
+    Some((Fence { ch, len }, has_info))
+}
+
 /// Parse one line as an ATX heading: up to 3 leading spaces, 1–6
 /// `#`, then whitespace and a non-empty title (same grammar family
 /// as the chunker's heading detector).  `#!shebang`, `#comment`,
@@ -120,7 +153,7 @@ pub fn extract_title(path: &str, head_text: &str) -> Option<String> {
     }
     let head = &head_text[..end];
     let mut in_frontmatter = false;
-    let mut in_code_fence = false;
+    let mut open_fence: Option<Fence> = None;
     for (i, line) in head.lines().enumerate() {
         let trimmed = line.trim();
         if i == 0 && trimmed == "---" {
@@ -133,12 +166,24 @@ pub fn extract_title(path: &str, head_text: &str) -> Option<String> {
             }
             continue;
         }
-        if trimmed.starts_with("```") {
-            in_code_fence = !in_code_fence;
-            continue;
-        }
-        if in_code_fence {
-            continue;
+        match (&open_fence, parse_fence_marker(line)) {
+            // Closing marker: same char, at least the opener's
+            // length, and NO info text (a shorter or annotated run
+            // is content, not a closer).
+            (Some(open), Some((marker, has_info)))
+                if marker.ch == open.ch && marker.len >= open.len && !has_info =>
+            {
+                open_fence = None;
+                continue;
+            }
+            // Inside a fence: every other line is code.
+            (Some(_), _) => continue,
+            // Opening marker outside a fence.
+            (None, Some((marker, _))) => {
+                open_fence = Some(marker);
+                continue;
+            }
+            (None, None) => {}
         }
         if let Some(title) = parse_atx_title(line) {
             return Some(title.to_string());
@@ -629,6 +674,49 @@ mod tests {
         assert_eq!(
             extract_title("/d/a.md", "   # Indented Heading\n"),
             Some("Indented Heading".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_title_fence_grammar_is_marker_aware() {
+        // Review R4 (#4628): the fence state must track marker char
+        // and run length — a boolean toggle leaked code out of tilde
+        // fences and longer-backtick fences.
+        // Tilde fences hide hash lines too.
+        assert_eq!(
+            extract_title("/d/a.md", "~~~sh\n# Dangerous\n~~~\nprose\n"),
+            None,
+            "tilde fence"
+        );
+        // A 4-backtick fence is NOT closed by a 3-backtick line.
+        assert_eq!(
+            extract_title("/d/a.md", "````\n```\n# Still Code\n````\n"),
+            None,
+            "longer opener"
+        );
+        // A closing-length run WITH info text is content, not a closer.
+        assert_eq!(
+            extract_title("/d/a.md", "```\n``` not-a-closer\n# Still Code\n```\n"),
+            None,
+            "annotated pseudo-closer"
+        );
+        // A tilde run inside a backtick fence is content, not a closer.
+        assert_eq!(
+            extract_title("/d/a.md", "```\n~~~\n# Still Code\n```\n# Real\n"),
+            Some("Real".to_string()),
+            "mismatched marker chars"
+        );
+        // A 4-space-indented run is indented code, not a fence opener
+        // — the heading after it is still found.
+        assert_eq!(
+            extract_title("/d/a.md", "    ```\n# Real Title\n"),
+            Some("Real Title".to_string()),
+            "indented marker is not a fence"
+        );
+        // After a proper close, headings resume.
+        assert_eq!(
+            extract_title("/d/a.md", "~~~~\ncode\n~~~~\n# Back To Prose\n"),
+            Some("Back To Prose".to_string())
         );
     }
 

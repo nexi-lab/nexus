@@ -115,8 +115,99 @@ class TestIndexResponseContract:
         # indexed) and the zone key is camelCase.  Post-pivot the
         # proxy's dict leaked whole into ``count`` and the key became
         # zone_id — strict SDK parsers threw on every successful index.
-        assert body == {"status": "indexed", "count": 2, "zoneId": "eng"}
+        # ``skippedCount`` is additive (review R2): content-level skips
+        # are no longer invisible behind a bare 200.
+        assert body == {"status": "indexed", "count": 2, "skippedCount": 0, "zoneId": "eng"}
         assert isinstance(body["count"], int)
+
+    def test_content_skips_surface_in_response(self):
+        from nexus.grpc.search.v1 import search_pb2
+
+        daemon, _ = _daemon_with_stub(
+            IndexDocuments=search_pb2.IndexDocumentsResponse(indexed_count=1, skipped_count=1)
+        )
+        app = _build_app(daemon)
+
+        resp = TestClient(app).post(
+            "/api/v2/search/index",
+            json={
+                "documents": [
+                    {"path": "/ws/a.md", "text": "alpha"},
+                    {"path": "/ws/b.md", "text": " "},
+                ]
+            },
+        )
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["skippedCount"] == 1
+
+    def test_plugin_error_fails_closed_500(self):
+        from nexus.grpc.search.v1 import search_pb2
+
+        daemon, _ = _daemon_with_stub(
+            IndexDocuments=search_pb2.IndexDocumentsResponse(
+                indexed_count=1, error="fts commit failed"
+            )
+        )
+        app = _build_app(daemon)
+
+        resp = TestClient(app).post(
+            "/api/v2/search/index",
+            json={"documents": [{"path": "/ws/a.md", "text": "alpha"}]},
+        )
+
+        # A populated plugin error must NEVER 200 (review R1) — clients
+        # need to retry, not believe the index is complete.
+        assert resp.status_code == 500, resp.text
+        assert "fts commit failed" in resp.text
+
+    def test_cross_zone_document_rejected(self):
+        from nexus.grpc.search.v1 import search_pb2
+
+        daemon, stub = _daemon_with_stub(
+            IndexDocuments=search_pb2.IndexDocumentsResponse(indexed_count=1)
+        )
+        app = _build_app(daemon)
+
+        # Auth zone is "eng"; smuggling a doc-level zone_id must 403
+        # BEFORE anything reaches the daemon (review R2, critical —
+        # per-doc zones are a plugin-side routing override, so honoring
+        # them would let one tenant write into another's index).
+        resp = TestClient(app).post(
+            "/api/v2/search/index",
+            json={
+                "documents": [
+                    {"path": "/ws/a.md", "text": "alpha", "zone_id": "victim-zone"},
+                ]
+            },
+        )
+
+        assert resp.status_code == 403, resp.text
+        assert stub.requests == []
+
+    def test_matching_doc_zone_is_allowed_and_forced(self):
+        from nexus.grpc.search.v1 import search_pb2
+
+        daemon, stub = _daemon_with_stub(
+            IndexDocuments=search_pb2.IndexDocumentsResponse(indexed_count=2)
+        )
+        app = _build_app(daemon)
+
+        resp = TestClient(app).post(
+            "/api/v2/search/index",
+            json={
+                "documents": [
+                    {"path": "/ws/a.md", "text": "alpha", "zone_id": "eng"},
+                    {"path": "/ws/b.md", "text": "beta"},
+                ]
+            },
+        )
+
+        assert resp.status_code == 200, resp.text
+        (_, req) = stub.requests[0]
+        # Defense in depth: EVERY wire document carries the authorized
+        # zone regardless of what the caller supplied.
+        assert [d.zone_id for d in req.documents] == ["eng", "eng"]
 
 
 class TestHealthResponseContract:

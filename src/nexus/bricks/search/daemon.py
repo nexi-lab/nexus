@@ -221,7 +221,13 @@ class SearchDaemon:
             entry = search_pb2.DocumentInput(
                 path=d.get("path", ""),
                 text=d.get("text", ""),
-                zone_id=d.get("zone_id", ""),
+                # Tenant boundary (review R2): when the caller passes an
+                # authorized zone, it OVERRIDES any per-document zone —
+                # the plugin treats a non-empty doc zone as a routing
+                # override, so honoring caller-controlled values here
+                # would let one tenant write into another's index.  The
+                # HTTP route additionally 403s explicit mismatches.
+                zone_id=zone_id or d.get("zone_id", ""),
             )
             if "mtime_ms" in d and d["mtime_ms"] is not None:
                 entry.mtime_ms = int(d["mtime_ms"])

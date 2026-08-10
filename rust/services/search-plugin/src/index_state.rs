@@ -115,17 +115,32 @@ impl IndexState {
             let persisted: Persisted = serde_json::from_slice(&bytes)
                 .map_err(|e| StateError::Parse(path.display().to_string(), e.to_string()))?;
             if persisted.version != STATE_VERSION {
-                // Stale layout generation (see STATE_VERSION doc):
-                // start empty so the next Refresh re-indexes the
-                // whole corpus into the current index layout.  The
-                // next save() rewrites the file at the new version.
+                // Stale layout generation (see STATE_VERSION doc).
+                // KEEP the path keys but null every mtime instead of
+                // starting empty (review R2): only the FTS moved to a
+                // new directory in the fts-v2 bump — the ANN index is
+                // still the live one, and this state is its ONLY
+                // deletion set.  Dropping the keys would make vectors
+                // for files deleted before the upgrade invisible to
+                // Refresh's stale sweep forever.  Null mtimes verdict
+                // Changed, so the next Refresh re-indexes every
+                // present file into the new layout AND sweeps the
+                // absent ones out of ANN.  The next save() rewrites
+                // the file at the new version.
                 tracing::warn!(
                     on_disk = persisted.version,
                     expected = STATE_VERSION,
                     path = %path.display(),
-                    "index_state version mismatch — resetting mtime cache; next refresh reindexes",
+                    "index_state version mismatch — nulling mtimes; next refresh reindexes + sweeps",
                 );
-                HashMap::new()
+                persisted
+                    .files
+                    .into_iter()
+                    .map(|(p, mut entry)| {
+                        entry.mtime_ms = None;
+                        (p, entry)
+                    })
+                    .collect()
             } else {
                 persisted.files
             }
@@ -367,12 +382,15 @@ mod tests {
     }
 
     #[test]
-    fn stale_on_disk_version_loads_as_empty_not_error() {
+    fn stale_on_disk_version_nulls_mtimes_but_keeps_deletion_set() {
         // Index-layout bumps (fts → fts-v2, #4618) must invalidate
-        // this cache: a preserved v1 cache reports Unchanged for
-        // every file and the fresh (empty) index never repopulates.
-        // The cache is derived state — an old version loads as EMPTY
-        // (full reindex on next Refresh) rather than erroring.
+        // this cache so the fresh index repopulates — but the ANN
+        // index did NOT move, and these path keys are its only
+        // deletion set (review R2).  Dropping them would leave
+        // vectors for pre-upgrade-deleted files undiscoverable by
+        // Refresh's stale sweep forever.  So: keys survive, mtimes
+        // null (⇒ every present file re-indexes, every absent one
+        // sweeps).
         let dir = tempdir();
         std::fs::write(
             dir.join(STATE_FILE),
@@ -380,8 +398,14 @@ mod tests {
         )
         .expect("write stale-version state");
         let s = IndexState::open_or_create(dir).expect("open must not error");
-        assert!(s.is_empty(), "stale-version cache must reset to empty");
-        assert_eq!(s.cached_mtime("/a.md"), None);
+        assert!(!s.is_empty(), "migration must keep the deletion set");
+        // Path known, mtime nulled — always verdicts Changed.
+        assert_eq!(s.cached_mtime("/a.md"), Some(None));
+        assert_eq!(s.known_paths(), vec!["/a.md".to_string()]);
+        assert!(matches!(
+            s.verdict("/a.md", Some(123)),
+            RefreshVerdict::Changed
+        ));
     }
 
     #[test]

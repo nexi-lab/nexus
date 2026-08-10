@@ -1688,6 +1688,22 @@ async def search_index_documents(
     documents: list[dict[str, Any]] = body.get("documents", [])
     if not documents:
         raise HTTPException(status_code=400, detail="No documents provided")
+    # Tenant boundary (review R2, CRITICAL): the request is authorized
+    # for ONE zone, but each document dict may carry its own zone_id,
+    # which the plugin treats as an override — a writer authorized for
+    # zone A could inject documents into zone B's index.  Reject any
+    # explicit mismatch loudly; matching/absent per-doc zones are
+    # normalized to the authorized zone (the proxy also force-stamps
+    # it as defense in depth).
+    for doc in documents:
+        doc_zone = doc.get("zone_id") if isinstance(doc, dict) else None
+        if doc_zone and doc_zone != zone_id:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"document zone_id {doc_zone!r} does not match the authorized zone {zone_id!r}"
+                ),
+            )
 
     async def _work() -> dict[str, Any]:
         try:
@@ -1707,9 +1723,11 @@ async def search_index_documents(
         if isinstance(result, dict):
             count = result.get("indexed", 0)
             skipped = list(result.get("skipped") or [])
+            skipped_count = int(result.get("skipped_count") or 0)
         else:
             count = getattr(result, "indexed", result)
             skipped = list(getattr(result, "skipped", []) or [])
+            skipped_count = int(getattr(result, "skipped_count", 0) or 0)
         if skipped:
             raise HTTPException(
                 status_code=409,
@@ -1723,8 +1741,17 @@ async def search_index_documents(
                     "zone_id": zone_id,
                 },
             )
-        # ``zoneId`` casing is the pre-P12 public contract (#4617).
-        return {"status": "indexed", "count": int(count), "zoneId": zone_id}
+        # ``zoneId`` casing is the pre-P12 public contract (#4617);
+        # ``skippedCount`` is additive (review R2) — content-level
+        # skips (empty/whitespace/chunkless docs) were previously
+        # invisible behind a bare 200, so a caller couldn't tell
+        # "all indexed" from "half the batch was empty".
+        return {
+            "status": "indexed",
+            "count": int(count),
+            "skippedCount": skipped_count,
+            "zoneId": zone_id,
+        }
 
     return await run_zone_scoped(_get_zone_registry(request), _auth_target_zone(auth_result), _work)
 

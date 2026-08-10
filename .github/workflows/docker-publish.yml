@@ -95,6 +95,8 @@ jobs:
     name: Build & push multi-arch image
     needs: [build-platform]
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -116,19 +118,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Review R2 (#4613 ask 3): this job pushes ONLY the immutable
+      # staging reference (commit SHA, or the dispatch's custom tag).
+      # Every mutable/public tag — edge, stable, latest, semver — is
+      # promoted by the promote-tags job AFTER the e2e smoke passes,
+      # so a broken image can no longer land on a tag the public pulls.
       - name: Determine image tags
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            # For tagged releases: v1.2.3 -> 1.2.3, latest, stable
-            type=semver,pattern={{version}}
-            type=raw,value=stable,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
-            # For main, develop, or tagged releases: edge (e2e-edge job always pulls :edge)
-            type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/tags/v') }}
-            # For manual dispatch: custom tag or SHA
             type=raw,value=${{ github.event.inputs.tag }},enable=${{ github.event.inputs.tag != '' }}
             type=sha,prefix=,enable=${{ github.event.inputs.tag == '' }}
 
@@ -272,18 +272,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Immutable staging reference only — mutable tags are promoted
+      # after the smoke by promote-tags (same rule as the server image).
       - name: Determine image tags
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.CLUSTER_IMAGE_NAME }}
-          # Same tag rules as the server image — every server tag must
-          # have a matching plugin-host tag from the same commit.
           tags: |
-            type=semver,pattern={{version}}
-            type=raw,value=stable,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
-            type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/tags/v') }}
             type=raw,value=${{ github.event.inputs.tag }},enable=${{ github.event.inputs.tag != '' }}
             type=sha,prefix=,enable=${{ github.event.inputs.tag == '' }}
 
@@ -308,15 +304,15 @@ jobs:
           docker buildx imagetools inspect "${{ env.REGISTRY }}/${{ env.CLUSTER_IMAGE_NAME }}:${{ steps.meta.outputs.version }}"
 
   # ---------------------------------------------------------------------------
-  # E2E smoke tests against the edge image (develop + tagged releases)
-  # Starts a Nexus container, runs init, then exercises the permissions demo
-  # and build-perf e2e scripts.  Failures block the workflow so issues are
-  # caught early.
+  # E2E smoke tests against the just-pushed IMMUTABLE image references.
+  # Runs for EVERY publishing trigger (develop, main, tags, dispatch) —
+  # review R2: a publish path that skips the smoke can ship a plugin
+  # that never loaded.  Mutable tags (edge/stable/latest/semver) are
+  # only promoted by promote-tags after this job passes.
   # ---------------------------------------------------------------------------
   e2e-edge:
     name: E2E edge smoke tests
     needs: [build-and-push, push-cluster-manifest]
-    if: github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     services:
@@ -429,7 +425,7 @@ jobs:
             -e NEXUS_SEARCH_PLUGIN_TARGET=127.0.0.1:2126 \
             -v /tmp/nexus-data:/app/data \
             -v nexus-shared-workspace:/workspace \
-            ghcr.io/nexi-lab/nexus:edge
+            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-and-push.outputs.version }}"
 
           # Wait for server to be ready
           echo "Waiting for Nexus to start..."
@@ -683,8 +679,8 @@ jobs:
           st, idx = http("POST", "/api/v2/search/index",
                          {"documents": [{"path": "/workspace/demo/README.md",
                                          "text": "contract smoke seed doc"}]})
-          if st != 200 or not isinstance(idx.get("count"), int) or "zoneId" not in idx:
-              failures.append(f"index contract drift: status={st} body={idx}")
+          if st != 200 or idx.get("count") != 1 or "zoneId" not in idx or "skippedCount" not in idx:
+              failures.append(f"index contract drift (want count==1 int + zoneId + skippedCount): status={st} body={idx}")
 
           # 3. /stats identity + visibility fields (#4617/#4623).
           st, stats = http("GET", "/api/v2/search/stats")
@@ -745,3 +741,83 @@ jobs:
           docker rm -f nexus-e2e 2>/dev/null || true
           docker rm -f nexus-search-plugin-node 2>/dev/null || true
           docker volume rm -f nexus-shared-workspace 2>/dev/null || true
+
+  # ---------------------------------------------------------------------------
+  # Tag promotion (review R2, #4613 ask 3): mutable/public tags — edge,
+  # stable, latest, semver — are applied ONLY after the e2e smoke passed
+  # against the immutable staging references.  A broken build therefore
+  # leaves every public tag pointing at the last good image instead of
+  # shipping and going red after the fact.  Dispatch runs publish only
+  # their custom/SHA tag, so there is nothing to promote there.
+  # ---------------------------------------------------------------------------
+  promote-tags:
+    name: Promote release tags
+    needs: [build-and-push, push-cluster-manifest, e2e-edge]
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine promotion tags (server image)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            # For tagged releases: v1.2.3 -> 1.2.3, latest, stable
+            type=semver,pattern={{version}}
+            type=raw,value=stable,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            # For main, develop, or tagged releases: edge
+            type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/tags/v') }}
+
+      - name: Determine promotion tags (cluster image)
+        id: cluster_meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.CLUSTER_IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=raw,value=stable,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/tags/v') }}
+
+      # NOTE: DOCKER_METADATA_OUTPUT_JSON holds the LAST metadata-action
+      # invocation (the cluster one) — each step below pins its own
+      # meta output explicitly to avoid promoting the wrong image's tags.
+      - name: Promote server image tags
+        env:
+          SOURCE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-and-push.outputs.version }}
+          SERVER_TAGS_JSON: ${{ steps.meta.outputs.json }}
+        run: |
+          mapfile -t image_tags < <(jq -r '.tags[]' <<< "$SERVER_TAGS_JSON")
+          tag_args=()
+          for tag in "${image_tags[@]}"; do
+            tag_args+=("-t" "$tag")
+          done
+          docker buildx imagetools create "${tag_args[@]}" "$SOURCE"
+
+      - name: Promote cluster image tags
+        env:
+          SOURCE: ${{ env.REGISTRY }}/${{ env.CLUSTER_IMAGE_NAME }}:${{ needs.push-cluster-manifest.outputs.version }}
+          CLUSTER_TAGS_JSON: ${{ steps.cluster_meta.outputs.json }}
+        run: |
+          mapfile -t image_tags < <(jq -r '.tags[]' <<< "$CLUSTER_TAGS_JSON")
+          tag_args=()
+          for tag in "${image_tags[@]}"; do
+            tag_args+=("-t" "$tag")
+          done
+          docker buildx imagetools create "${tag_args[@]}" "$SOURCE"
+
+      - name: Inspect promoted tags
+        run: |
+          docker buildx imagetools inspect "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}"
+          docker buildx imagetools inspect "${{ env.REGISTRY }}/${{ env.CLUSTER_IMAGE_NAME }}:${{ steps.cluster_meta.outputs.version }}"

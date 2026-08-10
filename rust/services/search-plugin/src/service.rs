@@ -207,6 +207,29 @@ impl SearchServiceImpl {
         *slot = Some(Arc::clone(&built));
         Ok(built)
     }
+
+    /// Embedder resolution for INDEXING paths (review R2).  Returns
+    /// `(embedder, embed_broken)` — distinguishing "no embedder
+    /// configured" (clean NotAvailable ⇒ keyword-only mode, docs
+    /// record their real mtime) from "configured but failed to
+    /// initialise" (Load/Runtime ⇒ `embed_broken = true`, every doc
+    /// indexed this pass records mtime None so the next
+    /// Refresh/IndexDocuments retries its vectors once the embedder
+    /// recovers, instead of the failure minting permanently
+    /// keyword-only documents behind a success response).
+    fn indexing_embedder(&self) -> (Option<Arc<dyn Embedder>>, bool) {
+        match self.get_or_init_embedder() {
+            Ok(e) => (Some(e), false),
+            Err(EmbedError::NotAvailable(_)) => (None, false),
+            Err(e) => {
+                tracing::warn!(
+                    err = %e,
+                    "embedder init failed — this pass's docs stay ANN-retryable",
+                );
+                (None, true)
+            }
+        }
+    }
 }
 
 /// Fluent builder for [`SearchServiceImpl`].  Every knob is
@@ -919,6 +942,12 @@ struct IndexSinks<'a> {
     ann: Option<&'a Arc<crate::ann_index::AnnIndex>>,
     embedder: Option<&'a Arc<dyn Embedder>>,
     state: &'a crate::index_state::IndexState,
+    /// True when an embedder IS configured but failed to initialise
+    /// (review R2).  Distinct from `embedder: None` with a clean
+    /// NotAvailable (keyword-only mode): a broken embedder means
+    /// every doc indexed this pass must stay ANN-retryable (mtime
+    /// None) so vectors land once the embedder recovers.
+    embed_broken: bool,
 }
 
 /// Walk `root_path` and index every regular file.  Same walker Glob +
@@ -935,6 +964,7 @@ fn do_index(
     handle: &KernelHandle,
     manager: &IndexManager,
     embedder: Option<&Arc<dyn Embedder>>,
+    embed_broken: bool,
     root_path: &str,
     zone_id: &str,
     recursive: bool,
@@ -970,6 +1000,7 @@ fn do_index(
         ann: ann.as_ref(),
         embedder,
         state: &state,
+        embed_broken,
     };
 
     let mut indexed: u32 = 0;
@@ -1115,7 +1146,7 @@ fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> I
     // recording the fresh mtime below despite a failed embed would
     // make the semantic hole permanent, because the next Refresh sees
     // the matching mtime and skips the doc forever.
-    let mut ann_complete = true;
+    let mut ann_complete = !sinks.embed_broken;
     if let (Some(ann), Some(embedder)) = (sinks.ann, sinks.embedder) {
         let inputs: Vec<&str> = chunks.iter().map(|c| c.embed_input.as_str()).collect();
         match embedder.embed_batch(&inputs) {
@@ -1205,6 +1236,7 @@ fn do_refresh(
     handle: &KernelHandle,
     manager: &IndexManager,
     embedder: Option<&Arc<dyn Embedder>>,
+    embed_broken: bool,
     root_path: &str,
     zone_id: &str,
     recursive: bool,
@@ -1236,6 +1268,7 @@ fn do_refresh(
         ann: ann.as_ref(),
         embedder,
         state: &state,
+        embed_broken,
     };
 
     let mut counts = RefreshCounts::default();
@@ -1343,6 +1376,7 @@ fn do_refresh(
 fn do_index_documents(
     manager: &IndexManager,
     embedder: Option<&Arc<dyn Embedder>>,
+    embed_broken: bool,
     default_zone: &str,
     documents: Vec<crate::search_proto::DocumentInput>,
     cache: &crate::query_cache::SharedQueryCache,
@@ -1428,7 +1462,7 @@ fn do_index_documents(
             // mtime and never retries the missing vectors (a remote
             // provider 429/timeout would silently produce a
             // forever-keyword-only doc; review R1).
-            let mut ann_complete = true;
+            let mut ann_complete = !embed_broken;
             if let (Some(ann), Some(emb)) = (ann.as_ref(), embedder) {
                 let inputs: Vec<&str> = chunks.iter().map(|c| c.embed_input.as_str()).collect();
                 match emb.embed_batch(&inputs) {
@@ -1466,13 +1500,17 @@ fn do_index_documents(
             }
 
             // Only a FULLY indexed doc (FTS + ANN when an embedder is
-            // configured) gets its mtime recorded; an incomplete doc
-            // stays "stale" so Refresh / a repeated IndexDocuments
-            // re-processes it.  FTS re-adds are idempotent
-            // (delete-then-add), so the retry costs a re-chunk, not
-            // correctness.
+            // configured) gets its real mtime recorded.  An incomplete
+            // doc records mtime None EXPLICITLY — merely skipping the
+            // record would leave a PRIOR same-mtime entry in place and
+            // Refresh would read Unchanged forever (review R2).  A
+            // None mtime always verdicts Changed, so the next
+            // Refresh / IndexDocuments retries the missing vectors;
+            // FTS re-adds are idempotent (delete-then-add).
             if ann_complete {
                 state.record(&doc.path, doc.mtime_ms);
+            } else {
+                state.record(&doc.path, None);
             }
             total_indexed += 1;
             docs_since_commit += 1;
@@ -1953,7 +1991,7 @@ impl SearchService for SearchServiceImpl {
         // just stays empty until an operator wires the embedder up
         // and re-runs Index.  This matches the "graceful degradation"
         // posture SemanticQuery uses.
-        let embedder = self.get_or_init_embedder().ok();
+        let (embedder, embed_broken) = self.indexing_embedder();
         // Retain the zone id for post-outcome cache invalidation
         // (the closure below moves the owned copy into
         // spawn_blocking).
@@ -1964,6 +2002,7 @@ impl SearchService for SearchServiceImpl {
                 &handle,
                 &manager,
                 embedder.as_ref(),
+                embed_broken,
                 &root,
                 &zone_id,
                 recursive,
@@ -2019,7 +2058,7 @@ impl SearchService for SearchServiceImpl {
         // Same best-effort embedder posture as Index: a missing
         // embedder means ANN stays unchanged this Refresh; keyword
         // side still incrementally updates.
-        let embedder = self.get_or_init_embedder().ok();
+        let (embedder, embed_broken) = self.indexing_embedder();
         let zone_for_invalidate = zone_id.clone();
         let outcome = tokio::task::spawn_blocking(move || {
             let _indexing = indexing; // held until the WORK ends, not the RPC
@@ -2027,6 +2066,7 @@ impl SearchService for SearchServiceImpl {
                 &handle,
                 &manager,
                 embedder.as_ref(),
+                embed_broken,
                 &root,
                 &zone_id,
                 recursive,
@@ -2150,13 +2190,14 @@ impl SearchService for SearchServiceImpl {
         let req = request.into_inner();
         let default_zone = resolve_zone(&req.zone_id).to_string();
         let manager = Arc::clone(&self.manager);
-        let embedder = self.get_or_init_embedder().ok();
+        let (embedder, embed_broken) = self.indexing_embedder();
         let cache = Arc::clone(&self.query_cache);
         let outcome = tokio::task::spawn_blocking(move || {
             let _indexing = indexing; // held until the WORK ends, not the RPC
             do_index_documents(
                 &manager,
                 embedder.as_ref(),
+                embed_broken,
                 &default_zone,
                 req.documents,
                 &cache,

@@ -31,7 +31,7 @@
 //!
 //! # File layout
 //!
-//! `<root>/<zone_id>/index_state.json` — a sibling of the `fts/` +
+//! `<root>/<zone_id>/index_state.json` — a sibling of the `fts-v2/` +
 //! `ann-*-v2/` directories under the per-zone root.  Atomic rewrite
 //! via write-then-rename so a mid-write crash never leaves a
 //! truncated file that would break the next open.
@@ -55,10 +55,16 @@ use serde::{Deserialize, Serialize};
 /// derived-state; this is meta about them).
 const STATE_FILE: &str = "index_state.json";
 
-/// On-disk schema.  `version` bump semantics same as
-/// `ann_index::Sidecar`: a schema drift refuses to load and the
-/// operator drops-and-reindexes.
-const STATE_VERSION: u32 = 1;
+/// On-disk schema version.  A mismatched on-disk version loads as
+/// EMPTY (not an error): the cache is derived state, and a version
+/// bump signals the indices it describes were invalidated — an empty
+/// cache makes the next Refresh re-index everything into the new
+/// layout.  Preserving the old cache instead would report Unchanged
+/// for every file and leave the fresh index silently empty.
+///
+/// v1 → v2: #4618 `en_stem` schema change moved the FTS store from
+/// `fts/` to `fts-v2/`; v1 caches describe the abandoned v1 dir.
+const STATE_VERSION: u32 = 2;
 
 fn state_version_default() -> u32 {
     STATE_VERSION
@@ -105,15 +111,20 @@ impl IndexState {
             let persisted: Persisted = serde_json::from_slice(&bytes)
                 .map_err(|e| StateError::Parse(path.display().to_string(), e.to_string()))?;
             if persisted.version != STATE_VERSION {
-                return Err(StateError::Parse(
-                    path.display().to_string(),
-                    format!(
-                        "state version {} != expected {}; drop and reindex",
-                        persisted.version, STATE_VERSION
-                    ),
-                ));
+                // Stale layout generation (see STATE_VERSION doc):
+                // start empty so the next Refresh re-indexes the
+                // whole corpus into the current index layout.  The
+                // next save() rewrites the file at the new version.
+                tracing::warn!(
+                    on_disk = persisted.version,
+                    expected = STATE_VERSION,
+                    path = %path.display(),
+                    "index_state version mismatch — resetting mtime cache; next refresh reindexes",
+                );
+                HashMap::new()
+            } else {
+                persisted.files
             }
-            persisted.files
         } else {
             HashMap::new()
         };
@@ -339,6 +350,24 @@ mod tests {
             let _ = s.verdict(p, Some(1));
         }
         assert_eq!(paths, vec!["/a.md".to_string()]);
+    }
+
+    #[test]
+    fn stale_on_disk_version_loads_as_empty_not_error() {
+        // Index-layout bumps (fts → fts-v2, #4618) must invalidate
+        // this cache: a preserved v1 cache reports Unchanged for
+        // every file and the fresh (empty) index never repopulates.
+        // The cache is derived state — an old version loads as EMPTY
+        // (full reindex on next Refresh) rather than erroring.
+        let dir = tempdir();
+        std::fs::write(
+            dir.join(STATE_FILE),
+            r#"{"version":1,"files":{"/a.md":{"mtime_ms":123}}}"#,
+        )
+        .expect("write stale-version state");
+        let s = IndexState::open_or_create(dir).expect("open must not error");
+        assert!(s.is_empty(), "stale-version cache must reset to empty");
+        assert_eq!(s.cached_mtime("/a.md"), None);
     }
 
     #[test]

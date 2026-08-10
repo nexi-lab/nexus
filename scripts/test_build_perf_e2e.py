@@ -533,13 +533,65 @@ def main() -> None:
     print(f"    p50={p50:.1f}ms  p95={p95:.1f}ms", flush=True)
 
     # =========================================================================
-    # Sections 9 + 10 (auto-index-on-write + delete-through-index) live at
-    # tests/e2e/docker/test_search_plugin.py against the sidecar cluster
-    # (Docker Compose in .github/workflows/search-plugin-e2e.yml).  Edge
-    # smoke exercises the Python edge topology, which post-P12 (#4598) has
-    # no writer→plugin content path: the plugin sidecar receives absolute
-    # virtual paths via NotifyFileChange but has no way to fetch the
-    # bytes (nexus-e2e writes land in the record store, not on a shared
+    section("9. BATCH QUERY HTTP SEAM (#4616 / #4612)")
+    # =========================================================================
+    # The P12 pivot shipped /query/batch with a router→proxy signature the
+    # proxy couldn't accept — a hard 500 on EVERY call — and no server-side
+    # e2e existed to catch it (#4616).  This section pins the seam through
+    # the full HTTP surface: a valid query must return genuine results with
+    # NO error key, and an invalid spec must serialize the additive
+    # per-entry ``error`` (the 2026-08-04 batch contract, #4612).
+
+    step("POST /api/v2/search/query/batch (valid + invalid spec)")
+    batch_body = json.dumps(
+        {
+            "queries": [
+                {"q": "Nexus Core", "path": HERB_SEARCH_PATH, "type": "hybrid", "limit": 3},
+                {"q": "bad-spec", "limit": 0},
+            ]
+        }
+    ).encode()
+    batch_req = urllib.request.Request(
+        f"{NEXUS_URL}/api/v2/search/query/batch",
+        data=batch_body,
+        headers={
+            "Authorization": f"Bearer {ADMIN_KEY}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        resp = urllib.request.urlopen(batch_req, timeout=30)
+        batch_payload = json.loads(resp.read().decode())
+        entries = batch_payload.get("queries", [])
+        ok_entry = entries[0] if entries else {}
+        bad_entry = entries[1] if len(entries) > 1 else {}
+        print(f"    entries: {json.dumps(entries)[:400]}", file=sys.stderr, flush=True)
+        check("batch endpoint answers 200", resp.status == 200, f"status={resp.status}")
+        check(
+            "batch valid entry: genuine results, no error key",
+            "error" not in ok_entry and ok_entry.get("total", 0) >= 1,
+            json.dumps(ok_entry)[:200],
+        )
+        check(
+            "batch invalid spec: additive per-entry error",
+            "error" in bad_entry and bad_entry.get("results") == [],
+            json.dumps(bad_entry)[:200],
+        )
+    except Exception as e:
+        print(f"    error: {e}", file=sys.stderr, flush=True)
+        check("batch endpoint answers 200", False, str(e)[:200])
+        check("batch valid entry: genuine results, no error key", False, "request failed")
+        check("batch invalid spec: additive per-entry error", False, "request failed")
+
+    # =========================================================================
+    # Auto-index-on-write + delete-through-index (former sections 9 + 10)
+    # live at tests/e2e/docker/test_search_plugin.py against the sidecar
+    # cluster (Docker Compose in .github/workflows/search-plugin-e2e.yml).
+    # Edge smoke exercises the Python edge topology, which post-P12 (#4598)
+    # has no writer→plugin content path: the plugin sidecar receives
+    # absolute virtual paths via NotifyFileChange but has no way to fetch
+    # the bytes (nexus-e2e writes land in the record store, not on a shared
     # host FS).  Testing auto-index here would only cover a topology we
     # don't actually ship — the split-container edge image is being
     # retired in favour of nexusd-cluster + plugin as the single search

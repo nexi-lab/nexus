@@ -748,10 +748,11 @@ async def search_query_batch(
 
     Applies the same ReBAC file-level permission filter as ``/query``
     (Decision #17), over-fetching via ``_compute_rebac_fetch_limit`` and
-    trimming to each query's requested ``limit`` after filtering. All
-    unique query texts are embedded in ONE ``embed_batch`` call and the
-    inner searches run concurrently (``NEXUS_SEARCH_BATCH_CONCURRENCY``,
-    default 8).
+    trimming to each query's requested ``limit`` after filtering. The
+    Rust plugin runs the inner searches concurrently
+    (``NEXUS_SEARCH_BATCH_CONCURRENCY``, default 4, clamped 1..=16) and
+    pre-warms its query-embedding cache for duplicate embedding-needing
+    query texts, so a fan-out batch embeds each unique text once (#4611).
     """
     from nexus.contracts.constants import ROOT_ZONE_ID
 
@@ -807,29 +808,32 @@ async def search_query_batch(
     valid: list[tuple[int, ParsedBatchSpec]] = [
         (i, p) for i, p in enumerate(parsed) if isinstance(p, ParsedBatchSpec)
     ]
-    fetch_specs = [
-        {
-            "query": spec.query,
-            "search_type": spec.search_type,
-            "limit": _compute_rebac_fetch_limit(
+    # Same typed request shape as the single-query path — the P12 proxy's
+    # batch_search takes SearchRequest objects (zone_id rides inside each
+    # request, exactly like single ``search()``), so every tuning knob the
+    # single route forwards reaches the plugin here too (#4612).
+    fetch_requests = [
+        SearchRequest(
+            query=spec.query,
+            search_type=spec.search_type,
+            limit=_compute_rebac_fetch_limit(
                 spec.limit, has_enforcer=permission_enforcer is not None
             ),
-            "path_filter": spec.path_filter,
-            "alpha": spec.alpha,
-            "fusion_method": spec.fusion_method,
-            "rrf_k": spec.rrf_k,
-            "expand": spec.expand,
-            "recency": spec.recency,
-            "recency_weight": spec.recency_weight,
-            "recency_half_life_days": spec.recency_half_life_days,
-        }
+            path_filter=spec.path_filter,
+            alpha=spec.alpha,
+            fusion_method=spec.fusion_method,
+            rrf_k=spec.rrf_k,
+            zone_id=zone_id,
+            expand=spec.expand,
+            recency=spec.recency,
+            recency_weight=spec.recency_weight,
+            recency_half_life_days=spec.recency_half_life_days,
+        )
         for _, spec in valid
     ]
 
     t0 = time.perf_counter()
-    raw_results = (
-        await search_daemon.batch_search(fetch_specs, zone_id=zone_id) if fetch_specs else []
-    )
+    raw_results = await search_daemon.batch_search(fetch_requests) if fetch_requests else []
     elapsed_ms = (time.perf_counter() - t0) * 1000
 
     result_by_index: dict[int, Any] = {

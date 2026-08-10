@@ -195,7 +195,11 @@ def _build_batch_app(mock_daemon):
 
     app = FastAPI()
     app.include_router(router)
-    mock_daemon.is_initialized = True
+    try:
+        mock_daemon.is_initialized = True
+    except AttributeError:
+        # Real SearchDaemon proxy: read-only property, already True.
+        pass
     app.state.search_daemon = mock_daemon
     app.state.search_daemon_enabled = True
     app.state.record_store = MagicMock()
@@ -243,17 +247,24 @@ class TestBatchRoute:
         )
 
         assert resp.status_code == 200, resp.text
+        # #4612: the route hands the daemon typed SearchRequest objects —
+        # the same shape single /query uses — with zone_id inside each
+        # request rather than a separate kwarg.
+        from nexus.contracts.search_types import SearchRequest
+
         (specs,) = daemon.batch_search.call_args.args
-        assert daemon.batch_search.call_args.kwargs == {"zone_id": "eng"}
+        assert daemon.batch_search.call_args.kwargs == {}
         spec = specs[0]
-        assert spec["query"] == "tuned"
-        assert spec["search_type"] == "hybrid"
-        assert spec["path_filter"] == "/ws/"
-        assert (spec["alpha"], spec["fusion_method"], spec["rrf_k"]) == (0.3, "weighted", 90)
-        assert (spec["expand"], spec["recency"]) == ("macro", "on")
-        assert (spec["recency_weight"], spec["recency_half_life_days"]) == (1.5, 30.0)
+        assert isinstance(spec, SearchRequest)
+        assert spec.query == "tuned"
+        assert spec.search_type == "hybrid"
+        assert spec.path_filter == "/ws/"
+        assert spec.zone_id == "eng"
+        assert (spec.alpha, spec.fusion_method, spec.rrf_k) == (0.3, "weighted", 90)
+        assert (spec.expand, spec.recency) == ("macro", "on")
+        assert (spec.recency_weight, spec.recency_half_life_days) == (1.5, 30.0)
         # No enforcer on this app -> fetch limit == requested limit.
-        assert spec["limit"] == 7
+        assert spec.limit == 7
 
     def test_serializer_parity_with_single_query(self):
         from nexus.server.api.v2.routers._search_serialize import _serialize_search_result
@@ -327,7 +338,7 @@ class TestBatchRoute:
         assert "error" not in body["queries"][1]
         # Only the valid spec reached the daemon.
         (specs,) = daemon.batch_search.call_args.args
-        assert [s["query"] for s in specs] == ["fine"]
+        assert [s.query for s in specs] == ["fine"]
 
     def test_all_specs_invalid_skips_daemon_entirely(self):
         daemon = MagicMock()
@@ -431,3 +442,117 @@ class TestBatchCardinality:
 
         assert resp.status_code == 200, resp.text
         daemon.batch_search.assert_called_once()
+
+
+@pytest.mark.skipif(not _HAS_FASTAPI_TESTCLIENT, reason="fastapi test client not available")
+class TestBatchRealProxyRoundtrip:
+    """Route → REAL SearchDaemon gRPC proxy → fake stub → route response.
+
+    The mock-daemon tests above pin the route's behaviour against
+    whatever ``batch_search`` they stub — which is how the P12 proxy
+    shipped with a signature the route couldn't even call (dict specs +
+    ``zone_id`` kwarg vs typed requests) and with the per-query typed
+    failure dropped on the floor (#4612).  This class runs the real
+    proxy with only the gRPC stub faked, so route↔proxy contract drift
+    fails a test instead of 500ing (or silently lying) in production.
+    """
+
+    def _daemon_with_stub(self, response):
+        from nexus.bricks.search.daemon import SearchDaemon
+
+        class _FakeStub:
+            def __init__(self, resp):
+                self._resp = resp
+                self.requests = []
+
+            async def BatchQuery(self, req):  # noqa: N802 — gRPC stub surface
+                self.requests.append(req)
+                return self._resp
+
+        daemon = SearchDaemon(target="127.0.0.1:1")  # never dialed
+        stub = _FakeStub(response)
+        daemon._stub = stub
+        return daemon, stub
+
+    def test_failed_inner_query_serializes_error_field(self):
+        from nexus.grpc.search.v1 import search_pb2
+
+        response = search_pb2.BatchQueryResponse(
+            responses=[
+                search_pb2.QueryResponse(
+                    results=[
+                        search_pb2.QueryResult(
+                            path="/ws/doc.md",
+                            chunk_text="hello",
+                            score=0.9,
+                            chunk_index=0,
+                            zone_id="eng",
+                        )
+                    ]
+                ),
+                search_pb2.QueryResponse(error="embedder unavailable"),
+            ]
+        )
+        daemon, _ = self._daemon_with_stub(response)
+        app = _build_batch_app(daemon)
+
+        resp = TestClient(app).post(
+            "/api/v2/search/query/batch",
+            json={"queries": [{"q": "ok"}, {"q": "doomed", "type": "semantic"}]},
+        )
+
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        ok, doomed = body["queries"]
+        assert "error" not in ok
+        assert ok["total"] == 1
+        assert ok["results"][0]["path"] == "/ws/doc.md"
+        # The 2026-08-04 contract: a failed inner query carries an additive
+        # per-entry error — absence of ``error`` means genuinely empty.
+        assert doomed == {
+            "query": "doomed",
+            "results": [],
+            "total": 0,
+            "error": "embedder unavailable",
+        }
+
+    def test_tuning_params_reach_the_wire(self):
+        from nexus.grpc.search.v1 import search_pb2
+
+        response = search_pb2.BatchQueryResponse(responses=[search_pb2.QueryResponse()])
+        daemon, stub = self._daemon_with_stub(response)
+        app = _build_batch_app(daemon)
+
+        resp = TestClient(app).post(
+            "/api/v2/search/query/batch",
+            json={
+                "queries": [
+                    {
+                        "q": "tuned",
+                        "type": "hybrid",
+                        "limit": 7,
+                        "path": "/ws/",
+                        "alpha": 0.3,
+                        "fusion": "weighted",
+                        "rrf_k": 90,
+                        "expand": "macro",
+                        "recency": "on",
+                        "recency_weight": 1.5,
+                        "recency_half_life_days": 30,
+                    }
+                ]
+            },
+        )
+
+        assert resp.status_code == 200, resp.text
+        (req,) = stub.requests
+        (q,) = req.queries
+        assert q.q == "tuned"
+        assert q.zone_id == "eng"
+        assert q.limit == 7
+        assert q.path_filter == "/ws/"
+        assert q.query_type == search_pb2.QUERY_TYPE_HYBRID
+        assert q.fusion_method == search_pb2.FUSION_METHOD_WEIGHTED
+        assert (round(q.alpha, 6), q.rrf_k) == (0.3, 90)
+        assert (q.expand, q.recency_mode) == ("macro", "on")
+        assert (q.recency_weight, q.recency_half_life_days) == (1.5, 30.0)

@@ -52,6 +52,19 @@ const BATCH_QUERY_CONCURRENCY_ENV: &str = "NEXUS_SEARCH_BATCH_CONCURRENCY";
 const DEFAULT_BATCH_QUERY_CONCURRENCY: usize = 4;
 const MAX_BATCH_QUERY_CONCURRENCY: usize = 16;
 
+/// Kill-switch for the hybrid title arm (#4628; mirrors Python's
+/// NEXUS_SEARCH_TITLE_ARM, default ON).  Read per-query so an
+/// operator can flip it without a restart; "false" / "0" / "no"
+/// (trimmed, case-insensitive) disable.
+const TITLE_ARM_ENV: &str = "NEXUS_SEARCH_TITLE_ARM";
+
+fn title_arm_env_enabled() -> bool {
+    match std::env::var(TITLE_ARM_ENV) {
+        Ok(v) => !matches!(v.trim().to_ascii_lowercase().as_str(), "false" | "0" | "no"),
+        Err(_) => true,
+    }
+}
+
 fn batch_query_concurrency() -> usize {
     std::env::var(BATCH_QUERY_CONCURRENCY_ENV)
         .ok()
@@ -137,6 +150,10 @@ pub struct SearchServiceImpl {
     /// operations.  Surfaced on Stats as `indexing_in_progress` so
     /// pollers can tell "genuinely empty" from "still building".
     indexing_ops: Arc<std::sync::atomic::AtomicU32>,
+    /// Builder override for the hybrid title arm (#4628) — `None` ⇒
+    /// read `NEXUS_SEARCH_TITLE_ARM` per query (production);
+    /// `Some(_)` pins it (tests must not race the process env).
+    title_arm: Option<bool>,
 }
 
 /// RAII increment of [`SearchServiceImpl::indexing_ops`].
@@ -183,7 +200,14 @@ impl SearchServiceImpl {
             embedder: None,
             query_cache: None,
             embed_cache: None,
+            title_arm: None,
         }
+    }
+
+    /// Whether the hybrid title arm runs for this query — builder
+    /// pin wins; otherwise the env knob (default on).
+    fn title_arm_enabled(&self) -> bool {
+        self.title_arm.unwrap_or_else(title_arm_env_enabled)
     }
 
     /// Fetch (or lazily initialise) the embedder.  Fast path: read
@@ -245,6 +269,7 @@ pub struct SearchServiceBuilder {
     embedder: Option<Arc<dyn Embedder>>,
     query_cache: Option<crate::query_cache::SharedQueryCache>,
     embed_cache: Option<Arc<QueryEmbedCache>>,
+    title_arm: Option<bool>,
 }
 
 impl SearchServiceBuilder {
@@ -281,6 +306,13 @@ impl SearchServiceBuilder {
         self
     }
 
+    /// Pin the title arm on/off, bypassing NEXUS_SEARCH_TITLE_ARM —
+    /// for tests that must not race the process environment.
+    pub fn title_arm(mut self, enabled: bool) -> Self {
+        self.title_arm = Some(enabled);
+        self
+    }
+
     pub fn build(self) -> SearchServiceImpl {
         SearchServiceImpl {
             handle: self.handle,
@@ -295,6 +327,7 @@ impl SearchServiceBuilder {
                 .embed_cache
                 .unwrap_or_else(|| Arc::new(QueryEmbedCache::from_env())),
             indexing_ops: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+            title_arm: self.title_arm,
         }
     }
 }
@@ -921,6 +954,132 @@ const HYBRID_OVER_FETCH_MULT: usize = 2;
 /// 1000-doc fetch into the blocking pool.
 const ADJUSTMENT_OVER_FETCH_MULT: usize = 10;
 const ADJUSTMENT_FETCH_CEILING: usize = 500;
+
+/// Cap on per-query representative-chunk fetches for uncovered
+/// title hits (Python TITLE_ARM_MAX_HYDRATION_FETCH).  Hits beyond
+/// it degrade to chunk_text="" instead of unbounded FTS lookups.
+const TITLE_ARM_MAX_HYDRATION_FETCH: usize = 32;
+
+/// Run the title arm's locate: skeleton lookup (building it on
+/// first use per index generation) + evidence gate.  Fail-soft —
+/// a skeleton build error degrades to an empty arm with a debug
+/// log; the search itself must never fail on the arm's account.
+fn do_title_locate(
+    manager: &IndexManager,
+    q: &str,
+    zone_id: &str,
+    limit: usize,
+    path_filter: &str,
+) -> Vec<crate::title_index::TitleHit> {
+    match manager.get_or_build_skeleton(zone_id) {
+        Ok(skeleton) => {
+            let prefix = (!path_filter.is_empty()).then_some(path_filter);
+            let mut hits = skeleton.locate(q, limit, prefix);
+            // Evidence gate: a lone incidental path-token overlap
+            // (score 1.0) must not earn rank-based RRF votes;
+            // require at least one real title-token match (2.0).
+            hits.retain(|h| h.score >= crate::title_index::TITLE_ARM_MIN_SCORE);
+            hits
+        }
+        Err(e) => {
+            tracing::debug!(err = %e, zone = %zone_id, "title arm: skeleton unavailable — degrading");
+            Vec::new()
+        }
+    }
+}
+
+/// Hydrate locate() hits to the QueryResult shape for fusion.  The
+/// fusion identity is (path, chunk_index), so each hit needs a
+/// representative chunk: borrow the best-scored keyword-leg row for
+/// the path (aligns the key so RRF votes accumulate on one fused
+/// entry instead of splitting), dense rows as the lowest-priority
+/// borrow source, then a capped FTS chunk-0 fetch for still-
+/// uncovered paths.  A doc with no FTS row (drift) stays
+/// retrievable with empty text.  `score` = the locate score —
+/// rrf_multi turns it into rank votes and stamps it as title_score
+/// attribution.
+fn hydrate_title_hits(
+    fts: Option<&crate::fts_index::FtsIndex>,
+    title_hits: &[crate::title_index::TitleHit],
+    keyword: &[QueryResult],
+    semantic: &[QueryResult],
+    zone_id: &str,
+) -> Vec<QueryResult> {
+    let mut best_by_path: std::collections::HashMap<&str, &QueryResult> =
+        std::collections::HashMap::new();
+    for r in keyword {
+        match best_by_path.get(r.path.as_str()) {
+            Some(cur) if cur.score >= r.score => {}
+            _ => {
+                best_by_path.insert(&r.path, r);
+            }
+        }
+    }
+    let mut best_dense: std::collections::HashMap<&str, &QueryResult> =
+        std::collections::HashMap::new();
+    for r in semantic {
+        match best_dense.get(r.path.as_str()) {
+            Some(cur) if cur.score >= r.score => {}
+            _ => {
+                best_dense.insert(&r.path, r);
+            }
+        }
+    }
+    for (path, r) in best_dense {
+        best_by_path.entry(path).or_insert(r);
+    }
+
+    let mut fetched: std::collections::HashMap<&str, crate::fts_index::FtsHit> =
+        std::collections::HashMap::new();
+    if let Some(fts) = fts {
+        let uncovered: Vec<&str> = title_hits
+            .iter()
+            .map(|h| h.path.as_str())
+            .filter(|p| !best_by_path.contains_key(*p))
+            .take(TITLE_ARM_MAX_HYDRATION_FETCH)
+            .collect();
+        for path in uncovered {
+            match fts.get_chunks_by_path(path) {
+                // Sorted by chunk_index — first entry is chunk 0.
+                Ok(chunks) => {
+                    if let Some(c0) = chunks.into_iter().next() {
+                        fetched.insert(path, c0);
+                    }
+                }
+                Err(e) => tracing::debug!(
+                    err = %e, path = %path,
+                    "title arm: representative-chunk fetch failed — empty text",
+                ),
+            }
+        }
+    }
+
+    title_hits
+        .iter()
+        .map(|h| {
+            let (chunk_index, chunk_text, mtime_ms) =
+                if let Some(leg) = best_by_path.get(h.path.as_str()) {
+                    (leg.chunk_index, leg.chunk_text.clone(), leg.mtime_ms)
+                } else if let Some(row) = fetched.get(h.path.as_str()) {
+                    (row.chunk_index, row.chunk_text.clone(), row.mtime_ms)
+                } else {
+                    (0, String::new(), None)
+                };
+            QueryResult {
+                path: h.path.clone(),
+                chunk_index,
+                chunk_text,
+                score: h.score,
+                zone_id: zone_id.to_string(),
+                mtime_ms,
+                expanded_context: String::new(),
+                // Stamped by rrf_multi per arm vote, not here — so
+                // merged chunk-arm entries get it too.
+                title_score: None,
+            }
+        })
+        .collect()
+}
 
 /// Fuse two source result lists per the caller's chosen method,
 /// pool per-doc, and truncate to `limit`.  Pure math — the two
@@ -2100,16 +2259,26 @@ impl SearchService for SearchServiceImpl {
                     .saturating_mul(HYBRID_OVER_FETCH_MULT)
                     .max(limit)
                     .max(fetch_limit);
-                let (kw_task, sem_task) = {
+                // Title arm (#4628): a third parallel leg over the
+                // in-memory skeleton.  Independent of kw/sem, so it
+                // joins the same spawn_blocking fan-out.  Runs only
+                // when enabled — a disabled arm costs nothing (no
+                // skeleton is ever built).
+                let title_arm_on = self.title_arm_enabled();
+                let (kw_task, sem_task, title_task) = {
                     let mgr_kw = Arc::clone(&manager);
                     let mgr_sem = Arc::clone(&manager);
+                    let mgr_title = Arc::clone(&manager);
                     let embedder = Arc::clone(&embedder);
                     let embed_cache = Arc::clone(&self.embed_cache);
                     let q_kw = q.clone();
+                    let q_title = q.clone();
                     let q_sem = q;
                     let zone_kw = zone_id.clone();
+                    let zone_title = zone_id.clone();
                     let zone_sem = zone_id;
                     let path_kw = path_filter.clone();
+                    let path_title = path_filter.clone();
                     let path_sem = path_filter;
                     (
                         tokio::task::spawn_blocking(move || {
@@ -2126,20 +2295,65 @@ impl SearchService for SearchServiceImpl {
                                 &path_sem,
                             )
                         }),
+                        tokio::task::spawn_blocking(move || {
+                            if !title_arm_on {
+                                return Vec::new();
+                            }
+                            // limit * 2 mirrors Python's locate
+                            // over-fetch (fusion headroom).
+                            do_title_locate(
+                                &mgr_title,
+                                &q_title,
+                                &zone_title,
+                                limit.saturating_mul(2),
+                                &path_title,
+                            )
+                        }),
                     )
                 };
-                let (kw_join, sem_join) = tokio::join!(kw_task, sem_task);
+                let (kw_join, sem_join, title_join) = tokio::join!(kw_task, sem_task, title_task);
                 let kw = kw_join
                     .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
                 let sem = sem_join
                     .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
+                // A panicked title task degrades to an empty arm —
+                // the arm is additive evidence, never a failure
+                // source (fail-soft parity with Python).
+                let title_hits = title_join.unwrap_or_default();
                 match (kw, sem) {
                     (Ok(keyword), Ok(semantic)) => {
+                        // Keyword-lane sub-fusion (#4628).  Empty
+                        // title arm ⇒ the lane passes through
+                        // UNCHANGED — non-title queries stay byte-
+                        // identical to the pre-title-arm plugin
+                        // under every fusion method (the WEIGHTED
+                        // method normalises raw scores, so even a
+                        // score-preserving no-op re-fusion would
+                        // shift its blend).
+                        let kw_lane = if title_hits.is_empty() {
+                            keyword
+                        } else {
+                            let fts = manager_for_expand.get_or_open(&zone_for_expand).ok();
+                            let hydrated = hydrate_title_hits(
+                                fts.as_deref(),
+                                &title_hits,
+                                &keyword,
+                                &semantic,
+                                &zone_for_expand,
+                            );
+                            fusion::rrf_multi(
+                                &[
+                                    (fusion::ArmKind::Chunk, keyword.as_slice()),
+                                    (fusion::ArmKind::Title, hydrated.as_slice()),
+                                ],
+                                fusion_opts.rrf_k,
+                            )
+                        };
                         // Keep the over-fetched pool through fusion
                         // when adjustments still need to reorder it;
                         // the final truncate-to-limit happens post-
                         // adjustment below.
-                        Ok(fuse_hybrid(keyword, semantic, fetch_limit, fusion_opts))
+                        Ok(fuse_hybrid(kw_lane, semantic, fetch_limit, fusion_opts))
                     }
                     // A source-side error on either leg — surface it
                     // as the response's `error` field rather than a

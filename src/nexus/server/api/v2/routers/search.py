@@ -158,16 +158,51 @@ from nexus.server.api.v2.routers._search_serialize import (  # noqa: E402
 
 @router.get("/health")
 async def search_daemon_health(
+    request: Request,
     search_daemon: Any = Depends(_get_optional_search_daemon),
 ) -> dict[str, Any]:
-    """Health check for the search daemon."""
+    """Health check for the search daemon.
+
+    #4617: the P12 pivot reduced this to the plugin's raw
+    ``{status, detail}`` pair, breaking health pollers keyed on the
+    pre-pivot fields.  Restore the contract keys with honest post-P12
+    values — ``backend`` is now ``rust-plugin``, ``bm25_index_loaded``
+    means the plugin's FTS leg answers, ``db_pool_ready`` reports the
+    server's own async session factory (the daemon no longer owns a
+    pool), and ``zoekt_available`` is always False (retired from this
+    path).  Absent keys break consumers; changed values don't.
+    """
+    db_pool_ready = getattr(request.app.state, "async_session_factory", None) is not None
     if not search_daemon:
         return {
             "status": "disabled",
             "daemon_enabled": False,
             "message": "Search daemon unavailable (set NEXUS_SEARCH_DAEMON=false to disable)",
+            "initialized": False,
+            "daemon_initialized": False,
+            "backend": None,
+            "bm25_index_loaded": False,
+            "db_pool_ready": db_pool_ready,
+            "zoekt_available": False,
         }
-    health: dict[str, Any] = await search_daemon.get_health()
+    try:
+        health: dict[str, Any] = await search_daemon.get_health()
+    except Exception as exc:  # plugin died after the boot probe — health must not 500
+        logger.warning("search health probe failed: %s", exc)
+        health = {"status": "unavailable", "detail": f"{type(exc).__name__}: {exc}"}
+    status = health.get("status", "unavailable")
+    initialized = bool(getattr(search_daemon, "is_initialized", False))
+    health.update(
+        {
+            "initialized": initialized,
+            "daemon_initialized": initialized,
+            "backend": "rust-plugin",
+            # "degraded" = semantic leg missing, keyword still answers.
+            "bm25_index_loaded": status in ("healthy", "degraded"),
+            "db_pool_ready": db_pool_ready,
+            "zoekt_available": False,
+        }
+    )
     return health
 
 
@@ -175,8 +210,16 @@ async def search_daemon_health(
 async def search_daemon_stats(
     search_daemon: Any = Depends(_get_search_daemon),
 ) -> dict[str, Any]:
-    """Get search daemon statistics."""
+    """Get search daemon statistics.
+
+    #4617: on top of the plugin's counters (which carry the
+    ``backend`` / ``embedding_model`` identity fields and the #4623
+    ``indexing_in_progress`` build signal), restore the pre-pivot
+    ``initialized`` key stats consumers gate on.
+    """
     stats: dict[str, Any] = await search_daemon.get_stats()
+    stats["initialized"] = bool(getattr(search_daemon, "is_initialized", False))
+    stats.setdefault("backend", "rust-plugin")
     return stats
 
 
@@ -1650,9 +1693,18 @@ async def search_index_documents(
                 status_code=500,
                 detail=f"Index persistence failed: {type(exc).__name__}: {exc}",
             ) from exc
-        # ``getattr`` fallbacks keep int-returning test doubles working.
-        count = getattr(result, "indexed", result)
-        skipped = list(getattr(result, "skipped", []) or [])
+        # #4617: the P12 proxy returns a dict, the pre-P12 daemon
+        # returned an ExplicitIndexResult, and int-returning test
+        # doubles exist — normalize ALL of them so ``count`` stays the
+        # plain int the pre-pivot wire contract promised (the dict
+        # previously leaked whole into ``count`` because ``getattr``
+        # doesn't read dict keys).
+        if isinstance(result, dict):
+            count = result.get("indexed", 0)
+            skipped = list(result.get("skipped") or [])
+        else:
+            count = getattr(result, "indexed", result)
+            skipped = list(getattr(result, "skipped", []) or [])
         if skipped:
             raise HTTPException(
                 status_code=409,
@@ -1666,7 +1718,8 @@ async def search_index_documents(
                     "zone_id": zone_id,
                 },
             )
-        return {"status": "indexed", "count": count, "zone_id": zone_id}
+        # ``zoneId`` casing is the pre-P12 public contract (#4617).
+        return {"status": "indexed", "count": int(count), "zoneId": zone_id}
 
     return await run_zone_scoped(_get_zone_registry(request), _auth_target_zone(auth_result), _work)
 

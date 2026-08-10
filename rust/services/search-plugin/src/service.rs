@@ -60,6 +60,16 @@ fn batch_query_concurrency() -> usize {
         .unwrap_or(DEFAULT_BATCH_QUERY_CONCURRENCY)
 }
 
+/// #4623: explicit-index incremental FTS commit cadence.  Every N
+/// successfully indexed documents the FTS layer commits (and the
+/// zone's result cache drops) so keyword hits become visible while
+/// the embed-heavy remainder of the batch is still building.
+const INDEX_INCREMENTAL_COMMIT_EVERY: usize = 8;
+
+/// #4617: backend identity string on Stats — distinguishes this
+/// generation from the deleted Python daemon's BM25S/pgvector stack.
+const SEARCH_BACKEND_NAME: &str = "rust-plugin";
+
 /// Belt-and-suspenders per-file size cap for grep — a 100 MB
 /// binary blob would otherwise stall a single request for seconds.
 /// Files above this size are skipped with a `tracing::debug` log.
@@ -123,6 +133,27 @@ pub struct SearchServiceImpl {
     /// Embeddings have no corpus dependency, so Index / Refresh do
     /// not invalidate this cache.
     embed_cache: Arc<QueryEmbedCache>,
+    /// #4623: in-flight explicit Index / IndexDocuments / Refresh
+    /// operations.  Surfaced on Stats as `indexing_in_progress` so
+    /// pollers can tell "genuinely empty" from "still building".
+    indexing_ops: Arc<std::sync::atomic::AtomicU32>,
+}
+
+/// RAII increment of [`SearchServiceImpl::indexing_ops`] — decrements
+/// on every exit path, including handler errors and cancellation.
+struct IndexingGuard(Arc<std::sync::atomic::AtomicU32>);
+
+impl IndexingGuard {
+    fn enter(counter: &Arc<std::sync::atomic::AtomicU32>) -> Self {
+        counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Self(Arc::clone(counter))
+    }
+}
+
+impl Drop for IndexingGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 impl SearchServiceImpl {
@@ -234,6 +265,7 @@ impl SearchServiceBuilder {
             embed_cache: self
                 .embed_cache
                 .unwrap_or_else(|| Arc::new(QueryEmbedCache::from_env())),
+            indexing_ops: Arc::new(std::sync::atomic::AtomicU32::new(0)),
         }
     }
 }
@@ -1317,6 +1349,18 @@ fn do_index_documents(
         let state = crate::index_state::IndexState::open_or_create(manager.zone_root(&zone_id))
             .map_err(|e| format!("open state for zone {zone_id:?}: {e}"))?;
 
+        // #4623: incremental FTS visibility.  Embedding dominates a
+        // large explicit batch (tens of seconds of CPU), and a single
+        // end-of-batch commit left keyword queries answering
+        // healthy-empty the whole time — indistinguishable from the
+        // silent-degradation modes health sentinels exist to catch.
+        // Commit (and drop the zone's cached results) every few docs
+        // so keyword hits appear progressively; commits are a couple
+        // of ms, noise next to the embed cost.  ANN stays end-commit:
+        // the dense leg is what's being built, and hnsw dumps are not
+        // cheap per-doc.
+        let mut docs_since_commit: usize = 0;
+
         for doc in docs {
             if doc.text.trim().is_empty() {
                 total_skipped += 1;
@@ -1369,6 +1413,17 @@ fn do_index_documents(
 
             state.record(&doc.path, doc.mtime_ms);
             total_indexed += 1;
+            docs_since_commit += 1;
+            if docs_since_commit >= INDEX_INCREMENTAL_COMMIT_EVERY {
+                if let Err(e) = fts.commit() {
+                    return Err(format!("fts incremental commit for zone {zone_id:?}: {e}"));
+                }
+                // Cached results captured before this commit would
+                // mask the fresh docs for the cache TTL — drop them
+                // with every visibility step, not just at the end.
+                cache.invalidate_zone(&zone_id);
+                docs_since_commit = 0;
+            }
         }
 
         if let Err(e) = fts.commit() {
@@ -1811,6 +1866,7 @@ impl SearchService for SearchServiceImpl {
         &self,
         request: Request<IndexRequest>,
     ) -> Result<Response<IndexResponse>, Status> {
+        let _indexing = IndexingGuard::enter(&self.indexing_ops);
         let req = request.into_inner();
         let root = if req.root_path.is_empty() {
             "/".to_string()
@@ -1877,6 +1933,7 @@ impl SearchService for SearchServiceImpl {
         &self,
         request: Request<RefreshRequest>,
     ) -> Result<Response<RefreshResponse>, Status> {
+        let _indexing = IndexingGuard::enter(&self.indexing_ops);
         let req = request.into_inner();
         let root = if req.root_path.is_empty() {
             "/".to_string()
@@ -2021,6 +2078,7 @@ impl SearchService for SearchServiceImpl {
         &self,
         request: Request<IndexDocumentsRequest>,
     ) -> Result<Response<IndexDocumentsResponse>, Status> {
+        let _indexing = IndexingGuard::enter(&self.indexing_ops);
         let req = request.into_inner();
         let default_zone = resolve_zone(&req.zone_id).to_string();
         let manager = Arc::clone(&self.manager);
@@ -2436,6 +2494,19 @@ impl SearchService for SearchServiceImpl {
             .lock()
             .as_ref()
             .map(|e| (e.tag().to_string(), e.dim()));
+        // #4617: identity fields.  The live embedder's tag when one is
+        // initialised; otherwise the CONFIGURED tag (env / feature
+        // default) so pollers see the model identity without stats
+        // ever forcing an ONNX session build.
+        let embedding_model = embedder_tag_dim
+            .as_ref()
+            .map(|(tag, _)| tag.clone())
+            .or_else(crate::embedder::configured_embedder_tag)
+            .unwrap_or_default();
+        // #4623: non-zero while explicit Index/IndexDocuments/Refresh
+        // ops are in flight — "empty results" during that window mean
+        // "still building", not "no matches".
+        let indexing_in_progress = self.indexing_ops.load(std::sync::atomic::Ordering::SeqCst);
         let outcome = tokio::task::spawn_blocking(move || -> Result<StatsResponse, String> {
             // FTS side: count chunks + distinct paths in the zone.
             // FtsIndex doesn't expose a raw count today, so we open
@@ -2479,6 +2550,9 @@ impl SearchService for SearchServiceImpl {
                 ann_chunk_count,
                 parked_count,
                 error: None,
+                backend: SEARCH_BACKEND_NAME.to_string(),
+                embedding_model,
+                indexing_in_progress,
             })
         })
         .await
@@ -2492,6 +2566,9 @@ impl SearchService for SearchServiceImpl {
                 ann_chunk_count: 0,
                 parked_count: 0,
                 error: Some(err),
+                backend: SEARCH_BACKEND_NAME.to_string(),
+                embedding_model: String::new(),
+                indexing_in_progress: 0,
             })),
         }
     }

@@ -617,6 +617,37 @@ pub fn resolve_model_dir(data_root: &Path) -> PathBuf {
         .unwrap_or_else(|_| data_root.join("models"))
 }
 
+/// AnnIndex tag of the built-in local model — single source for
+/// [`build_default_embedder`] and the Stats identity field.
+#[cfg(feature = "semantic")]
+const LOCAL_EMBEDDER_TAG: &str = "mE5-small-v1";
+
+/// CONFIGURED embedder identity without loading anything (#4617).
+///
+/// Stats polls must never pay the ~1s ONNX session build, so this
+/// reports what [`build_default_embedder`] WOULD use: the remote
+/// config's tag when `NEXUS_SEARCH_EMBED_API_URL` is set, else the
+/// built-in local tag when the `semantic` feature is compiled in.
+/// `None` = keyword-only mode (no embedder configured, or a partial
+/// remote config that build_default_embedder will reject loudly).
+pub fn configured_embedder_tag() -> Option<String> {
+    match RemoteEmbedderConfig::from_env() {
+        Ok(Some(cfg)) => return Some(cfg.tag()),
+        Ok(None) => {}
+        // Partial remote config: the embedder build fails loud, so
+        // reporting the local fallback here would lie.
+        Err(_) => return None,
+    }
+    #[cfg(feature = "semantic")]
+    {
+        Some(LOCAL_EMBEDDER_TAG.to_string())
+    }
+    #[cfg(not(feature = "semantic"))]
+    {
+        None
+    }
+}
+
 /// Best-effort embedder factory — used by the service to lazily
 /// build the embedder on first SemanticQuery.  Returns
 /// `NotAvailable` when no remote endpoint is configured AND the
@@ -651,7 +682,7 @@ pub fn build_default_embedder(data_root: &Path) -> Result<Arc<dyn Embedder>, Emb
         })?;
         Ok(Arc::new(FastEmbedder::load(
             &dir,
-            "mE5-small-v1",
+            LOCAL_EMBEDDER_TAG,
             Path::new(&dylib),
         )?))
     }

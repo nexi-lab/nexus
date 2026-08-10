@@ -670,4 +670,22 @@ message StatsResponse {
   // Number of parked documents awaiting retry.
   uint32 parked_count = 4;
   optional string error = 5;
+  // ── Backend identity (#4617) ──────────────────────────────────
+  // Post-P12 stats consumers (health pollers, canaries) keep their
+  // pre-pivot contract keys; values honestly reflect the new stack.
+  // Constant "rust-plugin" — distinguishes this generation from the
+  // deleted Python daemon's BM25S/pgvector backends.
+  string backend = 6;
+  // CONFIGURED embedding model tag (e.g. "mE5-small-v1" or
+  // "api-text-embedding-3-small-1536").  Empty = no embedder
+  // configured — keyword-only mode.  Reported from config, not from
+  // a live embedder load, so polling stats never forces the ~1s
+  // ONNX session build.
+  string embedding_model = 7;
+  // ── Build visibility (#4623) ──────────────────────────────────
+  // Number of in-flight explicit Index / IndexDocuments / Refresh
+  // operations.  Non-zero means query results may be served from a
+  // partially-built index — pollers gating "healthy-empty is real"
+  // decisions should wait for 0.
+  uint32 indexing_in_progress = 8;
 }

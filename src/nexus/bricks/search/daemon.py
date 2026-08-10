@@ -221,6 +221,16 @@ class SearchDaemon:
             "fts_path_count": resp.fts_path_count,
             "ann_chunk_count": resp.ann_chunk_count,
             "parked_count": resp.parked_count,
+            # #4617 identity fields — pre-P12 stats consumers key on
+            # these.  ``embedding_model`` empty on the wire means
+            # keyword-only mode; surface that as None, matching the
+            # old daemon's "no embedding model configured" contract.
+            "backend": resp.backend or "rust-plugin",
+            "embedding_model": resp.embedding_model or None,
+            # #4623: non-zero while explicit index ops are in flight —
+            # "empty results" then mean "still building", not "no
+            # matches".
+            "indexing_in_progress": resp.indexing_in_progress,
         }
 
 

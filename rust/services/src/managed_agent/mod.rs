@@ -942,6 +942,77 @@ mod tests {
         svc.stop().unwrap();
     }
 
+    /// Nexus-half of the in-process sudocode co-host: prove the seam.
+    ///
+    /// Each spawn body receives the SHARED `Arc<Kernel>` and does a REAL
+    /// in-process `KernelSyscall` against it. Three concurrent sessions ⇒
+    /// three agent loops, ONE kernel, direct Rust syscalls (no gRPC). This is
+    /// exactly what a co-hosted `sudocode_runtime` gets through the
+    /// `SpawnTask<Kernel>` adapter at the `nexusd-cluster` binary edge.
+    struct ProbingSpawn {
+        /// Test sink: (kernel Arc ptr, pid, whether the loop's in-process
+        /// stat of its own stamped `/proc/{pid}/workspace` hit).
+        seen: Arc<std::sync::Mutex<Vec<(usize, String, bool)>>>,
+    }
+    impl SpawnTask<Kernel> for ProbingSpawn {
+        fn spawn(
+            &self,
+            kernel: Arc<Kernel>,
+            desc: AgentDescriptor,
+            state_observer: Arc<dyn Fn(AgentLoopState) + Send + Sync>,
+        ) -> Box<dyn SpawnHandle> {
+            state_observer(AgentLoopState::WarmingUp);
+            let ptr = Arc::as_ptr(&kernel) as usize;
+            // Real in-process KernelSyscall on the SHARED kernel: stat the
+            // procfs workspace `start_session` stamped for THIS pid (procfs
+            // is virtual — no backend needed). A hit proves the loop reached
+            // the very kernel the service planted into: not a copy, not gRPC.
+            let ws = format!("/proc/{}/workspace", desc.pid);
+            let hit = kernel.sys_stat(&ws, &desc.zone_id).is_some();
+            self.seen.lock().unwrap().push((ptr, desc.pid.clone(), hit));
+            state_observer(AgentLoopState::Ready);
+            Box::new(NoopHandle)
+        }
+    }
+
+    #[test]
+    fn multiple_loops_share_one_kernel_via_in_process_syscall() {
+        let kernel = Arc::new(Kernel::new());
+        let kernel_ptr = Arc::as_ptr(&kernel) as usize;
+        let registry = Arc::clone(kernel.agent_registry());
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let svc = ManagedAgentService::<Kernel>::with_spawn(
+            Arc::clone(&kernel),
+            registry,
+            Arc::new(ProbingSpawn {
+                seen: Arc::clone(&seen),
+            }),
+        );
+
+        for id in ["agent-a", "agent-b", "agent-c"] {
+            svc.start_session(req(id)).expect("start_session");
+        }
+
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 3, "all three loops ran: {seen:?}");
+        // (1) ONE shared kernel: every loop received the SAME `Arc<Kernel>` the
+        //     service holds (pointer identity) — co-hosted, not per-agent copies.
+        assert!(
+            seen.iter().all(|(ptr, _, _)| *ptr == kernel_ptr),
+            "every loop shares the ONE service kernel: {seen:?}"
+        );
+        // (2) In-process syscall: each loop's stat hit its own stamped procfs
+        //     subtree, proving the loop reached the shared kernel directly.
+        assert!(
+            seen.iter().all(|(_, _, hit)| *hit),
+            "each loop's in-process sys_stat saw its /proc/pid/workspace: {seen:?}"
+        );
+        // (3) Three distinct pids — three real sessions, not one reused.
+        let pids: std::collections::BTreeSet<&String> =
+            seen.iter().map(|(_, pid, _)| pid).collect();
+        assert_eq!(pids.len(), 3, "three distinct pids: {seen:?}");
+    }
+
     #[test]
     fn start_session_returns_identity_tuple_and_plants_agent_registry_record() {
         let (_kernel, table, svc) = fresh_service();

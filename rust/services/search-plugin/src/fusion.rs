@@ -95,6 +95,64 @@ pub fn weighted(keyword: &[QueryResult], semantic: &[QueryResult], alpha: f32) -
     finalise(merged)
 }
 
+/// Top-rank bonus constants (#3773 via Python `rrf_multi_fusion`):
+/// a doc whose BEST rank across arms is 1 gets +0.05; ranks 2-3 get
+/// +0.02.  Rewards strong evidence in ANY single arm over uniform
+/// mediocrity.  Applied only by [`rrf_multi`] — the 2-way [`rrf`]
+/// stays bonus-free for backward compatibility with existing hybrid
+/// rankings.
+pub const RRF_TOP1_BONUS: f32 = 0.05;
+pub const RRF_TOP3_BONUS: f32 = 0.02;
+
+/// Which retrieval arm a source list is.  `rrf_multi` uses this for
+/// per-arm attribution: a `Title` arm's votes stamp
+/// `QueryResult.title_score` with the arm's own score so callers see
+/// why a weak-body doc surfaced (#4628).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArmKind {
+    Chunk,
+    Title,
+}
+
+/// N-way reciprocal-rank fusion — the keyword-lane sub-fusion for
+/// the title arm (#4628; mirrors Python `rrf_multi_fusion`, #4552).
+/// Same `(path, chunk_index)` identity and first-seen-template rules
+/// as [`rrf`]; adds the top-rank bonus and per-arm attribution.
+/// Returns the FULL fused union (callers pool + truncate downstream,
+/// matching the Python "fuse complete union, cap later" shape).
+pub fn rrf_multi(arms: &[(ArmKind, &[QueryResult])], k: u32) -> Vec<QueryResult> {
+    let k_f = k.max(1) as f32;
+    let mut merged: HashMap<DocKey, MergedHit> = HashMap::new();
+    let mut best_rank: HashMap<DocKey, usize> = HashMap::new();
+    for (kind, source) in arms {
+        for (idx, r) in source.iter().enumerate() {
+            let rank = idx + 1;
+            let c = 1.0 / (k_f + rank as f32);
+            let key = DocKey::of(r);
+            let entry = merged.entry(key.clone()).or_insert_with(|| MergedHit {
+                score: 0.0,
+                template: r.clone(),
+            });
+            entry.score += c;
+            if matches!(kind, ArmKind::Title) {
+                entry.template.title_score = Some(r.score);
+            }
+            best_rank
+                .entry(key)
+                .and_modify(|b| *b = (*b).min(rank))
+                .or_insert(rank);
+        }
+    }
+    for (key, m) in merged.iter_mut() {
+        match best_rank.get(key) {
+            Some(1) => m.score += RRF_TOP1_BONUS,
+            Some(2) | Some(3) => m.score += RRF_TOP3_BONUS,
+            _ => {}
+        }
+    }
+    finalise(merged)
+}
+
 /// Per-document chunk cap on the final ranked list (#4542).  Keeps
 /// at most `chunks_per_page` hits per source path; extras (already
 /// sorted lower by the fusion score) fall off the tail.
@@ -233,6 +291,7 @@ mod tests {
             zone_id: "root".to_string(),
             mtime_ms: Some(1),
             expanded_context: String::new(),
+            title_score: None,
         }
     }
 
@@ -340,6 +399,7 @@ mod tests {
             zone_id: "root".into(),
             mtime_ms: Some(100),
             expanded_context: String::new(),
+            title_score: None,
         }];
         let sem = vec![QueryResult {
             path: "/a".into(),
@@ -349,6 +409,7 @@ mod tests {
             zone_id: "root".into(),
             mtime_ms: Some(200),
             expanded_context: String::new(),
+            title_score: None,
         }];
         let fused = rrf(&kw, &sem, 60);
         assert_eq!(fused.len(), 1);
@@ -397,6 +458,92 @@ mod tests {
     }
 
     #[test]
+    fn rrf_multi_accumulates_across_arms_and_stamps_title_score() {
+        // /a is in both arms → RRF sum + title_score stamped even on
+        // the chunk arm's first-seen template.  /b chunk-only → no
+        // title_score.  /c title-only → title_score set.
+        let chunk = vec![hit("/a", 0, 10.0), hit("/b", 0, 5.0)];
+        let title = vec![hit("/a", 0, 7.0), hit("/c", 0, 4.0)];
+        let fused = rrf_multi(
+            &[(ArmKind::Chunk, &chunk), (ArmKind::Title, &title)],
+            DEFAULT_RRF_K,
+        );
+        let a = fused.iter().find(|r| r.path == "/a").expect("/a");
+        let b = fused.iter().find(|r| r.path == "/b").expect("/b");
+        let c = fused.iter().find(|r| r.path == "/c").expect("/c");
+        assert_eq!(
+            a.title_score,
+            Some(7.0),
+            "merged doc carries the arm's own score"
+        );
+        assert_eq!(b.title_score, None);
+        assert_eq!(c.title_score, Some(4.0));
+        // Shared doc leads: two votes + top-1 bonus.
+        assert_eq!(fused[0].path, "/a");
+    }
+
+    #[test]
+    fn rrf_multi_matches_reference_formula_with_top_rank_bonus() {
+        // /a: rank 1 in chunk, rank 2 in title, best rank 1
+        //   → 1/61 + 1/62 + RRF_TOP1_BONUS
+        // /z: rank 1 in title, best rank 1 → 1/61 + RRF_TOP1_BONUS
+        // /b: rank 2 in chunk, best rank 2 → 1/62 + RRF_TOP3_BONUS
+        let chunk = vec![hit("/a", 0, 1.0), hit("/b", 0, 0.5)];
+        let title = vec![hit("/z", 0, 9.0), hit("/a", 0, 8.0)];
+        let fused = rrf_multi(&[(ArmKind::Chunk, &chunk), (ArmKind::Title, &title)], 60);
+        let score_of = |p: &str| fused.iter().find(|r| r.path == p).unwrap().score;
+        let close = |a: f32, b: f32| (a - b).abs() < 1e-5;
+        assert!(close(
+            score_of("/a"),
+            1.0 / 61.0 + 1.0 / 62.0 + RRF_TOP1_BONUS
+        ));
+        assert!(close(score_of("/z"), 1.0 / 61.0 + RRF_TOP1_BONUS));
+        assert!(close(score_of("/b"), 1.0 / 62.0 + RRF_TOP3_BONUS));
+    }
+
+    #[test]
+    fn rrf_multi_single_arm_preserves_input_order() {
+        // Guards the pass-through contract's neighbour: even when
+        // callers DO sub-fuse a lone chunk arm, ranks must not move.
+        let chunk = vec![hit("/x", 0, 9.0), hit("/y", 0, 5.0), hit("/z", 0, 1.0)];
+        let fused = rrf_multi(&[(ArmKind::Chunk, &chunk)], DEFAULT_RRF_K);
+        let paths: Vec<&str> = fused.iter().map(|r| r.path.as_str()).collect();
+        assert_eq!(paths, ["/x", "/y", "/z"]);
+        assert!(fused.iter().all(|r| r.title_score.is_none()));
+    }
+
+    #[test]
+    fn rrf_multi_first_seen_template_wins_but_title_score_lands() {
+        // Chunk arm listed first → its chunk_text/mtime win the base
+        // copy (mirrors Python "title arm listed last" rule); the
+        // title vote still stamps title_score on that template.
+        let mut chunk_row = hit("/a", 3, 1.0);
+        chunk_row.chunk_text = "leg-text".into();
+        chunk_row.mtime_ms = Some(100);
+        let mut title_row = hit("/a", 3, 6.0);
+        title_row.chunk_text = "hydrated-text".into();
+        title_row.mtime_ms = Some(200);
+        let chunk = vec![chunk_row];
+        let title = vec![title_row];
+        let fused = rrf_multi(&[(ArmKind::Chunk, &chunk), (ArmKind::Title, &title)], 60);
+        assert_eq!(fused.len(), 1);
+        assert_eq!(fused[0].chunk_text, "leg-text");
+        assert_eq!(fused[0].mtime_ms, Some(100));
+        assert_eq!(fused[0].title_score, Some(6.0));
+    }
+
+    #[test]
+    fn rrf_multi_key_alignment_merges_only_same_chunk_index() {
+        // (path, chunk_index) is the fusion identity — a title hit
+        // hydrated to chunk 0 does NOT merge with a chunk-arm hit at
+        // chunk 2 (that's why hydration borrows the leg's index).
+        let chunk = vec![hit("/a", 2, 1.0)];
+        let title = vec![hit("/a", 0, 6.0)];
+        let fused = rrf_multi(&[(ArmKind::Chunk, &chunk), (ArmKind::Title, &title)], 60);
+        assert_eq!(fused.len(), 2, "different chunk_index must not merge");
+    }
+
+    #[test]
     fn finalise_ties_break_deterministically() {
         // Two docs at the same fused score — path lexicographic
         // then chunk_index.  Snapshot tests depend on this.
@@ -409,6 +556,7 @@ mod tests {
                 zone_id: "root".into(),
                 mtime_ms: None,
                 expanded_context: String::new(),
+                title_score: None,
             },
             QueryResult {
                 path: "/a".into(),
@@ -418,6 +566,7 @@ mod tests {
                 zone_id: "root".into(),
                 mtime_ms: None,
                 expanded_context: String::new(),
+                title_score: None,
             },
         ];
         // rrf here: rank-1 and rank-2 have different scores; equalise

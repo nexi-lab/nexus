@@ -63,6 +63,22 @@ const FTS_SUBDIR: &str = "fts-v2";
 /// relocates all plugin state to a data volume.
 const DATA_DIR_ENV: &str = "NEXUS_DATA_DIR";
 
+/// fsync a directory so freshly created entries survive a power
+/// cut (#4628 review R8).  On non-Unix targets directories cannot
+/// be opened for sync — degrade to a no-op there (the deployed
+/// plugin targets are Unix).
+fn sync_dir(dir: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        std::fs::File::open(dir)?.sync_all()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = dir;
+        Ok(())
+    }
+}
+
 /// Resolve the default per-node storage root — `$NEXUS_DATA_DIR` if
 /// set, `./nexus-data` otherwise.  Matches vault's exact fallback so
 /// a fresh dev checkout puts vault + search state under the same
@@ -92,6 +108,28 @@ pub struct IndexManager {
     /// Holding this lock for the duration of a zone's index
     /// transaction serializes writers; queries never take it.
     zone_write_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    /// Per-zone skeleton snapshots for the title arm (#4628), keyed
+    /// implicitly by each snapshot's FTS generation — see
+    /// [`Self::get_or_build_skeleton`].
+    skeletons: Mutex<HashMap<String, Arc<crate::title_index::ZoneSkeleton>>>,
+    /// Per-zone single-flight guards for skeleton builds (review
+    /// R1 of #4628's title arm).  A build is a full stored-doc scan;
+    /// without this, N concurrent cache misses after a commit would
+    /// run N simultaneous corpus scans and retain N snapshot copies.
+    /// Exactly one caller builds; the rest serve the prior snapshot
+    /// (or run with an empty arm on a cold start).
+    skeleton_build_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    /// Zones with an index write IN FLIGHT or a FAILED write behind
+    /// them (#4628 review R5).  ANN mutations become search-visible
+    /// before the FTS commit bumps the generation, so the epoch
+    /// alone can't see a half-applied write: writers mark the zone
+    /// dirty before touching any sink and clear it only after every
+    /// sink committed.  The query path treats a dirty zone as
+    /// "no observable epoch" — cache reads and inserts are skipped,
+    /// so mixed-sink state is never pinned for the TTL.  A failed
+    /// write leaves the flag set (fail-closed) until a later
+    /// successful write clears it.
+    dirty_zones: Mutex<std::collections::HashSet<String>>,
 }
 
 /// Cache key for the ANN index — one entry per `(zone, embedder tag)`.
@@ -101,6 +139,22 @@ pub struct IndexManager {
 struct AnnKey {
     zone_id: String,
     embedder_tag: String,
+}
+
+/// Outcome of a skeleton fetch (#4628 review R2).  Freshness is part
+/// of the contract so callers can decide whether a result computed
+/// from this snapshot is CACHEABLE: a ranking built from a stale or
+/// absent skeleton must not be stored under the same cache identity
+/// as a fresh one, or it outlives the rebuild for the cache TTL.
+pub enum SkeletonAccess {
+    /// Snapshot matches the index's CURRENT searcher generation.
+    Fresh(Arc<crate::title_index::ZoneSkeleton>),
+    /// A rebuild is in flight; this is the previous generation's
+    /// snapshot (slightly stale titles beat a thundering herd).
+    Stale(Arc<crate::title_index::ZoneSkeleton>),
+    /// A rebuild is in flight and no prior snapshot exists (cold
+    /// start) — callers run with an empty title arm.
+    Building,
 }
 
 impl IndexManager {
@@ -118,7 +172,101 @@ impl IndexManager {
             zones: Mutex::new(HashMap::new()),
             ann_zones: Mutex::new(HashMap::new()),
             zone_write_locks: Mutex::new(HashMap::new()),
+            skeletons: Mutex::new(HashMap::new()),
+            skeleton_build_locks: Mutex::new(HashMap::new()),
+            dirty_zones: Mutex::new(std::collections::HashSet::new()),
         }
+    }
+
+    /// On-disk twin of the in-memory dirty flag (#4628 review R6):
+    /// a crash between sink commits would erase a memory-only flag
+    /// while leaving the sinks mixed, so the marker also lives as a
+    /// sentinel file under the zone root and survives restarts.
+    fn zone_dirty_sentinel(&self, zone_id: &str) -> PathBuf {
+        self.zone_root(zone_id).join(".write-dirty")
+    }
+
+    /// Mark a zone's index write as in flight — call BEFORE the
+    /// first sink mutation.  FALLIBLE (review R7): if the sentinel
+    /// cannot be durably created, the caller must ABORT the write —
+    /// proceeding would mean a crash under the same degraded
+    /// storage re-enables caching over mixed sinks after restart.
+    /// Returns whether the zone was ALREADY dirty (a prior failed /
+    /// interrupted write left unreconciled drift) — callers use it
+    /// to avoid clearing dirt they didn't create.
+    pub fn mark_zone_dirty(&self, zone_id: &str) -> Result<bool, String> {
+        let was_dirty = self.zone_is_dirty(zone_id);
+        self.dirty_zones.lock().insert(zone_id.to_string());
+        let sentinel = self.zone_dirty_sentinel(zone_id);
+        std::fs::create_dir_all(self.zone_root(zone_id))
+            .and_then(|_| std::fs::File::create(&sentinel))
+            .and_then(|f| f.sync_all())
+            // Directory-entry durability (review R8): the file's own
+            // sync_all does not pin the NEW directory entry — a
+            // power cut could drop `.write-dirty` while surviving
+            // independently-committed sink state.  fsync the zone
+            // dir (covers the sentinel entry) and the manager root
+            // (covers a zone dir create_dir_all just made).
+            .and_then(|_| sync_dir(&self.zone_root(zone_id)))
+            .and_then(|_| sync_dir(&self.root))
+            .map_err(|e| {
+                format!("dirty sentinel create failed for zone {zone_id:?}: {e} — write aborted")
+            })?;
+        Ok(was_dirty)
+    }
+
+    /// Clear the write-in-flight mark — call only after EVERY sink
+    /// (FTS + ANN + state) committed successfully.  A failed write
+    /// path must NOT call this: the flag then keeps the query cache
+    /// bypassed until a subsequent successful write repairs the
+    /// zone.
+    ///
+    /// Clearing is durable and fail-closed (review R9): the sentinel
+    /// is removed AND the directory entry fsynced BEFORE the
+    /// in-memory flag drops.  If removal or the sync fails, the
+    /// in-memory flag stays set — matching the on-disk state a
+    /// restart would observe, instead of silently diverging until
+    /// one.
+    pub fn clear_zone_dirty(&self, zone_id: &str) {
+        let sentinel = self.zone_dirty_sentinel(zone_id);
+        // NotFound also syncs (review R10): a PRIOR unlink may still
+        // be unsynced in the directory, so "already absent" is only
+        // trustworthy after the entry state is pinned.
+        let removed = match std::fs::remove_file(&sentinel) {
+            Ok(()) => sync_dir(&self.zone_root(zone_id)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                sync_dir(&self.zone_root(zone_id))
+            }
+            Err(e) => Err(e),
+        };
+        match removed {
+            Ok(()) => {
+                self.dirty_zones.lock().remove(zone_id);
+            }
+            Err(e) => {
+                tracing::warn!(err = %e, zone = %zone_id, "dirty sentinel clear failed — zone stays cache-bypassed");
+                // Restore the ON-DISK fail-closed state (review R10):
+                // if the unlink landed but its durability is unproven,
+                // a restart would otherwise observe a clean zone.
+                // Best-effort — if the filesystem is this sick, sink
+                // writes are failing too and their errors keep the
+                // in-memory flag set.
+                let _ = std::fs::File::create(&sentinel).and_then(|f| f.sync_all());
+                let _ = sync_dir(&self.zone_root(zone_id));
+            }
+        }
+    }
+
+    /// Is a write in flight (or a failed/interrupted write
+    /// unrepaired) for this zone?  Query callers skip cache reads
+    /// AND inserts while true.  Consults the persistent sentinel
+    /// too, so a crash mid-write keeps the cache bypassed after
+    /// restart until a successful write clears it (review R6).
+    /// Sentinel metadata errors read as DIRTY (review R7) — a
+    /// filesystem that can't answer must not re-enable caching.
+    pub fn zone_is_dirty(&self, zone_id: &str) -> bool {
+        self.dirty_zones.lock().contains(zone_id)
+            || !matches!(self.zone_dirty_sentinel(zone_id).try_exists(), Ok(false))
     }
 
     /// Handle to the given zone's write lock.  Callers hold the
@@ -182,6 +330,77 @@ impl IndexManager {
         let idx = FtsIndex::open_or_create(self.index_dir(zone_id))?;
         zones.insert(zone_id.to_string(), Arc::clone(&idx));
         Ok(idx)
+    }
+
+    /// Get the zone's skeleton snapshot, rebuilding when the FTS
+    /// index has committed since the cached build.  Generation-keyed
+    /// (not call-site invalidated): every Index / Refresh /
+    /// IndexDocuments / NotifyFileChange mutation ends in an FTS
+    /// commit, which bumps the searcher generation — so staleness
+    /// detection is structural and new mutation paths can't forget
+    /// to invalidate.
+    ///
+    /// Builds are SINGLE-FLIGHT per zone: a build is a full
+    /// stored-doc scan, so exactly one caller runs it while
+    /// concurrent callers immediately get [`SkeletonAccess::Stale`]
+    /// (prior generation's snapshot) or
+    /// [`SkeletonAccess::Building`] (cold start — empty title arm
+    /// for that query, fail-soft).  Freshness rides the return so
+    /// callers can keep degraded results out of response caches.
+    /// The winning builder holds only the per-zone build lock during
+    /// the scan, never the snapshot-cache lock.
+    pub fn get_or_build_skeleton(&self, zone_id: &str) -> Result<SkeletonAccess, IndexError> {
+        let fts = self.get_or_open(zone_id)?;
+        let current_gen = fts.generation_id();
+        let stale = self.skeletons.lock().get(zone_id).map(Arc::clone);
+        if let Some(sk) = &stale {
+            if sk.generation_id() == current_gen {
+                return Ok(SkeletonAccess::Fresh(Arc::clone(sk)));
+            }
+        }
+        let build_lock = Arc::clone(
+            self.skeleton_build_locks
+                .lock()
+                .entry(zone_id.to_string())
+                .or_default(),
+        );
+        let Some(_build_guard) = build_lock.try_lock() else {
+            // Another thread is scanning this zone right now — serve
+            // the previous snapshot (or nothing on a cold start)
+            // rather than piling on a duplicate corpus scan.
+            return Ok(match stale {
+                Some(sk) => SkeletonAccess::Stale(sk),
+                None => SkeletonAccess::Building,
+            });
+        };
+        // Double-check under build exclusivity: the previous builder
+        // may have published the current generation between our cache
+        // read and lock acquisition.
+        {
+            let cache = self.skeletons.lock();
+            if let Some(sk) = cache.get(zone_id) {
+                if sk.generation_id() == current_gen {
+                    return Ok(SkeletonAccess::Fresh(Arc::clone(sk)));
+                }
+            }
+        }
+        let built = Arc::new(crate::title_index::ZoneSkeleton::build(&fts)?);
+        self.skeletons
+            .lock()
+            .insert(zone_id.to_string(), Arc::clone(&built));
+        Ok(SkeletonAccess::Fresh(built))
+    }
+
+    /// Test-only: hold the zone's skeleton build lock so tests can
+    /// pin the "builder busy" path deterministically.
+    #[cfg(test)]
+    pub fn skeleton_build_lock_for_test(&self, zone_id: &str) -> Arc<Mutex<()>> {
+        Arc::clone(
+            self.skeleton_build_locks
+                .lock()
+                .entry(zone_id.to_string())
+                .or_default(),
+        )
     }
 
     /// Fetch (or lazily open) the ANN index for `zone_id` under the
@@ -349,5 +568,129 @@ mod tests {
         let hits_b = b.search("only", 10, None).expect("search b");
         assert_eq!(hits_b.len(), 1);
         assert_eq!(hits_b[0].path, "/y.md");
+    }
+
+    #[test]
+    fn skeleton_cache_rebuilds_on_generation_change() {
+        let root = tempfile::tempdir().expect("tempdir").keep();
+        let mgr = IndexManager::with_root(root);
+        let fts = mgr.get_or_open("zoneA").expect("open");
+        fts.add_document("/a.md", 0, "# Alpha\nbody", Some(1))
+            .expect("add");
+        fts.commit().expect("commit");
+
+        let sk1 = expect_fresh(mgr.get_or_build_skeleton("zoneA"));
+        assert_eq!(sk1.doc_count(), 1);
+        // Same generation → the SAME Arc comes back (cache hit).
+        let sk1b = expect_fresh(mgr.get_or_build_skeleton("zoneA"));
+        assert!(std::sync::Arc::ptr_eq(&sk1, &sk1b));
+
+        // Mutate + commit → generation bump → rebuild with fresh docs.
+        fts.add_document("/b.md", 0, "# Beta\nbody", Some(2))
+            .expect("add");
+        fts.commit().expect("commit");
+        let sk2 = expect_fresh(mgr.get_or_build_skeleton("zoneA"));
+        assert!(!std::sync::Arc::ptr_eq(&sk1, &sk2));
+        assert_eq!(sk2.doc_count(), 2);
+
+        // Zone isolation: an unrelated zone builds its own skeleton.
+        let sk_other = expect_fresh(mgr.get_or_build_skeleton("zoneB"));
+        assert_eq!(sk_other.doc_count(), 0);
+    }
+
+    fn expect_fresh(
+        access: Result<SkeletonAccess, IndexError>,
+    ) -> std::sync::Arc<crate::title_index::ZoneSkeleton> {
+        match access.expect("no error") {
+            SkeletonAccess::Fresh(sk) => sk,
+            SkeletonAccess::Stale(_) => panic!("expected Fresh, got Stale"),
+            SkeletonAccess::Building => panic!("expected Fresh, got Building"),
+        }
+    }
+
+    #[test]
+    fn zone_dirty_flag_marks_clears_and_isolates_zones() {
+        // Review R5 (#4628): writers mark before the first sink
+        // mutation and clear only after every sink committed; a
+        // failed write leaves the mark so the query cache stays
+        // bypassed until a later successful write.
+        let root = tempfile::tempdir().expect("tempdir").keep();
+        let mgr = IndexManager::with_root(root);
+        assert!(!mgr.zone_is_dirty("zoneA"));
+        mgr.mark_zone_dirty("zoneA").expect("mark");
+        assert!(mgr.zone_is_dirty("zoneA"));
+        assert!(!mgr.zone_is_dirty("zoneB"), "zones must not share the flag");
+        mgr.clear_zone_dirty("zoneA");
+        assert!(!mgr.zone_is_dirty("zoneA"));
+        // Clearing an unmarked zone is a no-op, not a panic.
+        mgr.clear_zone_dirty("zoneB");
+    }
+
+    #[test]
+    fn zone_dirty_flag_survives_restart() {
+        // Review R6 (#4628): a crash between sink commits must not
+        // erase the cache-bypass signal — the sentinel file carries
+        // it across manager restarts.
+        let root = tempfile::tempdir().expect("tempdir").keep();
+        {
+            let mgr = IndexManager::with_root(root.clone());
+            mgr.mark_zone_dirty("zoneA").expect("mark");
+            // Simulated crash: the manager is dropped without clear.
+        }
+        let reborn = IndexManager::with_root(root);
+        assert!(
+            reborn.zone_is_dirty("zoneA"),
+            "dirty mark must survive a restart until a successful write clears it"
+        );
+        reborn.clear_zone_dirty("zoneA");
+        assert!(!reborn.zone_is_dirty("zoneA"));
+    }
+
+    #[test]
+    fn skeleton_build_is_single_flight_busy_serves_stale_or_building() {
+        let root = tempfile::tempdir().expect("tempdir").keep();
+        let mgr = IndexManager::with_root(root);
+        let fts = mgr.get_or_open("zoneA").expect("open");
+        fts.add_document("/a.md", 0, "# Alpha\nbody", Some(1))
+            .expect("add");
+        fts.commit().expect("commit");
+
+        // Cold start with the build lock held elsewhere: no snapshot
+        // exists → callers get Building (empty arm, NOT cacheable)
+        // instead of piling onto a second scan.
+        let lock = mgr.skeleton_build_lock_for_test("zoneA");
+        {
+            let _held = lock.lock();
+            let got = mgr.get_or_build_skeleton("zoneA").expect("no error");
+            assert!(
+                matches!(got, SkeletonAccess::Building),
+                "cold start + busy builder must report Building"
+            );
+        }
+
+        // Build once, then stale-serve: bump the generation and hold
+        // the lock again — callers get the PRIOR snapshot marked
+        // Stale (NOT cacheable), not a duplicate build.
+        let sk1 = expect_fresh(mgr.get_or_build_skeleton("zoneA"));
+        fts.add_document("/b.md", 0, "# Beta\nbody", Some(2))
+            .expect("add");
+        fts.commit().expect("commit");
+        {
+            let _held = lock.lock();
+            match mgr.get_or_build_skeleton("zoneA").expect("no error") {
+                SkeletonAccess::Stale(got) => {
+                    assert!(
+                        std::sync::Arc::ptr_eq(&sk1, &got),
+                        "busy builder must serve the stale snapshot"
+                    );
+                    assert_eq!(got.doc_count(), 1);
+                }
+                SkeletonAccess::Fresh(_) => panic!("stale snapshot must not be reported Fresh"),
+                SkeletonAccess::Building => panic!("prior snapshot exists — must be Stale"),
+            }
+        }
+        // Lock released → the next call rebuilds to the new generation.
+        let sk2 = expect_fresh(mgr.get_or_build_skeleton("zoneA"));
+        assert_eq!(sk2.doc_count(), 2);
     }
 }

@@ -388,6 +388,14 @@ message QueryResult {
   // string) for `expand="none"` or when the source file has only
   // this one chunk.
   string expanded_context = 7;
+
+  // Title-arm attribution (#4628, mirrors Python #4552/#4545).  Set
+  // only on hybrid results the title arm voted for — carries the
+  // locate() score (title-token overlaps × 2 + path-token overlaps)
+  // so callers can see WHY a weak-body doc surfaced.  Absent for
+  // keyword / semantic modes, for hybrid hits with no title match,
+  // and when the arm is disabled (NEXUS_SEARCH_TITLE_ARM=false).
+  optional float title_score = 8;
 }
 
 message QueryResponse {

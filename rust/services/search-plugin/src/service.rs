@@ -52,6 +52,19 @@ const BATCH_QUERY_CONCURRENCY_ENV: &str = "NEXUS_SEARCH_BATCH_CONCURRENCY";
 const DEFAULT_BATCH_QUERY_CONCURRENCY: usize = 4;
 const MAX_BATCH_QUERY_CONCURRENCY: usize = 16;
 
+/// Kill-switch for the hybrid title arm (#4628; mirrors Python's
+/// NEXUS_SEARCH_TITLE_ARM, default ON).  Read per-query so an
+/// operator can flip it without a restart; "false" / "0" / "no"
+/// (trimmed, case-insensitive) disable.
+const TITLE_ARM_ENV: &str = "NEXUS_SEARCH_TITLE_ARM";
+
+fn title_arm_env_enabled() -> bool {
+    match std::env::var(TITLE_ARM_ENV) {
+        Ok(v) => !matches!(v.trim().to_ascii_lowercase().as_str(), "false" | "0" | "no"),
+        Err(_) => true,
+    }
+}
+
 fn batch_query_concurrency() -> usize {
     std::env::var(BATCH_QUERY_CONCURRENCY_ENV)
         .ok()
@@ -137,6 +150,10 @@ pub struct SearchServiceImpl {
     /// operations.  Surfaced on Stats as `indexing_in_progress` so
     /// pollers can tell "genuinely empty" from "still building".
     indexing_ops: Arc<std::sync::atomic::AtomicU32>,
+    /// Builder override for the hybrid title arm (#4628) — `None` ⇒
+    /// read `NEXUS_SEARCH_TITLE_ARM` per query (production);
+    /// `Some(_)` pins it (tests must not race the process env).
+    title_arm: Option<bool>,
 }
 
 /// RAII increment of [`SearchServiceImpl::indexing_ops`].
@@ -183,7 +200,14 @@ impl SearchServiceImpl {
             embedder: None,
             query_cache: None,
             embed_cache: None,
+            title_arm: None,
         }
+    }
+
+    /// Whether the hybrid title arm runs for this query — builder
+    /// pin wins; otherwise the env knob (default on).
+    fn title_arm_enabled(&self) -> bool {
+        self.title_arm.unwrap_or_else(title_arm_env_enabled)
     }
 
     /// Fetch (or lazily initialise) the embedder.  Fast path: read
@@ -245,6 +269,7 @@ pub struct SearchServiceBuilder {
     embedder: Option<Arc<dyn Embedder>>,
     query_cache: Option<crate::query_cache::SharedQueryCache>,
     embed_cache: Option<Arc<QueryEmbedCache>>,
+    title_arm: Option<bool>,
 }
 
 impl SearchServiceBuilder {
@@ -281,6 +306,13 @@ impl SearchServiceBuilder {
         self
     }
 
+    /// Pin the title arm on/off, bypassing NEXUS_SEARCH_TITLE_ARM —
+    /// for tests that must not race the process environment.
+    pub fn title_arm(mut self, enabled: bool) -> Self {
+        self.title_arm = Some(enabled);
+        self
+    }
+
     pub fn build(self) -> SearchServiceImpl {
         SearchServiceImpl {
             handle: self.handle,
@@ -295,6 +327,7 @@ impl SearchServiceBuilder {
                 .embed_cache
                 .unwrap_or_else(|| Arc::new(QueryEmbedCache::from_env())),
             indexing_ops: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+            title_arm: self.title_arm,
         }
     }
 }
@@ -544,10 +577,25 @@ fn walk_recursive(
     root_path: &str,
     visit: &mut dyn FnMut(&str, u8) -> WalkAction,
 ) -> Result<(), KernelIoError> {
+    let mut skipped_subtrees = 0u32;
+    walk_recursive_tracked(handle, root_path, visit, &mut skipped_subtrees)
+}
+
+/// Like [`walk_recursive`] but also counts subtrees SKIPPED because
+/// a nested `sys_readdir` failed transiently (#4628 review R9).
+/// Refresh must know: files under a skipped subtree were not seen,
+/// so "not seen" proves nothing — sweeping them as deleted would
+/// erase live index data on a transient permission/mount error.
+fn walk_recursive_tracked(
+    handle: &KernelHandle,
+    root_path: &str,
+    visit: &mut dyn FnMut(&str, u8) -> WalkAction,
+    skipped_subtrees: &mut u32,
+) -> Result<(), KernelIoError> {
     // Root-level readdir has to succeed OR we bubble the error.  A
     // NotFound here means the caller pointed us at nothing.
     let root_entries = kernel_io::sys_readdir(handle, root_path)?;
-    walk_entries(handle, root_path, root_entries, visit);
+    walk_entries(handle, root_path, root_entries, visit, skipped_subtrees);
     Ok(())
 }
 
@@ -556,6 +604,7 @@ fn walk_entries(
     parent: &str,
     entries: Vec<DirEntry>,
     visit: &mut dyn FnMut(&str, u8) -> WalkAction,
+    skipped_subtrees: &mut u32,
 ) -> WalkAction {
     for entry in entries {
         let child_path = kernel_io::join_vfs_path(parent, &entry.name);
@@ -569,14 +618,19 @@ fn walk_entries(
         if entry.entry_type == DT_DIR || entry.entry_type == kernel_io::DT_MOUNT {
             match kernel_io::sys_readdir(handle, &child_path) {
                 Ok(child_entries) => {
-                    if walk_entries(handle, &child_path, child_entries, visit) == WalkAction::Stop {
+                    if walk_entries(handle, &child_path, child_entries, visit, skipped_subtrees)
+                        == WalkAction::Stop
+                    {
                         return WalkAction::Stop;
                     }
                 }
                 Err(KernelIoError::NotFound) => {
-                    // Race with a concurrent unlink / unmount — skip.
+                    // Race with a concurrent unlink / unmount — the
+                    // subtree is genuinely GONE, so its cached files
+                    // legitimately sweep as deleted.  Not counted.
                 }
                 Err(e) => {
+                    *skipped_subtrees += 1;
                     tracing::warn!(
                         path = %child_path,
                         err = ?e,
@@ -769,6 +823,7 @@ fn enrich_ann_hit(
         zone_id: zone_id.to_string(),
         mtime_ms,
         expanded_context: String::new(),
+        title_score: None,
     }
 }
 
@@ -796,6 +851,7 @@ fn fts_hit_to_result(hit: FtsHit, zone_id: &str) -> QueryResult {
         zone_id: zone_id.to_string(),
         mtime_ms: hit.mtime_ms,
         expanded_context: String::new(),
+        title_score: None,
     }
 }
 
@@ -920,6 +976,245 @@ const HYBRID_OVER_FETCH_MULT: usize = 2;
 const ADJUSTMENT_OVER_FETCH_MULT: usize = 10;
 const ADJUSTMENT_FETCH_CEILING: usize = 500;
 
+/// Cap on per-query representative-chunk fetches for uncovered
+/// title hits.  Sized ABOVE the adjustment fetch ceiling (review
+/// R5: a 32-hit cap silently starved recency/prefix adjustments of
+/// the mtime + text they need for candidates past rank 32) — each
+/// lookup is a ~10 µs FTS TermQuery, so covering the full 500-hit
+/// adjustment pool costs single-digit milliseconds.  Locate's own
+/// candidate budgets bound the list well before this safety cap.
+const TITLE_ARM_MAX_HYDRATION_FETCH: usize = 512;
+
+/// Run the title arm's locate: skeleton lookup (building it on
+/// first use per index generation) + evidence gate.  Fail-soft —
+/// a skeleton build error degrades to an empty arm with a debug
+/// log; the search itself must never fail on the arm's account.
+///
+/// Outcome of the title-arm leg: the (gated) hits plus the
+/// arm-side cacheability verdict (#4628 reviews R2/R4).
+/// `cacheable = false` marks a run against a stale or absent
+/// skeleton — wrong within the SAME commit epoch, so the epoch-
+/// stamped query cache can't catch it on read.  Commit races are
+/// the cache's job: entries carry the producing query's start
+/// epoch and readers validate it (see `QueryCache::get`).
+struct TitleArmRun {
+    hits: Vec<crate::title_index::TitleHit>,
+    cacheable: bool,
+}
+
+impl TitleArmRun {
+    fn disabled() -> Self {
+        Self {
+            hits: Vec::new(),
+            cacheable: true,
+        }
+    }
+
+    fn degraded() -> Self {
+        Self {
+            hits: Vec::new(),
+            cacheable: false,
+        }
+    }
+}
+
+/// Run the title arm's locate: skeleton lookup (building it on
+/// first use per index generation) + evidence gate.  Fail-soft —
+/// a skeleton build error degrades to an empty arm with a debug
+/// log; the search itself must never fail on the arm's account.
+///
+/// Freshness (#4628 review R2): `cacheable` is true only when the
+/// hits came from the current-generation skeleton.  A ranking
+/// computed from a stale snapshot, a mid-build cold start, or a
+/// failed build must NOT enter the query cache — it would outlive
+/// the rebuild for the whole cache TTL.
+fn do_title_locate(
+    manager: &IndexManager,
+    q: &str,
+    zone_id: &str,
+    limit: usize,
+    path_filter: &str,
+) -> TitleArmRun {
+    let locate = |skeleton: &crate::title_index::ZoneSkeleton| {
+        let prefix = (!path_filter.is_empty()).then_some(path_filter);
+        let mut hits = skeleton.locate(q, limit, prefix);
+        // Evidence gate: a lone incidental path-token overlap
+        // (score 1.0) must not earn rank-based RRF votes;
+        // require at least one real title-token match (2.0).
+        hits.retain(|h| h.score >= crate::title_index::TITLE_ARM_MIN_SCORE);
+        hits
+    };
+    match manager.get_or_build_skeleton(zone_id) {
+        Ok(crate::index_manager::SkeletonAccess::Fresh(skeleton)) => TitleArmRun {
+            hits: locate(&skeleton),
+            cacheable: true,
+        },
+        Ok(crate::index_manager::SkeletonAccess::Stale(skeleton)) => {
+            tracing::debug!(zone = %zone_id, "title arm: rebuild in flight — stale snapshot, uncacheable");
+            TitleArmRun {
+                hits: locate(&skeleton),
+                cacheable: false,
+            }
+        }
+        // Cold start while another query is building the skeleton —
+        // single-flight served no snapshot; run this query with an
+        // empty arm rather than duplicating the corpus scan.
+        Ok(crate::index_manager::SkeletonAccess::Building) => {
+            tracing::debug!(zone = %zone_id, "title arm: skeleton build in flight — empty arm, uncacheable");
+            TitleArmRun::degraded()
+        }
+        Err(e) => {
+            tracing::debug!(err = %e, zone = %zone_id, "title arm: skeleton unavailable — degrading, uncacheable");
+            TitleArmRun::degraded()
+        }
+    }
+}
+
+/// Hydrate locate() hits to the QueryResult shape for fusion.  The
+/// fusion identity is (path, chunk_index), so each hit needs a
+/// representative chunk: borrow the best-scored keyword-leg row for
+/// the path (aligns the key so RRF votes accumulate on one fused
+/// entry instead of splitting), dense rows as the lowest-priority
+/// borrow source, then a capped FTS chunk-0 fetch for still-
+/// uncovered paths.  A doc with no FTS row (drift) stays
+/// retrievable with empty text.  `score` = the locate score —
+/// rrf_multi turns it into rank votes and stamps it as title_score
+/// attribution.
+fn hydrate_title_hits(
+    fts: Option<&crate::fts_index::FtsIndex>,
+    title_hits: &[crate::title_index::TitleHit],
+    keyword: &[QueryResult],
+    semantic: &[QueryResult],
+    zone_id: &str,
+) -> Vec<QueryResult> {
+    // Keyword rows are LIVE FTS evidence — BM25 served them from
+    // the current index.  Dense rows are not (review R7): delete
+    // handling defers ANN cleanup to the next Refresh, so an ANN
+    // row can outlive its document; borrowing it would resurrect
+    // the deleted path through title RRF.  Dense-covered hits
+    // therefore also require an FTS liveness check below.
+    let mut best_kw: std::collections::HashMap<&str, &QueryResult> =
+        std::collections::HashMap::new();
+    for r in keyword {
+        match best_kw.get(r.path.as_str()) {
+            Some(cur) if cur.score >= r.score => {}
+            _ => {
+                best_kw.insert(&r.path, r);
+            }
+        }
+    }
+    let mut best_dense: std::collections::HashMap<&str, &QueryResult> =
+        std::collections::HashMap::new();
+    for r in semantic {
+        match best_dense.get(r.path.as_str()) {
+            Some(cur) if cur.score >= r.score => {}
+            _ => {
+                best_dense.insert(&r.path, r);
+            }
+        }
+    }
+
+    // One FTS liveness/representative lookup per non-kw-covered
+    // hit.  Single-doc TermQuery — decodes exactly ONE stored row
+    // per path (review R6); the fusion identity only needs SOME
+    // live chunk, matching Python's arbitrary best-chunk borrows.
+    let mut fetched: std::collections::HashMap<&str, crate::fts_index::FtsHit> =
+        std::collections::HashMap::new();
+    if let Some(fts) = fts {
+        let need_liveness: Vec<&str> = title_hits
+            .iter()
+            .map(|h| h.path.as_str())
+            .filter(|p| !best_kw.contains_key(*p))
+            .take(TITLE_ARM_MAX_HYDRATION_FETCH)
+            .collect();
+        for path in need_liveness {
+            match fts.get_by_path(path) {
+                Ok(Some(row)) => {
+                    fetched.insert(path, row);
+                }
+                Ok(None) => {}
+                Err(e) => tracing::debug!(
+                    err = %e, path = %path,
+                    "title arm: representative-chunk fetch failed — hit dropped",
+                ),
+            }
+        }
+    }
+
+    title_hits
+        .iter()
+        .filter_map(|h| {
+            let path = h.path.as_str();
+            let (chunk_index, chunk_text, mtime_ms) = if let Some(leg) = best_kw.get(path) {
+                (leg.chunk_index, leg.chunk_text.clone(), leg.mtime_ms)
+            } else {
+                // No live FTS row (`?` drops the hit): the skeleton
+                // (fresh: drift; stale: deleted/retitled since the
+                // snapshot) or an orphaned ANN row references a doc
+                // the index no longer holds (reviews R5/R7).
+                let row = fetched.get(path)?;
+                // FTS-live path.  Merge with the dense vote's
+                // identity ONLY when that exact (path, chunk_index)
+                // is confirmed live (review R8): after a re-chunk
+                // with a failed re-embed, the path can be live while
+                // the dense row's chunk identity is an ANN orphan —
+                // borrowing it would boost a chunk the index no
+                // longer holds.  The fetched FTS row is the
+                // confirmation instrument and the safe fallback.
+                match best_dense.get(path) {
+                    Some(dense) if dense.chunk_index == row.chunk_index => {
+                        (dense.chunk_index, dense.chunk_text.clone(), dense.mtime_ms)
+                    }
+                    _ => (row.chunk_index, row.chunk_text.clone(), row.mtime_ms),
+                }
+            };
+            Some(QueryResult {
+                path: h.path.clone(),
+                chunk_index,
+                chunk_text,
+                score: h.score,
+                zone_id: zone_id.to_string(),
+                mtime_ms,
+                expanded_context: String::new(),
+                // Stamped by rrf_multi per arm vote, not here — so
+                // merged chunk-arm entries get it too.
+                title_score: None,
+            })
+        })
+        .collect()
+}
+
+/// Build the hybrid keyword lane (#4628).  The pass-through
+/// decision happens AFTER hydration (review R6): a title arm whose
+/// every hit was dropped (deleted paths from a stale skeleton, FTS
+/// drift) must leave the keyword arm byte-identical — re-fusing a
+/// lone chunk arm rewrites BM25 scores into RRF values, which
+/// shifts WEIGHTED-method blends even with zero title votes.
+fn build_kw_lane(
+    manager: &IndexManager,
+    zone_id: &str,
+    keyword: Vec<QueryResult>,
+    semantic: &[QueryResult],
+    title_hits: &[crate::title_index::TitleHit],
+    rrf_k: u32,
+) -> Vec<QueryResult> {
+    if title_hits.is_empty() {
+        return keyword;
+    }
+    let fts = manager.get_or_open(zone_id).ok();
+    let hydrated = hydrate_title_hits(fts.as_deref(), title_hits, &keyword, semantic, zone_id);
+    if hydrated.is_empty() {
+        return keyword;
+    }
+    fusion::rrf_multi(
+        &[
+            (fusion::ArmKind::Chunk, keyword.as_slice()),
+            (fusion::ArmKind::Title, hydrated.as_slice()),
+        ],
+        rrf_k,
+    )
+}
+
 /// Fuse two source result lists per the caller's chosen method,
 /// pool per-doc, and truncate to `limit`.  Pure math — the two
 /// source lists come in already fetched.  The RPC handler runs
@@ -996,6 +1291,15 @@ fn do_index(
     // whole at the end, so concurrent mutations would lose entries.
     let zone_lock = manager.zone_write_lock(zone_id);
     let _zone_guard = zone_lock.lock();
+    // Dirty window (#4628 review R5): ANN mutations are search-
+    // visible before the FTS commit bumps the generation, so the
+    // query cache must be bypassed from the first sink mutation
+    // until every sink committed.  Error paths deliberately leave
+    // the flag set — a half-applied write keeps the cache off until
+    // a later successful write repairs the zone.  Marking is
+    // fail-closed (R7): if the sentinel can't be durably created,
+    // the write aborts before touching any sink.
+    let zone_was_dirty = manager.mark_zone_dirty(zone_id)?;
 
     let fts = manager
         .get_or_open(zone_id)
@@ -1041,6 +1345,9 @@ fn do_index(
 
     let mut indexed: u32 = 0;
     let mut skipped: u32 = 0;
+    // Files whose sinks did NOT verifiably converge this pass
+    // (review R8) — any non-zero count blocks the dirty-mark clear.
+    let mut transient: u32 = 0;
 
     let visit_result = if recursive {
         walk_recursive(handle, root_path, &mut |vfs_path, entry_type| {
@@ -1052,7 +1359,15 @@ fn do_index(
             }
             match index_one(handle, &sinks, vfs_path) {
                 IndexOne::Added => indexed += 1,
+                IndexOne::AddedAnnRetry => {
+                    indexed += 1;
+                    transient += 1;
+                }
                 IndexOne::Skipped => skipped += 1,
+                IndexOne::SkippedTransient => {
+                    skipped += 1;
+                    transient += 1;
+                }
             }
             WalkAction::Continue
         })
@@ -1072,7 +1387,15 @@ fn do_index(
                     let child = kernel_io::join_vfs_path(root_path, &entry.name);
                     match index_one(handle, &sinks, &child) {
                         IndexOne::Added => indexed += 1,
+                        IndexOne::AddedAnnRetry => {
+                            indexed += 1;
+                            transient += 1;
+                        }
                         IndexOne::Skipped => skipped += 1,
+                        IndexOne::SkippedTransient => {
+                            skipped += 1;
+                            transient += 1;
+                        }
                     }
                 }
                 Ok(())
@@ -1097,11 +1420,24 @@ fn do_index(
     // an up-to-date baseline.  A crash between the sink commits and
     // this save just means the next Refresh will re-index those
     // files (fresh mtime not yet in the cache) — safe, wasted work.
-    if let Err(e) = state.save() {
-        tracing::warn!(err = %e, "index_state save failed");
-    }
+    let state_saved = match state.save() {
+        Ok(()) => true,
+        Err(e) => {
+            tracing::warn!(err = %e, "index_state save failed — zone stays cache-bypassed");
+            false
+        }
+    };
 
     visit_result?;
+    // Clear only dirt THIS write created, only when every sink
+    // (including the state file) persisted, AND only when every
+    // file it touched verifiably converged (reviews R7/R8).  Pre-
+    // existing dirt marks unreconciled cross-sink drift from a
+    // FAILED earlier write — a scoped success here didn't repair
+    // it; a full Refresh does.
+    if state_saved && !zone_was_dirty && transient == 0 {
+        manager.clear_zone_dirty(zone_id);
+    }
     Ok((indexed, skipped))
 }
 
@@ -1113,10 +1449,20 @@ enum IndexOne {
     // bytes (empty, oversize, binary, whitespace-only) — they record
     // their mtime in state so a Refresh dedups them like indexed
     // files and they stop consuming the repair budget every pass.
-    // Transient skips (read errors, FTS write errors) record nothing
-    // and are retried.
+    // Transient outcomes (read errors, FTS write errors, retryable
+    // ANN state) carry their own variants (review R8): they mean the
+    // pass did NOT fully converge this file's sinks, so dirty-mark
+    // clearing must not treat the pass as a completed reconciliation.
     Added,
+    /// FTS fully indexed, but the ANN side stayed retryable (embed
+    /// failure / embedder down with live ann-* dirs) — recorded with
+    /// mtime None so a later pass finishes the vectors.
+    AddedAnnRetry,
     Skipped,
+    /// Transient failure (read error, FTS write error, unreachable
+    /// ANN purge) — nothing recorded (or a retry tombstone kept);
+    /// the file's sink state is NOT verified-converged.
+    SkippedTransient,
 }
 
 /// Record a deterministic content-skip so Refresh dedups it (same
@@ -1141,7 +1487,7 @@ fn record_content_skip(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: 
         None if sinks.zone_has_ann => {
             // Vectors may exist but are unreachable — retry tombstone.
             sinks.state.record(vfs_path, None);
-            return IndexOne::Skipped;
+            return IndexOne::SkippedTransient;
         }
         None => {}
     }
@@ -1157,7 +1503,7 @@ fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> I
         Ok(b) => b,
         Err(e) => {
             tracing::debug!(path = %vfs_path, err = ?e, "index: sys_read failed — skipping");
-            return IndexOne::Skipped;
+            return IndexOne::SkippedTransient;
         }
     };
     if bytes.is_empty() {
@@ -1213,7 +1559,7 @@ fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> I
                 err = %e,
                 "index: fts add_document failed — skipping remaining chunks",
             );
-            return IndexOne::Skipped;
+            return IndexOne::SkippedTransient;
         }
     }
 
@@ -1281,11 +1627,11 @@ fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> I
     // re-add is idempotent, so the retry costs a re-chunk only.
     if ann_complete {
         sinks.state.record(vfs_path, mtime_ms);
+        IndexOne::Added
     } else {
         sinks.state.record(vfs_path, None);
+        IndexOne::AddedAnnRetry
     }
-
-    IndexOne::Added
 }
 
 /// Drop `path` from every sink — used by the Refresh stale-sweep
@@ -1397,6 +1743,8 @@ fn do_refresh(
     // Serialize writers per zone — same rationale as do_index.
     let zone_lock = manager.zone_write_lock(zone_id);
     let _zone_guard = zone_lock.lock();
+    // Dirty window — same rationale as do_index (reviews R5/R7).
+    let zone_was_dirty = manager.mark_zone_dirty(zone_id)?;
 
     let fts = manager
         .get_or_open(zone_id)
@@ -1438,6 +1786,13 @@ fn do_refresh(
     };
 
     let mut counts = RefreshCounts::default();
+    // Files whose sinks did NOT verifiably converge this pass
+    // (review R8) — any non-zero count blocks the dirty-mark clear.
+    let mut transient: u32 = 0;
+    // Subtrees the recursive walk skipped on transient readdir
+    // failures (review R9) — "not seen" proves nothing for those,
+    // so the stale sweep and the dirty clear are both blocked.
+    let mut skipped_subtrees: u32 = 0;
     // Track every path we visit so the stale-sweep at the end knows
     // which cached entries no longer exist in the corpus.
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -1449,6 +1804,18 @@ fn do_refresh(
     // set and its indexed docs).
     let mut truncated = false;
 
+    // Dirty-zone RECOVERY mode (reviews R9/R10): pre-existing dirt
+    // means an interrupted earlier write may have left a PARTIAL
+    // chunk set behind a retained same-mtime state entry, so the
+    // mtime cache cannot be trusted.  Recovery runs ONLY on the
+    // deliberate full-root recursive refresh, and that pass is
+    // EXEMPT from the repair cap: a capped forced pass would
+    // re-index the same stable-DFS prefix every call and never
+    // reach the tail, stalling the zone in cache-bypass forever.
+    // Scoped/capped refreshes on a dirty zone use normal verdicts
+    // (they repair what changed but never clear pre-existing dirt).
+    let reconciling = zone_was_dirty && root_path == "/" && recursive;
+
     let mut visit_file = |vfs_path: &str| -> WalkAction {
         // The cap budgets REPAIR work (re-index = chunk + embed), not
         // cheap unchanged visits (one sys_stat each).  Counting
@@ -1457,7 +1824,7 @@ fn do_refresh(
         // post-migration pass repaired the first max_docs files,
         // every later refresh re-counted those now-unchanged entries
         // and stopped before ever reaching the tail (review R4).
-        if (counts.reindexed as usize + counts.skipped as usize) >= max_docs {
+        if !reconciling && (counts.reindexed as usize + counts.skipped as usize) >= max_docs {
             truncated = true;
             return WalkAction::Stop;
         }
@@ -1465,14 +1832,27 @@ fn do_refresh(
         let fresh_mtime = kernel_io::sys_stat(handle, vfs_path)
             .ok()
             .and_then(|info| info.modified_at_ms);
-        match sinks.state.verdict(vfs_path, fresh_mtime) {
+        let verdict = if reconciling {
+            crate::index_state::RefreshVerdict::Changed
+        } else {
+            sinks.state.verdict(vfs_path, fresh_mtime)
+        };
+        match verdict {
             crate::index_state::RefreshVerdict::Unchanged => {
                 counts.unchanged += 1;
             }
             crate::index_state::RefreshVerdict::Changed => {
                 match index_one(handle, &sinks, vfs_path) {
                     IndexOne::Added => counts.reindexed += 1,
+                    IndexOne::AddedAnnRetry => {
+                        counts.reindexed += 1;
+                        transient += 1;
+                    }
                     IndexOne::Skipped => counts.skipped += 1,
+                    IndexOne::SkippedTransient => {
+                        counts.skipped += 1;
+                        transient += 1;
+                    }
                 }
             }
         }
@@ -1480,12 +1860,17 @@ fn do_refresh(
     };
 
     let visit_result = if recursive {
-        walk_recursive(handle, root_path, &mut |vfs_path, entry_type| {
-            if entry_type != DT_REG {
-                return WalkAction::Continue;
-            }
-            visit_file(vfs_path)
-        })
+        walk_recursive_tracked(
+            handle,
+            root_path,
+            &mut |vfs_path, entry_type| {
+                if entry_type != DT_REG {
+                    return WalkAction::Continue;
+                }
+                visit_file(vfs_path)
+            },
+            &mut skipped_subtrees,
+        )
         .map_err(walk_err_to_string)
     } else {
         match kernel_io::sys_readdir(handle, root_path) {
@@ -1526,7 +1911,15 @@ fn do_refresh(
              raise max_docs or refresh in narrower scopes to sweep deletions",
         );
     }
-    if visit_result.is_ok() && !truncated {
+    if skipped_subtrees > 0 {
+        tracing::warn!(
+            skipped_subtrees,
+            root = %root_path,
+            "refresh walk skipped subtrees on transient readdir failures — \
+             stale sweep skipped; files under them were NOT verified",
+        );
+    }
+    if visit_result.is_ok() && !truncated && skipped_subtrees == 0 {
         let scope = root_path.trim_end_matches('/');
         let has_ann_dir = sinks.zone_has_ann;
         for cached_path in sinks.state.known_paths() {
@@ -1552,12 +1945,28 @@ fn do_refresh(
             return Err(format!("ann commit: {e}"));
         }
     }
-    if let Err(e) = state.save() {
-        tracing::warn!(err = %e, "index_state save failed");
-    }
+    let state_saved = match state.save() {
+        Ok(()) => true,
+        Err(e) => {
+            tracing::warn!(err = %e, "index_state save failed — zone stays cache-bypassed");
+            false
+        }
+    };
 
     visit_result?;
     counts.truncated = truncated;
+    // Refresh IS the reconciliation op — but only a walk that
+    // actually CONVERGED every sink counts as one (reviews R7/R8):
+    // full recursive root coverage, un-truncated, zero transient
+    // failures (read/FTS errors, retryable ANN state), and zero
+    // kept deletion tombstones (deferred ANN purges).  A scoped,
+    // truncated, or partially-failed refresh clears only its own
+    // mark, and only when nothing it touched stayed unconverged.
+    let converged = transient == 0 && counts.tombstoned == 0 && skipped_subtrees == 0;
+    let full_reconciliation = root_path == "/" && recursive && !truncated && converged;
+    if state_saved && ((!zone_was_dirty && converged) || full_reconciliation) {
+        manager.clear_zone_dirty(zone_id);
+    }
     Ok(counts)
 }
 
@@ -1596,6 +2005,8 @@ fn do_index_documents(
         // Serialize writers per zone — same rationale as do_index.
         let zone_lock = manager.zone_write_lock(&zone_id);
         let _zone_guard = zone_lock.lock();
+        // Dirty window — same rationale as do_index (reviews R5/R7).
+        let zone_was_dirty = manager.mark_zone_dirty(&zone_id)?;
 
         let fts = manager
             .get_or_open(&zone_id)
@@ -1639,32 +2050,45 @@ fn do_index_documents(
         // Content transition on explicit indexing (review R6): a doc
         // re-posted with empty/whitespace text must PURGE its prior
         // chunks, not leave stale text searchable behind a skip.
-        let content_skip = |path: &str| {
+        // Returns true when the purge stayed TRANSIENT (unreachable
+        // ANN → retry tombstone kept) — the zone did not converge
+        // this pass (review R8).
+        let content_skip = |path: &str| -> bool {
             fts.delete_all_chunks(path);
             match ann.as_ref() {
                 Some(a) => {
                     a.delete_all_chunks(path);
                     state.forget(path);
+                    false
                 }
                 None if zone_has_ann => {
                     // Vectors may exist but are unreachable — retry
                     // tombstone so a later pass finishes the purge.
                     state.record(path, None);
+                    true
                 }
                 None => {
                     state.forget(path);
+                    false
                 }
             }
         };
+        // Docs whose sinks did NOT verifiably converge this pass
+        // (review R8) — blocks the zone's dirty-mark clear below.
+        let mut zone_transient: u32 = 0;
         for doc in docs {
             if doc.text.trim().is_empty() {
-                content_skip(&doc.path);
+                if content_skip(&doc.path) {
+                    zone_transient += 1;
+                }
                 total_skipped += 1;
                 continue;
             }
             let chunks = crate::chunker::chunk_document(&doc.text);
             if chunks.is_empty() {
-                content_skip(&doc.path);
+                if content_skip(&doc.path) {
+                    zone_transient += 1;
+                }
                 total_skipped += 1;
                 continue;
             }
@@ -1682,6 +2106,7 @@ fn do_index_documents(
             }
             if !fts_ok {
                 total_skipped += 1;
+                zone_transient += 1;
                 continue;
             }
 
@@ -1743,6 +2168,7 @@ fn do_index_documents(
                 state.record(&doc.path, doc.mtime_ms);
             } else {
                 state.record(&doc.path, None);
+                zone_transient += 1;
             }
             total_indexed += 1;
             docs_since_commit += 1;
@@ -1766,10 +2192,20 @@ fn do_index_documents(
                 return Err(format!("ann commit for zone {zone_id:?}: {e}"));
             }
         }
-        if let Err(e) = state.save() {
-            tracing::warn!(err = %e, zone = %zone_id, "index_state save failed");
-        }
+        let state_saved = match state.save() {
+            Ok(()) => true,
+            Err(e) => {
+                tracing::warn!(err = %e, zone = %zone_id, "index_state save failed — zone stays cache-bypassed");
+                false
+            }
+        };
         cache.invalidate_zone(&zone_id);
+        // Clear only dirt this write created, only when the state
+        // file persisted, and only when every doc it touched
+        // verifiably converged (reviews R7/R8).
+        if state_saved && !zone_was_dirty && zone_transient == 0 {
+            manager.clear_zone_dirty(&zone_id);
+        }
     }
 
     Ok((total_indexed, total_skipped))
@@ -1800,6 +2236,12 @@ fn do_notify_file_change(
 
     match change_type {
         "delete" => {
+            // Dirty window — same rationale as do_index (reviews
+            // R5/R7).  Marked only on this MUTATING arm: the no-op
+            // arms must neither set nor clear the flag, or a
+            // "skipped" ack could erase the fail-closed mark left
+            // by an earlier failed write.
+            let zone_was_dirty = manager.mark_zone_dirty(zone_id)?;
             fts.delete_all_chunks(path);
             // Only open ANN if it happens to already be there —
             // creating an empty ANN dir on a delete is
@@ -1824,6 +2266,12 @@ fn do_notify_file_change(
                 return Err(format!("delete tombstone persist failed: {e}"));
             }
             cache.invalidate_zone(zone_id);
+            // Clear only dirt this delete created (review R7): a
+            // pre-existing mark is unreconciled drift a scoped
+            // delete didn't repair.
+            if !zone_was_dirty {
+                manager.clear_zone_dirty(zone_id);
+            }
             Ok("accepted".to_string())
         }
         "create" | "update" | "" => {
@@ -1832,7 +2280,9 @@ fn do_notify_file_change(
             // re-index.  A future NotifyFileChangeRequest with an
             // inline text field would let us do more here, but
             // matching Python's shape means callers pair this
-            // event with a follow-up IndexDocuments.
+            // event with a follow-up IndexDocuments.  This arm
+            // mutates nothing, so it neither sets nor clears the
+            // zone's dirty mark.
             Ok("skipped".to_string())
         }
         other => Err(format!("unknown change_type: {other:?}")),
@@ -1973,20 +2423,50 @@ impl SearchService for SearchServiceImpl {
         let mut req_for_cache = req.clone();
         req_for_cache.zone_id = resolve_zone(&req.zone_id).to_string();
 
+        // Parse borrow-only fields FIRST so later `let q = req.q`
+        // moves don't leave `req` partially moved for later reads.
+        let query_type = QueryType::try_from(req.query_type).unwrap_or(QueryType::Unspecified);
+        // Effective title-arm state for THIS request (#4628 review
+        // R1): resolved BEFORE the cache lookup and folded into the
+        // cache identity, so flipping NEXUS_SEARCH_TITLE_ARM takes
+        // effect on the next query instead of being masked by
+        // cached pre-flip rankings for the TTL.  Only hybrid
+        // rankings depend on the arm, so non-hybrid requests share
+        // one identity regardless of the knob.
+        let title_arm_on = matches!(query_type, QueryType::Hybrid) && self.title_arm_enabled();
+
+        // Zone commit epoch (#4628 review R4): the FTS searcher
+        // generation observed BEFORE any leg runs.  Cache entries
+        // are stamped with the producing query's start epoch and
+        // reads validate against the reader's current epoch — so a
+        // commit racing any leg, the fusion, or the insert itself
+        // makes the entry unservable.  No epoch (zone unopenable,
+        // or a write in flight / failed write behind us — review
+        // R5: ANN mutations are visible before the FTS generation
+        // moves) ⇒ skip the cache entirely; the query still runs
+        // and surfaces whatever the sinks currently hold.
+        let query_epoch = if self.manager.zone_is_dirty(&req_for_cache.zone_id) {
+            None
+        } else {
+            self.manager
+                .get_or_open(&req_for_cache.zone_id)
+                .ok()
+                .map(|fts| fts.generation_id())
+        };
+
         // P7 cache check.  Zone is the auth boundary (D5), so a
         // hit here is safe to serve directly — we don't need to
         // re-check permission, the kernel router already did.  A
         // hit skips FTS + ANN + fusion + scoring + pooling +
         // expand entirely.
-        if let Some(cached) = self.query_cache.get(&req_for_cache) {
-            return Ok(Response::new(QueryResponse {
-                results: cached,
-                error: None,
-            }));
+        if let Some(epoch) = query_epoch {
+            if let Some(cached) = self.query_cache.get(&req_for_cache, title_arm_on, epoch) {
+                return Ok(Response::new(QueryResponse {
+                    results: cached,
+                    error: None,
+                }));
+            }
         }
-        // Parse borrow-only fields FIRST so later `let q = req.q`
-        // moves don't leave `req` partially moved for later reads.
-        let query_type = QueryType::try_from(req.query_type).unwrap_or(QueryType::Unspecified);
         let fusion_opts = FusionOpts::from_request(&req);
         let expand_mode = ExpandMode::from_str(&req.expand);
         let recency_mode = crate::scoring::RecencyMode::parse_wire(&req.recency_mode);
@@ -2038,6 +2518,13 @@ impl SearchService for SearchServiceImpl {
         // avoids threading them back).
         let manager_for_expand = Arc::clone(&self.manager);
         let zone_for_expand = zone_id.clone();
+        // #4628 review R2: hybrid results computed while the title
+        // arm ran DEGRADED (stale/absent skeleton, failed build) must
+        // not enter the query cache — the cached ranking would
+        // outlive the rebuild for the whole TTL.  Non-hybrid modes
+        // and arm-off queries stay cacheable.  Commit races are
+        // covered separately by the epoch-stamped cache (R4).
+        let mut results_cacheable = true;
 
         let outcome = match query_type {
             QueryType::Unspecified | QueryType::Keyword => tokio::task::spawn_blocking(move || {
@@ -2098,16 +2585,27 @@ impl SearchService for SearchServiceImpl {
                     .saturating_mul(HYBRID_OVER_FETCH_MULT)
                     .max(limit)
                     .max(fetch_limit);
-                let (kw_task, sem_task) = {
+                // Title arm (#4628): a third parallel leg over the
+                // in-memory skeleton.  Independent of kw/sem, so it
+                // joins the same spawn_blocking fan-out.  Runs only
+                // when enabled — a disabled arm costs nothing (no
+                // skeleton is ever built).  `title_arm_on` was
+                // resolved before the cache lookup so the cached
+                // identity and the computed ranking agree.
+                let (kw_task, sem_task, title_task) = {
                     let mgr_kw = Arc::clone(&manager);
                     let mgr_sem = Arc::clone(&manager);
+                    let mgr_title = Arc::clone(&manager);
                     let embedder = Arc::clone(&embedder);
                     let embed_cache = Arc::clone(&self.embed_cache);
                     let q_kw = q.clone();
+                    let q_title = q.clone();
                     let q_sem = q;
                     let zone_kw = zone_id.clone();
+                    let zone_title = zone_id.clone();
                     let zone_sem = zone_id;
                     let path_kw = path_filter.clone();
+                    let path_title = path_filter.clone();
                     let path_sem = path_filter;
                     (
                         tokio::task::spawn_blocking(move || {
@@ -2124,20 +2622,78 @@ impl SearchService for SearchServiceImpl {
                                 &path_sem,
                             )
                         }),
+                        tokio::task::spawn_blocking(move || {
+                            if !title_arm_on {
+                                // Arm off is a deterministic state —
+                                // cacheable.
+                                return TitleArmRun::disabled();
+                            }
+                            // Same candidate headroom as the other
+                            // legs: `over_fetch` = limit×2 normally
+                            // (Python's locate over-fetch), widened
+                            // to the adjustment fetch ceiling when
+                            // recency/prefix boosts are active — a
+                            // boosted title-only hit below 2×limit
+                            // must still reach fusion (review R4).
+                            do_title_locate(
+                                &mgr_title,
+                                &q_title,
+                                &zone_title,
+                                over_fetch,
+                                &path_title,
+                            )
+                        }),
                     )
                 };
-                let (kw_join, sem_join) = tokio::join!(kw_task, sem_task);
+                let (kw_join, sem_join, title_join) = tokio::join!(kw_task, sem_task, title_task);
                 let kw = kw_join
                     .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
                 let sem = sem_join
                     .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
+                // A panicked title task degrades to an empty arm —
+                // the arm is additive evidence, never a failure
+                // source (fail-soft parity with Python).  Degraded
+                // ⇒ uncacheable, same as stale/absent skeletons.
+                let title_run = title_join.unwrap_or_else(|_| TitleArmRun::degraded());
+                results_cacheable = title_run.cacheable;
+                let title_hits = title_run.hits;
                 match (kw, sem) {
                     (Ok(keyword), Ok(semantic)) => {
-                        // Keep the over-fetched pool through fusion
-                        // when adjustments still need to reorder it;
-                        // the final truncate-to-limit happens post-
-                        // adjustment below.
-                        Ok(fuse_hybrid(keyword, semantic, fetch_limit, fusion_opts))
+                        // Keyword-lane sub-fusion (#4628).  Empty
+                        // title arm ⇒ the lane passes through
+                        // UNCHANGED — non-title queries stay byte-
+                        // identical to the pre-title-arm plugin
+                        // under every fusion method (the WEIGHTED
+                        // method normalises raw scores, so even a
+                        // score-preserving no-op re-fusion would
+                        // shift its blend).
+                        // Hydration decodes stored docs and the
+                        // fusions merge over-fetched pools — run the
+                        // whole tail on the blocking pool instead of
+                        // the async handler (review R6: up to 512
+                        // representative lookups must not stall the
+                        // runtime).  Keep the over-fetched pool
+                        // through fusion when adjustments still need
+                        // to reorder it; the final truncate-to-limit
+                        // happens post-adjustment below.
+                        let mgr_fuse = Arc::clone(&manager_for_expand);
+                        let zone_fuse = zone_for_expand.clone();
+                        let fused = tokio::task::spawn_blocking(move || {
+                            let kw_lane = build_kw_lane(
+                                &mgr_fuse,
+                                &zone_fuse,
+                                keyword,
+                                &semantic,
+                                &title_hits,
+                                fusion_opts.rrf_k,
+                            );
+                            fuse_hybrid(kw_lane, semantic, fetch_limit, fusion_opts)
+                        })
+                        .await
+                        .map_err(|e| {
+                            Status::internal(format!("spawn_blocking joined error: {e}"))
+                        })?;
+                        Ok(fused)
                     }
                     // A source-side error on either leg — surface it
                     // as the response's `error` field rather than a
@@ -2219,7 +2775,29 @@ impl SearchService for SearchServiceImpl {
                 // NOT cached — a stale FTS index / missing zone
                 // may resolve on retry, and we don't want the
                 // cache to sticky-fail those.
-                self.query_cache.insert(&req_for_cache, results.clone());
+                // Entries are stamped with the START-of-query epoch
+                // (#4628 review R4): if a commit raced this query —
+                // any leg, the fusion, or this very insert — the
+                // reader-side epoch check makes the entry a miss, so
+                // no TOCTOU window exists here.  Degraded title arms
+                // (stale/absent skeleton) still skip the insert:
+                // their rankings are wrong within the SAME epoch.
+                match query_epoch {
+                    Some(epoch) if results_cacheable => {
+                        self.query_cache.insert(
+                            &req_for_cache,
+                            title_arm_on,
+                            epoch,
+                            results.clone(),
+                        );
+                    }
+                    _ => {
+                        tracing::debug!(
+                            "skipping query-cache insert — title arm ran degraded \
+                             or the zone had no observable epoch",
+                        );
+                    }
+                }
                 Ok(Response::new(QueryResponse {
                     results,
                     error: None,
@@ -3115,5 +3693,136 @@ mod tests {
             Some(v) => unsafe { std::env::set_var(BATCH_QUERY_CONCURRENCY_ENV, v) },
             None => unsafe { std::env::remove_var(BATCH_QUERY_CONCURRENCY_ENV) },
         }
+    }
+
+    #[test]
+    fn build_kw_lane_passes_through_when_hydration_drops_everything() {
+        // Review R6 (#4628): a stale skeleton can hand locate() hits
+        // whose paths are deleted from every leg AND from FTS —
+        // hydration drops them all, and the keyword arm must then
+        // pass through UNCHANGED.  Re-fusing a lone arm would
+        // rewrite BM25 scores into RRF values and shift
+        // WEIGHTED-method blends with zero title votes.
+        let root = tempfile::tempdir().expect("tempdir").keep();
+        let manager = IndexManager::with_root(root);
+        // The zone's FTS exists but holds nothing — the title hit's
+        // path resolves to no live row.
+        manager.get_or_open("zoneA").expect("open");
+        let keyword = vec![QueryResult {
+            path: "/live/doc.md".into(),
+            chunk_index: 0,
+            chunk_text: "bm25 text".into(),
+            score: 7.5,
+            zone_id: "zoneA".into(),
+            mtime_ms: Some(1),
+            expanded_context: String::new(),
+            title_score: None,
+        }];
+        let ghost_hits = vec![crate::title_index::TitleHit {
+            path: "/deleted/ghost.md".into(),
+            score: 6.0,
+            title: Some("Ghost".into()),
+        }];
+        let lane = build_kw_lane(&manager, "zoneA", keyword.clone(), &[], &ghost_hits, 60);
+        assert_eq!(
+            lane, keyword,
+            "all-dropped hydration must pass the keyword arm through"
+        );
+    }
+
+    #[test]
+    fn hydration_drops_ann_orphaned_paths_without_live_fts_rows() {
+        // Review R7 (#4628): delete handling defers ANN cleanup, so
+        // a dense row can outlive its document.  A title hit covered
+        // ONLY by that orphaned semantic row must be dropped — the
+        // FTS liveness check is the gate.
+        let root = tempfile::tempdir().expect("tempdir").keep();
+        let manager = IndexManager::with_root(root);
+        let fts = manager.get_or_open("zoneA").expect("open");
+        fts.add_document("/live/doc.md", 0, "# Live\nbody", Some(1))
+            .expect("add");
+        fts.commit().expect("commit");
+
+        let ghost_dense = QueryResult {
+            path: "/deleted/ghost.md".into(),
+            chunk_index: 2,
+            chunk_text: "orphaned vector text".into(),
+            score: 0.9,
+            zone_id: "zoneA".into(),
+            mtime_ms: Some(5),
+            expanded_context: String::new(),
+            title_score: None,
+        };
+        let hits = vec![
+            crate::title_index::TitleHit {
+                path: "/deleted/ghost.md".into(),
+                score: 6.0,
+                title: Some("Ghost".into()),
+            },
+            crate::title_index::TitleHit {
+                path: "/live/doc.md".into(),
+                score: 4.0,
+                title: Some("Live".into()),
+            },
+        ];
+        let hydrated = hydrate_title_hits(
+            Some(&fts),
+            &hits,
+            &[],
+            std::slice::from_ref(&ghost_dense),
+            "zoneA",
+        );
+        let paths: Vec<&str> = hydrated.iter().map(|r| r.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            ["/live/doc.md"],
+            "ANN-orphaned path must be dropped; FTS-live path survives"
+        );
+    }
+
+    #[test]
+    fn hydration_does_not_merge_into_orphaned_dense_chunk_of_live_path() {
+        // Review R8 (#4628): a doc re-chunked from many chunks to
+        // one, with the re-embed failed, leaves the PATH live in FTS
+        // while the dense row still carries the old chunk identity.
+        // The title vote must hydrate from the live FTS row, not the
+        // orphaned dense chunk.
+        let root = tempfile::tempdir().expect("tempdir").keep();
+        let manager = IndexManager::with_root(root);
+        let fts = manager.get_or_open("zoneA").expect("open");
+        // Live doc now has ONLY chunk 0.
+        fts.add_document("/docs/reworked.md", 0, "# Reworked\nnew body", Some(9))
+            .expect("add");
+        fts.commit().expect("commit");
+
+        // Stale dense row referencing the doc's OLD chunk 7.
+        let stale_dense = QueryResult {
+            path: "/docs/reworked.md".into(),
+            chunk_index: 7,
+            chunk_text: "old pre-rework text".into(),
+            score: 0.8,
+            zone_id: "zoneA".into(),
+            mtime_ms: Some(1),
+            expanded_context: String::new(),
+            title_score: None,
+        };
+        let hits = vec![crate::title_index::TitleHit {
+            path: "/docs/reworked.md".into(),
+            score: 4.0,
+            title: Some("Reworked".into()),
+        }];
+        let hydrated = hydrate_title_hits(
+            Some(&fts),
+            &hits,
+            &[],
+            std::slice::from_ref(&stale_dense),
+            "zoneA",
+        );
+        assert_eq!(hydrated.len(), 1);
+        assert_eq!(
+            hydrated[0].chunk_index, 0,
+            "must hydrate from the live FTS row, not the orphaned dense chunk"
+        );
+        assert_eq!(hydrated[0].chunk_text, "# Reworked\nnew body");
     }
 }

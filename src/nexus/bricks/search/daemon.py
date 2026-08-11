@@ -402,4 +402,7 @@ def _result_to_base(pb: search_pb2.QueryResult) -> BaseSearchResult:
         chunk_index=int(pb.chunk_index),
         zone_id=pb.zone_id or None,
         macro_text=pb.expanded_context or None,
+        # #4628: title-arm attribution — optional proto field, so
+        # presence (not zero-ness) decides None.
+        title_score=float(pb.title_score) if pb.HasField("title_score") else None,
     )

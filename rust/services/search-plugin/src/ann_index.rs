@@ -69,6 +69,28 @@ use hnsw_rs::prelude::AnnT;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
+/// Remove hnsw dump files whose basename differs from `current` (the
+/// pair the just-committed sidecar points at). See `Sidecar::graph_basename`
+/// for why dumps are generation-named.
+fn prune_stale_dump_pairs(dir: &std::path::Path, current: &str) {
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in rd.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        let Some(base) = name
+            .strip_suffix(".hnsw.graph")
+            .or_else(|| name.strip_suffix(".hnsw.data"))
+        else {
+            continue;
+        };
+        if base != current {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
 /// Basename used by `Hnsw::file_dump` — produces
 /// `<basename>.hnsw.graph` + `<basename>.hnsw.data`.  Matched by
 /// [`HnswIo::new`] on reload.
@@ -144,6 +166,28 @@ struct Sidecar {
     /// Search post-filter drops these before returning hits.
     #[serde(default)]
     shadowed: HashSet<usize>,
+    /// Basename of the hnsw dump pair this sidecar's entries describe
+    /// (`<basename>.hnsw.{graph,data}`). Written on every commit;
+    /// reload opens EXACTLY this pair. `None` = legacy sidecar from
+    /// before generation-named dumps (fixed `hnsw` basename era).
+    ///
+    /// Why not a fixed name: `hnsw_rs::file_dump` does NOT honor the
+    /// requested basename unconditionally — with a datamap-active
+    /// graph it uniquifies to `<basename>-<rand>` (DumpInit) and
+    /// returns the name it actually used; with overwrite it truncates
+    /// the previous dump in place (a crash mid-dump destroys the only
+    /// copy). Observed live: a restarted plugin reloaded NOTHING
+    /// (fixed-name pair absent, five `hnsw-<rand>` pairs on disk)
+    /// while stats still reported the sidecar-era chunk count — the
+    /// semantic lane silently served [] for every pre-restart doc.
+    /// Generation-named dumps + this recorded pointer make the swap
+    /// atomic (the sidecar rename IS the commit point) and reloads
+    /// deterministic.
+    #[serde(default)]
+    graph_basename: Option<String>,
+    /// Monotonic dump-generation counter for basename minting.
+    #[serde(default)]
+    generation: u64,
 }
 
 /// One per-zone HNSW vector index.  Cheap to clone (`Arc` inside).
@@ -173,22 +217,12 @@ impl AnnIndex {
         std::fs::create_dir_all(&dir)
             .map_err(|e| AnnError::CreateDir(dir.display().to_string(), e.to_string()))?;
 
-        let graph = dir.join(format!("{HNSW_BASENAME}.hnsw.graph"));
         let sidecar_path = dir.join(SIDECAR_FILE);
 
-        let (hnsw, sidecar) = if graph.exists() && sidecar_path.exists() {
-            // Leak the HnswIo so its buffer lives 'static — hnsw_rs's
-            // `load_hnsw` returns a `Hnsw<'a>` tied to the loader's
-            // internal storage, and Hnsw needs to outlive this function
-            // (it's owned by the returned Arc<AnnIndex>).  Leaking
-            // costs one struct per zone open, permanent — negligible
-            // for a long-running daemon.  A more surgical fix would
-            // switch to an owning reload API when hnsw_rs exposes one.
-            let io = Box::leak(Box::new(HnswIo::new(&dir, HNSW_BASENAME)));
-            io.set_options(ReloadOptions::default());
-            let hnsw = io
-                .load_hnsw::<f32, DistCosine>()
-                .map_err(|e| AnnError::Open(dir.display().to_string(), e.to_string()))?;
+        // The sidecar is the source of truth for WHICH dump pair is
+        // live (see Sidecar::graph_basename) — read it first, then
+        // open exactly the pair it names.
+        let loaded_sidecar: Option<Sidecar> = if sidecar_path.exists() {
             let bytes = std::fs::read(&sidecar_path)
                 .map_err(|e| AnnError::Open(sidecar_path.display().to_string(), e.to_string()))?;
             let sidecar: Sidecar = serde_json::from_slice(&bytes)
@@ -202,8 +236,12 @@ impl AnnIndex {
                     ),
                 ));
             }
-            (hnsw, sidecar)
+            Some(sidecar)
         } else {
+            None
+        };
+
+        let fresh = || {
             let hnsw = Hnsw::<f32, DistCosine>::new(
                 HNSW_M,
                 DEFAULT_CAPACITY,
@@ -216,6 +254,52 @@ impl AnnIndex {
                 ..Default::default()
             };
             (hnsw, side)
+        };
+
+        let (hnsw, sidecar) = match loaded_sidecar {
+            Some(sidecar) => {
+                let basename = sidecar
+                    .graph_basename
+                    .clone()
+                    .unwrap_or_else(|| HNSW_BASENAME.to_string());
+                let graph = dir.join(format!("{basename}.hnsw.graph"));
+                if graph.exists() {
+                    // Leak the HnswIo so its buffer lives 'static —
+                    // hnsw_rs's `load_hnsw` returns a `Hnsw<'a>` tied to
+                    // the loader's internal storage, and Hnsw needs to
+                    // outlive this function (it's owned by the returned
+                    // Arc<AnnIndex>).  Leaking costs one struct per zone
+                    // open, permanent — negligible for a long-running
+                    // daemon.  A more surgical fix would switch to an
+                    // owning reload API when hnsw_rs exposes one.
+                    let io = Box::leak(Box::new(HnswIo::new(&dir, &basename)));
+                    io.set_options(ReloadOptions::default());
+                    let hnsw = io
+                        .load_hnsw::<f32, DistCosine>()
+                        .map_err(|e| AnnError::Open(dir.display().to_string(), e.to_string()))?;
+                    (hnsw, sidecar)
+                } else if sidecar.entries.is_empty() {
+                    // Sidecar without a dump = zone that never committed
+                    // a non-empty graph.  Normal fresh path.
+                    fresh()
+                } else {
+                    // Sidecar CLAIMS live vectors but its dump pair is
+                    // gone (legacy fixed-name sidecar whose pair was
+                    // uniquified away, or a lost/partial dump).  Serving
+                    // would silently return [] for everything while
+                    // stats report the sidecar count — reset LOUDLY to
+                    // an honest empty index instead; a reindex heals.
+                    tracing::error!(
+                        dir = %dir.display(),
+                        basename = %basename,
+                        orphaned_entries = sidecar.entries.len(),
+                        "ANN sidecar references a missing hnsw dump pair — resetting to an \
+                         empty index (semantic hits for this zone are gone until reindexed)",
+                    );
+                    fresh()
+                }
+            }
+            None => fresh(),
         };
 
         let chunk_to_id: HashMap<(String, u32), usize> = sidecar
@@ -410,16 +494,37 @@ impl AnnIndex {
     /// next open_or_create knows the manager has seen this zone;
     /// the graph files reappear the next time a real doc arrives.
     pub fn commit(&self) -> Result<(), AnnError> {
-        let live = self.sidecar.read().entries.len();
-        if live > 0 {
-            self.hnsw
-                .file_dump(&self.dir, HNSW_BASENAME)
-                .map_err(|e| AnnError::Commit(format!("hnsw file_dump: {e}")))?;
-        }
+        // Mint a generation-named dump pair, then switch the
+        // (atomically-renamed) sidecar to point at it — the sidecar
+        // rename below is the commit point, so a crash anywhere before
+        // it leaves the previous pair live and consistent, and a crash
+        // mid-dump can never truncate the only good copy (the previous
+        // pair is a different basename). `file_dump` cannot be trusted
+        // to honor the requested basename (a datamap-active graph gets
+        // a uniquified `<basename>-<rand>` via DumpInit) — always
+        // record the name it RETURNS.
+        let (bytes, dumped_basename) = {
+            let mut side = self.sidecar.write();
+            let dumped = if side.entries.is_empty() {
+                // Empty graph: hnsw_rs errors on zero-point dumps.  The
+                // sidecar still writes so the next open knows this zone;
+                // any previously-recorded pair stays on disk untouched.
+                None
+            } else {
+                side.generation += 1;
+                let requested = format!("{HNSW_BASENAME}-g{}", side.generation);
+                let actual = self
+                    .hnsw
+                    .file_dump(&self.dir, &requested)
+                    .map_err(|e| AnnError::Commit(format!("hnsw file_dump: {e}")))?;
+                side.graph_basename = Some(actual.clone());
+                Some(actual)
+            };
+            let bytes = serde_json::to_vec_pretty(&*side)
+                .map_err(|e| AnnError::Commit(format!("sidecar encode: {e}")))?;
+            (bytes, dumped)
+        };
         let sidecar_path = self.dir.join(SIDECAR_FILE);
-        let side = self.sidecar.read();
-        let bytes = serde_json::to_vec_pretty(&*side)
-            .map_err(|e| AnnError::Commit(format!("sidecar encode: {e}")))?;
         // Atomic swap via write-and-rename so a mid-write crash
         // never leaves a truncated sidecar file that would break
         // the next open_or_create.
@@ -428,6 +533,13 @@ impl AnnIndex {
             .map_err(|e| AnnError::Commit(format!("sidecar tmp write: {e}")))?;
         std::fs::rename(&tmp, &sidecar_path)
             .map_err(|e| AnnError::Commit(format!("sidecar rename: {e}")))?;
+        // Past the commit point: superseded generation pairs are dead
+        // weight (each commit mints a fresh pair; without GC restarts
+        // accumulate them forever). Best-effort — an unremovable stray
+        // is unreferenced and harmless, and must not fail the commit.
+        if let Some(current) = dumped_basename {
+            prune_stale_dump_pairs(&self.dir, &current);
+        }
         Ok(())
     }
 
@@ -674,6 +786,85 @@ mod tests {
         assert_eq!(idx2.live_count(), 2);
         let hits = idx2.search(&vec_seed(4, 5.0), 2).expect("search");
         assert_eq!(hits[0].path, "/b");
+    }
+
+    #[test]
+    fn multi_commit_reopen_reloads_the_last_generation() {
+        // Regression for the live silent-wipe: dumps are generation-named
+        // and the sidecar records which pair is current; a reopen after
+        // SEVERAL commits (the shape a real daemon produces via
+        // incremental commits) must reload the newest graph, not an
+        // absent fixed-name pair.
+        let dir = tempdir().join("ann");
+        {
+            let idx = AnnIndex::open_or_create(dir.clone(), 4).expect("open");
+            idx.add_vector("/a", 0, &vec_seed(4, 1.0)).expect("add-a");
+            idx.commit().expect("commit-1");
+            idx.add_vector("/b", 0, &vec_seed(4, 5.0)).expect("add-b");
+            idx.commit().expect("commit-2");
+            idx.add_vector("/c", 0, &vec_seed(4, 9.0)).expect("add-c");
+            idx.commit().expect("commit-3");
+        }
+        let idx2 = AnnIndex::open_or_create(dir.clone(), 4).expect("reopen");
+        assert_eq!(idx2.live_count(), 3);
+        let hits = idx2.search(&vec_seed(4, 9.0), 3).expect("search");
+        assert_eq!(hits[0].path, "/c");
+
+        // The recorded basename must reference a pair that exists.
+        let bytes = std::fs::read(dir.join(SIDECAR_FILE)).expect("sidecar");
+        let side: Sidecar = serde_json::from_slice(&bytes).expect("decode");
+        let basename = side.graph_basename.expect("graph_basename recorded");
+        assert!(dir.join(format!("{basename}.hnsw.graph")).exists());
+        assert!(dir.join(format!("{basename}.hnsw.data")).exists());
+    }
+
+    #[test]
+    fn commit_gc_leaves_exactly_one_dump_pair() {
+        let dir = tempdir().join("ann");
+        let idx = AnnIndex::open_or_create(dir.clone(), 4).expect("open");
+        for i in 0..3 {
+            idx.add_vector(&format!("/p{i}"), 0, &vec_seed(4, i as f32 + 1.0))
+                .expect("add");
+            idx.commit().expect("commit");
+        }
+        let pairs: Vec<String> = std::fs::read_dir(&dir)
+            .expect("read_dir")
+            .flatten()
+            .filter_map(|e| e.file_name().to_str().map(str::to_string))
+            .filter(|n| n.ends_with(".hnsw.graph") || n.ends_with(".hnsw.data"))
+            .collect();
+        assert_eq!(pairs.len(), 2, "one .graph + one .data, got {pairs:?}");
+    }
+
+    #[test]
+    fn orphaned_sidecar_resets_loudly_instead_of_lying() {
+        // A sidecar claiming live entries whose dump pair is gone (the
+        // pre-fix legacy state observed live: fixed-name sidecar, only
+        // uniquified `hnsw-<rand>` pairs on disk) must come back as an
+        // honest EMPTY index — not an index whose stats say N chunks
+        // while every search serves [].
+        let dir = tempdir().join("ann");
+        {
+            let idx = AnnIndex::open_or_create(dir.clone(), 4).expect("open");
+            idx.add_vector("/a", 0, &vec_seed(4, 1.0)).expect("add");
+            idx.commit().expect("commit");
+        }
+        // Simulate the legacy/lost-dump state: remove the dump pair the
+        // sidecar points at.
+        let bytes = std::fs::read(dir.join(SIDECAR_FILE)).expect("sidecar");
+        let side: Sidecar = serde_json::from_slice(&bytes).expect("decode");
+        let basename = side.graph_basename.expect("recorded");
+        std::fs::remove_file(dir.join(format!("{basename}.hnsw.graph"))).expect("rm graph");
+        std::fs::remove_file(dir.join(format!("{basename}.hnsw.data"))).expect("rm data");
+
+        let idx2 = AnnIndex::open_or_create(dir, 4).expect("reopen resets, not errors");
+        assert_eq!(
+            idx2.live_count(),
+            0,
+            "stats must not report unservable chunks"
+        );
+        let hits = idx2.search(&vec_seed(4, 1.0), 3).expect("search");
+        assert!(hits.is_empty());
     }
 
     #[test]

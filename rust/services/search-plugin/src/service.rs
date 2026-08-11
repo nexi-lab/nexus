@@ -1805,6 +1805,18 @@ fn do_refresh(
     // set and its indexed docs).
     let mut truncated = false;
 
+    // Dirty-zone RECOVERY mode (reviews R9/R10): pre-existing dirt
+    // means an interrupted earlier write may have left a PARTIAL
+    // chunk set behind a retained same-mtime state entry, so the
+    // mtime cache cannot be trusted.  Recovery runs ONLY on the
+    // deliberate full-root recursive refresh, and that pass is
+    // EXEMPT from the repair cap: a capped forced pass would
+    // re-index the same stable-DFS prefix every call and never
+    // reach the tail, stalling the zone in cache-bypass forever.
+    // Scoped/capped refreshes on a dirty zone use normal verdicts
+    // (they repair what changed but never clear pre-existing dirt).
+    let reconciling = zone_was_dirty && root_path == "/" && recursive;
+
     let mut visit_file = |vfs_path: &str| -> WalkAction {
         // The cap budgets REPAIR work (re-index = chunk + embed), not
         // cheap unchanged visits (one sys_stat each).  Counting
@@ -1813,7 +1825,7 @@ fn do_refresh(
         // post-migration pass repaired the first max_docs files,
         // every later refresh re-counted those now-unchanged entries
         // and stopped before ever reaching the tail (review R4).
-        if (counts.reindexed as usize + counts.skipped as usize) >= max_docs {
+        if !reconciling && (counts.reindexed as usize + counts.skipped as usize) >= max_docs {
             truncated = true;
             return WalkAction::Stop;
         }
@@ -1821,13 +1833,7 @@ fn do_refresh(
         let fresh_mtime = kernel_io::sys_stat(handle, vfs_path)
             .ok()
             .and_then(|info| info.modified_at_ms);
-        // Pre-existing dirt distrusts the mtime cache (review R9):
-        // an interrupted earlier write can leave a PARTIAL chunk set
-        // behind a retained same-mtime state entry — "Unchanged"
-        // would then never repair it and the later clear would lie.
-        // While reconciling a dirty zone, every encountered file is
-        // forced through re-indexing.
-        let verdict = if zone_was_dirty {
+        let verdict = if reconciling {
             crate::index_state::RefreshVerdict::Changed
         } else {
             sinks.state.verdict(vfs_path, fresh_mtime)

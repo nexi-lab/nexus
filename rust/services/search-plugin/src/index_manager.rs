@@ -228,18 +228,32 @@ impl IndexManager {
     /// restart would observe, instead of silently diverging until
     /// one.
     pub fn clear_zone_dirty(&self, zone_id: &str) {
-        let removed = match std::fs::remove_file(self.zone_dirty_sentinel(zone_id)) {
-            Ok(()) => sync_dir(&self.zone_root(zone_id)).map_err(|e| {
-                tracing::warn!(err = %e, zone = %zone_id, "dirty sentinel dir sync failed — zone stays cache-bypassed");
-            }),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => {
-                tracing::warn!(err = %e, zone = %zone_id, "dirty sentinel remove failed — zone stays cache-bypassed");
-                Err(())
+        let sentinel = self.zone_dirty_sentinel(zone_id);
+        // NotFound also syncs (review R10): a PRIOR unlink may still
+        // be unsynced in the directory, so "already absent" is only
+        // trustworthy after the entry state is pinned.
+        let removed = match std::fs::remove_file(&sentinel) {
+            Ok(()) => sync_dir(&self.zone_root(zone_id)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                sync_dir(&self.zone_root(zone_id))
             }
+            Err(e) => Err(e),
         };
-        if removed.is_ok() {
-            self.dirty_zones.lock().remove(zone_id);
+        match removed {
+            Ok(()) => {
+                self.dirty_zones.lock().remove(zone_id);
+            }
+            Err(e) => {
+                tracing::warn!(err = %e, zone = %zone_id, "dirty sentinel clear failed — zone stays cache-bypassed");
+                // Restore the ON-DISK fail-closed state (review R10):
+                // if the unlink landed but its durability is unproven,
+                // a restart would otherwise observe a clean zone.
+                // Best-effort — if the filesystem is this sick, sink
+                // writes are failing too and their errors keep the
+                // in-memory flag set.
+                let _ = std::fs::File::create(&sentinel).and_then(|f| f.sync_all());
+                let _ = sync_dir(&self.zone_root(zone_id));
+            }
         }
     }
 
@@ -601,7 +615,7 @@ mod tests {
         let root = tempfile::tempdir().expect("tempdir").keep();
         let mgr = IndexManager::with_root(root);
         assert!(!mgr.zone_is_dirty("zoneA"));
-        mgr.mark_zone_dirty("zoneA");
+        mgr.mark_zone_dirty("zoneA").expect("mark");
         assert!(mgr.zone_is_dirty("zoneA"));
         assert!(!mgr.zone_is_dirty("zoneB"), "zones must not share the flag");
         mgr.clear_zone_dirty("zoneA");
@@ -618,7 +632,7 @@ mod tests {
         let root = tempfile::tempdir().expect("tempdir").keep();
         {
             let mgr = IndexManager::with_root(root.clone());
-            mgr.mark_zone_dirty("zoneA");
+            mgr.mark_zone_dirty("zoneA").expect("mark");
             // Simulated crash: the manager is dropped without clear.
         }
         let reborn = IndexManager::with_root(root);

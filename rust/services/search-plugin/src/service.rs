@@ -1147,7 +1147,12 @@ fn hydrate_title_hits(
             let path = h.path.as_str();
             let (chunk_index, chunk_text, mtime_ms) = if let Some(leg) = best_kw.get(path) {
                 (leg.chunk_index, leg.chunk_text.clone(), leg.mtime_ms)
-            } else if let Some(row) = fetched.get(path) {
+            } else {
+                // No live FTS row (`?` drops the hit): the skeleton
+                // (fresh: drift; stale: deleted/retitled since the
+                // snapshot) or an orphaned ANN row references a doc
+                // the index no longer holds (reviews R5/R7).
+                let row = fetched.get(path)?;
                 // FTS-live path.  Merge with the dense vote's
                 // identity ONLY when that exact (path, chunk_index)
                 // is confirmed live (review R8): after a re-chunk
@@ -1162,12 +1167,6 @@ fn hydrate_title_hits(
                     }
                     _ => (row.chunk_index, row.chunk_text.clone(), row.mtime_ms),
                 }
-            } else {
-                // No live FTS row: the skeleton (fresh: drift;
-                // stale: deleted/retitled since the snapshot) or an
-                // orphaned ANN row references a doc the index no
-                // longer holds — DROP the hit (reviews R5/R7).
-                return None;
             };
             Some(QueryResult {
                 path: h.path.clone(),

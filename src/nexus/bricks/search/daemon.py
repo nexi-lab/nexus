@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import grpc
@@ -117,6 +118,55 @@ def _build_channel(target: str) -> "grpc.aio.Channel":
     return grpc.aio.insecure_channel(target)
 
 
+# Per-document pooling parity with the deleted Python daemon.  Its
+# DaemonConfig defaulted ``page_aggregation=True`` / ``chunks_per_page=2``
+# ("Best-of-Page" dedup, #4550) — and the P12 proxy forwarded NOTHING, so
+# the plugin (which implements pooling behind ``QueryRequest.chunks_per_page``,
+# fusion.rs) always received 0 = pooling off.  Silent ranking regression:
+# one long document's chunks crowd the fused top-N and push distinct docs
+# out (observed on a real 75-doc corpus: 2 documents holding 6 of the top
+# 12 hybrid slots, evicting a gold hit).  Same env contract as pre-P12:
+# ``NEXUS_SEARCH_PAGE_AGGREGATION=false`` disables pooling,
+# ``NEXUS_SEARCH_CHUNKS_PER_PAGE=<n>`` overrides the cap.
+_PAGE_AGGREGATION_ENV = "NEXUS_SEARCH_PAGE_AGGREGATION"
+_CHUNKS_PER_PAGE_ENV = "NEXUS_SEARCH_CHUNKS_PER_PAGE"
+_DEFAULT_CHUNKS_PER_PAGE = 2
+
+
+def _resolve_chunks_per_page() -> int:
+    """Effective per-document pooling cap for plugin requests (0 = off)."""
+    if os.environ.get(_PAGE_AGGREGATION_ENV, "").lower() in ("false", "0", "no", "off"):
+        return 0
+    raw = os.environ.get(_CHUNKS_PER_PAGE_ENV)
+    if raw is None:
+        return _DEFAULT_CHUNKS_PER_PAGE
+    try:
+        cap = int(raw)
+    except ValueError:
+        logger.warning(
+            "%s=%r is not an integer — using default %d",
+            _CHUNKS_PER_PAGE_ENV,
+            raw,
+            _DEFAULT_CHUNKS_PER_PAGE,
+        )
+        return _DEFAULT_CHUNKS_PER_PAGE
+    return cap if cap > 0 else 0
+
+
+@dataclass(frozen=True)
+class _ProxyPoolingConfig:
+    """Minimal ``daemon.config`` surface for helpers that still read the
+    old DaemonConfig shape — specifically
+    ``federated_search.daemon_pooling_cap`` (its strict ``is True`` /
+    ``isinstance`` guards, #4542) — so the federated flat-merge's
+    Python-side ``cap_chunks_per_page`` engages again on the P12 proxy.
+    Deliberately NOT a full DaemonConfig: only the pooling fields have a
+    meaningful proxy-side answer."""
+
+    page_aggregation: bool
+    chunks_per_page: int
+
+
 _QUERY_TYPE_MAP = {
     "keyword": search_pb2.QUERY_TYPE_KEYWORD,
     "semantic": search_pb2.QUERY_TYPE_SEMANTIC,
@@ -143,6 +193,16 @@ class SearchDaemon:
         self._channel: grpc.aio.Channel | None = None
         self._stub: search_pb2_grpc.SearchServiceStub | None = None
         self._initialized = True  # matches Python daemon's boot posture
+        # Pooling cap resolved once at construction (env is boot-time
+        # config).  Exposed BOTH as the pb default for every plugin
+        # request and as a ``config`` shim so
+        # ``federated_search.daemon_pooling_cap`` sees the same answer —
+        # one source, the two capping layers cannot drift.
+        self._chunks_per_page = _resolve_chunks_per_page()
+        self.config = _ProxyPoolingConfig(
+            page_aggregation=self._chunks_per_page > 0,
+            chunks_per_page=self._chunks_per_page,
+        )
 
     # ── SearchBrickProtocol boilerplate ────────────────────────
 
@@ -184,7 +244,9 @@ class SearchDaemon:
         — same contract shape as the batch endpoint's per-entry
         failures (#4612).
         """
-        resp = await self._get_stub().Query(_request_to_pb(request))
+        resp = await self._get_stub().Query(
+            _request_to_pb(request, chunks_per_page=self._chunks_per_page)
+        )
         if resp.HasField("error"):
             logger.warning("rust search returned error: %s", resp.error)
             return [], resp.error
@@ -214,7 +276,9 @@ class SearchDaemon:
         and fail-closed consumers can tell "searched, no matches" from
         "search failed" (#4612).
         """
-        req = search_pb2.BatchQueryRequest(queries=[_request_to_pb(r) for r in requests])
+        req = search_pb2.BatchQueryRequest(
+            queries=[_request_to_pb(r, chunks_per_page=self._chunks_per_page) for r in requests]
+        )
         resp = await self._get_stub().BatchQuery(req)
         out: list[list[BaseSearchResult] | BatchQueryFailure] = []
         for sub in resp.responses:
@@ -365,11 +429,15 @@ class SearchDaemon:
         }
 
 
-def _request_to_pb(request: "SearchRequest") -> search_pb2.QueryRequest:
+def _request_to_pb(request: "SearchRequest", *, chunks_per_page: int) -> search_pb2.QueryRequest:
     """Map a SearchRequest onto the plugin's QueryRequest proto.
 
     Shared by ``search`` and ``batch_search`` so the batch path can
     never silently drop a tuning knob the single path forwards.
+    ``chunks_per_page`` is keyword-REQUIRED for the same reason: the
+    daemon's resolved pooling cap must be an explicit decision at every
+    call site, not a forgettable default that silently re-disables
+    per-document pooling (the exact P12 regression this parameter fixes).
     """
     return search_pb2.QueryRequest(
         q=request.query,
@@ -387,6 +455,7 @@ def _request_to_pb(request: "SearchRequest") -> search_pb2.QueryRequest:
         recency_weight=request.recency_weight or 0.0,
         recency_half_life_days=request.recency_half_life_days or 0.0,
         path_prefix_boosts=request.path_prefix_boosts or {},
+        chunks_per_page=chunks_per_page,
     )
 
 

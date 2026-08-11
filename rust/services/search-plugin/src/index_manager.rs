@@ -575,7 +575,8 @@ mod tests {
         let root = tempfile::tempdir().expect("tempdir").keep();
         let mgr = IndexManager::with_root(root);
         let fts = mgr.get_or_open("zoneA").expect("open");
-        fts.add_document("/a.md", 0, "# Alpha\nbody", Some(1)).expect("add");
+        fts.add_document("/a.md", 0, "# Alpha\nbody", Some(1))
+            .expect("add");
         fts.commit().expect("commit");
 
         let sk1 = expect_fresh(mgr.get_or_build_skeleton("zoneA"));
@@ -585,7 +586,8 @@ mod tests {
         assert!(std::sync::Arc::ptr_eq(&sk1, &sk1b));
 
         // Mutate + commit → generation bump → rebuild with fresh docs.
-        fts.add_document("/b.md", 0, "# Beta\nbody", Some(2)).expect("add");
+        fts.add_document("/b.md", 0, "# Beta\nbody", Some(2))
+            .expect("add");
         fts.commit().expect("commit");
         let sk2 = expect_fresh(mgr.get_or_build_skeleton("zoneA"));
         assert!(!std::sync::Arc::ptr_eq(&sk1, &sk2));
@@ -649,7 +651,8 @@ mod tests {
         let root = tempfile::tempdir().expect("tempdir").keep();
         let mgr = IndexManager::with_root(root);
         let fts = mgr.get_or_open("zoneA").expect("open");
-        fts.add_document("/a.md", 0, "# Alpha\nbody", Some(1)).expect("add");
+        fts.add_document("/a.md", 0, "# Alpha\nbody", Some(1))
+            .expect("add");
         fts.commit().expect("commit");
 
         // Cold start with the build lock held elsewhere: no snapshot
@@ -669,7 +672,8 @@ mod tests {
         // the lock again — callers get the PRIOR snapshot marked
         // Stale (NOT cacheable), not a duplicate build.
         let sk1 = expect_fresh(mgr.get_or_build_skeleton("zoneA"));
-        fts.add_document("/b.md", 0, "# Beta\nbody", Some(2)).expect("add");
+        fts.add_document("/b.md", 0, "# Beta\nbody", Some(2))
+            .expect("add");
         fts.commit().expect("commit");
         {
             let _held = lock.lock();

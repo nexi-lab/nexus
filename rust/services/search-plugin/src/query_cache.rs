@@ -160,7 +160,13 @@ impl QueryCache {
     /// producing query — see [`Self::get`].  Stamping the start (not
     /// the insert moment) makes a commit racing the query, or racing
     /// this very insert, invalidate the entry at read time.
-    pub fn insert(&self, req: &QueryRequest, title_arm: bool, epoch: u64, results: Vec<QueryResult>) {
+    pub fn insert(
+        &self,
+        req: &QueryRequest,
+        title_arm: bool,
+        epoch: u64,
+        results: Vec<QueryResult>,
+    ) {
         let key = hash_request(req, title_arm);
         let now = Instant::now();
         let mut zones = self.zones.lock();
@@ -323,7 +329,10 @@ mod tests {
             c.get(&req, false, 0).is_none(),
             "arm-off lookup must not see the arm-on entry"
         );
-        assert!(c.get(&req, true, 0).is_some(), "same-state lookup still hits");
+        assert!(
+            c.get(&req, true, 0).is_some(),
+            "same-state lookup still hits"
+        );
     }
 
     #[test]
@@ -370,7 +379,10 @@ mod tests {
         let mut r2 = base_req("root", "widget");
         r2.auth_token = "token-b".into();
         c.insert(&r1, false, 0, vec![hit("/x", 1.0)]);
-        assert!(c.get(&r2, false, 0).is_some(), "different tokens must share");
+        assert!(
+            c.get(&r2, false, 0).is_some(),
+            "different tokens must share"
+        );
     }
 
     #[test]
@@ -383,7 +395,10 @@ mod tests {
         let mut r2 = base_req("root", "q");
         r2.path_filter = "/foo".into();
         c.insert(&r1, false, 0, vec![hit("/a", 1.0)]);
-        assert!(c.get(&r2, false, 0).is_none(), "path_filter suffix must matter");
+        assert!(
+            c.get(&r2, false, 0).is_none(),
+            "path_filter suffix must matter"
+        );
     }
 
     #[test]
@@ -394,7 +409,10 @@ mod tests {
         let mut r2 = base_req("root", "q");
         r2.path_prefix_boosts.insert("/docs/".to_string(), 2.0);
         c.insert(&r1, false, 0, vec![hit("/x", 1.0)]);
-        assert!(c.get(&r2, false, 0).is_none(), "boost value must key distinctly");
+        assert!(
+            c.get(&r2, false, 0).is_none(),
+            "boost value must key distinctly"
+        );
     }
 
     #[test]
@@ -409,7 +427,10 @@ mod tests {
         r2.path_prefix_boosts.insert("/b/".to_string(), 2.0);
         r2.path_prefix_boosts.insert("/a/".to_string(), 1.0);
         c.insert(&r1, false, 0, vec![hit("/x", 1.0)]);
-        assert!(c.get(&r2, false, 0).is_some(), "map-order should not flap the key");
+        assert!(
+            c.get(&r2, false, 0).is_some(),
+            "map-order should not flap the key"
+        );
     }
 
     #[test]
@@ -417,7 +438,10 @@ mod tests {
         let c = QueryCache::with_ttl(Duration::from_millis(1));
         c.insert(&base_req("root", "q"), false, 0, vec![hit("/a", 1.0)]);
         std::thread::sleep(Duration::from_millis(10));
-        assert!(c.get(&base_req("root", "q"), false, 0).is_none(), "TTL not honoured");
+        assert!(
+            c.get(&base_req("root", "q"), false, 0).is_none(),
+            "TTL not honoured"
+        );
     }
 
     #[test]
@@ -449,7 +473,12 @@ mod tests {
         // The oldest entry (q0) should still be present.
         assert!(c.get(&base_req("root", "q0"), false, 0).is_some());
         // One more insert — oldest gets evicted.
-        c.insert(&base_req("root", "q_new"), false, 0, vec![hit("/p_new", 1.0)]);
+        c.insert(
+            &base_req("root", "q_new"),
+            false,
+            0,
+            vec![hit("/p_new", 1.0)],
+        );
         assert_eq!(c.zone_entries("root"), MAX_ENTRIES_PER_ZONE);
         assert!(
             c.get(&base_req("root", "q0"), false, 0).is_none(),

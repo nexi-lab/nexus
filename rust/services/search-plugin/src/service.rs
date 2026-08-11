@@ -2785,8 +2785,12 @@ impl SearchService for SearchServiceImpl {
                 // their rankings are wrong within the SAME epoch.
                 match query_epoch {
                     Some(epoch) if results_cacheable => {
-                        self.query_cache
-                            .insert(&req_for_cache, title_arm_on, epoch, results.clone());
+                        self.query_cache.insert(
+                            &req_for_cache,
+                            title_arm_on,
+                            epoch,
+                            results.clone(),
+                        );
                     }
                     _ => {
                         tracing::debug!(
@@ -3721,7 +3725,10 @@ mod tests {
             title: Some("Ghost".into()),
         }];
         let lane = build_kw_lane(&manager, "zoneA", keyword.clone(), &[], &ghost_hits, 60);
-        assert_eq!(lane, keyword, "all-dropped hydration must pass the keyword arm through");
+        assert_eq!(
+            lane, keyword,
+            "all-dropped hydration must pass the keyword arm through"
+        );
     }
 
     #[test]
@@ -3733,7 +3740,8 @@ mod tests {
         let root = tempfile::tempdir().expect("tempdir").keep();
         let manager = IndexManager::with_root(root);
         let fts = manager.get_or_open("zoneA").expect("open");
-        fts.add_document("/live/doc.md", 0, "# Live\nbody", Some(1)).expect("add");
+        fts.add_document("/live/doc.md", 0, "# Live\nbody", Some(1))
+            .expect("add");
         fts.commit().expect("commit");
 
         let ghost_dense = QueryResult {

@@ -291,7 +291,10 @@ fn seed_corpus(mock: &mut MockKernel) {
     // titles share no token with the query) so chunk-BM25 buries the
     // target under the arm-off ranking — the kill-switch test asserts
     // STRICT rank benefit at a tight limit (review R3).
-    for (i, name) in ["three", "four", "five", "six", "seven", "eight"].iter().enumerate() {
+    for (i, name) in ["three", "four", "five", "six", "seven", "eight"]
+        .iter()
+        .enumerate()
+    {
         mock.add_file(
             &format!("/notes/scratch-{name}.md"),
             format!(

@@ -471,7 +471,11 @@ mod tests {
         let a = fused.iter().find(|r| r.path == "/a").expect("/a");
         let b = fused.iter().find(|r| r.path == "/b").expect("/b");
         let c = fused.iter().find(|r| r.path == "/c").expect("/c");
-        assert_eq!(a.title_score, Some(7.0), "merged doc carries the arm's own score");
+        assert_eq!(
+            a.title_score,
+            Some(7.0),
+            "merged doc carries the arm's own score"
+        );
         assert_eq!(b.title_score, None);
         assert_eq!(c.title_score, Some(4.0));
         // Shared doc leads: two votes + top-1 bonus.
@@ -489,7 +493,10 @@ mod tests {
         let fused = rrf_multi(&[(ArmKind::Chunk, &chunk), (ArmKind::Title, &title)], 60);
         let score_of = |p: &str| fused.iter().find(|r| r.path == p).unwrap().score;
         let close = |a: f32, b: f32| (a - b).abs() < 1e-5;
-        assert!(close(score_of("/a"), 1.0 / 61.0 + 1.0 / 62.0 + RRF_TOP1_BONUS));
+        assert!(close(
+            score_of("/a"),
+            1.0 / 61.0 + 1.0 / 62.0 + RRF_TOP1_BONUS
+        ));
         assert!(close(score_of("/z"), 1.0 / 61.0 + RRF_TOP1_BONUS));
         assert!(close(score_of("/b"), 1.0 / 62.0 + RRF_TOP3_BONUS));
     }

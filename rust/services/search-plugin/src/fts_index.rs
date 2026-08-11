@@ -680,9 +680,12 @@ mod tests {
     fn for_each_chunk_scans_all_chunks_and_generation_bumps() {
         let dir = tempdir().join("fts");
         let idx = FtsIndex::open_or_create(dir).expect("open");
-        idx.add_document("/a.md", 0, "# Alpha\nbody a", Some(1)).expect("add");
-        idx.add_document("/a.md", 1, "body a continued", Some(1)).expect("add");
-        idx.add_document("/b.md", 0, "# Beta\nbody b", Some(2)).expect("add");
+        idx.add_document("/a.md", 0, "# Alpha\nbody a", Some(1))
+            .expect("add");
+        idx.add_document("/a.md", 1, "body a continued", Some(1))
+            .expect("add");
+        idx.add_document("/b.md", 0, "# Beta\nbody b", Some(2))
+            .expect("add");
         idx.commit().expect("commit");
         let gen_before = idx.generation_id();
 
@@ -693,7 +696,10 @@ mod tests {
             })
             .expect("scan");
         seen.sort();
-        assert_eq!(scan_gen, gen_before, "scan reports the generation it observed");
+        assert_eq!(
+            scan_gen, gen_before,
+            "scan reports the generation it observed"
+        );
         assert_eq!(
             seen,
             vec![
@@ -707,8 +713,13 @@ mod tests {
         // A commit (even after a delete+re-add) bumps the generation —
         // this is the skeleton cache's staleness signal.
         idx.delete_all_chunks("/b.md");
-        idx.add_document("/b.md", 0, "# Beta2\nbody", Some(3)).expect("add");
+        idx.add_document("/b.md", 0, "# Beta2\nbody", Some(3))
+            .expect("add");
         idx.commit().expect("commit");
-        assert_ne!(idx.generation_id(), gen_before, "commit must change the generation");
+        assert_ne!(
+            idx.generation_id(),
+            gen_before,
+            "commit must change the generation"
+        );
     }
 }

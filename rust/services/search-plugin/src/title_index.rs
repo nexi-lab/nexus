@@ -224,12 +224,11 @@ pub const TITLE_ARM_MIN_SCORE: f32 = 2.0;
 static LOCATE_QUERY_STOPWORDS: LazyLock<std::collections::HashSet<&'static str>> =
     LazyLock::new(|| {
         [
-            "a", "an", "the", "and", "or", "of", "to", "in", "on", "at", "for", "with",
-            "from", "by", "as", "is", "are", "was", "were", "be", "been", "do", "does",
-            "did", "can", "could", "should", "would", "will", "how", "what", "why",
-            "when", "where", "which", "who", "whom", "it", "its", "this", "that",
-            "these", "those", "i", "me", "my", "you", "your", "we", "our", "they",
-            "their",
+            "a", "an", "the", "and", "or", "of", "to", "in", "on", "at", "for", "with", "from",
+            "by", "as", "is", "are", "was", "were", "be", "been", "do", "does", "did", "can",
+            "could", "should", "would", "will", "how", "what", "why", "when", "where", "which",
+            "who", "whom", "it", "its", "this", "that", "these", "those", "i", "me", "my", "you",
+            "your", "we", "our", "they", "their",
         ]
         .into_iter()
         .collect()
@@ -363,10 +362,16 @@ impl ZoneSkeleton {
         let mut exact_title: HashMap<String, BTreeSet<String>> = HashMap::new();
         for (path, doc) in &docs {
             for t in &doc.title_tokens {
-                title_postings.entry(t.clone()).or_default().insert(path.clone());
+                title_postings
+                    .entry(t.clone())
+                    .or_default()
+                    .insert(path.clone());
             }
             for t in &doc.path_tokens {
-                path_postings.entry(t.clone()).or_default().insert(path.clone());
+                path_postings
+                    .entry(t.clone())
+                    .or_default()
+                    .insert(path.clone());
             }
             if let Some(title) = &doc.title {
                 let norm = tokenize(title).join(" ");
@@ -433,7 +438,9 @@ impl ZoneSkeleton {
                         continue;
                     }
                 }
-                let Some(doc) = self.docs.get(path) else { continue };
+                let Some(doc) = self.docs.get(path) else {
+                    continue;
+                };
                 let score = 2.0 * doc.title_tokens.len() as f32;
                 hits.push(TitleHit {
                     path: path.clone(),
@@ -454,17 +461,23 @@ impl ZoneSkeleton {
         let mut token_min_df: BTreeMap<&str, usize> = BTreeMap::new();
         let mut oversized: Vec<(usize, &str, usize, &BTreeSet<String>)> = Vec::new();
         for token in &query_tokens {
-            for (field_rank, index) in
-                [&self.title_postings, &self.path_postings].into_iter().enumerate()
+            for (field_rank, index) in [&self.title_postings, &self.path_postings]
+                .into_iter()
+                .enumerate()
             {
-                let Some(bucket) = index.get(*token) else { continue };
+                let Some(bucket) = index.get(*token) else {
+                    continue;
+                };
                 if bucket.len() > TITLE_ARM_MAX_TOKEN_DF {
                     if path_prefix.is_some() {
                         oversized.push((bucket.len(), token, field_rank, bucket));
                     }
                     continue;
                 }
-                token_buckets.entry(token).or_default().push(bucket.iter().collect());
+                token_buckets
+                    .entry(token)
+                    .or_default()
+                    .push(bucket.iter().collect());
                 let e = token_min_df.entry(token).or_insert(usize::MAX);
                 *e = (*e).min(bucket.len());
             }
@@ -481,8 +494,7 @@ impl ZoneSkeleton {
                     continue;
                 }
                 scan_budget -= size;
-                let filtered: Vec<&String> =
-                    big.iter().filter(|p| p.starts_with(prefix)).collect();
+                let filtered: Vec<&String> = big.iter().filter(|p| p.starts_with(prefix)).collect();
                 if filtered.is_empty() || filtered.len() > TITLE_ARM_MAX_TOKEN_DF {
                     continue;
                 }
@@ -520,7 +532,9 @@ impl ZoneSkeleton {
                     continue;
                 }
             }
-            let Some(doc) = self.docs.get(path) else { continue };
+            let Some(doc) = self.docs.get(path) else {
+                continue;
+            };
             let title_overlap = doc
                 .title_tokens
                 .iter()
@@ -592,7 +606,10 @@ mod tests {
             tokenize("/workspace/src/auth/parseUserLogin.py"),
             ["workspace", "src", "auth", "parse", "user", "login", "py"]
         );
-        assert_eq!(tokenize("/docs/README_API.md"), ["docs", "readme", "api", "md"]);
+        assert_eq!(
+            tokenize("/docs/README_API.md"),
+            ["docs", "readme", "api", "md"]
+        );
     }
 
     #[test]
@@ -630,12 +647,18 @@ mod tests {
     #[test]
     fn extract_title_skips_yaml_frontmatter() {
         let text = "---\ntitle: raw\n# not a heading, a YAML comment\n---\n# Real Title\nbody";
-        assert_eq!(extract_title("/d/a.md", text), Some("Real Title".to_string()));
+        assert_eq!(
+            extract_title("/d/a.md", text),
+            Some("Real Title".to_string())
+        );
     }
 
     #[test]
     fn extract_title_none_when_no_heading() {
-        assert_eq!(extract_title("/d/a.md", "plain prose with no heading"), None);
+        assert_eq!(
+            extract_title("/d/a.md", "plain prose with no heading"),
+            None
+        );
         assert_eq!(extract_title("/d/a.md", ""), None);
     }
 
@@ -651,14 +674,36 @@ mod tests {
         // Review R3 (#4628): shebangs, source comments, and code
         // must never become title evidence.
         // Non-markdown extensions are ineligible outright.
-        assert_eq!(extract_title("/bin/run.sh", "#!/usr/bin/env bash\n# Deploy Tool\n"), None);
-        assert_eq!(extract_title("/src/mod.py", "# Auth Module\ndef f(): ...\n"), None);
+        assert_eq!(
+            extract_title("/bin/run.sh", "#!/usr/bin/env bash\n# Deploy Tool\n"),
+            None
+        );
+        assert_eq!(
+            extract_title("/src/mod.py", "# Auth Module\ndef f(): ...\n"),
+            None
+        );
         assert_eq!(extract_title("/src/noext", "# Title\n"), None);
         // Inside markdown: ATX grammar enforced.
-        assert_eq!(extract_title("/d/a.md", "#!/usr/bin/env bash\n"), None, "shebang");
-        assert_eq!(extract_title("/d/a.md", "#no-space heading\n"), None, "no space after #");
-        assert_eq!(extract_title("/d/a.md", "####### seven hashes\n"), None, "7 hashes");
-        assert_eq!(extract_title("/d/a.md", "    # indented code\n"), None, "4-space indent");
+        assert_eq!(
+            extract_title("/d/a.md", "#!/usr/bin/env bash\n"),
+            None,
+            "shebang"
+        );
+        assert_eq!(
+            extract_title("/d/a.md", "#no-space heading\n"),
+            None,
+            "no space after #"
+        );
+        assert_eq!(
+            extract_title("/d/a.md", "####### seven hashes\n"),
+            None,
+            "7 hashes"
+        );
+        assert_eq!(
+            extract_title("/d/a.md", "    # indented code\n"),
+            None,
+            "4-space indent"
+        );
         // `# comment` inside a fenced block is code, not a heading.
         assert_eq!(
             extract_title("/d/a.md", "```sh\n# fence comment\n```\nprose\n"),
@@ -728,7 +773,8 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir").keep().join("fts");
         let idx = FtsIndex::open_or_create(dir).expect("open");
         for (path, chunk_index, text) in docs {
-            idx.add_document(path, *chunk_index, text, Some(1)).expect("add");
+            idx.add_document(path, *chunk_index, text, Some(1))
+                .expect("add");
         }
         idx.commit().expect("commit");
         idx
@@ -749,7 +795,11 @@ mod tests {
     #[test]
     fn build_indexes_titles_and_paths_from_chunk0() {
         let sk = atlas_skeleton();
-        assert_eq!(sk.doc_count(), 3, "one skeleton doc per path, chunk 1 ignored");
+        assert_eq!(
+            sk.doc_count(),
+            3,
+            "one skeleton doc per path, chunk 1 ignored"
+        );
     }
 
     #[test]
@@ -802,7 +852,9 @@ mod tests {
     #[test]
     fn locate_path_prefix_filters() {
         let sk = atlas_skeleton();
-        assert!(sk.locate("atlas design doc", 10, Some("/notes/")).is_empty());
+        assert!(sk
+            .locate("atlas design doc", 10, Some("/notes/"))
+            .is_empty());
         assert_eq!(
             sk.locate("atlas design doc", 10, Some("/designs/"))[0].path,
             "/designs/atlas.md"
@@ -902,7 +954,10 @@ mod tests {
         idx.commit().expect("commit");
         let sk = ZoneSkeleton::build(&idx).expect("build");
         let hits = sk.locate("atlas design doc", 10, None);
-        assert_eq!(hits.first().map(|h| h.path.as_str()), Some("/designs/atlas.md"));
+        assert_eq!(
+            hits.first().map(|h| h.path.as_str()),
+            Some("/designs/atlas.md")
+        );
         assert_eq!(hits[0].title.as_deref(), Some("Atlas Design Doc"));
     }
 

@@ -577,10 +577,25 @@ fn walk_recursive(
     root_path: &str,
     visit: &mut dyn FnMut(&str, u8) -> WalkAction,
 ) -> Result<(), KernelIoError> {
+    let mut skipped_subtrees = 0u32;
+    walk_recursive_tracked(handle, root_path, visit, &mut skipped_subtrees)
+}
+
+/// Like [`walk_recursive`] but also counts subtrees SKIPPED because
+/// a nested `sys_readdir` failed transiently (#4628 review R9).
+/// Refresh must know: files under a skipped subtree were not seen,
+/// so "not seen" proves nothing — sweeping them as deleted would
+/// erase live index data on a transient permission/mount error.
+fn walk_recursive_tracked(
+    handle: &KernelHandle,
+    root_path: &str,
+    visit: &mut dyn FnMut(&str, u8) -> WalkAction,
+    skipped_subtrees: &mut u32,
+) -> Result<(), KernelIoError> {
     // Root-level readdir has to succeed OR we bubble the error.  A
     // NotFound here means the caller pointed us at nothing.
     let root_entries = kernel_io::sys_readdir(handle, root_path)?;
-    walk_entries(handle, root_path, root_entries, visit);
+    walk_entries(handle, root_path, root_entries, visit, skipped_subtrees);
     Ok(())
 }
 
@@ -589,6 +604,7 @@ fn walk_entries(
     parent: &str,
     entries: Vec<DirEntry>,
     visit: &mut dyn FnMut(&str, u8) -> WalkAction,
+    skipped_subtrees: &mut u32,
 ) -> WalkAction {
     for entry in entries {
         let child_path = kernel_io::join_vfs_path(parent, &entry.name);
@@ -602,14 +618,19 @@ fn walk_entries(
         if entry.entry_type == DT_DIR || entry.entry_type == kernel_io::DT_MOUNT {
             match kernel_io::sys_readdir(handle, &child_path) {
                 Ok(child_entries) => {
-                    if walk_entries(handle, &child_path, child_entries, visit) == WalkAction::Stop {
+                    if walk_entries(handle, &child_path, child_entries, visit, skipped_subtrees)
+                        == WalkAction::Stop
+                    {
                         return WalkAction::Stop;
                     }
                 }
                 Err(KernelIoError::NotFound) => {
-                    // Race with a concurrent unlink / unmount — skip.
+                    // Race with a concurrent unlink / unmount — the
+                    // subtree is genuinely GONE, so its cached files
+                    // legitimately sweep as deleted.  Not counted.
                 }
                 Err(e) => {
+                    *skipped_subtrees += 1;
                     tracing::warn!(
                         path = %child_path,
                         err = ?e,
@@ -1769,6 +1790,10 @@ fn do_refresh(
     // Files whose sinks did NOT verifiably converge this pass
     // (review R8) — any non-zero count blocks the dirty-mark clear.
     let mut transient: u32 = 0;
+    // Subtrees the recursive walk skipped on transient readdir
+    // failures (review R9) — "not seen" proves nothing for those,
+    // so the stale sweep and the dirty clear are both blocked.
+    let mut skipped_subtrees: u32 = 0;
     // Track every path we visit so the stale-sweep at the end knows
     // which cached entries no longer exist in the corpus.
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -1796,7 +1821,18 @@ fn do_refresh(
         let fresh_mtime = kernel_io::sys_stat(handle, vfs_path)
             .ok()
             .and_then(|info| info.modified_at_ms);
-        match sinks.state.verdict(vfs_path, fresh_mtime) {
+        // Pre-existing dirt distrusts the mtime cache (review R9):
+        // an interrupted earlier write can leave a PARTIAL chunk set
+        // behind a retained same-mtime state entry — "Unchanged"
+        // would then never repair it and the later clear would lie.
+        // While reconciling a dirty zone, every encountered file is
+        // forced through re-indexing.
+        let verdict = if zone_was_dirty {
+            crate::index_state::RefreshVerdict::Changed
+        } else {
+            sinks.state.verdict(vfs_path, fresh_mtime)
+        };
+        match verdict {
             crate::index_state::RefreshVerdict::Unchanged => {
                 counts.unchanged += 1;
             }
@@ -1819,12 +1855,17 @@ fn do_refresh(
     };
 
     let visit_result = if recursive {
-        walk_recursive(handle, root_path, &mut |vfs_path, entry_type| {
-            if entry_type != DT_REG {
-                return WalkAction::Continue;
-            }
-            visit_file(vfs_path)
-        })
+        walk_recursive_tracked(
+            handle,
+            root_path,
+            &mut |vfs_path, entry_type| {
+                if entry_type != DT_REG {
+                    return WalkAction::Continue;
+                }
+                visit_file(vfs_path)
+            },
+            &mut skipped_subtrees,
+        )
         .map_err(walk_err_to_string)
     } else {
         match kernel_io::sys_readdir(handle, root_path) {
@@ -1865,7 +1906,15 @@ fn do_refresh(
              raise max_docs or refresh in narrower scopes to sweep deletions",
         );
     }
-    if visit_result.is_ok() && !truncated {
+    if skipped_subtrees > 0 {
+        tracing::warn!(
+            skipped_subtrees,
+            root = %root_path,
+            "refresh walk skipped subtrees on transient readdir failures — \
+             stale sweep skipped; files under them were NOT verified",
+        );
+    }
+    if visit_result.is_ok() && !truncated && skipped_subtrees == 0 {
         let scope = root_path.trim_end_matches('/');
         let has_ann_dir = sinks.zone_has_ann;
         for cached_path in sinks.state.known_paths() {
@@ -1908,7 +1957,7 @@ fn do_refresh(
     // kept deletion tombstones (deferred ANN purges).  A scoped,
     // truncated, or partially-failed refresh clears only its own
     // mark, and only when nothing it touched stayed unconverged.
-    let converged = transient == 0 && counts.tombstoned == 0;
+    let converged = transient == 0 && counts.tombstoned == 0 && skipped_subtrees == 0;
     let full_reconciliation = root_path == "/" && recursive && !truncated && converged;
     if state_saved && ((!zone_was_dirty && converged) || full_reconciliation) {
         manager.clear_zone_dirty(zone_id);

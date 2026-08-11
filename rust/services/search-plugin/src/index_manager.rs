@@ -220,12 +220,26 @@ impl IndexManager {
     /// path must NOT call this: the flag then keeps the query cache
     /// bypassed until a subsequent successful write repairs the
     /// zone.
+    ///
+    /// Clearing is durable and fail-closed (review R9): the sentinel
+    /// is removed AND the directory entry fsynced BEFORE the
+    /// in-memory flag drops.  If removal or the sync fails, the
+    /// in-memory flag stays set — matching the on-disk state a
+    /// restart would observe, instead of silently diverging until
+    /// one.
     pub fn clear_zone_dirty(&self, zone_id: &str) {
-        self.dirty_zones.lock().remove(zone_id);
-        if let Err(e) = std::fs::remove_file(self.zone_dirty_sentinel(zone_id)) {
-            if e.kind() != std::io::ErrorKind::NotFound {
+        let removed = match std::fs::remove_file(self.zone_dirty_sentinel(zone_id)) {
+            Ok(()) => sync_dir(&self.zone_root(zone_id)).map_err(|e| {
+                tracing::warn!(err = %e, zone = %zone_id, "dirty sentinel dir sync failed — zone stays cache-bypassed");
+            }),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => {
                 tracing::warn!(err = %e, zone = %zone_id, "dirty sentinel remove failed — zone stays cache-bypassed");
+                Err(())
             }
+        };
+        if removed.is_ok() {
+            self.dirty_zones.lock().remove(zone_id);
         }
     }
 

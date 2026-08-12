@@ -66,6 +66,7 @@ pub mod parked_state;
 pub mod query_cache;
 pub mod scoring;
 pub mod service;
+pub mod skeleton_index;
 pub mod zone_modes_state;
 
 use search_proto::search_service_server::SearchService as SearchServiceTrait;

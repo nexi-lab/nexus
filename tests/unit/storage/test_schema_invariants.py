@@ -6,6 +6,7 @@ from sqlalchemy import create_engine, inspect
 
 from nexus.storage.schema_invariants import (
     _ensure_file_paths_search_columns,
+    _ensure_operation_log_snapshot_hash_text,
     _ensure_rebac_namespaces_table,
     _ensure_version_history_content_columns,
     _ensure_zone_indexes,
@@ -97,6 +98,52 @@ def test_schema_invariants_create_rebac_namespaces_for_sqlite() -> None:
     ensure_postgres_schema_invariants(engine)
 
     assert "rebac_namespaces" in inspect(engine).get_table_names()
+
+
+class _FakeInspector:
+    def __init__(self, columns_by_table: dict[str, list[dict[str, Any]]]) -> None:
+        self._columns = columns_by_table
+
+    def get_columns(self, table_name: str) -> list[dict[str, Any]]:
+        return self._columns.get(table_name, [])
+
+
+def test_ensure_operation_log_snapshot_hash_retypes_varchar_to_text() -> None:
+    """#4645: legacy VARCHAR(64) snapshot_hash must widen to TEXT."""
+
+    class _Varchar64:
+        length = 64
+
+    conn = RecordingConnection()
+    inspector = _FakeInspector({"operation_log": [{"name": "snapshot_hash", "type": _Varchar64()}]})
+
+    _ensure_operation_log_snapshot_hash_text(conn, inspector, {"operation_log"})
+
+    statements = "\n".join(conn.statements)
+    assert "ALTER COLUMN snapshot_hash TYPE TEXT" in statements
+
+
+def test_ensure_operation_log_snapshot_hash_noop_when_already_text() -> None:
+    class _Text:
+        length = None
+
+    conn = RecordingConnection()
+    inspector = _FakeInspector({"operation_log": [{"name": "snapshot_hash", "type": _Text()}]})
+
+    _ensure_operation_log_snapshot_hash_text(conn, inspector, {"operation_log"})
+
+    assert conn.statements == []
+
+
+def test_ensure_operation_log_snapshot_hash_repairs_nameonly_fake_columns() -> None:
+    # Unit-test fakes exposing only column names are treated as legacy.
+    conn = RecordingConnection()
+    inspector = _FakeInspector({"operation_log": [{"name": "snapshot_hash"}]})
+
+    _ensure_operation_log_snapshot_hash_text(conn, inspector, {"operation_log"})
+
+    statements = "\n".join(conn.statements)
+    assert "ALTER COLUMN snapshot_hash TYPE TEXT" in statements
 
 
 def test_ensure_version_history_content_columns_repairs_legacy_content_hash() -> None:

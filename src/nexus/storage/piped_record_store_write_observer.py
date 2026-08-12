@@ -325,14 +325,54 @@ class RecordStoreWriteObserver:
                 )
                 threading.Timer(wait, self._flush_batch, args=(events, attempt + 1)).start()
             else:
-                self._total_failed += len(events)
+                # #4645: a single poison event (e.g. an INSERT the
+                # schema rejects) must not take the whole batch's
+                # audit trail down with it — salvage per event and
+                # drop only the rows that individually fail.
                 logger.error(
                     "RecordStoreWriteObserver flush FAILED after %d retries, "
-                    "dropping %d events: %s",
+                    "salvaging %d events individually: %s",
                     _MAX_RETRIES,
                     len(events),
                     e,
                 )
+                salvaged = self._salvage_events_individually(events)
+                if salvaged:
+                    if self._event_signal is not None:
+                        self._event_signal.set()
+                    for hook in self._post_flush_hooks:
+                        try:
+                            hook(salvaged)
+                        except Exception as hook_err:
+                            logger.debug(
+                                "Post-flush hook %s failed (non-critical): %s",
+                                getattr(hook, "__name__", hook),
+                                hook_err,
+                            )
+
+    def _salvage_events_individually(self, events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Last-resort per-event flush after a batch repeatedly failed (#4645).
+
+        Each event gets its own transaction; only the rows that
+        individually fail are dropped, and every drop is logged loudly
+        with the op + path whose audit row it loses.  Returns the
+        events that made it to the store.
+        """
+        salvaged: list[dict[str, Any]] = []
+        for event in events:
+            try:
+                self._flush_batch_sync([event])
+                salvaged.append(event)
+            except Exception as event_err:
+                self._total_failed += 1
+                logger.error(
+                    "RecordStoreWriteObserver dropping audit event: op=%s path=%s error=%s",
+                    event.get("op"),
+                    event.get("path"),
+                    event_err,
+                )
+        self._total_flushed += len(salvaged)
+        return salvaged
 
     # ------------------------------------------------------------------
     # Flush sync (for CLI shutdown / close callbacks)
@@ -361,9 +401,13 @@ class RecordStoreWriteObserver:
             logger.debug("flush_sync: flushed %d events", count)
             return count
         except Exception as e:
-            logger.error("flush_sync failed, %d events lost: %s", len(events), e)
-            self._total_failed += len(events)
-            return 0
+            # #4645: salvage per event instead of losing the batch.
+            logger.error(
+                "flush_sync batch failed, salvaging %d events individually: %s",
+                len(events),
+                e,
+            )
+            return len(self._salvage_events_individually(events))
 
     async def flush(self, timeout: float = 5.0) -> int:  # noqa: ARG002
         """Flush pending events. Async signature for protocol compat.

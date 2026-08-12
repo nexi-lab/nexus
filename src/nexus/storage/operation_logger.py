@@ -99,7 +99,9 @@ class OperationLogger:
             zone_id: Zone ID for multi-tenancy
             agent_id: Agent ID performing operation
             new_path: New path for rename operations
-            snapshot_hash: CAS hash of previous content
+            snapshot_hash: Previous content identifier — a CAS hex digest
+                or, for path-addressed backends, the storage key
+                (unbounded length; the column is TEXT, #4645)
             metadata_snapshot: Previous file metadata (owner, group, mode, etc.)
             status: Operation status (success/failure)
             error_message: Error message if operation failed

@@ -422,6 +422,13 @@ class SearchDaemon:
             # old daemon's "no embedding model configured" contract.
             "backend": resp.backend or "rust-plugin",
             "embedding_model": resp.embedding_model or None,
+            # #4643: pre-P12 stats carried ``vector_backend`` and
+            # monitors key on it as the "vector lane is configured"
+            # signal.  Post-P12 the vector store is the plugin's
+            # in-process HNSW index; report that when an embedder is
+            # configured, and None in keyword-only mode so pollers
+            # keep an honest signal instead of going blind.
+            "vector_backend": "hnsw-in-process" if resp.embedding_model else None,
             # #4623: non-zero while explicit index ops are in flight —
             # "empty results" then mean "still building", not "no
             # matches".

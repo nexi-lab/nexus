@@ -214,9 +214,10 @@ async def search_daemon_stats(
     """Get search daemon statistics.
 
     #4617: on top of the plugin's counters (which carry the
-    ``backend`` / ``embedding_model`` identity fields and the #4623
-    ``indexing_in_progress`` build signal), restore the pre-pivot
-    ``initialized`` key stats consumers gate on.
+    ``backend`` / ``embedding_model`` / ``vector_backend`` (#4643)
+    identity fields and the #4623 ``indexing_in_progress`` build
+    signal), restore the pre-pivot ``initialized`` key stats
+    consumers gate on.
     """
     stats: dict[str, Any] = await search_daemon.get_stats()
     stats["initialized"] = bool(getattr(search_daemon, "is_initialized", False))

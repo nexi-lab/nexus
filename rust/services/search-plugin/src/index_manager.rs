@@ -45,6 +45,7 @@ use parking_lot::Mutex;
 
 use crate::ann_index::{AnnError, AnnIndex};
 use crate::fts_index::{FtsIndex, IndexError};
+use crate::skeleton_index::SkeletonIndex;
 
 /// Directory name inside a per-zone index root for the FTS store.
 /// Sibling directories (Phase 2's `ann/` for HNSW, etc.) land next
@@ -57,6 +58,12 @@ use crate::fts_index::{FtsIndex, IndexError};
 /// `index_state` version bump forces exactly that on the next
 /// Refresh).
 const FTS_SUBDIR: &str = "fts-v2";
+
+/// Directory name for the per-zone skeleton index (title arm — #4552
+/// mirror).  Lives alongside `fts-v2/` and `ann-*-v2/` under the
+/// zone root; `v1` because it's a fresh schema with no prior on-disk
+/// history to preserve.
+const SKELETON_SUBDIR: &str = "skeleton-v1";
 
 /// Environment variable that names the per-node state root.  Same
 /// SSOT the sibling `nexus-vault` plugin honours — one variable
@@ -84,6 +91,10 @@ pub struct IndexManager {
     root: PathBuf,
     zones: Mutex<HashMap<String, Arc<FtsIndex>>>,
     ann_zones: Mutex<HashMap<AnnKey, Arc<AnnIndex>>>,
+    /// Per-zone skeleton index cache (title arm — #4552 mirror).
+    /// Shape parallels `zones` / `ann_zones` — one Arc per zone,
+    /// lazily opened on first Index or Query call.
+    skeleton_zones: Mutex<HashMap<String, Arc<SkeletonIndex>>>,
     /// Per-zone WRITE locks (review R1).  Index / IndexDocuments /
     /// Refresh / NotifyFileChange each open an independent
     /// `IndexState` and save the whole snapshot at the end, so two
@@ -117,6 +128,7 @@ impl IndexManager {
             root,
             zones: Mutex::new(HashMap::new()),
             ann_zones: Mutex::new(HashMap::new()),
+            skeleton_zones: Mutex::new(HashMap::new()),
             zone_write_locks: Mutex::new(HashMap::new()),
         }
     }
@@ -152,6 +164,12 @@ impl IndexManager {
         self.root
             .join(zone_id)
             .join(format!("ann-{embedder_tag}-v2"))
+    }
+
+    /// Return the on-disk directory the given zone's skeleton index
+    /// lives in.  Same shape as [`index_dir`] but under `skeleton-v1/`.
+    pub fn skeleton_dir(&self, zone_id: &str) -> PathBuf {
+        self.root.join(zone_id).join(SKELETON_SUBDIR)
     }
 
     /// Return the per-zone root — parent of `fts/` and `ann-*-v2/`.
@@ -208,6 +226,20 @@ impl IndexManager {
         }
         let idx = AnnIndex::open_or_create(self.ann_dir(zone_id, embedder_tag), dim)?;
         zones.insert(key, Arc::clone(&idx));
+        Ok(idx)
+    }
+
+    /// Fetch (or lazily open) the skeleton index for `zone_id`.  Same
+    /// caching contract as [`get_or_open`]: repeat calls return the
+    /// same `Arc<SkeletonIndex>` so writer state (buffered adds)
+    /// survives across RPCs.
+    pub fn get_or_open_skeleton(&self, zone_id: &str) -> Result<Arc<SkeletonIndex>, IndexError> {
+        let mut zones = self.skeleton_zones.lock();
+        if let Some(idx) = zones.get(zone_id) {
+            return Ok(Arc::clone(idx));
+        }
+        let idx = SkeletonIndex::open_or_create(self.skeleton_dir(zone_id))?;
+        zones.insert(zone_id.to_string(), Arc::clone(&idx));
         Ok(idx)
     }
 }

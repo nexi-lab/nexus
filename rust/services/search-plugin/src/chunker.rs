@@ -139,6 +139,34 @@ pub fn chunk_document(text: &str) -> Vec<Chunk> {
     emitter.into_chunks()
 }
 
+/// Extract the FIRST markdown ATX heading text from a document, or
+/// `None` if none exists.  Skips fenced code blocks so a `#` inside
+/// a triple-backtick block isn't mistaken for a heading.
+///
+/// Used by [`crate::skeleton_index`] to seed the title arm's `title`
+/// field at index time — the first heading of a document is the
+/// closest cheap approximation to "the document's title" for the
+/// markdown corpus this plugin targets.
+pub fn extract_first_heading(text: &str) -> Option<String> {
+    let mut in_code_fence = false;
+    for raw_line in text.split_inclusive('\n') {
+        let trimmed_start = raw_line.trim_start();
+        if trimmed_start.starts_with("```") {
+            in_code_fence = !in_code_fence;
+            continue;
+        }
+        if in_code_fence {
+            continue;
+        }
+        if let Some((_, title)) = parse_heading(raw_line) {
+            if !title.is_empty() {
+                return Some(title);
+            }
+        }
+    }
+    None
+}
+
 /// Parse a markdown-style ATX heading (`#` through `######` +
 /// whitespace + title).  Setext (underline) headings not handled
 /// yet — deferred; rare enough that Python's chunker treats them

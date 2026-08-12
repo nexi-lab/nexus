@@ -953,6 +953,7 @@ fn fuse_hybrid(
 struct IndexSinks<'a> {
     fts: &'a Arc<crate::fts_index::FtsIndex>,
     ann: Option<&'a Arc<crate::ann_index::AnnIndex>>,
+    skeleton: &'a Arc<crate::skeleton_index::SkeletonIndex>,
     embedder: Option<&'a Arc<dyn Embedder>>,
     state: &'a crate::index_state::IndexState,
     /// True when an embedder IS configured but failed to initialise
@@ -1030,9 +1031,14 @@ fn do_index(
         }
     }
 
+    let skeleton = manager
+        .get_or_open_skeleton(zone_id)
+        .map_err(|e| format!("open skeleton for zone {zone_id:?}: {e}"))?;
+
     let sinks = IndexSinks {
         fts: &fts,
         ann: ann.as_ref(),
+        skeleton: &skeleton,
         embedder,
         state: &state,
         embed_broken,
@@ -1093,6 +1099,12 @@ fn do_index(
             return Err(format!("ann commit: {e}"));
         }
     }
+    // Skeleton is best-effort: a commit failure logs but does not
+    // fail the pass — FTS is the SSOT for retrievability, skeleton
+    // is a query-time booster that a follow-up Refresh rebuilds.
+    if let Err(e) = skeleton.commit() {
+        tracing::warn!(err = %e, "skeleton commit failed after walk");
+    }
     // Persist the mtime cache so the next Refresh's diff pass sees
     // an up-to-date baseline.  A crash between the sink commits and
     // this save just means the next Refresh will re-index those
@@ -1134,6 +1146,10 @@ enum IndexOne {
 /// the real mtime finalizes the skip.
 fn record_content_skip(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> IndexOne {
     sinks.fts.delete_all_chunks(vfs_path);
+    // Skeleton parity: a content transition that purges FTS chunks
+    // must also drop the doc's title-arm entry, or a query naming
+    // the old title would keep hitting the now-empty file.
+    sinks.skeleton.delete(vfs_path);
     match sinks.ann {
         Some(ann) => {
             ann.delete_all_chunks(vfs_path);
@@ -1215,6 +1231,21 @@ fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> I
             );
             return IndexOne::Skipped;
         }
+    }
+
+    // Skeleton (title arm — #4552 mirror): upsert the file's title
+    // alongside the FTS chunks so hybrid fusion can rank
+    // title-shaped queries against the same doc set FTS sees.
+    // Best-effort — a skeleton write failure logs but does not fail
+    // the whole indexing pass; skeleton is a query-time booster,
+    // FTS is the SSOT for retrievability.
+    let title = crate::chunker::extract_first_heading(text).unwrap_or_default();
+    if let Err(e) = sinks.skeleton.upsert(vfs_path, &title) {
+        tracing::warn!(
+            path = %vfs_path,
+            err = %e,
+            "index: skeleton upsert failed — title arm will miss this doc until next refresh",
+        );
     }
 
     // ANN side — keyword-degradation per query is fine, but a
@@ -1303,6 +1334,9 @@ fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> I
 /// working ANN sink completes the removal.
 fn remove_one(sinks: &IndexSinks<'_>, vfs_path: &str, zone_has_ann: bool) -> bool {
     sinks.fts.delete_all_chunks(vfs_path);
+    // Skeleton parity: the title-arm entry is small + orthogonal to
+    // ANN reachability, so drop it unconditionally alongside FTS.
+    sinks.skeleton.delete(vfs_path);
     match sinks.ann {
         Some(ann) => {
             ann.delete_all_chunks(vfs_path);
@@ -1428,9 +1462,14 @@ fn do_refresh(
         }
     }
 
+    let skeleton = manager
+        .get_or_open_skeleton(zone_id)
+        .map_err(|e| format!("open skeleton for zone {zone_id:?}: {e}"))?;
+
     let sinks = IndexSinks {
         fts: &fts,
         ann: ann.as_ref(),
+        skeleton: &skeleton,
         embedder,
         state: &state,
         embed_broken,
@@ -1552,6 +1591,10 @@ fn do_refresh(
             return Err(format!("ann commit: {e}"));
         }
     }
+    // Skeleton is best-effort — see do_index for the rationale.
+    if let Err(e) = skeleton.commit() {
+        tracing::warn!(err = %e, "skeleton commit failed after refresh");
+    }
     if let Err(e) = state.save() {
         tracing::warn!(err = %e, "index_state save failed");
     }
@@ -1609,6 +1652,9 @@ fn do_index_documents(
         } else {
             None
         };
+        let skeleton = manager
+            .get_or_open_skeleton(&zone_id)
+            .map_err(|e| format!("open skeleton for zone {zone_id:?}: {e}"))?;
         let state = crate::index_state::IndexState::open_or_create(manager.zone_root(&zone_id))
             .map_err(|e| format!("open state for zone {zone_id:?}: {e}"))?;
 
@@ -1641,6 +1687,9 @@ fn do_index_documents(
         // chunks, not leave stale text searchable behind a skip.
         let content_skip = |path: &str| {
             fts.delete_all_chunks(path);
+            // Skeleton parity: content transition drops the title-arm
+            // entry so a query on the old title stops matching.
+            skeleton.delete(path);
             match ann.as_ref() {
                 Some(a) => {
                     a.delete_all_chunks(path);
@@ -1683,6 +1732,17 @@ fn do_index_documents(
             if !fts_ok {
                 total_skipped += 1;
                 continue;
+            }
+
+            // Skeleton: upsert the doc's title alongside FTS chunks so
+            // hybrid fusion's title arm ranks it consistently.
+            let title = crate::chunker::extract_first_heading(&doc.text).unwrap_or_default();
+            if let Err(e) = skeleton.upsert(&doc.path, &title) {
+                tracing::warn!(
+                    path = %doc.path,
+                    err = %e,
+                    "index_documents: skeleton upsert failed — title arm will miss until next refresh",
+                );
             }
 
             // ANN: keyword-degradation is fine per query, but a
@@ -1750,6 +1810,11 @@ fn do_index_documents(
                 if let Err(e) = fts.commit() {
                     return Err(format!("fts incremental commit for zone {zone_id:?}: {e}"));
                 }
+                // Match FTS visibility on the incremental step so the
+                // title arm doesn't lag behind a keyword-visible doc.
+                if let Err(e) = skeleton.commit() {
+                    tracing::warn!(err = %e, zone = %zone_id, "skeleton incremental commit failed");
+                }
                 // Cached results captured before this commit would
                 // mask the fresh docs for the cache TTL — drop them
                 // with every visibility step, not just at the end.
@@ -1765,6 +1830,9 @@ fn do_index_documents(
             if let Err(e) = a.commit() {
                 return Err(format!("ann commit for zone {zone_id:?}: {e}"));
             }
+        }
+        if let Err(e) = skeleton.commit() {
+            tracing::warn!(err = %e, zone = %zone_id, "skeleton commit failed");
         }
         if let Err(e) = state.save() {
             tracing::warn!(err = %e, zone = %zone_id, "index_state save failed");
@@ -1795,12 +1863,18 @@ fn do_notify_file_change(
     let fts = manager
         .get_or_open(zone_id)
         .map_err(|e| format!("open fts for zone {zone_id:?}: {e}"))?;
+    let skeleton = manager
+        .get_or_open_skeleton(zone_id)
+        .map_err(|e| format!("open skeleton for zone {zone_id:?}: {e}"))?;
     let state = crate::index_state::IndexState::open_or_create(manager.zone_root(zone_id))
         .map_err(|e| format!("open state for zone {zone_id:?}: {e}"))?;
 
     match change_type {
         "delete" => {
             fts.delete_all_chunks(path);
+            // Skeleton drop mirrors the FTS delete — a deleted file
+            // must stop matching title-arm queries immediately.
+            skeleton.delete(path);
             // Only open ANN if it happens to already be there —
             // creating an empty ANN dir on a delete is
             // counterproductive.  We'd need the embedder tag to
@@ -1815,6 +1889,9 @@ fn do_notify_file_change(
             state.record(path, None);
             if let Err(e) = fts.commit() {
                 return Err(format!("fts commit: {e}"));
+            }
+            if let Err(e) = skeleton.commit() {
+                tracing::warn!(err = %e, "skeleton commit failed on delete notify");
             }
             // The tombstone IS the deferred-ANN-cleanup record — if it
             // cannot be persisted the delete must FAIL so the caller

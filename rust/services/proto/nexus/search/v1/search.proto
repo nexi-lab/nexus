@@ -396,6 +396,29 @@ message QueryResult {
   // keyword / semantic modes, for hybrid hits with no title match,
   // and when the arm is disabled (NEXUS_SEARCH_TITLE_ARM=false).
   optional float title_score = 8;
+
+  // ── Score attribution (#4644) ────────────────────────────────────
+  // Per-arm scores + applied boost factors so callers can see WHY a
+  // hit ranked where it did (debugging, regression evals,
+  // re-ranking).  All presence-based: absent means "this arm/boost
+  // did not touch this hit", not zero.
+
+  // Raw BM25 score from the keyword arm.  Set on keyword-mode hits
+  // and on hybrid hits the keyword arm voted for.
+  optional float keyword_score = 9;
+
+  // Cosine similarity (1 - distance) from the semantic arm.  Set on
+  // semantic-mode hits and on hybrid hits the dense arm voted for.
+  optional float vector_score = 10;
+
+  // Multiplier applied by the longest-matching path_prefix_boosts
+  // entry (#4544 tier boost).  Absent when no prefix matched.
+  optional float tier_boost = 11;
+
+  // Recency multiplier 1 + w*H/(H+age_days) applied to this hit
+  // (#4543).  Absent when recency scoring was off or the hit has no
+  // mtime.
+  optional float recency_boost = 12;
 }
 
 message QueryResponse {

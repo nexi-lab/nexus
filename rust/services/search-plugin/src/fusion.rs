@@ -137,6 +137,11 @@ pub fn rrf_multi(arms: &[(ArmKind, &[QueryResult])], k: u32) -> Vec<QueryResult>
             if matches!(kind, ArmKind::Title) {
                 entry.template.title_score = Some(r.score);
             }
+            // #4644: same cross-arm attribution merge as `accumulate` —
+            // the chunk arm carries keyword/vector scores the title
+            // arm's hydrated template may lack, and vice versa.
+            entry.template.keyword_score = entry.template.keyword_score.or(r.keyword_score);
+            entry.template.vector_score = entry.template.vector_score.or(r.vector_score);
             best_rank
                 .entry(key)
                 .and_modify(|b| *b = (*b).min(rank))
@@ -225,7 +230,16 @@ fn accumulate<F: Fn(usize, &QueryResult) -> f32>(
         let c = contribution(idx, r);
         merged
             .entry(DocKey::of(r))
-            .and_modify(|m| m.score += c)
+            .and_modify(|m| {
+                m.score += c;
+                // #4644: first-seen template wins for text/mtime, but a
+                // doc voted for by BOTH arms must not lose the second
+                // arm's attribution — each arm stamps only its own
+                // field, so `.or()` merges without clobbering.
+                m.template.keyword_score = m.template.keyword_score.or(r.keyword_score);
+                m.template.vector_score = m.template.vector_score.or(r.vector_score);
+                m.template.title_score = m.template.title_score.or(r.title_score);
+            })
             .or_insert_with(|| MergedHit {
                 score: c,
                 template: r.clone(),
@@ -292,6 +306,7 @@ mod tests {
             mtime_ms: Some(1),
             expanded_context: String::new(),
             title_score: None,
+            ..Default::default()
         }
     }
 
@@ -400,6 +415,7 @@ mod tests {
             mtime_ms: Some(100),
             expanded_context: String::new(),
             title_score: None,
+            ..Default::default()
         }];
         let sem = vec![QueryResult {
             path: "/a".into(),
@@ -410,11 +426,71 @@ mod tests {
             mtime_ms: Some(200),
             expanded_context: String::new(),
             title_score: None,
+            ..Default::default()
         }];
         let fused = rrf(&kw, &sem, 60);
         assert_eq!(fused.len(), 1);
         assert_eq!(fused[0].chunk_text, "keyword-text");
         assert_eq!(fused[0].mtime_ms, Some(100));
+    }
+
+    #[test]
+    fn rrf_merges_per_arm_attribution_across_sources() {
+        // #4644: a doc voted for by both arms keeps the first-seen
+        // template but must carry BOTH arms' raw scores.
+        let kw = vec![QueryResult {
+            keyword_score: Some(10.0),
+            ..hit("/a", 0, 10.0)
+        }];
+        let sem = vec![QueryResult {
+            vector_score: Some(0.9),
+            ..hit("/a", 0, 0.9)
+        }];
+        let fused = rrf(&kw, &sem, 60);
+        assert_eq!(fused.len(), 1);
+        assert_eq!(fused[0].keyword_score, Some(10.0));
+        assert_eq!(fused[0].vector_score, Some(0.9));
+    }
+
+    #[test]
+    fn rrf_single_arm_docs_keep_only_their_own_attribution() {
+        let kw = vec![QueryResult {
+            keyword_score: Some(4.0),
+            ..hit("/kw-only", 0, 4.0)
+        }];
+        let sem = vec![QueryResult {
+            vector_score: Some(0.8),
+            ..hit("/sem-only", 0, 0.8)
+        }];
+        let fused = rrf(&kw, &sem, 60);
+        for r in &fused {
+            match r.path.as_str() {
+                "/kw-only" => {
+                    assert_eq!(r.keyword_score, Some(4.0));
+                    assert_eq!(r.vector_score, None);
+                }
+                "/sem-only" => {
+                    assert_eq!(r.keyword_score, None);
+                    assert_eq!(r.vector_score, Some(0.8));
+                }
+                other => panic!("unexpected path {other}"),
+            }
+        }
+    }
+
+    #[test]
+    fn rrf_multi_merges_chunk_arm_attribution_into_title_votes() {
+        // #4644: the kw-lane sub-fusion must not lose the chunk arm's
+        // keyword_score when the title arm also voted for the doc.
+        let chunk = vec![QueryResult {
+            keyword_score: Some(6.5),
+            ..hit("/a", 0, 6.5)
+        }];
+        let title = vec![hit("/a", 0, 7.0)];
+        let fused = rrf_multi(&[(ArmKind::Chunk, &chunk), (ArmKind::Title, &title)], 60);
+        assert_eq!(fused.len(), 1);
+        assert_eq!(fused[0].keyword_score, Some(6.5));
+        assert_eq!(fused[0].title_score, Some(7.0));
     }
 
     #[test]
@@ -557,6 +633,7 @@ mod tests {
                 mtime_ms: None,
                 expanded_context: String::new(),
                 title_score: None,
+                ..Default::default()
             },
             QueryResult {
                 path: "/a".into(),
@@ -567,6 +644,7 @@ mod tests {
                 mtime_ms: None,
                 expanded_context: String::new(),
                 title_score: None,
+                ..Default::default()
             },
         ];
         // rrf here: rank-1 and rank-2 have different scores; equalise

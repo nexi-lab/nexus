@@ -422,6 +422,13 @@ class SearchDaemon:
             # old daemon's "no embedding model configured" contract.
             "backend": resp.backend or "rust-plugin",
             "embedding_model": resp.embedding_model or None,
+            # #4643: pre-P12 stats carried ``vector_backend`` and
+            # monitors key on it as the "vector lane is configured"
+            # signal.  Post-P12 the vector store is the plugin's
+            # in-process HNSW index; report that when an embedder is
+            # configured, and None in keyword-only mode so pollers
+            # keep an honest signal instead of going blind.
+            "vector_backend": "hnsw-in-process" if resp.embedding_model else None,
             # #4623: non-zero while explicit index ops are in flight —
             # "empty results" then mean "still building", not "no
             # matches".
@@ -462,8 +469,8 @@ def _request_to_pb(request: "SearchRequest", *, chunks_per_page: int) -> search_
 def _result_to_base(pb: search_pb2.QueryResult) -> BaseSearchResult:
     """Convert a proto QueryResult into the Python daemon's result
     shape.  Fields Python has that Rust doesn't (matched_field,
-    reranker_score, etc.) stay None — the Rust plugin doesn't
-    surface them yet."""
+    reranker_score, splade_score, line_start/end) stay None — the
+    Rust plugin doesn't surface them."""
     return BaseSearchResult(
         path=pb.path,
         chunk_text=pb.chunk_text,
@@ -474,4 +481,11 @@ def _result_to_base(pb: search_pb2.QueryResult) -> BaseSearchResult:
         # #4628: title-arm attribution — optional proto field, so
         # presence (not zero-ness) decides None.
         title_score=float(pb.title_score) if pb.HasField("title_score") else None,
+        # #4644: per-arm scores + applied boost factors.  All optional
+        # proto fields — presence decides None, so "arm didn't vote" /
+        # "boost didn't apply" stay observably distinct from 0.0.
+        keyword_score=float(pb.keyword_score) if pb.HasField("keyword_score") else None,
+        vector_score=float(pb.vector_score) if pb.HasField("vector_score") else None,
+        tier_boost=float(pb.tier_boost) if pb.HasField("tier_boost") else None,
+        recency_boost=float(pb.recency_boost) if pb.HasField("recency_boost") else None,
     )

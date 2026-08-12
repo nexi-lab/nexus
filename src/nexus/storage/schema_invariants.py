@@ -254,6 +254,39 @@ def _ensure_version_history_content_columns(
         )
 
 
+def _ensure_operation_log_snapshot_hash_text(
+    conn: Any,
+    inspector: Any,
+    table_names: set[str],
+) -> None:
+    """#4645: retype operation_log.snapshot_hash VARCHAR(64) → TEXT.
+
+    The column was sized for a CAS hex digest, but path-addressed
+    backends use their storage key (``zone/<zone>/<path>``) as the
+    content_id — any rename of a path longer than 64 chars overflowed
+    the INSERT and the oplog row was silently lost while the operation
+    reported success.
+    """
+    if "operation_log" not in table_names:
+        return
+
+    for column in inspector.get_columns("operation_log"):
+        if column["name"] != "snapshot_hash":
+            continue
+        # Unit-test fakes only expose column names — treat them as
+        # legacy so the regression test can verify the repair SQL.
+        if "type" not in column or getattr(column["type"], "length", None) is not None:
+            conn.execute(
+                text(
+                    """
+                    ALTER TABLE operation_log
+                    ALTER COLUMN snapshot_hash TYPE TEXT
+                    """
+                )
+            )
+        return
+
+
 def _ensure_varchar_lengths(
     conn: Any,
     inspector: Any,
@@ -780,6 +813,7 @@ def ensure_postgres_schema_invariants(engine: Engine) -> None:
         _ensure_nullable_column(conn, inspector, table_names, "file_paths", "physical_path")
         _ensure_file_paths_search_columns(conn, columns_by_table)
         _ensure_version_history_content_columns(conn, columns_by_table)
+        _ensure_operation_log_snapshot_hash_text(conn, inspector, table_names)
         _ensure_rebac_id_lengths(conn, inspector, table_names)
         _ensure_varchar_lengths(
             conn,

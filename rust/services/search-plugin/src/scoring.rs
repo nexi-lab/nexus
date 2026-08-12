@@ -149,6 +149,9 @@ pub fn apply_recency(
         let age_days = age_ms / ms_per_day;
         let multiplier = 1.0 + w * h / (h + age_days);
         hit.score *= multiplier;
+        // #4644: expose the applied factor (mirrors Python
+        // `recency.py` stamping `result.recency_boost = boost`).
+        hit.recency_boost = Some(multiplier);
     }
 }
 
@@ -183,6 +186,9 @@ pub fn apply_prefix_boost(hits: &mut [QueryResult], boosts: &HashMap<String, f32
             .max_by_key(|(prefix, _)| prefix.len());
         if let Some((_, &multiplier)) = best {
             hit.score *= multiplier;
+            // #4644: expose the applied factor — this is what the
+            // Python surface calls `tier_boost` (#4544).
+            hit.tier_boost = Some(multiplier);
         }
     }
 }
@@ -226,6 +232,7 @@ mod tests {
             mtime_ms,
             expanded_context: String::new(),
             title_score: None,
+            ..Default::default()
         }
     }
 
@@ -300,6 +307,38 @@ mod tests {
             "expected 2.5 * 2 = 5.0, got {}",
             hits[0].score,
         );
+    }
+
+    #[test]
+    fn recency_stamps_applied_factor_as_attribution() {
+        // #4644: the applied multiplier is exposed on the hit so
+        // callers can verify the boost instead of rank-flip probing.
+        let now = 1_700_000_000_000;
+        let mut hits = vec![hit("/x", 2.5, Some(now)), hit("/no-mtime", 1.0, None)];
+        apply_recency(&mut hits, RecencyMode::On, 1.0, 30.0, now, "any");
+        assert!(
+            (hits[0].recency_boost.unwrap() - 2.0).abs() < 0.001,
+            "age-0 factor is 2.0, got {:?}",
+            hits[0].recency_boost,
+        );
+        assert_eq!(
+            hits[1].recency_boost, None,
+            "no-mtime hits carry no factor — absent, not 1.0"
+        );
+    }
+
+    #[test]
+    fn recency_off_leaves_attribution_absent() {
+        let mut hits = vec![hit("/x", 1.0, Some(1_700_000_000_000))];
+        apply_recency(
+            &mut hits,
+            RecencyMode::Off,
+            1.0,
+            30.0,
+            1_700_000_000_000,
+            "any",
+        );
+        assert_eq!(hits[0].recency_boost, None);
     }
 
     #[test]
@@ -414,6 +453,11 @@ mod tests {
         assert_eq!(hits[0].score, 2.0);
         assert_eq!(hits[1].score, 0.5);
         assert_eq!(hits[2].score, 1.0, "no matching prefix = untouched");
+        // #4644: applied multiplier is stamped as tier_boost; absent
+        // when no prefix matched.
+        assert_eq!(hits[0].tier_boost, Some(2.0));
+        assert_eq!(hits[1].tier_boost, Some(0.5));
+        assert_eq!(hits[2].tier_boost, None);
     }
 
     #[test]

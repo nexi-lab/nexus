@@ -62,10 +62,7 @@ class GlobResponse(_message.Message):
     truncated: bool
     error: str
     def __init__(
-        self,
-        paths: _Iterable[str] | None = ...,
-        truncated: bool = ...,
-        error: str | None = ...,
+        self, paths: _Iterable[str] | None = ..., truncated: bool = ..., error: str | None = ...
     ) -> None: ...
 
 class GrepRequest(_message.Message):
@@ -236,6 +233,10 @@ class QueryResult(_message.Message):
         "mtime_ms",
         "expanded_context",
         "title_score",
+        "keyword_score",
+        "vector_score",
+        "tier_boost",
+        "recency_boost",
     )
     PATH_FIELD_NUMBER: _ClassVar[int]
     CHUNK_INDEX_FIELD_NUMBER: _ClassVar[int]
@@ -245,6 +246,10 @@ class QueryResult(_message.Message):
     MTIME_MS_FIELD_NUMBER: _ClassVar[int]
     EXPANDED_CONTEXT_FIELD_NUMBER: _ClassVar[int]
     TITLE_SCORE_FIELD_NUMBER: _ClassVar[int]
+    KEYWORD_SCORE_FIELD_NUMBER: _ClassVar[int]
+    VECTOR_SCORE_FIELD_NUMBER: _ClassVar[int]
+    TIER_BOOST_FIELD_NUMBER: _ClassVar[int]
+    RECENCY_BOOST_FIELD_NUMBER: _ClassVar[int]
     path: str
     chunk_index: int
     chunk_text: str
@@ -253,6 +258,10 @@ class QueryResult(_message.Message):
     mtime_ms: int
     expanded_context: str
     title_score: float
+    keyword_score: float
+    vector_score: float
+    tier_boost: float
+    recency_boost: float
     def __init__(
         self,
         path: str | None = ...,
@@ -263,6 +272,10 @@ class QueryResult(_message.Message):
         mtime_ms: int | None = ...,
         expanded_context: str | None = ...,
         title_score: float | None = ...,
+        keyword_score: float | None = ...,
+        vector_score: float | None = ...,
+        tier_boost: float | None = ...,
+        recency_boost: float | None = ...,
     ) -> None: ...
 
 class QueryResponse(_message.Message):
@@ -272,9 +285,7 @@ class QueryResponse(_message.Message):
     results: _containers.RepeatedCompositeFieldContainer[QueryResult]
     error: str
     def __init__(
-        self,
-        results: _Iterable[QueryResult | _Mapping] | None = ...,
-        error: str | None = ...,
+        self, results: _Iterable[QueryResult | _Mapping] | None = ..., error: str | None = ...
     ) -> None: ...
 
 class IndexRequest(_message.Message):
@@ -372,9 +383,7 @@ class BatchQueryRequest(_message.Message):
     queries: _containers.RepeatedCompositeFieldContainer[QueryRequest]
     auth_token: str
     def __init__(
-        self,
-        queries: _Iterable[QueryRequest | _Mapping] | None = ...,
-        auth_token: str | None = ...,
+        self, queries: _Iterable[QueryRequest | _Mapping] | None = ..., auth_token: str | None = ...
     ) -> None: ...
 
 class BatchQueryResponse(_message.Message):
@@ -469,10 +478,7 @@ class LocateRequest(_message.Message):
     zone_id: str
     auth_token: str
     def __init__(
-        self,
-        path: str | None = ...,
-        zone_id: str | None = ...,
-        auth_token: str | None = ...,
+        self, path: str | None = ..., zone_id: str | None = ..., auth_token: str | None = ...
     ) -> None: ...
 
 class LocateResponse(_message.Message):
@@ -526,9 +532,7 @@ class ParkedListResponse(_message.Message):
     entries: _containers.RepeatedCompositeFieldContainer[ParkedEntry]
     error: str
     def __init__(
-        self,
-        entries: _Iterable[ParkedEntry | _Mapping] | None = ...,
-        error: str | None = ...,
+        self, entries: _Iterable[ParkedEntry | _Mapping] | None = ..., error: str | None = ...
     ) -> None: ...
 
 class ParkedRetryRequest(_message.Message):
@@ -593,10 +597,7 @@ class IndexedDirectory(_message.Message):
     zone_id: str
     added_at_ms: int
     def __init__(
-        self,
-        path: str | None = ...,
-        zone_id: str | None = ...,
-        added_at_ms: int | None = ...,
+        self, path: str | None = ..., zone_id: str | None = ..., added_at_ms: int | None = ...
     ) -> None: ...
 
 class AddIndexedDirectoryRequest(_message.Message):
@@ -608,10 +609,7 @@ class AddIndexedDirectoryRequest(_message.Message):
     zone_id: str
     auth_token: str
     def __init__(
-        self,
-        path: str | None = ...,
-        zone_id: str | None = ...,
-        auth_token: str | None = ...,
+        self, path: str | None = ..., zone_id: str | None = ..., auth_token: str | None = ...
     ) -> None: ...
 
 class AddIndexedDirectoryResponse(_message.Message):
@@ -631,10 +629,7 @@ class RemoveIndexedDirectoryRequest(_message.Message):
     zone_id: str
     auth_token: str
     def __init__(
-        self,
-        path: str | None = ...,
-        zone_id: str | None = ...,
-        auth_token: str | None = ...,
+        self, path: str | None = ..., zone_id: str | None = ..., auth_token: str | None = ...
     ) -> None: ...
 
 class RemoveIndexedDirectoryResponse(_message.Message):
@@ -674,10 +669,7 @@ class SetZoneIndexingModeRequest(_message.Message):
     mode: str
     auth_token: str
     def __init__(
-        self,
-        zone_id: str | None = ...,
-        mode: str | None = ...,
-        auth_token: str | None = ...,
+        self, zone_id: str | None = ..., mode: str | None = ..., auth_token: str | None = ...
     ) -> None: ...
 
 class SetZoneIndexingModeResponse(_message.Message):
@@ -707,9 +699,7 @@ class ListZoneIndexingModesResponse(_message.Message):
     modes: _containers.RepeatedCompositeFieldContainer[ZoneIndexingMode]
     error: str
     def __init__(
-        self,
-        modes: _Iterable[ZoneIndexingMode | _Mapping] | None = ...,
-        error: str | None = ...,
+        self, modes: _Iterable[ZoneIndexingMode | _Mapping] | None = ..., error: str | None = ...
     ) -> None: ...
 
 class HealthRequest(_message.Message):

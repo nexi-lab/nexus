@@ -152,3 +152,42 @@ def test_result_to_base_title_score_none_when_unset() -> None:
     pb = search_pb2.QueryResult(path="/a.md", chunk_index=0, chunk_text="t", score=0.5)
     base = daemon_mod._result_to_base(pb)
     assert base.title_score is None
+
+
+# ── #4644: result mapping carries score attribution ──────────────
+
+
+def test_result_to_base_copies_score_attribution_when_set() -> None:
+    """#4644: per-arm scores + boost factors must survive the
+    proto→Base hop so the HTTP surface stops serialising null."""
+    from nexus.grpc.search.v1 import search_pb2
+
+    pb = search_pb2.QueryResult(
+        path="/docs/guide.md",
+        chunk_index=1,
+        chunk_text="body",
+        score=0.42,
+        zone_id="root",
+        keyword_score=8.25,
+        vector_score=0.91,
+        tier_boost=2.0,
+        recency_boost=1.35,
+    )
+    base = daemon_mod._result_to_base(pb)
+    assert base.keyword_score == pytest.approx(8.25)
+    assert base.vector_score == pytest.approx(0.91)
+    assert base.tier_boost == pytest.approx(2.0)
+    assert base.recency_boost == pytest.approx(1.35)
+
+
+def test_result_to_base_score_attribution_none_when_unset() -> None:
+    """Presence (not zero-ness) decides None — "arm didn't vote" and
+    "boost didn't apply" must stay distinct from 0.0."""
+    from nexus.grpc.search.v1 import search_pb2
+
+    pb = search_pb2.QueryResult(path="/a.md", chunk_index=0, chunk_text="t", score=0.5)
+    base = daemon_mod._result_to_base(pb)
+    assert base.keyword_score is None
+    assert base.vector_score is None
+    assert base.tier_boost is None
+    assert base.recency_boost is None

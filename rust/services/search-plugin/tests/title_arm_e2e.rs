@@ -376,6 +376,52 @@ async fn title_shaped_query_surfaces_weak_body_doc_with_attribution() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn txt_doc_earns_title_attribution_via_stem_fallback() {
+    // #4647: mixed-format corpus — the gold doc is a .txt whose
+    // FILENAME is a near-exact query match; the decoy is an .md whose
+    // heading shares tokens with the query.  Pre-fallback the .txt
+    // could never earn title_score and the md decoy won the arm
+    // unopposed (observed on the koodle 75-doc corpus: MRR .679 vs
+    // .774 with the arm off).
+    let h = Harness::start(true);
+    {
+        let mock = h.mock_mut();
+        mock.add_dir("/");
+        mock.add_dir("/w");
+        mock.add_file(
+            "/w/08_PLRM_Q3_earnings_transcript.txt",
+            b"Operator: Good afternoon, and welcome to the conference call.",
+            1,
+        );
+        mock.add_file(
+            "/w/09_post_earnings_quick_take.md",
+            b"# Post-Earnings Quick Take: Q3\n\nhot take on the quarter.",
+            2,
+        );
+    }
+    index_root(&h.svc).await;
+
+    let results = hybrid_query(&h.svc, "Q3 earnings call prepared remarks transcript").await;
+    let gold = results
+        .iter()
+        .find(|r| r.path == "/w/08_PLRM_Q3_earnings_transcript.txt")
+        .expect(".txt doc must enter the hybrid results via the title arm");
+    let decoy = results
+        .iter()
+        .find(|r| r.path == "/w/09_post_earnings_quick_take.md")
+        .expect("decoy present");
+    let gold_title = gold
+        .title_score
+        .expect(".txt doc must carry title attribution");
+    if let Some(decoy_title) = decoy.title_score {
+        assert!(
+            gold_title > decoy_title,
+            "filename near-match must outscore the heading decoy: {gold_title} vs {decoy_title}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn arm_off_no_attribution_and_no_title_benefit() {
     // Shared IndexManager (same FTS + ANN graph) — see the parity
     // test below for why per-instance ANN builds would add hnsw_rs

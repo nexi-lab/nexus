@@ -341,6 +341,9 @@ class TestStatsResponseContract:
         assert body["initialized"] is True
         assert body["backend"] == "rust-plugin"
         assert body["embedding_model"] == "mE5-small-v1"
+        # #4643: monitors key on a non-empty vector_backend as the
+        # "vector lane is configured" signal.
+        assert body["vector_backend"] == "hnsw-in-process"
         # #4623: non-zero while an explicit index op is in flight.
         assert body["indexing_in_progress"] == 1
 
@@ -362,4 +365,8 @@ class TestStatsResponseContract:
         # Empty on the wire ⇒ None on the JSON surface, matching the
         # pre-P12 "no embedding model configured" contract.
         assert body["embedding_model"] is None
+        # #4643: keyword-only mode has no vector lane — the key is
+        # present (absent keys break consumers) but honestly None.
+        assert "vector_backend" in body
+        assert body["vector_backend"] is None
         assert body["indexing_in_progress"] == 0

@@ -388,6 +388,52 @@ jobs:
           docker volume create nexus-shared-workspace
           sudo chmod 777 "$(docker volume inspect nexus-shared-workspace --format '{{.Mountpoint}}')"
 
+      # ---------------------------------------------------------------
+      # #4646: the published plugin-host image deliberately ships NO
+      # ONNX Runtime dylib and NO embedding model (size + licensing —
+      # see docs/deployment/search-plugin.md).  Without them semantic /
+      # hybrid queries are typed-unavailable, the perf smoke's HERB
+      # hybrid-retrieval gate scores 0/8, and promote-tags never runs —
+      # `edge` was stuck while SHA tags advanced.  Provision both on
+      # the runner and mount them into the sidecar, exactly as the
+      # deployment docs prescribe for operators.
+      # ---------------------------------------------------------------
+      - name: Cache embedder assets (ORT dylib + mE5-small model)
+        uses: actions/cache@v4
+        with:
+          path: /tmp/nexus-embedder
+          key: nexus-embedder-ort-1.28.0-me5small-onnx-v1
+
+      - name: Provision embedder assets for the search-plugin sidecar
+        run: |
+          set -euo pipefail
+          ORT_VERSION=1.28.0   # ort 2.0.0-rc.13 (Cargo.lock) is built for ONNX Runtime 1.28
+          ASSETS=/tmp/nexus-embedder
+          mkdir -p "$ASSETS/ort" "$ASSETS/model"
+
+          if [ ! -f "$ASSETS/ort/libonnxruntime.so" ]; then
+            curl -fL --retry 5 --retry-delay 2 \
+              -o /tmp/onnxruntime.tgz \
+              "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz"
+            tar -xzf /tmp/onnxruntime.tgz -C /tmp
+            # Copy the real versioned .so to a stable mount name.
+            cp "/tmp/onnxruntime-linux-x64-${ORT_VERSION}/lib/libonnxruntime.so.${ORT_VERSION}" \
+              "$ASSETS/ort/libonnxruntime.so"
+          fi
+
+          # Layout contract from FastEmbedder::load (embedder.rs): the
+          # five files of the HF onnx/ export, flat in the model dir.
+          HF=https://huggingface.co/intfloat/multilingual-e5-small/resolve/main/onnx
+          for f in model.onnx tokenizer.json config.json special_tokens_map.json tokenizer_config.json; do
+            if [ ! -s "$ASSETS/model/$f" ]; then
+              curl -fL --retry 5 --retry-delay 2 -o "$ASSETS/model/$f" "$HF/$f"
+            fi
+          done
+
+          # Sidecar runs as nexus (UID 1000) — must be able to read.
+          chmod -R a+rX "$ASSETS"
+          ls -la "$ASSETS/ort" "$ASSETS/model"
+
       - name: Start search-plugin sidecar on 127.0.0.1:2126
         run: |
           # Same single-node topology + flags as the search-plugin-e2e
@@ -400,6 +446,9 @@ jobs:
             -e NEXUS_HOSTNAME=node \
             -e NEXUS_ADVERTISE_ADDR=127.0.0.1:2126 \
             -e RUST_LOG=info,nexus_raft=info,kernel::plugins=debug,plugins=debug \
+            -e ORT_DYLIB_PATH=/embedder/ort/libonnxruntime.so \
+            -e NEXUS_SEARCH_MODEL_DIR=/embedder/model \
+            -v /tmp/nexus-embedder:/embedder:ro \
             -v nexus-shared-workspace:/workspace \
             "${{ env.REGISTRY }}/${{ env.CLUSTER_IMAGE_NAME }}:${{ needs.push-cluster-manifest.outputs.version }}" \
             --bind-addr 0.0.0.0:2126 \

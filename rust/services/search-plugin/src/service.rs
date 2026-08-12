@@ -844,6 +844,12 @@ fn enrich_ann_hit(
         mtime_ms,
         expanded_context: String::new(),
         title_score: None,
+        // #4644: preserve the raw cosine score — fusion overwrites
+        // `score`, so this is the dense arm's only attribution.
+        vector_score: Some(score),
+        keyword_score: None,
+        tier_boost: None,
+        recency_boost: None,
     })
 }
 
@@ -872,6 +878,12 @@ fn fts_hit_to_result(hit: FtsHit, zone_id: &str) -> QueryResult {
         mtime_ms: hit.mtime_ms,
         expanded_context: String::new(),
         title_score: None,
+        // #4644: preserve the raw BM25 score — fusion overwrites
+        // `score`, so this is the keyword arm's only attribution.
+        keyword_score: Some(hit.score),
+        vector_score: None,
+        tier_boost: None,
+        recency_boost: None,
     }
 }
 
@@ -1199,6 +1211,13 @@ fn hydrate_title_hits(
                 // Stamped by rrf_multi per arm vote, not here — so
                 // merged chunk-arm entries get it too.
                 title_score: None,
+                // #4644: per-arm attribution merges in rrf_multi from
+                // the chunk arm's rows; the title row itself carries
+                // none.
+                keyword_score: None,
+                vector_score: None,
+                tier_boost: None,
+                recency_boost: None,
             })
         })
         .collect()
@@ -3737,6 +3756,7 @@ mod tests {
             mtime_ms: Some(1),
             expanded_context: String::new(),
             title_score: None,
+            ..Default::default()
         }];
         let ghost_hits = vec![crate::title_index::TitleHit {
             path: "/deleted/ghost.md".into(),
@@ -3772,6 +3792,7 @@ mod tests {
             mtime_ms: Some(5),
             expanded_context: String::new(),
             title_score: None,
+            ..Default::default()
         };
         let hits = vec![
             crate::title_index::TitleHit {
@@ -3825,6 +3846,7 @@ mod tests {
             mtime_ms: Some(1),
             expanded_context: String::new(),
             title_score: None,
+            ..Default::default()
         };
         let hits = vec![crate::title_index::TitleHit {
             path: "/docs/reworked.md".into(),

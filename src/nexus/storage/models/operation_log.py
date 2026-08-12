@@ -40,8 +40,13 @@ class OperationLogModel(Base):
     path: Mapped[str] = mapped_column(Text, nullable=False)
     new_path: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # Snapshot data (CAS-backed)
-    snapshot_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Snapshot data — the previous content identifier, for undo/replay.
+    # NOT always a hex digest: path-addressed backends use the storage
+    # key (e.g. ``zone/<zone>/<path>``) as the content_id, which has no
+    # length bound.  VARCHAR(64) here silently dropped rename oplog rows
+    # for any path longer than 64 chars (#4645) — the op reported
+    # success while the audit row was lost.
+    snapshot_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Metadata snapshot (JSON)
     metadata_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -300,6 +300,7 @@ mod tests {
             mtime_ms: None,
             expanded_context: String::new(),
             title_score: None,
+            ..Default::default()
         }
     }
 

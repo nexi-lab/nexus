@@ -4,9 +4,11 @@
 //!
 //! The skeleton is DERIVED data: path tokens come from the FTS
 //! `path` field, titles from the first ATX heading of each doc's
-//! chunk-0 text — both already indexed, so no schema change and no
-//! reindex (issue #4628 non-goal).  [`ZoneSkeleton`] builds the
-//! in-memory index from a tantivy stored-doc scan and
+//! chunk-0 text (markdown), falling back to the basename stem for
+//! docs whose content yields no title (#4647) — all already
+//! indexed, so no schema change and no reindex (issue #4628
+//! non-goal).  [`ZoneSkeleton`] builds the in-memory index from a
+//! tantivy stored-doc scan and
 //! [`crate::index_manager::IndexManager`] caches it per zone keyed
 //! by the FTS searcher generation.
 //!
@@ -66,8 +68,9 @@ pub fn tokenize(text: &str) -> Vec<String> {
 /// extension registry, and unregistered extensions produced no
 /// title.  Restricting to markdown-family files keeps shebangs and
 /// `#` source comments in code files from ever becoming "titles"
-/// (review R3 of #4628); every doc still joins the skeleton on path
-/// tokens alone.
+/// (review R3 of #4628).  Docs whose CONTENT yields no title fall
+/// back to the basename stem as the title source (#4647,
+/// [`basename_title`]) — reading no content, so R3 doesn't apply.
 const TITLE_EXTENSIONS: &[&str] = &["md", "markdown", "mdx", "mdown"];
 
 /// Does `path` name a markdown-family file eligible for title
@@ -190,6 +193,30 @@ pub fn extract_title(path: &str, head_text: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// #4647 fallback title source: the path's basename stem.  Content
+/// extraction is markdown-only ([`extract_title`]), which made the
+/// title arm structurally skew hybrid fusion on mixed-format corpora:
+/// a `.txt` doc whose FILENAME was a near-exact query match could
+/// never earn the ×2 title weight, so any `.md` doc sharing a couple
+/// of query tokens in its heading won the arm unopposed (measured
+/// MRR .679 → .774 with the arm off on a 75-doc mixed corpus).
+///
+/// The stem is the pre-P12 `locate()` spirit — filenames are titles
+/// for known-item search — and reads NO content, so the review-R3
+/// concern that gated content extraction to markdown (shebangs and
+/// `#` comments becoming titles) does not apply.  Extension dropped
+/// (`08_PLRM_Q3_earnings_transcript.txt` → `08_PLRM_Q3_earnings_transcript`);
+/// dotfiles (`.gitignore`) and extensionless names fall back to the
+/// whole basename.
+pub fn basename_title(path: &str) -> Option<String> {
+    let base = path.rsplit('/').next().unwrap_or(path);
+    let stem = match base.rsplit_once('.') {
+        Some((s, _)) if !s.is_empty() => s,
+        _ => base,
+    };
+    (!stem.is_empty()).then(|| stem.to_string())
 }
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -338,7 +365,12 @@ impl ZoneSkeleton {
                 }
                 head.push_str(&text);
             }
-            let title = extract_title(&path, &head);
+            // Content heading first (markdown); basename stem as the
+            // universal fallback (#4647) so non-md docs can earn the
+            // ×2 title weight on filename matches.  A stem token that
+            // also appears in path_tokens scores 3× — identical to an
+            // md doc whose heading token repeats in its filename.
+            let title = extract_title(&path, &head).or_else(|| basename_title(&path));
             let title_tokens: BTreeSet<String> = title
                 .as_deref()
                 .map(|t| tokenize(t).into_iter().collect())
@@ -793,6 +825,92 @@ mod tests {
     }
 
     #[test]
+    fn basename_title_strips_extension_and_handles_edge_shapes() {
+        // #4647: the fallback title source.
+        assert_eq!(
+            basename_title("/w/08_PLRM_Q3_earnings_transcript.txt").as_deref(),
+            Some("08_PLRM_Q3_earnings_transcript")
+        );
+        assert_eq!(
+            basename_title("/src/parseUserLogin.py").as_deref(),
+            Some("parseUserLogin")
+        );
+        // Dotfiles keep their whole name; extensionless too.
+        assert_eq!(
+            basename_title("/w/.gitignore").as_deref(),
+            Some(".gitignore")
+        );
+        assert_eq!(basename_title("/w/Makefile").as_deref(), Some("Makefile"));
+        // Multi-dot: only the last extension is dropped.
+        assert_eq!(
+            basename_title("/w/archive.tar.gz").as_deref(),
+            Some("archive.tar")
+        );
+    }
+
+    #[test]
+    fn build_falls_back_to_stem_title_for_non_md_and_headingless_md() {
+        // #4647: content heading wins when present; the stem covers
+        // .txt docs AND md docs without an ATX heading.
+        let fts = fts_with(&[
+            ("/w/report_q3.txt", 0, "plain text, no headings"),
+            ("/w/no_heading.md", 0, "just prose, no atx heading"),
+            ("/w/titled.md", 0, "# Real Heading\nbody"),
+        ]);
+        let sk = ZoneSkeleton::build(&fts).expect("build");
+        let by_path = |p: &str| {
+            sk.locate("report q3", 10, None)
+                .into_iter()
+                .find(|h| h.path == p)
+        };
+        let txt = by_path("/w/report_q3.txt").expect("txt doc must hit");
+        assert_eq!(txt.title.as_deref(), Some("report_q3"));
+        // Content heading still wins over the stem.
+        let hits = sk.locate("real heading", 10, None);
+        assert_eq!(hits[0].path, "/w/titled.md");
+        assert_eq!(hits[0].title.as_deref(), Some("Real Heading"));
+        // Headingless md earns its stem too.
+        let hits = sk.locate("no heading", 10, None);
+        assert!(
+            hits.iter()
+                .any(|h| h.path == "/w/no_heading.md" && h.title.as_deref() == Some("no_heading")),
+            "headingless md doc must fall back to its stem: {hits:?}"
+        );
+    }
+
+    #[test]
+    fn locate_txt_filename_match_outranks_md_heading_sharing_tokens() {
+        // #4647 regression — the observed inversion: query
+        // "Q3 earnings call prepared remarks transcript" ranked
+        // 09_post_earnings_quick_take.md (heading shares tokens)
+        // ABOVE the gold 08_PLRM_Q3_earnings_transcript.txt whose
+        // FILENAME is a near-exact match, because .txt could never
+        // earn title weight.
+        let fts = fts_with(&[
+            (
+                "/w/08_PLRM_Q3_earnings_transcript.txt",
+                0,
+                "Operator: Good afternoon, and welcome...",
+            ),
+            (
+                "/w/09_post_earnings_quick_take.md",
+                0,
+                "# Post-Earnings Quick Take: Q3\nhot take body",
+            ),
+        ]);
+        let sk = ZoneSkeleton::build(&fts).expect("build");
+        let hits = sk.locate("Q3 earnings call prepared remarks transcript", 10, None);
+        assert_eq!(
+            hits[0].path, "/w/08_PLRM_Q3_earnings_transcript.txt",
+            "filename near-match must win the title arm: {hits:?}"
+        );
+        assert!(
+            hits[0].score > hits[1].score,
+            "gold doc must strictly outrank the md decoy: {hits:?}"
+        );
+    }
+
+    #[test]
     fn build_indexes_titles_and_paths_from_chunk0() {
         let sk = atlas_skeleton();
         assert_eq!(
@@ -814,13 +932,20 @@ mod tests {
     }
 
     #[test]
-    fn locate_path_only_match_scores_1_per_token() {
+    fn locate_non_md_doc_scores_stem_as_title() {
+        // #4647: pre-fallback this pinned 1.0 (path-token only) — a
+        // non-md doc could never earn the ×2 title weight and the
+        // service gate (TITLE_ARM_MIN_SCORE = 2.0) silently dropped
+        // single-token filename matches.  With the basename-stem
+        // fallback, "login" overlaps the stem-derived title (×2) AND
+        // the path tokens (×1) → 3.0, same as an md doc whose heading
+        // token repeats in its filename.
         let sk = atlas_skeleton();
-        // "login" hits only path tokens of parseUserLogin.py.
         let hits = sk.locate("login", 10, None);
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].path, "/src/parseUserLogin.py");
-        assert!((hits[0].score - 1.0).abs() < 1e-4);
+        assert!((hits[0].score - 3.0).abs() < 1e-4);
+        assert_eq!(hits[0].title.as_deref(), Some("parseUserLogin"));
     }
 
     #[test]

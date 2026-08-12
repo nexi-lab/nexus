@@ -219,6 +219,12 @@ fn hash_request(req: &QueryRequest) -> u64 {
         k.hash(&mut hasher);
         v.to_bits().hash(&mut hasher);
     }
+    // Title arm (#4552 mirror / #4628) — MUST land in the hash even
+    // for its default value per the module's "adversarial hardening"
+    // clause: two requests differing only in title_arm_disabled
+    // produce different ranked outputs and MUST NOT share a cache
+    // entry.
+    req.title_arm_disabled.hash(&mut hasher);
     hasher.finish()
 }
 
@@ -229,6 +235,22 @@ pub type SharedQueryCache = Arc<QueryCache>;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn title_arm_flag_distinguishes_cache_entries() {
+        // Adversarial hardening: two requests differing ONLY in
+        // title_arm_disabled produce different fused rankings and
+        // MUST NOT share a cache entry.  Regression pin for the
+        // #4552 mirror / #4628 hash-key addition.
+        let a = base_req("root", "widget");
+        let mut b = a.clone();
+        b.title_arm_disabled = true;
+        assert_ne!(
+            hash_request(&a),
+            hash_request(&b),
+            "title_arm_disabled must land in the cache key",
+        );
+    }
 
     fn base_req(zone: &str, q: &str) -> QueryRequest {
         QueryRequest {

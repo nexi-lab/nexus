@@ -19,6 +19,34 @@
 //! adds; supersets inherit it. `acp` (nexus-drives-ACP one-shot) is NOT a
 //! cluster service.
 
+#[cfg(feature = "cohost-sudocode")]
+mod cohost;
+
+/// The `managed_agent` boot declaration. In the default slim cluster build
+/// this is the procfs-only variant (`service_decl`) — no runtime body. In a
+/// `cohost-sudocode` build it becomes a custom decl whose `install` injects
+/// the real sudocode runtime via `install_managed_agent_with_spawn`, so a
+/// minted agent runs a live LLM loop in-process. Same service name either
+/// way; only the install closure differs.
+#[cfg(not(feature = "cohost-sudocode"))]
+fn managed_agent_decl() -> kernel::kernel::ServiceDecl {
+    services::managed_agent::service_decl()
+}
+
+#[cfg(feature = "cohost-sudocode")]
+fn managed_agent_decl() -> kernel::kernel::ServiceDecl {
+    use std::sync::Arc;
+    kernel::kernel::ServiceDecl {
+        name: "managed_agent".to_string(),
+        install: Box::new(|kernel| {
+            services::managed_agent::install_managed_agent_with_spawn(
+                kernel,
+                Arc::new(cohost::SudoCodeSpawnAdapter),
+            )
+        }),
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     // The daemon's service set — the SSOT for "which services this daemon
     // runs", ordered. a2a is installed first (its from-stamp hook must be
@@ -26,9 +54,6 @@ fn main() -> anyhow::Result<()> {
     // `ctx.auth_armed` is boot-derived (true iff sk- auth is armed) and
     // sets a2a's fail-closed posture.
     nexus_cluster::run_with_services(|ctx| {
-        vec![
-            a2a::service_decl(ctx.auth_armed),
-            services::managed_agent::service_decl(),
-        ]
+        vec![a2a::service_decl(ctx.auth_armed), managed_agent_decl()]
     })
 }

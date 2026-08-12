@@ -18,6 +18,15 @@ default = []
 # so the shipped binary keeps the sudowork/edge size budget; only an
 # S3-serving tier builds `--features driver-s3`.
 driver-s3 = ["dep:backends", "backends/driver-s3"]
+# Co-host the real sudocode managed-agent runtime IN-PROCESS. Off by
+# default so the slim `cluster` binary stays sudocode-free (profile purity
+# — §7); a cohost-enabled build statically links `sudocode_runtime` +
+# `tools` and wires `SudoCodeSpawnAdapter` via
+# `install_managed_agent_with_spawn`, so a minted agent runs a real LLM
+# loop doing in-process `KernelSyscall` calls (no gRPC on its fs path).
+# The kernel rev MUST match the workspace pin (both at nexus-vfs
+# `c9ecc9da`) so `SpawnTask<Kernel>` is one type across the seam.
+cohost-sudocode = ["dep:sudocode-runtime", "dep:sudocode-tools"]
 
 [dependencies]
 # Cluster library entry — `nexus_cluster::run_with_services` owns clap
@@ -37,3 +46,21 @@ services = { workspace = true, features = ["service-managed-agent"] }
 # so it is not pulled at all in the default (slim cluster) build.
 backends = { workspace = true, default-features = false, optional = true }
 anyhow = "1"
+
+# ── Co-host (opt-in `cohost-sudocode`) ──────────────────────────────────
+# The real sudocode agent runtime, linked ONLY when co-hosting. Both crates
+# reach `kernel` at the SAME nexus-vfs rev the workspace pins (`c9ecc9da`),
+# so the `Kernel` / `AgentDescriptor` / `KernelSyscall` types unify across
+# the seam and `SpawnTask<Kernel>` is a single monomorphised type.
+# `sudocode-tools` carries the `spawn_managed_agent` factory (it composes
+# the api + runtime crates); `sudocode-runtime` names the `AgentLoopState`
+# / `SpawnHandle` types the adapter maps. Pinned to the #392 branch tip
+# until #392 merges to sudocode main (then bump to the merge commit).
+sudocode-runtime = { package = "runtime", git = "https://github.com/sudoprivacy/sudocode", rev = "bb2a0d3dcd10cd308b2b2ac0037f7bb6ae82de84", optional = true }
+sudocode-tools = { package = "tools", git = "https://github.com/sudoprivacy/sudocode", rev = "bb2a0d3dcd10cd308b2b2ac0037f7bb6ae82de84", optional = true }
+# Named directly to spell `kernel::kernel::{ServiceDecl, Kernel}` — the
+# managed-agent boot decl's return type (both builds) and the co-host
+# adapter's `SpawnTask<Kernel>` (cohost build). Already present transitively
+# via services / nexus-cluster at the same workspace pin, so this direct dep
+# adds no new compilation and keeps one `Kernel` type.
+kernel = { workspace = true, default-features = false }

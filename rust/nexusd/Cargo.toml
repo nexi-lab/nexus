@@ -54,10 +54,10 @@ anyhow = "1"
 # the seam and `SpawnTask<Kernel>` is a single monomorphised type.
 # `sudocode-tools` carries the `spawn_managed_agent` factory (it composes
 # the api + runtime crates); `sudocode-runtime` names the `AgentLoopState`
-# / `SpawnHandle` types the adapter maps. Pinned to the #392 branch tip
-# until #392 merges to sudocode main (then bump to the merge commit).
-sudocode-runtime = { package = "runtime", git = "https://github.com/sudoprivacy/sudocode", rev = "bb2a0d3dcd10cd308b2b2ac0037f7bb6ae82de84", optional = true }
-sudocode-tools = { package = "tools", git = "https://github.com/sudoprivacy/sudocode", rev = "bb2a0d3dcd10cd308b2b2ac0037f7bb6ae82de84", optional = true }
+# / `SpawnHandle` types the adapter maps. Pinned to the sudocode main merge
+# commit of #392 (co-host readiness).
+sudocode-runtime = { package = "runtime", git = "https://github.com/sudoprivacy/sudocode", rev = "d7f64b9898151553f517d0b4ba177658da5264a8", optional = true }
+sudocode-tools = { package = "tools", git = "https://github.com/sudoprivacy/sudocode", rev = "d7f64b9898151553f517d0b4ba177658da5264a8", optional = true }
 # Named directly to spell `kernel::kernel::{ServiceDecl, Kernel}` — the
 # managed-agent boot decl's return type (both builds) and the co-host
 # adapter's `SpawnTask<Kernel>` (cohost build). Already present transitively

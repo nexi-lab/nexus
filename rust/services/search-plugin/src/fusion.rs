@@ -477,9 +477,9 @@ mod tests {
         let doc = hit("/shared", 0, 5.0);
         let fused = rrf_multi_fusion(
             &[
-                ("chunk", &[doc.clone()]),
+                ("chunk", std::slice::from_ref(&doc)),
                 ("page", &[]),
-                ("title", &[doc.clone()]),
+                ("title", std::slice::from_ref(&doc)),
             ],
             DEFAULT_RRF_K,
         );

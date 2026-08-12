@@ -695,6 +695,85 @@ fn do_keyword_query(
         .collect())
 }
 
+/// Title-arm ranked search over the per-zone skeleton index
+/// (#4552 mirror / #4628).  Returns hits shaped as `QueryResult`
+/// with chunk_text hydrated from the sibling FTS: covered paths
+/// borrow the first chunk (FtsIndex::get_chunks_by_path[0]) so a
+/// title-only hit still carries a snippet callers can render.
+/// A hit whose FTS row is absent (drift or chunkless doc) still
+/// enters the fusion with an empty `chunk_text` — the doc stays
+/// retrievable per the design doc.
+fn do_title_query(
+    manager: &IndexManager,
+    q: &str,
+    zone_id: &str,
+    limit: usize,
+    path_filter: &str,
+) -> Result<Vec<QueryResult>, String> {
+    if q.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let skeleton = manager
+        .get_or_open_skeleton(zone_id)
+        .map_err(|e| format!("open skeleton for zone {zone_id:?}: {e}"))?;
+
+    let prefix = if path_filter.is_empty() {
+        None
+    } else {
+        Some(path_filter)
+    };
+
+    let hits = skeleton
+        .search(q, limit, prefix)
+        .map_err(|e| format!("title search: {e}"))?;
+
+    // Best-effort FTS side to hydrate chunk_text + mtime — a missing
+    // FTS row (drift or chunkless doc) still ships the title hit
+    // through with empty chunk_text.
+    let fts = manager.get_or_open(zone_id).ok();
+
+    Ok(hits
+        .into_iter()
+        .map(|h| title_hit_to_result(fts.as_deref(), h, zone_id))
+        .collect())
+}
+
+/// Hydrate a [`crate::skeleton_index::SkeletonHit`] into a full
+/// `QueryResult` by borrowing the first FTS chunk for the same
+/// path.  Chunkless docs (no FTS row) come through with empty
+/// `chunk_text` — the doc is still retrievable through the fused
+/// result envelope per the design doc.  The skeleton hit's raw
+/// BM25 score is preserved as the sub-fusion input; the title-arm
+/// attribution stamped later by [`fusion::rrf_multi_fusion`] is a
+/// separate rank-derived value.
+fn title_hit_to_result(
+    fts: Option<&crate::fts_index::FtsIndex>,
+    hit: crate::skeleton_index::SkeletonHit,
+    zone_id: &str,
+) -> QueryResult {
+    let (chunk_text, chunk_index, mtime_ms) = fts
+        .and_then(|f| f.get_chunks_by_path(&hit.path).ok())
+        .and_then(|mut chunks| {
+            if chunks.is_empty() {
+                None
+            } else {
+                let first = chunks.remove(0);
+                Some((first.chunk_text, first.chunk_index, first.mtime_ms))
+            }
+        })
+        .unwrap_or((String::new(), 0, None));
+    QueryResult {
+        path: hit.path,
+        chunk_index,
+        chunk_text,
+        score: hit.score,
+        zone_id: zone_id.to_string(),
+        mtime_ms,
+        expanded_context: String::new(),
+        title_score: None,
+    }
+}
+
 /// Vector-similarity search over the per-zone HNSW index (Phase 2).
 /// Embeds `q` via the caller-supplied embedder, opens the ANN index
 /// tagged with the embedder's `tag()`, runs top-k, and materialises
@@ -922,10 +1001,36 @@ const HYBRID_OVER_FETCH_MULT: usize = 2;
 const ADJUSTMENT_OVER_FETCH_MULT: usize = 10;
 const ADJUSTMENT_FETCH_CEILING: usize = 500;
 
-/// Fuse two source result lists per the caller's chosen method,
-/// pool per-doc, and truncate to `limit`.  Pure math — the two
-/// source lists come in already fetched.  The RPC handler runs
-/// the fetches in parallel then hands them here.
+/// Env kill-switch for the title arm — matches Python's
+/// `NEXUS_SEARCH_TITLE_ARM` config knob.  Absent or truthy ⇒ arm on;
+/// any of `false/0/off/no` (case-insensitive) ⇒ arm off.  Combined
+/// with the wire flag `QueryRequest.title_arm_disabled` via
+/// [`title_arm_effective`].  Read fresh per query — env access is
+/// cheap and this lets ops flip the switch without a plugin restart.
+fn title_arm_env_enabled() -> bool {
+    match std::env::var("NEXUS_SEARCH_TITLE_ARM").ok() {
+        None => true,
+        Some(v) => !matches!(v.trim().to_ascii_lowercase().as_str(), "false" | "0" | "off" | "no"),
+    }
+}
+
+/// Effective title-arm state for a single hybrid query.  ON when
+/// BOTH the env allows it AND the wire request has not disabled it.
+/// The wire flag exists so callers can ablate per-query; the env
+/// flag exists so ops can rollback fleet-wide without a redeploy.
+fn title_arm_effective(req: &QueryRequest) -> bool {
+    title_arm_env_enabled() && !req.title_arm_disabled
+}
+
+/// Fuse the keyword + semantic legs per the caller's chosen method,
+/// pool per-doc, and truncate to `limit`.  Pure math — the source
+/// lists come in already fetched.  The RPC handler runs the fetches
+/// in parallel then hands them here.
+///
+/// The title-arm variant [`fuse_hybrid_with_title`] adds a third
+/// keyword-side arm to the sub-fusion; the plain [`fuse_hybrid`]
+/// preserves the pre-title-arm two-source shape for callers that
+/// disabled the arm.
 fn fuse_hybrid(
     keyword: Vec<QueryResult>,
     semantic: Vec<QueryResult>,
@@ -943,6 +1048,34 @@ fn fuse_hybrid(
     };
     let pooled = fusion::pool_by_document(fused, opts.chunks_per_page);
     pooled.into_iter().take(limit).collect()
+}
+
+/// Three-arm sub-fusion variant (#4552 mirror / #4628).  Runs
+/// `rrf_multi_fusion(chunk, title)` first (page arm empty in the
+/// Rust plugin since FTS already stores chunks, not pages), then
+/// feeds the fused keyword lane into the caller's chosen final
+/// method against the semantic lane.
+///
+/// The title arm can PROMOTE a title-shaped hit ranked below the
+/// requested limit in chunk BM25 alone into the top-N — which is
+/// exactly the point.  Fusion parity for non-title queries is
+/// covered by `fusion::rrf_multi_fusion_empty_title_arm_ranks_like_two_arm_rrf`.
+fn fuse_hybrid_with_title(
+    chunk_kw: Vec<QueryResult>,
+    title_kw: Vec<QueryResult>,
+    semantic: Vec<QueryResult>,
+    limit: usize,
+    opts: FusionOpts,
+) -> Vec<QueryResult> {
+    let kw_fused = fusion::rrf_multi_fusion(
+        &[("chunk", &chunk_kw), ("title", &title_kw)],
+        opts.rrf_k,
+    );
+    // Feed the sub-fused keyword lane into the final method against
+    // the semantic lane. RRF-family methods work naturally; weighted
+    // will renormalise its inputs so the intermediate score scale is
+    // fine.
+    fuse_hybrid(kw_fused, semantic, limit, opts)
 }
 
 /// Sinks the Index walker writes into.  `fts` is required (Index
@@ -2080,6 +2213,11 @@ impl SearchService for SearchServiceImpl {
             req.recency_half_life_days
         };
         let prefix_boosts = req.path_prefix_boosts.clone();
+        // Grab the title-arm flag before any downstream move — the
+        // Hybrid arm below moves several req fields for its parallel
+        // spawns, so we resolve title_arm_effective here while &req
+        // is still fully alive.
+        let title_arm_on = title_arm_effective(&req);
         let limit = if req.limit == 0 {
             DEFAULT_QUERY_LIMIT
         } else {
@@ -2173,21 +2311,43 @@ impl SearchService for SearchServiceImpl {
                 // on the blocking pool + joining brings wall-clock to
                 // max(kw, sem) ≈ 300 ms — no free lunch on total CPU
                 // but user-visible p95 halves in the worst-case ratio.
+                //
+                // Title arm (#4552 mirror / #4628): runs as a THIRD
+                // parallel leg when enabled.  Skeleton search is
+                // sub-millisecond (per-doc index, ~one BM25 term
+                // query) so its cost is dominated by the ~300 ms
+                // semantic leg — free ranking-quality lift.
                 let over_fetch = limit
                     .saturating_mul(HYBRID_OVER_FETCH_MULT)
                     .max(limit)
                     .max(fetch_limit);
-                let (kw_task, sem_task) = {
+                let title_enabled = title_arm_on;
+                let (kw_task, sem_task, title_task) = {
                     let mgr_kw = Arc::clone(&manager);
                     let mgr_sem = Arc::clone(&manager);
+                    let mgr_title = Arc::clone(&manager);
                     let embedder = Arc::clone(&embedder);
                     let embed_cache = Arc::clone(&self.embed_cache);
                     let q_kw = q.clone();
-                    let q_sem = q;
+                    let q_sem = q.clone();
+                    let q_title = q;
                     let zone_kw = zone_id.clone();
-                    let zone_sem = zone_id;
+                    let zone_sem = zone_id.clone();
+                    let zone_title = zone_id;
                     let path_kw = path_filter.clone();
-                    let path_sem = path_filter;
+                    let path_sem = path_filter.clone();
+                    let path_title = path_filter;
+                    let title_fut: tokio::task::JoinHandle<Result<Vec<QueryResult>, String>> =
+                        if title_enabled {
+                            tokio::task::spawn_blocking(move || {
+                                do_title_query(&mgr_title, &q_title, &zone_title, over_fetch, &path_title)
+                            })
+                        } else {
+                            // Match the type: an already-resolved
+                            // future returning an empty list keeps
+                            // downstream code branch-free.
+                            tokio::task::spawn_blocking(|| Ok(Vec::new()))
+                        };
                     (
                         tokio::task::spawn_blocking(move || {
                             do_keyword_query(&mgr_kw, &q_kw, &zone_kw, over_fetch, &path_kw)
@@ -2203,20 +2363,42 @@ impl SearchService for SearchServiceImpl {
                                 &path_sem,
                             )
                         }),
+                        title_fut,
                     )
                 };
-                let (kw_join, sem_join) = tokio::join!(kw_task, sem_task);
+                let (kw_join, sem_join, title_join) =
+                    tokio::join!(kw_task, sem_task, title_task);
                 let kw = kw_join
                     .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
                 let sem = sem_join
                     .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
+                // A title-arm error MUST NOT fail the whole hybrid
+                // query — title is a booster, not a required lane.
+                // Log and treat as empty, mirroring the "hydration
+                // failure is best-effort" clause in the design doc.
+                let title = match title_join {
+                    Ok(Ok(hits)) => hits,
+                    Ok(Err(e)) => {
+                        tracing::warn!(err = %e, "title arm failed — falling back to two-arm hybrid");
+                        Vec::new()
+                    }
+                    Err(e) => {
+                        tracing::warn!(err = %e, "title arm spawn joined error — falling back");
+                        Vec::new()
+                    }
+                };
                 match (kw, sem) {
                     (Ok(keyword), Ok(semantic)) => {
                         // Keep the over-fetched pool through fusion
                         // when adjustments still need to reorder it;
                         // the final truncate-to-limit happens post-
                         // adjustment below.
-                        Ok(fuse_hybrid(keyword, semantic, fetch_limit, fusion_opts))
+                        let fused = if title_enabled && !title.is_empty() {
+                            fuse_hybrid_with_title(keyword, title, semantic, fetch_limit, fusion_opts)
+                        } else {
+                            fuse_hybrid(keyword, semantic, fetch_limit, fusion_opts)
+                        };
+                        Ok(fused)
                     }
                     // A source-side error on either leg — surface it
                     // as the response's `error` field rather than a

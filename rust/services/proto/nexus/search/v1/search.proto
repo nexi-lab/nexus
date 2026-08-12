@@ -351,6 +351,26 @@ message QueryRequest {
   // ⇒ no boost (multiplier stays 1.0).  Matches Python's
   // per-prefix ranking weight via path_contexts (#4544).
   map<string, float> path_prefix_boosts = 15;
+
+  // ── Title arm (P7, #4552 mirror / #4628) ───────────────────────
+  //
+  // When true (default), the hybrid keyword sub-fusion adds a
+  // THIRD arm — BM25 over the per-doc skeleton index (path tokens +
+  // first-heading title, title weighted 2x) — so title-shaped
+  // queries ("<project> design doc", "Q3 report") rank their
+  // target even when body chunks are weak.  KEYWORD-only queries
+  // do NOT run the title arm (no fusion happens there); Hybrid /
+  // Semantic queries do.
+  //
+  // Set to false to A/B-ablate the ranking effect or as a rollback
+  // knob; the plugin also honours NEXUS_SEARCH_TITLE_ARM=false to
+  // disable server-side without a wire flag change.
+  //
+  // Wire default is false (proto3), but the plugin treats the
+  // "unset" state as "on" — mirrors Python's default-on config so
+  // callers that don't set the field get the ranking-quality
+  // improvement automatically.
+  bool title_arm_disabled = 16;
 }
 
 message QueryResult {
@@ -388,6 +408,14 @@ message QueryResult {
   // string) for `expand="none"` or when the source file has only
   // this one chunk.
   string expanded_context = 7;
+
+  // Per-arm score attribution for the hybrid keyword sub-fusion
+  // (#4552 title arm mirror / #4628).  Populated only when the
+  // corresponding arm scored this hit; absent when the hit came
+  // from the other arms alone.  Present values are float scores
+  // in the same range the sub-fusion consumes (rank-derived for
+  // RRF; raw for weighted).
+  optional float title_score = 8;
 }
 
 message QueryResponse {

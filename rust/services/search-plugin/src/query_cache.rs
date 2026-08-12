@@ -247,6 +247,7 @@ mod tests {
             recency_weight: 0.0,
             recency_half_life_days: 0.0,
             path_prefix_boosts: HashMap::new(),
+            title_arm_disabled: false,
         }
     }
 
@@ -259,6 +260,7 @@ mod tests {
             zone_id: "root".to_string(),
             mtime_ms: None,
             expanded_context: String::new(),
+            title_score: None,
         }
     }
 

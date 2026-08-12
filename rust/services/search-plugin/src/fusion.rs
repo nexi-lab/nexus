@@ -66,6 +66,50 @@ pub fn rrf(keyword: &[QueryResult], semantic: &[QueryResult], k: u32) -> Vec<Que
     finalise(merged)
 }
 
+/// Multi-source RRF — takes N labelled result lists and fuses them
+/// under the same 1/(k + rank) contribution rule as [`rrf`].  Adds
+/// per-source score ATTRIBUTION on the output when the source label
+/// matches a known attribution slot: the `"title"` label stamps
+/// each hit's `title_score` with the RRF contribution the title arm
+/// added.  Other labels contribute to the fused score but produce
+/// no attribution field.
+///
+/// Mirrors Python `rrf_multi_fusion([("chunk", …), ("page", …),
+/// ("title", …)])` — used by [`crate::service`]'s hybrid path to
+/// fold the skeleton index's title-arm hits into the keyword
+/// sub-fusion alongside chunk-BM25 and page-pooling arms (#4552
+/// mirror / #4628).
+///
+/// The dedup key is `(path, chunk_index)` — the same key `rrf` uses.
+/// Sources listed EARLIER win the "first-seen template" (richer
+/// chunk_text / mtime_ms fields), so callers pass the arms with
+/// the richest QueryResult templates first — typically page_kw
+/// then chunk_kw then title (title's `QueryResult` carries an empty
+/// or synthetic chunk_text; the caller hydrates it post-fusion).
+pub fn rrf_multi_fusion(sources: &[(&str, &[QueryResult])], k: u32) -> Vec<QueryResult> {
+    let mut merged: HashMap<DocKey, MergedHit> = HashMap::new();
+    let k_f = k.max(1) as f32;
+    for (label, list) in sources {
+        for (idx, r) in list.iter().enumerate() {
+            let contribution = 1.0 / (k_f + (idx + 1) as f32);
+            let key = DocKey::of(r);
+            let entry = merged.entry(key).or_insert_with(|| MergedHit {
+                score: 0.0,
+                template: r.clone(),
+            });
+            entry.score += contribution;
+            // Per-arm attribution — a doc scored by the title arm
+            // carries its title contribution as `title_score` so
+            // callers observe which arm surfaced it.
+            if *label == "title" {
+                let prior = entry.template.title_score.unwrap_or(0.0);
+                entry.template.title_score = Some(prior + contribution);
+            }
+        }
+    }
+    finalise(merged)
+}
+
 pub fn rrf_weighted(
     keyword: &[QueryResult],
     semantic: &[QueryResult],
@@ -233,6 +277,7 @@ mod tests {
             zone_id: "root".to_string(),
             mtime_ms: Some(1),
             expanded_context: String::new(),
+            title_score: None,
         }
     }
 
@@ -340,6 +385,7 @@ mod tests {
             zone_id: "root".into(),
             mtime_ms: Some(100),
             expanded_context: String::new(),
+            title_score: None,
         }];
         let sem = vec![QueryResult {
             path: "/a".into(),
@@ -349,6 +395,7 @@ mod tests {
             zone_id: "root".into(),
             mtime_ms: Some(200),
             expanded_context: String::new(),
+            title_score: None,
         }];
         let fused = rrf(&kw, &sem, 60);
         assert_eq!(fused.len(), 1);
@@ -380,6 +427,80 @@ mod tests {
         assert_eq!(paths, ["/a", "/a", "/b", "/c"]);
     }
 
+    // ── rrf_multi_fusion (#4552 mirror / #4628) ──────────────────
+
+    #[test]
+    fn rrf_multi_fusion_empty_title_arm_ranks_like_two_arm_rrf() {
+        // Fusion parity guard: adding an empty title arm to the
+        // sub-fusion must not change the rank order or scores of the
+        // pre-existing chunk+page arms.  Locks in the "opt-in
+        // ranking-neutral when the title arm has no hits" property
+        // called out by the design doc.
+        let chunk = vec![hit("/a", 0, 5.0), hit("/b", 0, 4.0)];
+        let page = vec![hit("/b", 0, 3.0), hit("/c", 0, 2.0)];
+        let two_arm = rrf(&chunk, &page, DEFAULT_RRF_K);
+        let three_arm =
+            rrf_multi_fusion(&[("chunk", &chunk), ("page", &page), ("title", &[])], DEFAULT_RRF_K);
+        assert_eq!(three_arm.len(), two_arm.len());
+        for (a, b) in three_arm.iter().zip(two_arm.iter()) {
+            assert_eq!(a.path, b.path, "rank order must match: {three_arm:?} vs {two_arm:?}");
+            assert!(
+                (a.score - b.score).abs() < 1e-5,
+                "scores must match: {} vs {}",
+                a.score,
+                b.score,
+            );
+            assert!(a.title_score.is_none(), "empty title arm produces no attribution");
+        }
+    }
+
+    #[test]
+    fn rrf_multi_fusion_title_score_attributed_when_arm_hits() {
+        // A doc scored only by the title arm gets `title_score`
+        // populated; a doc scored by chunk alone does not.
+        let chunk = vec![hit("/a", 0, 5.0)];
+        let title = vec![hit("/z", 0, 9.0)];
+        let fused =
+            rrf_multi_fusion(&[("chunk", &chunk), ("page", &[]), ("title", &title)], DEFAULT_RRF_K);
+        let a = fused.iter().find(|r| r.path == "/a").expect("/a");
+        let z = fused.iter().find(|r| r.path == "/z").expect("/z");
+        assert!(a.title_score.is_none(), "/a scored only by chunk arm");
+        assert!(z.title_score.is_some(), "/z scored by title arm: {z:?}");
+        assert!(z.title_score.unwrap() > 0.0);
+    }
+
+    #[test]
+    fn rrf_multi_fusion_title_and_chunk_share_a_doc_accumulate() {
+        // A doc that appears in both the chunk arm AND the title arm
+        // accumulates its fused score AND still carries the
+        // title-arm attribution.
+        let doc = hit("/shared", 0, 5.0);
+        let fused = rrf_multi_fusion(
+            &[
+                ("chunk", &[doc.clone()]),
+                ("page", &[]),
+                ("title", &[doc.clone()]),
+            ],
+            DEFAULT_RRF_K,
+        );
+        assert_eq!(fused.len(), 1);
+        assert!(fused[0].title_score.is_some());
+        // Fused score = chunk contribution (1/61) + title contribution (1/61)
+        // = 2/61 ≈ 0.032787
+        let expected = 2.0 / 61.0;
+        assert!(
+            (fused[0].score - expected).abs() < 1e-5,
+            "expected {expected}, got {}",
+            fused[0].score,
+        );
+    }
+
+    #[test]
+    fn rrf_multi_fusion_empty_sources_returns_empty() {
+        let fused = rrf_multi_fusion(&[], DEFAULT_RRF_K);
+        assert!(fused.is_empty());
+    }
+
     #[test]
     fn pool_by_document_preserves_input_order_among_kept_hits() {
         // Regression: a naive impl that groups-then-emits would break
@@ -409,6 +530,7 @@ mod tests {
                 zone_id: "root".into(),
                 mtime_ms: None,
                 expanded_context: String::new(),
+                title_score: None,
             },
             QueryResult {
                 path: "/a".into(),
@@ -418,6 +540,7 @@ mod tests {
                 zone_id: "root".into(),
                 mtime_ms: None,
                 expanded_context: String::new(),
+                title_score: None,
             },
         ];
         // rrf here: rank-1 and rank-2 have different scores; equalise

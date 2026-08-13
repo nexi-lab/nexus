@@ -47,6 +47,19 @@ fn managed_agent_decl() -> kernel::kernel::ServiceDecl {
     }
 }
 
+/// Extra boot decls only a cohost build adds: the A2A co-host loop
+/// (`NEXUS_COHOST_AGENT`), spawned after a2a + managed_agent so the
+/// replicated `/agents/<name>` mailbox it binds to is already armed.
+#[cfg(not(feature = "cohost-sudocode"))]
+fn cohost_a2a_decls() -> Vec<kernel::kernel::ServiceDecl> {
+    Vec::new()
+}
+
+#[cfg(feature = "cohost-sudocode")]
+fn cohost_a2a_decls() -> Vec<kernel::kernel::ServiceDecl> {
+    vec![cohost::service_decl()]
+}
+
 fn main() -> anyhow::Result<()> {
     // The daemon's service set — the SSOT for "which services this daemon
     // runs", ordered. a2a is installed first (its from-stamp hook must be
@@ -54,6 +67,8 @@ fn main() -> anyhow::Result<()> {
     // `ctx.auth_armed` is boot-derived (true iff sk- auth is armed) and
     // sets a2a's fail-closed posture.
     nexus_cluster::run_with_services(|ctx| {
-        vec![a2a::service_decl(ctx.auth_armed), managed_agent_decl()]
+        let mut decls = vec![a2a::service_decl(ctx.auth_armed), managed_agent_decl()];
+        decls.extend(cohost_a2a_decls());
+        decls
     })
 }

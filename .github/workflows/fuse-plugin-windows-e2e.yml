@@ -62,7 +62,7 @@ jobs:
           git fetch --no-tags --prune origin "${{ github.base_ref }}"
           git diff --name-only "origin/${{ github.base_ref }}"...HEAD > /tmp/changed_files.txt
           cat /tmp/changed_files.txt
-          if grep -Eq '^(rust/services/fuse-plugin/|Cargo\.toml$|Cargo\.lock$|tests/e2e/windows/)' /tmp/changed_files.txt; then
+          if grep -Eq '^(rust/services/fuse-plugin/|Cargo\.toml$|Cargo\.lock$|tests/e2e/windows/|\.github/workflows/fuse-plugin-windows-e2e\.yml$)' /tmp/changed_files.txt; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
             echo "run=false" >> "$GITHUB_OUTPUT"
@@ -73,16 +73,42 @@ jobs:
         run: |
           echo "No FUSE-plugin-relevant Windows changes; reporting required check without running suite."
 
-      # WinFsp is the Windows kernel-side userspace-filesystem driver
-      # the plugin depends on at runtime.  Chocolatey's `winfsp`
-      # package installs the .sys driver + the userspace DLL.  The
-      # /VERYSILENT switch skips the GUI installer's UAC dance — fine
-      # because the runner already runs as Administrator.
-      - name: Install WinFsp
+      # WinFsp is the Windows kernel-side userspace-filesystem driver the
+      # plugin depends on at runtime.  Pull the fixed-version .msi from the
+      # VENDOR GitHub release behind an actions/cache — NOT
+      # `choco install winfsp`.  community.chocolatey.org is a rate-limited
+      # free service that explicitly warns against CI use; a 503/rate-limit
+      # there failed this job even though our code is fine, and it recurs.
+      # Caching the pinned .msi keeps the hot path network-free on a cache
+      # hit and, on the one-time miss, fetches the release origin (not
+      # Chocolatey's re-host).  Mirrors the #4646 cache-then-download
+      # pattern used for the ORT dylib + fastembed model.
+      - name: Cache WinFsp installer (pinned .msi)
+        if: steps.changes.outputs.run == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}\winfsp.msi
+          key: winfsp-msi-2.1.25156
+
+      - name: Install WinFsp (vendor .msi, no Chocolatey)
         if: steps.changes.outputs.run == 'true'
         shell: pwsh
         run: |
-          choco install winfsp -y --no-progress
+          $msi = "$env:RUNNER_TEMP\winfsp.msi"
+          if (-not (Test-Path $msi)) {
+            $url = 'https://github.com/winfsp/winfsp/releases/download/v2.1/winfsp-2.1.25156.msi'
+            Write-Host "WinFsp installer cache miss; downloading $url"
+            Invoke-WebRequest -Uri $url -OutFile $msi -UseBasicParsing
+          } else {
+            Write-Host "WinFsp installer restored from cache"
+          }
+          # Silent install (runner is Administrator); WinFsp lands the .sys
+          # driver + userspace DLL under C:\Program Files (x86)\WinFsp\.
+          $p = Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn /norestart" -Wait -PassThru
+          if ($p.ExitCode -ne 0) {
+            Write-Error "msiexec returned $($p.ExitCode) installing WinFsp"
+            exit 1
+          }
           # Verify the driver landed.
           if (-not (Test-Path 'C:\Program Files (x86)\WinFsp\bin\winfsp-x64.dll')) {
             Write-Error "WinFsp install did not place winfsp-x64.dll"

@@ -62,7 +62,7 @@ jobs:
           git fetch --no-tags --prune origin "${{ github.base_ref }}"
           git diff --name-only "origin/${{ github.base_ref }}"...HEAD > /tmp/changed_files.txt
           cat /tmp/changed_files.txt
-          if grep -Eq '^(rust/services/fuse-plugin/|Cargo\.toml$|Cargo\.lock$|tests/e2e/windows/)' /tmp/changed_files.txt; then
+          if grep -Eq '^(rust/services/fuse-plugin/|Cargo\.toml$|Cargo\.lock$|tests/e2e/windows/|\.github/workflows/fuse-plugin-windows-e2e\.yml$)' /tmp/changed_files.txt; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
             echo "run=false" >> "$GITHUB_OUTPUT"

@@ -233,7 +233,7 @@ checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
 [[package]]
 name = "api"
 version = "0.1.20"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=fc59c5ffbf5c4ae7ccd4629e4810882973eb01f6#fc59c5ffbf5c4ae7ccd4629e4810882973eb01f6"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=b1d3e887f65f1917d9ec6a10e6c870c9e7b0bd03#b1d3e887f65f1917d9ec6a10e6c870c9e7b0bd03"
 dependencies = [
  "base64 0.22.1",
  "httpdate",
@@ -847,7 +847,7 @@ dependencies = [
 [[package]]
 name = "commands"
 version = "0.1.20"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=fc59c5ffbf5c4ae7ccd4629e4810882973eb01f6#fc59c5ffbf5c4ae7ccd4629e4810882973eb01f6"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=b1d3e887f65f1917d9ec6a10e6c870c9e7b0bd03#b1d3e887f65f1917d9ec6a10e6c870c9e7b0bd03"
 dependencies = [
  "plugins",
  "runtime",
@@ -3075,7 +3075,7 @@ dependencies = [
 [[package]]
 name = "nexus-vfs-client"
 version = "0.1.20"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=fc59c5ffbf5c4ae7ccd4629e4810882973eb01f6#fc59c5ffbf5c4ae7ccd4629e4810882973eb01f6"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=b1d3e887f65f1917d9ec6a10e6c870c9e7b0bd03#b1d3e887f65f1917d9ec6a10e6c870c9e7b0bd03"
 dependencies = [
  "prost 0.13.5",
  "protoc-bin-vendored",
@@ -3532,7 +3532,7 @@ checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 [[package]]
 name = "plugins"
 version = "0.1.20"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=fc59c5ffbf5c4ae7ccd4629e4810882973eb01f6#fc59c5ffbf5c4ae7ccd4629e4810882973eb01f6"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=b1d3e887f65f1917d9ec6a10e6c870c9e7b0bd03#b1d3e887f65f1917d9ec6a10e6c870c9e7b0bd03"
 dependencies = [
  "serde",
  "serde_json",
@@ -4376,7 +4376,7 @@ dependencies = [
 [[package]]
 name = "runtime"
 version = "0.1.20"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=fc59c5ffbf5c4ae7ccd4629e4810882973eb01f6#fc59c5ffbf5c4ae7ccd4629e4810882973eb01f6"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=b1d3e887f65f1917d9ec6a10e6c870c9e7b0bd03#b1d3e887f65f1917d9ec6a10e6c870c9e7b0bd03"
 dependencies = [
  "agent-client-protocol",
  "agent-client-protocol-schema",
@@ -5282,7 +5282,7 @@ dependencies = [
 [[package]]
 name = "telemetry"
 version = "0.1.20"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=fc59c5ffbf5c4ae7ccd4629e4810882973eb01f6#fc59c5ffbf5c4ae7ccd4629e4810882973eb01f6"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=b1d3e887f65f1917d9ec6a10e6c870c9e7b0bd03#b1d3e887f65f1917d9ec6a10e6c870c9e7b0bd03"
 dependencies = [
  "chrono",
  "dirs",
@@ -5673,7 +5673,7 @@ dependencies = [
 [[package]]
 name = "tools"
 version = "0.1.20"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=fc59c5ffbf5c4ae7ccd4629e4810882973eb01f6#fc59c5ffbf5c4ae7ccd4629e4810882973eb01f6"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=b1d3e887f65f1917d9ec6a10e6c870c9e7b0bd03#b1d3e887f65f1917d9ec6a10e6c870c9e7b0bd03"
 dependencies = [
  "api",
  "async-trait",

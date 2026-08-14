@@ -2,7 +2,7 @@
 
 Low-level search utilities at the brick tier (Issue #2123).
 
-These primitives power Search brick operations:
+These primitives power Search service operations:
 - glob_helpers: pure-Python glob query helpers (extract_static_prefix,
   is_simple_pattern, glob_match, glob_filter)
 - trigram_fast: Trigram-based search indexing (Rust-accelerated)

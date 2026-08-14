@@ -16,7 +16,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import argparse  # noqa: E402
 
 from scripts.surface_coverage import (  # noqa: E402
-    extract_bricks,
     extract_cli,
     extract_grpc_call,
     extract_grpc_typed,
@@ -25,6 +24,7 @@ from scripts.surface_coverage import (  # noqa: E402
     extract_profiles,
     extract_rpc_expose,
     extract_sdk,
+    extract_services,
     normalize,
 )
 from scripts.surface_coverage.merge import merge_coverage  # noqa: E402
@@ -50,7 +50,7 @@ from scripts.surface_coverage.taxonomy import (  # noqa: E402
     classify_op_id,
 )
 
-_KNOWN_BRICK_IDS = {m.id for m in TAXONOMY_MODULES if m.layer == "brick"}
+_KNOWN_SERVICE_IDS = {m.id for m in TAXONOMY_MODULES if m.layer == "service"}
 
 
 def generate_coverage(
@@ -174,21 +174,21 @@ def generate_coverage(
                 op_id = raw.name  # classifier handles unprefixed names
             _upsert(operations, op_id, "grpc_expose", raw.name, raw.source)
 
-    # --- Bricks (metadata-only; each brick becomes a module via taxonomy) ---
+    # --- Services (metadata-only; each service becomes a module via taxonomy) ---
     bricks_root = repo_root / "src/nexus/bricks"
     if bricks_root.exists():
-        for raw in extract_bricks.extract_bricks(bricks_root):
-            # Each brick is represented as an Operation for visibility in YAML even
+        for raw in extract_services.extract_services(bricks_root):
+            # Each service is represented as an Operation for visibility in YAML even
             # without its own external surfaces. Op-id "brick.<name>".
-            op_id = f"{raw.id}.brick"
-            _upsert(operations, op_id, "grpc_expose", f"brick:{raw.id}", raw.source)
+            op_id = f"{raw.id}.service"
+            _upsert(operations, op_id, "grpc_expose", f"service:{raw.id}", raw.source)
             # Override module to match brick id (classifier may have placed it elsewhere)
-            operations[op_id].module = raw.id if raw.id in _KNOWN_BRICK_IDS else "uncategorized"
-            # Stash brick metadata in summary if available
-            if raw.brick_name:
+            operations[op_id].module = raw.id if raw.id in _KNOWN_SERVICE_IDS else "uncategorized"
+            # Stash service metadata in summary if available
+            if raw.service_name:
                 operations[
                     op_id
-                ].summary = f"brick gate: {raw.brick_name}, tier: {raw.tier or 'n/a'}"
+                ].summary = f"service gate: {raw.service_name}, tier: {raw.tier or 'n/a'}"
 
     # --- SDK (v3: walk the whole remote/ tree) ---
     remote_root = repo_root / "src/nexus/remote"

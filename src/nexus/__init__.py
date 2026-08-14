@@ -424,7 +424,7 @@ def connect(
     record_store_path = cfg.record_store_path or None
 
     # --- Profile resolution (Issue #1708, moved before metadata store for federation gating) ---
-    from nexus.contracts.deployment_profile import DeploymentProfile, resolve_enabled_bricks
+    from nexus.contracts.deployment_profile import DeploymentProfile, resolve_enabled_services
 
     if cfg.profile == "auto":
         from nexus.lib.device_capabilities import detect_capabilities, suggest_profile
@@ -486,7 +486,7 @@ def connect(
     try:
         # Apply FeaturesConfig overrides (Issue #1389)
         overrides = cfg.features.to_overrides() if cfg.features else {}
-        enabled_bricks = resolve_enabled_bricks(resolved_profile, overrides=overrides)
+        enabled_services = resolve_enabled_services(resolved_profile, overrides=overrides)
 
         # Create Rust kernel early so RustMetastoreProxy can use it.
         # Construct a KernelClient for the connect() path. Federation
@@ -600,7 +600,7 @@ def connect(
             permissions=perm_cfg,
             distributed=dist_cfg,
             parsing=parse_cfg,
-            enabled_bricks=enabled_bricks,
+            enabled_services=enabled_services,
             audit=audit_cfg,
             federation=federation,
             security=getattr(cfg, "security", None),

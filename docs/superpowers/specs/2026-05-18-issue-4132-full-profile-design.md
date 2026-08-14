@@ -60,7 +60,7 @@ no user-runnable command prints the resolved profile contract.
 
 ## Ground-truth facts (verified against source)
 
-- `DeploymentProfile.FULL.default_bricks()` = `_LITE_BRICKS` ∪
+- `DeploymentProfile.FULL.default_services()` = `_LITE_BRICKS` ∪
   {search, pay, llm, skills, sandbox, workflows, discovery, mcp, memory,
   task_manager, observability, uploads, resiliency, access_manifest,
   catalog, delegation, identity, share_link, versioning, workspace,
@@ -111,7 +111,7 @@ no user-runnable command prints the resolved profile contract.
 
 The guide states, and tests prove:
 
-1. `DeploymentProfile.FULL.default_bricks()` ⊇ `LITE.default_bricks()`,
+1. `DeploymentProfile.FULL.default_services()` ⊇ `LITE.default_services()`,
    includes the feature bricks listed above, and **excludes**
    `federation`.
 2. `DeploymentProfile.FULL.default_drivers()` includes
@@ -235,7 +235,7 @@ mapped host port):
 - **Full hub boots & serves** (closes verification gap #1, core): the
   nexus container reached `Application startup complete`,
   `GET /health` → **200**, `GET /api/v2/features` →
-  `{profile: "full", enabled_bricks: 29, mode: "standalone",
+  `{profile: "full", enabled_services: 29, mode: "standalone",
   version: "0.10.0"}`. Postgres + Dragonfly healthy.
 - **`nexus status --json`** (Gap 2) against the live hub →
   `deployment_profile="full"`, `auth_mode="none"`,

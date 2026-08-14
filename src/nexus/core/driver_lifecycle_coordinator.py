@@ -15,7 +15,7 @@ the Rust kernel:
 The Rust ``DriverLifecycleCoordinator`` (``rust/kernel/src/core/dlc.rs``)
 threads mount mutations into those kernel-owned tables.  This Python
 class only fires the Python ``KernelDispatch`` ``unmount`` event after a
-Rust unmount completes so brick hooks (e.g. ``CasLocalBackend._on_unmount``)
+Rust unmount completes so service hooks (e.g. ``CasLocalBackend._on_unmount``)
 get notified — the Rust kernel does not yet have a parallel hook-firing
 primitive.
 

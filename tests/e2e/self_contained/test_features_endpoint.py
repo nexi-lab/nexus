@@ -17,7 +17,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from nexus.contracts.deployment_profile import (
-    ALL_BRICK_NAMES,
+    ALL_SERVICE_NAMES,
     DeploymentProfile,
 )
 from nexus.server.api.core.features import FeaturesResponse, router
@@ -29,13 +29,13 @@ def app_with_features() -> FastAPI:
     app = FastAPI()
 
     # Mock minimal app.state (features endpoint reads from app.state.features_info)
-    full_bricks = DeploymentProfile.FULL.default_bricks()
-    disabled = sorted(ALL_BRICK_NAMES - full_bricks)
+    full_bricks = DeploymentProfile.FULL.default_services()
+    disabled = sorted(ALL_SERVICE_NAMES - full_bricks)
 
     app.state.features_info = FeaturesResponse(
         profile="full",
         mode="standalone",
-        enabled_bricks=sorted(full_bricks),
+        enabled_services=sorted(full_bricks),
         disabled_bricks=disabled,
         version="0.test.0",
     )
@@ -65,13 +65,13 @@ class TestFeaturesEndpoint:
         data = client.get("/api/v2/features").json()
         assert data["mode"] == "standalone"
 
-    def test_returns_enabled_bricks(self, client: TestClient) -> None:
+    def test_returns_enabled_services(self, client: TestClient) -> None:
         data = client.get("/api/v2/features").json()
-        assert isinstance(data["enabled_bricks"], list)
-        assert len(data["enabled_bricks"]) > 0
+        assert isinstance(data["enabled_services"], list)
+        assert len(data["enabled_services"]) > 0
         # Full profile should include search and pay
-        assert "search" in data["enabled_bricks"]
-        assert "pay" in data["enabled_bricks"]
+        assert "search" in data["enabled_services"]
+        assert "pay" in data["enabled_services"]
 
     def test_returns_disabled_bricks(self, client: TestClient) -> None:
         data = client.get("/api/v2/features").json()
@@ -84,7 +84,7 @@ class TestFeaturesEndpoint:
 
     def test_bricks_are_sorted(self, client: TestClient) -> None:
         data = client.get("/api/v2/features").json()
-        assert data["enabled_bricks"] == sorted(data["enabled_bricks"])
+        assert data["enabled_services"] == sorted(data["enabled_services"])
         assert data["disabled_bricks"] == sorted(data["disabled_bricks"])
 
 
@@ -94,13 +94,13 @@ class TestFeaturesEndpointLiteProfile:
     @pytest.fixture
     def lite_app(self) -> FastAPI:
         app = FastAPI()
-        lite_bricks = DeploymentProfile.LITE.default_bricks()
-        disabled = sorted(ALL_BRICK_NAMES - lite_bricks)
+        lite_bricks = DeploymentProfile.LITE.default_services()
+        disabled = sorted(ALL_SERVICE_NAMES - lite_bricks)
 
         app.state.features_info = FeaturesResponse(
             profile="lite",
             mode="standalone",
-            enabled_bricks=sorted(lite_bricks),
+            enabled_services=sorted(lite_bricks),
             disabled_bricks=disabled,
             version="0.test.0",
         )
@@ -118,18 +118,18 @@ class TestFeaturesEndpointLiteProfile:
 
     def test_lite_disables_search(self, lite_client: TestClient) -> None:
         data = lite_client.get("/api/v2/features").json()
-        assert "search" not in data["enabled_bricks"]
+        assert "search" not in data["enabled_services"]
         assert "search" in data["disabled_bricks"]
 
     def test_lite_disables_pay(self, lite_client: TestClient) -> None:
         data = lite_client.get("/api/v2/features").json()
-        assert "pay" not in data["enabled_bricks"]
+        assert "pay" not in data["enabled_services"]
         assert "pay" in data["disabled_bricks"]
 
     def test_lite_enables_core(self, lite_client: TestClient) -> None:
         data = lite_client.get("/api/v2/features").json()
-        assert "permissions" in data["enabled_bricks"]
-        assert "cache" in data["enabled_bricks"]
+        assert "permissions" in data["enabled_services"]
+        assert "cache" in data["enabled_services"]
 
 
 class TestFeaturesEndpointFallback:
@@ -163,7 +163,7 @@ def _svc_from_app(app: FastAPI) -> Any:
     return LifespanServices(
         deployment_profile=getattr(app.state, "deployment_profile", "full"),
         deployment_mode=getattr(app.state, "deployment_mode", "standalone"),
-        enabled_bricks=getattr(app.state, "enabled_bricks", frozenset()),
+        enabled_services=getattr(app.state, "enabled_services", frozenset()),
         profile_tuning=getattr(app.state, "profile_tuning", None),
     )
 
@@ -183,26 +183,26 @@ class TestComputeFeaturesInfo:
         info: Any = app.state.features_info
         assert info.profile == "lite"
         assert info.mode == "standalone"
-        assert "search" not in info.enabled_bricks
+        assert "search" not in info.enabled_services
 
-    def test_compute_with_enabled_bricks_override(self) -> None:
+    def test_compute_with_enabled_services_override(self) -> None:
         from nexus.server.lifespan import _compute_features_info
 
         app = FastAPI()
         app.state.deployment_profile = "lite"
         app.state.deployment_mode = "standalone"
-        # Explicitly override enabled_bricks with search added
-        from nexus.contracts.deployment_profile import BRICK_SEARCH, resolve_enabled_bricks
+        # Explicitly override enabled_services with search added
+        from nexus.contracts.deployment_profile import SERVICE_SEARCH, resolve_enabled_services
 
-        custom_bricks = resolve_enabled_bricks(
-            DeploymentProfile.LITE, overrides={BRICK_SEARCH: True}
+        custom_bricks = resolve_enabled_services(
+            DeploymentProfile.LITE, overrides={SERVICE_SEARCH: True}
         )
-        app.state.enabled_bricks = custom_bricks
+        app.state.enabled_services = custom_bricks
 
         _compute_features_info(app, _svc_from_app(app))
 
         info: Any = app.state.features_info
-        assert "search" in info.enabled_bricks
+        assert "search" in info.enabled_services
 
     def test_compute_defaults_to_full(self) -> None:
         from nexus.server.lifespan import _compute_features_info

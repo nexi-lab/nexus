@@ -14,8 +14,8 @@ The ``_force_single_node_metastore`` workaround and the explicit path-field
 overrides in ``_sandbox_config`` are intentionally absent after the two wiring
 gaps closed by Issue #3778 Task-14 follow-up:
 
-  1. Federation bootstrap is now gated on ``BRICK_FEDERATION`` (not
-     ``BRICK_IPC``), so SANDBOX never attempts Raft.
+  1. Federation bootstrap is now gated on ``SERVICE_FEDERATION`` (not
+     ``SERVICE_IPC``), so SANDBOX never attempts Raft.
   2. ``_load_from_dict`` strips stale sandbox-defaulted path fields when
      the user supplies a custom ``data_dir``, so ``_apply_sandbox_defaults``
      correctly re-derives ``metastore_path`` / ``db_path`` /
@@ -259,7 +259,7 @@ async def test_sandbox_with_vector_search_enabled_wires_backend(
 
 
 @pytest.mark.asyncio
-async def test_sandbox_features_endpoint_reports_enabled_bricks(
+async def test_sandbox_features_endpoint_reports_enabled_services(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """/api/v2/features reports profile=sandbox and the expected brick set."""
@@ -279,7 +279,7 @@ async def test_sandbox_features_endpoint_reports_enabled_bricks(
             body = r.json()
 
             assert body["profile"] == "sandbox", body
-            enabled = set(body["enabled_bricks"])
+            enabled = set(body["enabled_services"])
 
             # Core SANDBOX bricks (LITE subset that matters + SEARCH + MCP + PARSERS)
             expected_subset = {

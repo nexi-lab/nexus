@@ -13,7 +13,7 @@ Sections:
     2.  File CRUD (write, sys_read)
     3.  Grep (local file scan)
     4.  Edit (exact, fuzzy, preview, OCC)
-    5.  Version history (skipped — BRICK_VERSIONING not in SANDBOX)
+    5.  Version history (skipped — SERVICE_VERSIONING not in SANDBOX)
     6.  HERB retrieval-quality gate (vector, hit rate >= 7/8)
     7.  Permission enforcement (ReBAC wiring only)
     8.  In-process RPC latency
@@ -349,10 +349,10 @@ async def main() -> int:
             # =============================================================
             print("\n=== 5. VERSION HISTORY ===")
             # =============================================================
-            # SANDBOX does not enable BRICK_VERSIONING (see _SANDBOX_BRICKS
+            # SANDBOX does not enable SERVICE_VERSIONING (see _SANDBOX_BRICKS
             # in contracts/deployment_profile.py). Version history is a
             # FULL-profile feature. Record as intentionally skipped.
-            print("    (skipped — BRICK_VERSIONING not enabled in SANDBOX)")
+            print("    (skipped — SERVICE_VERSIONING not enabled in SANDBOX)")
 
             # =============================================================
             print("\n=== 6. HERB RETRIEVAL-QUALITY GATE (vector) ===")

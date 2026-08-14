@@ -357,7 +357,7 @@ def contract_cmd(ctx: click.Context, url: str | None, api_key: str | None) -> No
 
     contract = {
         "auth_mode": auth_mode,
-        "bricks": sorted(features.get("enabled_bricks", [])),
+        "bricks": sorted(features.get("enabled_services", [])),
         "deployment_profile": profile_str,
         "disabled_bricks": sorted(features.get("disabled_bricks", [])),
         # NOT named "drivers": the hub does not return its driver set, so

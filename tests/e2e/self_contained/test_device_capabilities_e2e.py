@@ -17,9 +17,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from nexus.contracts.deployment_profile import (
-    ALL_BRICK_NAMES,
+    ALL_SERVICE_NAMES,
     DeploymentProfile,
-    resolve_enabled_bricks,
+    resolve_enabled_services,
 )
 from nexus.lib.device_capabilities import DeviceCapabilities
 from nexus.server.api.core.features import FeaturesResponse, router
@@ -27,17 +27,17 @@ from nexus.server.api.core.features import FeaturesResponse, router
 
 def _make_features_app(
     profile: DeploymentProfile,
-    enabled_bricks: frozenset[str] | None = None,
+    enabled_services: frozenset[str] | None = None,
 ) -> FastAPI:
     """Create a FastAPI app with features endpoint and pre-computed features_info."""
     app = FastAPI()
-    bricks = enabled_bricks if enabled_bricks is not None else profile.default_bricks()
-    disabled = sorted(ALL_BRICK_NAMES - bricks)
+    bricks = enabled_services if enabled_services is not None else profile.default_services()
+    disabled = sorted(ALL_SERVICE_NAMES - bricks)
 
     app.state.features_info = FeaturesResponse(
         profile=profile.value,
         mode="standalone",
-        enabled_bricks=sorted(bricks),
+        enabled_services=sorted(bricks),
         disabled_bricks=disabled,
         version="0.test.0",
     )
@@ -71,14 +71,14 @@ class TestAutoProfileViaFeatures:
 
         assert profile.value == expected_profile
 
-        bricks = resolve_enabled_bricks(profile)
-        app = _make_features_app(profile, enabled_bricks=bricks)
+        bricks = resolve_enabled_services(profile)
+        app = _make_features_app(profile, enabled_services=bricks)
         client = TestClient(app)
 
         data = client.get("/api/v2/features").json()
         assert data["profile"] == expected_profile
         for brick in expected_absent:
-            assert brick not in data["enabled_bricks"]
+            assert brick not in data["enabled_services"]
 
 
 class TestExplicitProfileWithMismatchWarning:
@@ -116,16 +116,16 @@ class TestFeaturesConfigOverrideWithAutoProfile:
         assert profile == DeploymentProfile.LITE
 
         # Force-enable search via FeaturesConfig override
-        bricks = resolve_enabled_bricks(profile, overrides={"search": True})
+        bricks = resolve_enabled_services(profile, overrides={"search": True})
         assert "search" in bricks
 
         # Verify through features endpoint
-        app = _make_features_app(profile, enabled_bricks=bricks)
+        app = _make_features_app(profile, enabled_services=bricks)
         client = TestClient(app)
 
         data = client.get("/api/v2/features").json()
         assert data["profile"] == "lite"
-        assert "search" in data["enabled_bricks"]
+        assert "search" in data["enabled_services"]
 
     def test_auto_profile_with_brick_disabled(self) -> None:
         """Auto-detect full profile, then force-disable pay via override."""
@@ -136,15 +136,15 @@ class TestFeaturesConfigOverrideWithAutoProfile:
         assert profile == DeploymentProfile.FULL
 
         # Force-disable pay via override
-        bricks = resolve_enabled_bricks(profile, overrides={"pay": False})
+        bricks = resolve_enabled_services(profile, overrides={"pay": False})
         assert "pay" not in bricks
 
-        app = _make_features_app(profile, enabled_bricks=bricks)
+        app = _make_features_app(profile, enabled_services=bricks)
         client = TestClient(app)
 
         data = client.get("/api/v2/features").json()
         assert data["profile"] == "full"
-        assert "pay" not in data["enabled_bricks"]
+        assert "pay" not in data["enabled_services"]
         assert "pay" in data["disabled_bricks"]
 
 
@@ -158,16 +158,16 @@ class TestComputeFeaturesInfoAutoProfile:
         app = FastAPI()
         app.state.deployment_profile = "lite"
         app.state.deployment_mode = "standalone"
-        app.state.enabled_bricks = resolve_enabled_bricks(DeploymentProfile.LITE)
+        app.state.enabled_services = resolve_enabled_services(DeploymentProfile.LITE)
 
         svc = LifespanServices(
             deployment_profile="lite",
             deployment_mode="standalone",
-            enabled_bricks=resolve_enabled_bricks(DeploymentProfile.LITE),
+            enabled_services=resolve_enabled_services(DeploymentProfile.LITE),
         )
         _compute_features_info(app, svc)
 
         info: Any = app.state.features_info
         assert info.profile == "lite"
-        assert "search" not in info.enabled_bricks
+        assert "search" not in info.enabled_services
         assert "search" in info.disabled_bricks

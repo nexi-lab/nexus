@@ -8,8 +8,8 @@ Two phases (see orchestrator.py module docstring for the full 4-phase
 boot sequence):
 
     _wire_services(nx, ...)  →  _InitContext
-        Phase 2.  Pure memory, no I/O.  Constructs ParsersBrick and
-        CacheBrick, boots post-kernel wired services (those that need an
+        Phase 2.  Pure memory, no I/O.  Constructs ParsersService and
+        CacheService, boots post-kernel wired services (those that need an
         NexusFS reference), enlists them into ServiceRegistry, and creates
         the PermissionChecker.  Returns an ``_InitContext`` dataclass that
         captures all factory-phase locals needed by the next phase.
@@ -58,7 +58,7 @@ def _wire_services(
     *,
     services: dict[str, Any] | None = None,
     zone_id: str | None = None,
-    enabled_bricks: "frozenset[str] | None" = None,
+    enabled_services: "frozenset[str] | None" = None,
     parsing: Any = None,
     workflow_engine: Any = None,
     federation: Any = None,
@@ -67,7 +67,7 @@ def _wire_services(
 ) -> _InitContext:
     """Phase 1: wire service topology.  Pure memory — NO I/O.
 
-    Creates ParsersBrick, CacheBrick, ContentCache; packs them into
+    Creates ParsersService, CacheService, ContentCache; packs them into
     the services dict; boots wired services that need a NexusFS reference;
     binds them onto ``nx``; creates PermissionChecker.
 
@@ -85,16 +85,16 @@ def _wire_services(
 
     _parsing = parsing if parsing is not None else nx._parse_config
 
-    # --- ParsersBrick (owns both registries — Issue #1523) ---
-    from nexus.bricks.parsers.brick import ParsersBrick
+    # --- ParsersService (owns both registries — Issue #1523) ---
+    from nexus.bricks.parsers.brick import ParsersService
 
-    parsers_brick = ParsersBrick(parsing_config=_parsing)
+    parsers_brick = ParsersService(parsing_config=_parsing)
     _parse_fn = parsers_brick.create_parse_fn()
 
-    # --- CacheBrick (owns all cache domain services — Issue #1524) ---
-    from nexus.cache.brick import CacheBrick
+    # --- CacheService (owns all cache domain services — Issue #1524) ---
+    from nexus.cache.brick import CacheService
 
-    _cache_brick = CacheBrick(
+    _cache_brick = CacheService(
         cache_store=nx.cache_store,
         record_store=nx._record_store,
     )
@@ -109,17 +109,17 @@ def _wire_services(
     if workflow_engine is not None:
         _brick_updates["workflow_engine"] = workflow_engine
 
-    # --- Resolve enabled_bricks for profile gating ---
-    _resolved_bricks = enabled_bricks
-    if _resolved_bricks is None:
-        _resolved_bricks = _DP.FULL.default_bricks()
-    _brick_updates["enabled_bricks"] = _resolved_bricks
+    # --- Resolve enabled_services for profile gating ---
+    _resolved_services = enabled_services
+    if _resolved_services is None:
+        _resolved_services = _DP.FULL.default_services()
+    _brick_updates["enabled_services"] = _resolved_services
 
     # Merge factory-phase additions into the unified services dict
     _svc.update(_brick_updates)
 
     def svc_on(name: str) -> bool:
-        return name in _resolved_bricks
+        return name in _resolved_services
 
     # --- PermissionChecker (services layer — Issue #899, #1766) ---
     # Factory-local: _permission_checker is only needed by _register_vfs_hooks()

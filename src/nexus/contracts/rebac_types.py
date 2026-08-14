@@ -1,4 +1,4 @@
-"""Tier-neutral ReBAC types for cross-brick use (Issue #2190).
+"""Tier-neutral ReBAC types for cross-service use (Issue #2190).
 
 Canonical home for shared ReBAC vocabulary types used across the permissions
 system service, memory brick, and bulk permission checker.

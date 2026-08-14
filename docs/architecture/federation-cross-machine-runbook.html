@@ -57,16 +57,30 @@ This runbook now spans two related surfaces of the same `nexusd-cluster` binary:
 * **Service plane** — the cloud SaaS's public endpoints, reachable over the internet: `agent.sudoprivacy.com` (moss web, 443) and `broker.sudoprivacy.com` (the cross-org broker, 8443).
 * **Cross-org trust boundary** — the SaaS super-agent (our trust domain, **CA_A**) and a customer edge box (`sudoedge`, its own **CA_B**) authenticate each other over mTLS. Each side registers the other's CA out-of-band; only *signed messages* cross, never raw data.
 
-The product has two halves:
+The product has two halves — a cloud SaaS super-agent (our trust domain, **CA_A**) and a customer edge box (`sudoedge`, its own **CA_B**), joined by one cross-org mTLS broker:
 
+```mermaid
+flowchart LR
+  subgraph CLOUD["☁️ SaaS super-agent · cloud · trust domain CA_A · Tencent Beijing VM"]
+    direction TB
+    C1["moss · nexus · sudorouter"]
+    C2["nexus half = the BROKER<br/>auth-on + foreign-ca<br/>classify → stamp → containment"]
+  end
+  subgraph BOX["📦 Edge box · customer site · trust domain CA_B · sudoedge (FDE carries it)"]
+    direction TB
+    B1["sudowork · moss · nexus · sudorouter · gpustack"]
+    B2["nexus half = CA_B agents"]
+  end
+  B2 =="① mTLS · broker.sudoprivacy.com:8443<br/>🔒 signed messages only — never raw data"==> C2
+  C2 -."CA_A reverse anchor: box verifies our server cert".-> B2
+  B2 -."CA_B forward anchor: broker verifies box's agent cert".-> C2
+  classDef cloud fill:#1e2a4a,stroke:#6ea8fe,color:#dbe6ff;
+  classDef box fill:#3a2a10,stroke:#e0a94b,color:#f7e6c8;
+  class C1,C2 cloud
+  class B1,B2 box
 ```
-   SaaS super-agent (cloud · CA_A)                 Edge box (customer site · CA_B)
-   Tencent Beijing VM                              FDE carries it (sudoedge repo)
-   ┌───────────────────────────┐   cross-org mTLS  ┌───────────────────────────┐
-   │ moss + nexus + sudorouter │◄═════════════════►│ sudowork+moss+nexus+…     │
-   │ nexus half = the BROKER   │  broker:8443      │ nexus half = CA_B agents  │
-   └───────────────────────────┘  signed msgs only └───────────────────────────┘
-```
+
+Two anchors, registered out-of-band, make the trust *mutual*: the **forward** anchor lets the broker validate a CA_B agent's client cert (so it can be classified + stamped + contained); the **reverse** anchor (CA_A on the box) lets the box validate the broker's server cert.
 
 **Part 2 below** documents the SaaS/cloud half (the broker). **Part 1** (from "Repo split" onward) documents intra-org federation between two of our own nodes — the same binary, the same overlay, a different job (raft-replicated shared zones vs cross-CA trust).
 

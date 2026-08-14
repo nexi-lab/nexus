@@ -30,11 +30,7 @@
   <main id="content"><noscript>此页面需要启用 JavaScript 才能显示内容。</noscript></main>
   <script id="markdown-source" type="text/plain"># Nexus Cross-Machine Runbook — Overlay Federation + Cloud SaaS + Cross-Org Broker
 
-**Status:**
-- **Part 1 · intra-org federation** — verified end-to-end 2026-06-06, Mac↔Win L1 cross-node read byte-exact.
-- **Part 2 · cloud SaaS + cross-org broker** — 2026-08-14: Tencent Beijing VM broker up, CA_A generated, sudoedge CA_B registered + `foreign-ca list` verified. The cross-org authN *handshake* (a foreign agent connecting) is pending the sudoedge e2e — the trust anchors are configured + verified, the live connection is not yet driven.
-
-> **Doc SSOT.**  This file supersedes nexi-lab/nexus discussion #2596 ("Cross-Machine Federation over Tailscale/Headscale — Complete Runbook").  That discussion is now closed and should be removed; new content for this surface goes here.
+This runbook is the SSOT for standing up cross-machine Nexus from the one `nexusd-cluster` binary: intra-org federation (Part 1) and the cloud SaaS super-agent + cross-org broker (Part 2).
 
 ---
 
@@ -49,7 +45,7 @@ If you only need the conceptual picture without the operator commands, jump to [
 
 ---
 
-## Environments & two planes (2026-08)
+## Environments & two planes
 
 This runbook now spans two related surfaces of the same `nexusd-cluster` binary:
 
@@ -91,7 +87,7 @@ Two anchors, registered out-of-band, make the trust *mutual*: the **forward** an
 ### The VM
 
 * Host `sudowork-saas` · Tencent Cloud **Beijing** · Ubuntu 24.04 x86_64 · 4c/8G/60G. Public IP `152.136.139.254`; overlay IP `100.64.0.1`. Provisioned by Hu Xuetao. It joins the **same headscale overlay** as every other node — enroll it per **Part 1 §1h** (the overlay and its gotchas are documented once, there; headscale itself runs on this same Tencent infra).
-* **Access = SSH over the overlay only**: `ssh ubuntu@100.64.0.1`; **public port 22 is CLOSED** (the management plane is private). Public service ports: `80/443` (moss web, `agent.sudoprivacy.com`) and `8443` (broker, `broker.sudoprivacy.com`). Credentials are in the password vault (`SSH - sudowork SaaS VM`, `Headscale overlay (nexus mesh) enrollment`), not here.
+* **Access rides the overlay**: `ssh ubuntu@100.64.0.1`.  The public interface serves traffic — `80/443` (moss web, `agent.sudoprivacy.com`) and `8443` (broker, `broker.sudoprivacy.com`).  Credentials live in the password vault (`SSH - sudowork SaaS VM`, `Headscale overlay (nexus mesh) enrollment`).
 
 ### Bring up the cross-org broker (`nexusd-cluster` founder)
 
@@ -121,7 +117,7 @@ nexusd-cluster \
 
 * **TLS is on by default → the founder generates CA_A** at `~/nexus-broker/data/tls/ca.pem` (+ `ca-key.pem`, and the node's server cert `node.pem`).
 * Binds `0.0.0.0:8443` (mTLS data-plane = the broker the DGX dials) and `0.0.0.0:8444` (the enrollment plane, `+1` offset).
-* **`--hostname` sets the server cert SAN.** For a DGX that verifies the hostname, set `--hostname broker.sudoprivacy.com` so the cert is *valid for that name* — CA_A is unchanged, only the node cert re-signs. If the DGX pins CA_A and skips the hostname check (common for pinned-CA mTLS), any hostname works. This is the "public SAN" step; confirm which mode the DGX uses with the edge side before the e2e.
+* **`--hostname` sets the server cert SAN.** For a DGX that verifies the hostname, set `--hostname broker.sudoprivacy.com` so the cert is *valid for that name* — CA_A is unchanged, only the node cert re-signs. If the DGX pins CA_A and skips the hostname check (common for pinned-CA mTLS), any hostname works. This is the "public SAN" step.
 
 **3. Register the foreign org's CA (the forward anchor)** — the broker now trusts the customer's CA_B. `foreign-ca` connects to the *running* daemon, so pass the SAME `--advertise-addr` as the daemon (default control port is 2126; override to your bind port):
 
@@ -134,21 +130,17 @@ nexusd-cluster foreign-ca list --advertise-addr <addr>:8443 --data-dir ~/nexus-b
 # → sudoedge-dgx-dev  sha256:<hex>
 ```
 
-**4. Reverse anchor** — hand the customer your **CA_A** (`~/nexus-broker/data/tls/ca.pem`) to register on their side, so their agent validates the broker's server cert. This CA_A *replaces* any earlier dev-broker CA_A.
+**4. Reverse anchor** — hand the customer your **CA_A** (`~/nexus-broker/data/tls/ca.pem`) to register on their side, so their agent validates the broker's server cert.
+
+**5. Persist it** — run the founder under a **systemd unit** so it survives reboot.
 
 ### What cross-org authN does on connect
 
-A foreign agent (CA_B-signed cert) dials `broker.sudoprivacy.com:8443` → the broker validates its cert against the registered CA_B → `classify_peer_cert` resolves it to `{trust_domain}/agent/{name}` (e.g. `sudoedge-dgx-dev/agent/worker`) → the a2a `ForeignAgentMailboxOnly` provider confines it to its `*/chat-with-me` mailbox (can't touch `/proc`, etc.); `MailboxStampingHook` rewrites the envelope `from` to the authenticated id (unforgeable). This is the "end-to-end tamper-proof ID" the customer asked for. The broker is otherwise a full nexus daemon (VFS, federation zones, agent mint via `auth`, node enroll, the a2a mailbox substrate).
-
-### Durability / remaining
-
-* Currently launched via `nohup`; make it a **systemd service** so it survives reboot (hardening TODO).
-* **Public-facing SAN** (`--hostname broker.sudoprivacy.com`) + confirming the *current* CA_B with the edge side + driving a real DGX→broker connection = the cross-org **e2e**, done with `sudoedge`.
-* **moss** (the SaaS agent-runtime half) is a separate deploy on the same VM (Docker; `moss/deploy` + a thin cloud overlay) — see the moss deploy notes; not yet stood up here.
+A foreign agent (CA_B-signed cert) dials `broker.sudoprivacy.com:8443` → the broker validates its cert against the registered CA_B → `classify_peer_cert` resolves it to `{trust_domain}/agent/{name}` (e.g. `sudoedge-dgx-dev/agent/worker`) → the a2a `ForeignAgentMailboxOnly` provider confines it to its `*/chat-with-me` mailbox (can't touch `/proc`, etc.); `MailboxStampingHook` rewrites the envelope `from` to the authenticated id (unforgeable). This is the end-to-end tamper-proof ID. The broker is otherwise a full nexus daemon (VFS, federation zones, agent mint via `auth`, node enroll, the a2a mailbox substrate).
 
 ---
 
-## Repo split (since #4259, 2026-06-03)
+## Repo split
 
 Kernel-tier crates (`contracts`, `lib`, `transport`, `kernel`, `backends` source, `raft`, `profiles/cluster`, `plugin-abi`, plus `proto/`) live in **[nexi-lab/nexus-vfs](https://github.com/nexi-lab/nexus-vfs)**.  This `nexus` repo holds the service tier (`services`, including service-plugin dylib sub-crates such as `services/vault/`) and the driver-plugin dylib sub-crates under `backends/` (`backends/local-connector/`, …), and consumes the kernel tier as git dependencies in `Cargo.toml`.  Each plugin dylib crate compiles to a cdylib loaded by `nexusd-cluster` via `--plugin-dir`.
 
@@ -167,38 +159,36 @@ Two CI gates enforce the split:
 
 ## Architecture
 
-```
-Headscale server (company-managed)
-  headscale.sudoprivacy.com
-            │
-  ┌─────────┼─────────┐
-  │  Tailscale WireGuard mesh    │
-  │                              │
-┌─┴──────┐              ┌────────┴─┐
-│Machine A│◄════════════►│ Machine B│
-│(founder)│   encrypted │ (joiner) │
-│:2126    │    P2P      │ :2126    │
-│:2028    │   tunnel    │ :2028    │
-└─────────┘             └──────────┘
+```mermaid
+flowchart TB
+  HS["🎛️ Headscale · company-managed<br/>headscale.sudoprivacy.com"]
+  subgraph MESH["Tailscale WireGuard mesh · encrypted P2P tunnel"]
+    A["Machine A · founder<br/>:2126 raft gRPC + VFS"]
+    B["Machine B · joiner<br/>:2126 raft gRPC + VFS"]
+    A <==> B
+  end
+  HS -. coordinates .-> MESH
+  classDef ctrl fill:#3a2a10,stroke:#e0a94b,color:#f7e6c8;
+  classDef node fill:#1e2a4a,stroke:#6ea8fe,color:#dbe6ff;
+  class HS ctrl
+  class A,B node
 ```
 
-* **Port 2126** — Raft gRPC + ZoneApiService + VfsService.  Hosts inter-node consensus, JoinZone / Propose RPCs, and the kernel's VFS server.  Mounted as the cluster binary's primary listener.
-* **Port 2028** — Reserved for future VFS-only client surface; not used by `nexusd-cluster` today.
-* **Founder** — First node, brings up the root zone as a 1-voter cluster, then optionally creates federation zones from env (`NEXUS_FEDERATION_ZONES` / `NEXUS_FEDERATION_MOUNTS`).
-* **Joiner** — Second node, brings up its own local root, then `nexusd-cluster join` against the founder to subscribe to a federation zone and write a local DT_MOUNT.
+* **Port 2126** — Raft gRPC + ZoneApiService + VfsService: inter-node consensus, JoinZone / Propose RPCs, and the kernel's VFS server.  The cluster binary's primary listener.
+* **Founder** — the first node; brings up the root zone as a 1-voter cluster, then creates federation zones from env (`NEXUS_FEDERATION_ZONES` / `NEXUS_FEDERATION_MOUNTS`).
+* **Joiner** — the second node; brings up its own local root, then `nexusd-cluster join` against the founder to subscribe to a federation zone and write a local DT_MOUNT.
 
 ---
 
 ## Prerequisites
 
-* `nexus-vfs` repo cloned on both machines (for the `nexusd-cluster` build).  This `nexus` repo is **not** required on the cluster machines unless you also want service-tier plugins (vault cdylib, etc.).
-* Rust toolchain (stable; the cluster binary builds on the `release` profile).
-* Tailscale client installed on both machines.
-* Headscale pre-auth key (from IT) if joining the corporate mesh.
-* **For `cc tasks list` cross-machine workflow** (Step 3g) — operating-system FUSE userspace:
-  * **Linux**: `apt install fuse3 libfuse3-3`.
-  * **macOS**: `brew install macfuse-t`.  No kernel extension approval, no reboot — FUSE-T runs the FUSE protocol over a localhost NFS loopback, so the macOS kernel needs nothing beyond its built-in NFS client.  Use FUSE-T instead of macFUSE: macFUSE needs an interactive System Settings → Privacy & Security approval + a reboot per host, which doesn't fit a one-command operator install (the GPL license also blocks bundling it into a closed-source installer).  FUSE-T is MIT-licensed and exposes the same libfuse3 API surface the `fuser` Rust crate consumes, so the plugin source is unchanged.
-  * **Windows**: `choco install winfsp -y` (Administrator PowerShell) or `winget install --id WinFsp.WinFsp --silent`.  WinFsp is the Windows kernel-side userspace-filesystem driver `nexus-fuse-plugin` consumes via the `winfsp` Rust crate (different binding from `fuser`, but the same KernelHandle ABI surface).  The driver installs at `C:\Program Files (x86)\WinFsp\bin\winfsp-x64.dll` but the installer does NOT add that dir to system PATH.  Before launching the daemon, prepend it: `$env:PATH = "C:\Program Files (x86)\WinFsp\bin;$env:PATH"`.  Without this, the plugin DLL load fails at `LoadLibraryExW` with error 126 ("module not found") because the static import on `winfsp-x64.dll` can't be resolved.
+| Requirement | Detail |
+|---|---|
+| `nexus-vfs` checkout (both machines) | Source for the `nexusd-cluster` build.  The `nexus` repo is additionally needed only for service-tier plugins (vault cdylib, etc.). |
+| Rust toolchain (stable) | The cluster binary builds on the `release` profile. |
+| Tailscale client (both machines) | Joins the headscale overlay. |
+| Headscale pre-auth key | From IT; enrolls a node into the corporate mesh. |
+| FUSE userspace — for the §3g OS mount | **Linux** `apt install fuse3 libfuse3-3` · **macOS** `brew install macfuse-t` (FUSE-T: MIT-licensed, exposes the libfuse3 ABI, no kernel-extension approval or reboot) · **Windows** `choco install winfsp -y`, then prepend `C:\Program Files (x86)\WinFsp\bin` to `PATH` so the plugin DLL resolves.  Rationale + admin surface live in `rust/services/fuse-plugin/README.md`. |
 
 ---
 
@@ -524,11 +514,11 @@ The FUSE plugin and LocalConnector compose without coupling — LocalConnector i
 
 Platform matrix:
 
-| Platform | FUSE userspace | Status |
-|----------|----------------|--------|
-| Linux    | `libfuse3` (`fuse3`) | First-cut. |
-| macOS    | `FUSE-T` (`fuse-t`)  | First-cut.  Same `fuser` source body — FUSE-T exposes the libfuse3 ABI, so the macOS build path is the cfg-default `fuser` branch with no per-target code.  Chosen over macFUSE for operator UX (no kernel-extension approval, no reboot) and license (MIT, bundleable into a closed-source installer).  macOS NFS attribute cache may surface stale `mtime`/`size` for a few seconds after a remote write; the operator-facing surface today (`cc tasks list` — stat + readdir + read) is unaffected.  See `rust/services/fuse-plugin/README.md` if you need to force-refresh. |
-| Windows  | `WinFsp`             | First-cut.  `winfsp` crate, cfg-gated under `target_os = "windows"`; `NEXUS_FUSE_MOUNT_POINT` accepts a drive letter (`Z:`) or directory path. |
+| Platform | FUSE userspace | Notes |
+|----------|----------------|-------|
+| Linux    | `libfuse3` (`fuse3`) | — |
+| macOS    | `FUSE-T` (`fuse-t`)  | Same `fuser` source — FUSE-T exposes the libfuse3 ABI, so the macOS build is the cfg-default `fuser` branch.  Chosen for operator UX (no kernel-extension approval, no reboot) and license (MIT, bundleable).  The NFS attribute cache may show stale `mtime`/`size` for a few seconds after a remote write; `cc tasks list` (stat + readdir + read) is unaffected. |
+| Windows  | `WinFsp`             | `winfsp` crate, cfg-gated to `target_os = "windows"`; `NEXUS_FUSE_MOUNT_POINT` accepts a drive letter (`Z:`) or a directory path. |
 
 The dylib is unsigned-rejected by `PluginLoader::load`; the release pipeline (`.github/workflows/release-fuse-plugin.yml`) signs every dylib it ships against the `kernel-dogfood-v1` key in the sealed in-repo keystore.  See `rust/services/fuse-plugin/README.md` for the operator install + admin RPC surface, and `docs/superpowers/specs/2026-06-13-sealed-keystore-dogfood-design.md` for the signing trust chain.
 
@@ -540,7 +530,7 @@ The federation write surface exposes two consistency tiers; today the kernel hot
 |---------|------|------|-----------|
 | `sys_setattr` / `sys_unlink` (the kernel hot path; everything `vfs_write` and `vfs_unlink` drive) | SC — `ZoneConsensus::propose` through raft consensus | ~5–10 ms intra-DC + majority ACK | Default for every metadata mutation.  Non-leader callers either forward to the leader or surface `NotLeader`. |
 | Lock acquire / release, CAS (`put_if_version`), stream WAL append, control-plane (mount install, ConfChange) | SC — `ZoneConsensus::propose` through raft consensus | Same as above | Operations that need linearizability. |
-| Caller-driven EC opt-in via `zone_handle::set_metadata(.., Consistency::Ec)` | EC — `ZoneConsensus::propose_ec_local` (WAL append + local apply, sync return; async raft replication) | ~5–50 µs, no quorum needed | Niche callers that can tolerate async cross-node visibility and want WAL-first persistence without raft consensus.  Not wired into the kernel hot path today — see [EC kernel-hot-path activation deferred](#ec-kernel-hot-path-activation-deferred) below. |
+| Caller-driven EC opt-in via `zone_handle::set_metadata(.., Consistency::Ec)` | EC — `ZoneConsensus::propose_ec_local` (WAL append + local apply, sync return; async raft replication) | ~5–50 µs, no quorum needed | Niche callers that can tolerate async cross-node visibility and want WAL-first persistence without raft consensus.  The kernel hot path stays on SC. |
 
 Practical consequence for the §3b `--as` choice:
 
@@ -549,11 +539,7 @@ Practical consequence for the §3b `--as` choice:
 
 Conflict resolution at the SC tier is raft consensus — strictly serialized.  The cc-tasks-share path-of-least-resistance for the Mac↔Win bidirectional pattern is `--as voter` on both peers; both can propose, raft serializes, no contention because each peer owns its own subpath (`/shared/cc-tasks/<host>/...`).
 
-#### EC kernel-hot-path activation deferred
-
-nexi-lab/nexus-vfs PR #61 attempted to route the kernel hot path through `propose_ec_local` so a `--as learner` joiner could still write metadata.  The activation exposed correctness / liveness issues in `transport_loop.rs::replicate_ec_entries` that only surface in 1-voter + 1-learner topologies (per-peer exponential backoff accumulates, founder→learner writes stop reaching the learner's local state machine within typical wait-budgets).  PR #63 reverted the activation; the EC primitive remains first-class at the `zone_handle.rs::set_metadata` API for callers that explicitly opt in, but the kernel hot path stays on SC until the EC drain is hardened (substrate follow-up).
-
-See `nexus-vfs` `docs/federation-architecture.md` §4.1 for the in-kernel architecture, and `docs/superpowers/specs/2026-06-23-federation-write-consistency-surface.md` for the design decision capture (including why the activation was deferred and what would need to land for the next attempt).
+See `nexus-vfs` `docs/federation-architecture.md` §4.1 for the in-kernel architecture, and `docs/superpowers/specs/2026-06-23-federation-write-consistency-surface.md` for the design-decision capture.
 
 ### Step 4 — Smoke (cross-machine byte-exact read)
 
@@ -635,24 +621,17 @@ Expected:
 
 ## Key design decisions
 
-The choices below are stable invariants of the design.  Each ties back to a specific PR; see the [Relevant PRs](#relevant-prs) table for the original write-up.
+The choices below are stable invariants of the design.
 
-* **Node IDs are opaque random `u64`.**  Minted on first boot, persisted to `<data-dir>/.node_id` (PR #3996).  Wipe-rejoin mints a fresh ID; the old ID stays in ConfState as a ghost.  Hostname is *not* part of the identity — that's what lets a single host re-register cleanly after disk wipe.
-* **`--peers` lists only the *other* nodes** (PR #4014).  Self-in-peers is a parse error.  Self enters the cluster through `create_zone` (founder path) or AddNode-on-leader (joiner path), never via env.
-* **Bootstrap mode is explicit** (PR #4028).  Operator declares `static` / `restart` / `dynamic` at boot.  A validator at startup rejects state × flag combinations that contradict the declared mode (e.g. `restart` on an empty data dir, or `dynamic` on a non-empty one); `static` accepts any data-dir state by design so the same env safely covers both first boot and container restart, with `bootstrap_or_join_zone` resuming from persisted ConfState when it finds one.
-* **DT_MOUNT entries live in the *parent* zone's raft state.**  Both `share --mount-at` and `join` write DT_MOUNT via `propose_set_metadata` on the parent zone (PR #4293).  Each node has its own local root zone with its own DT_MOUNT entries — symmetric semantics either side; nodes don't need to share root-zone membership.
-* **Federation cross-node read uses a two-Arc round-trip** (PR #4294).
-  1. Write side records `last_writer_address = <self_address>` on every entry's metadata.
-  2. Reader looks up the entry locally; on backend miss, `Kernel::try_remote_fetch` reads `last_writer_address` and asks `PeerBlobClient` to fetch from that origin.
-  3. The origin's raft gRPC server has a `BlobFetcherSlot` populated with a `KernelBlobFetcher` (drained at boot by `blob_fetcher_handler::install`), which routes the fetch back through the origin's `VFSRouter`.
-
-  All four wiring points (`set_self_address`, `stash_blob_fetcher_slot`, `blob_fetcher_handler::install`, `transport::peer_blob::install`) must run at cluster-binary boot.  PR #4294 consolidated the first three into `RaftDistributedCoordinator::install_with_kernel` and kept the fourth in cluster `main` (since `transport` sits above `raft` in the dep graph).
-* **`PeerBlobClient` borrows the kernel's runtime via `Handle`, not `Arc<Runtime>`** (PR #4294).  Holding `Arc<Runtime>` extended the runtime's lifetime through the kernel's blob-fetcher capture chain, dropping it from `run_daemon`'s async-context unwind and panicking "Cannot drop a runtime in a context where blocking is not allowed".  With `Handle`, the kernel is the sole runtime owner; `PeerBlobClient` drops are side-effect-free in any context.
-* **ZoneManager exposes both sync and async APIs** (nexus-vfs PR #23).  The sync façade (`mount`, `apply_topology`, `bootstrap_static`, `create_zone`, `share_subtree_core`) remains for sync callers — the `DistributedCoordinator` trait impl reached from `Kernel::setattr_mount`, tests, the witness / federation-server founder paths.  Async wrappers (`mount_async`, `apply_topology_async`, etc.) host the `spawn_blocking` hop *once per method* inside `ZoneManager` rather than at every `#[tokio::main]` caller.  No raft contract changed — the wrappers just add async-friendly entry points.
-* **`is_leader()` and `leader_id()` share one atomic** (nexus-vfs PR #25).  Both read `cached_leader_id`; `is_leader()` returns `leader_id() == Some(self.config.id)`.  This eliminates the inter-atomic race that previously let a caller observe `(role=Follower, leader=self)` between two `Relaxed` stores in the driver's `update_cached_status`.  Companion fix: `forward_to_leader` returns to a local `submit_to_channel` retry when the resolved leader is self, so 1-voter founder zones never attempt a self-forward via gRPC (which would hairpin on Tailscale).
-* **`share` / `join` are operator escape hatches** (PR #4008).  They open the data directory directly and must run with the daemon stopped — redb holds an exclusive file lock.  Day-1 deployment uses static topology env vars at daemon startup (`NEXUS_FEDERATION_ZONES` / `NEXUS_FEDERATION_MOUNTS`); `share` / `join` are for ad-hoc growth after the cluster is up.
-* **TLS is opt-in.**  `--no-tls` is fine for testing.  Without it, the daemon auto-detects certs in `<data-dir>/tls/`; the founder generates them on first boot and the joiner gets them via the JoinCluster RPC.
-* **3-node cluster recommended for production.**  A 2-node cluster loses quorum on a single failure; a witness node keeps quorum at 2/3 during one-node-down events.  Witness is a slim build with no VFS surface — see `rust/raft/src/bin/witness.rs` in nexus-vfs.
+* **Node IDs are opaque random `u64`.**  Minted on first boot, persisted to `<data-dir>/.node_id`.  Hostname is *not* part of the identity, so a single host re-registers cleanly after a disk wipe (the wipe mints a fresh ID; the old one stays in ConfState as a ghost).
+* **`--peers` lists only the *other* nodes.**  Self enters the cluster through `create_zone` (founder path) or AddNode-on-leader (joiner path), never via env.
+* **Bootstrap mode is explicit.**  The operator declares `static` / `restart` / `dynamic` at boot; a startup validator rejects state × flag combinations that contradict the declared mode.  `static` accepts any data-dir state, so the same env safely covers both first boot and container restart.
+* **DT_MOUNT entries live in the *parent* zone's raft state.**  Both `share --mount-at` and `join` write DT_MOUNT via `propose_set_metadata` on the parent zone.  Each node has its own local root zone with its own DT_MOUNT entries — symmetric either side; nodes share no root-zone membership.
+* **Federation cross-node read is origin-attributed.**  The write side records `last_writer_address` on every entry; on a local backend miss, the reader's `try_remote_fetch` asks that origin's `PeerBlobClient` to fetch the bytes, which the origin routes back through its `VFSRouter`.  The boot-time wiring (`set_self_address`, the blob-fetcher slot, `peer_blob::install`) runs at cluster-binary startup.
+* **`is_leader()` derives from `leader_id()`** — one atomic SSOT, so `is_leader()` is `leader_id() == self`.  A 1-voter founder retries locally instead of RPC-forwarding to itself (which would hairpin on Tailscale).
+* **`share` / `join` are operator escape hatches.**  They open the data directory directly and run with the daemon stopped (redb holds an exclusive lock).  Day-1 deployment uses static-topology env vars at startup; `share` / `join` grow the cluster ad-hoc after it is up.
+* **TLS is on by default; `--no-tls` opts out for local testing.**  With TLS the daemon auto-detects certs in `<data-dir>/tls/`; the founder generates them on first boot and the joiner receives them via the JoinCluster RPC.
+* **Three nodes for production.**  A witness node — a slim build with no VFS surface (`rust/raft/src/bin/witness.rs`) — keeps quorum at 2/3 during one-node-down events.
 
 ---
 
@@ -680,7 +659,7 @@ It walks every zone subdirectory, reads ConfState + HardState + log indices dire
 | Clash Verge blocks Tailscale | TUN mode intercepts coordination traffic | Add Headscale IP + `100.64.0.0/10` to `route-exclude-address` in the *active profile's* merge file (not just the global one) |
 | `nc -zv` to peer succeeds momentarily, then grpcurl times out | Tailscale dropped between the two; or Clash proxy remnant (`127.0.0.1:7897` enabled with nothing listening) intercepting HTTP/2 | Restart Tailscale; clean Clash proxy state (disable system proxy + clear DNS) |
 
-### Bootstrap mode (PR #4028)
+### Bootstrap mode
 
 | Symptom | Cause | Fix |
 |---|---|---|
@@ -716,58 +695,6 @@ It walks every zone subdirectory, reads ConfState + HardState + log indices dire
 | TLS certs auto-generated unexpectedly | Old `<data-dir>/tls/*.pem` from previous runs | Delete and re-bootstrap, or set `--no-tls` |
 | `NEXUS_DATA_DIR` vs `--data-dir` mismatch | Raft state and operator state in different dirs | Set both to the same path |
 | Cluster-binary CI gate fails: `nexusd-cluster-<platform> exceeds size budget` | Adding a callable that drags new code paths into LTO retention | Either factor the dep out, or bump the budget in `.github/workflows/cluster-binary-build.yml` with measurement justification |
-
----
-
-## Relevant PRs
-
-The bug-class history matters here — the same shape regressed twice during the 2026 push, and the runbook entries above are organised around the specific PRs that closed each class.
-
-### Pre-split (in nexi-lab/nexus)
-
-| PR | What |
-|----|------|
-| #3453 | Peer address format (`id@host:port`) |
-| #3926 | Store-and-forward content fetch (cross-node read primitive) |
-| #3955 | Dynamic bootstrap mode (initial) |
-| #3996 | Opaque random `node_id` (replace hostname-derived) |
-| #4008 | `nexusd-cluster` migrated to opaque-ID + `init_from_env` |
-| #4011 | Wrap `bootstrap_or_join_zone` in `spawn_blocking` — nested-tokio panic on founder boot |
-| #4014 | `--peers` other-only contract (self-in-peers rejected) |
-| #4023 | `share` / `join` leader-wait + AddNode trigger |
-| #4028 | `BootstrapMode` enum + boot-time validator |
-| #4253 | `nexusd-cluster` outer runtime sized via `recommended_worker_threads` — fixed gRPC accept-path starvation (Win→Mac HTTP/2 SETTINGS stall) |
-| #4257 | Raft gRPC client onto `transport_primitives::create_channel` (SSOT consolidation) |
-| #4261-#4263 | `ObjectStoreProvider` + driver gate; DT_MOUNT backends over gRPC; `NEXUS_S3_*` config |
-| #4293 | `share --mount-at` + DT_MOUNT apply-cb wiring for cluster binary |
-| #4294 | Federation cross-node read complete: `self_address` publish, `PeerBlobClient` runtime-Handle refactor, `bootstrap_done` flag, delete dead `init_from_env` |
-| #4313 | Repo-boundary CI gate forbidding kernel-tier paths in this repo |
-| #4259 | Delete kernel-tier from this repo; SSOT now lives in nexus-vfs |
-
-### Post-split (in nexi-lab/nexus-vfs)
-
-| PR | What |
-|----|------|
-| nexus-vfs #18 | Catch up kernel-tier state in nexus-vfs to nexus `c18db70dd` snapshot (previous fresh-import had silently fallen ~40 files behind); add reverse repo-boundary CI gate |
-| nexus-vfs #23 | ZoneManager async wrappers — `mount_async` / `apply_topology_async` / `create_zone_async` / `share_subtree_core_async` / `bootstrap_static_async`.  Hosts the `spawn_blocking` hop inside the type rather than at every async caller |
-| nexus-vfs #25 | F1: `is_leader()` derives from `leader_id()` (single atomic SSOT).  F2: `forward_to_leader` retries `submit_to_channel` locally when leader is self instead of RPC-forwarding via the self-address (which hairpins on Tailscale-on-Windows/macOS).  Eliminates the `Forward to leader failed leader=<self>` warning at every founder boot |
-
----
-
-## Smoke regression covered in CI
-
-* nexus-vfs `rust/raft/tests/test_zone_manager_under_tokio_main.rs::one_voter_propose_converges_without_self_forward_loop` — pins the convergence behaviour PR #25 restored.  A 2 s upper bound catches both a re-introduction of the cached-role/leader-id race and any restoration of the self-RPC-forward path.
-* nexus `tests/e2e/docker/test_federation_runbook.py::TestJoinerCrossNodeReadRunbook` — pins the cross-process L1 milestone (byte-exact cross-node read via the `nexusd-cluster join` CLI flow + `PeerBlobClient` round-trip).  Runs against the 3-voter `docker-compose.federation-runbook.yml` topology on every PR via `.github/workflows/federation-e2e.yml`.  The same test class also catches:
-  * pre-#4293 `mount: not leader` from the joiner's `zm.mount_async` propose
-  * pre-#4294 `PeerBlobClient not installed` / `NOT_FOUND` (origin attribution missing)
-  * pre-nexus-vfs-#23 nested-tokio panic on the join's mount path
-  * pre-nexus-vfs-#25 founder self-forward hairpin
-* nexus `tests/e2e/docker/test_federation_runbook.py::TestFounderBootstrap` — convergence budget + zero `Forward to leader failed leader=` warnings.
-* nexus `tests/e2e/docker/test_federation_runbook.py::TestRestartReplay` — `--bootstrap-mode restart` replays persisted `DT_MOUNT` entries; pre-existing files stay readable post-reboot.
-* nexus `tests/e2e/docker/test_federation_runbook.py::TestWitnessQuorumHA` — 3-voter quorum survives founder loss; ConfState recovers to 3 voters on restart.
-* nexus `tests/e2e/docker/test_federation_runbook.py::TestRunbookOperatorErgonomics` — `share --mount-at`, `--bootstrap-mode` validator, `--peers <self>` rejection.
-
-The Step-4 byte-exact L1 read across two real machines (Mac↔Win over Tailscale) remains a manual gate for the Tailscale-specific surface; the CI runbook tests cover the cross-process semantics in-network, but do not exercise the Tailscale path itself.
 </script>
   <script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>

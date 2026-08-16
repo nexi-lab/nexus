@@ -53,6 +53,13 @@ This runbook now spans two related surfaces of the same `nexusd-cluster` binary:
 * **Service plane** — the cloud SaaS's public endpoints, reachable over the internet: `agent.sudoprivacy.com` (moss web, 443) and `broker.sudoprivacy.com` (the cross-org broker, 8443).
 * **Cross-org trust boundary** — the SaaS super-agent (our trust domain, **CA_A**) and a customer edge box (`sudoedge`, its own **CA_B**) authenticate each other over mTLS. Each side registers the other's CA out-of-band; only *signed messages* cross, never raw data.
 
+The two planes are two different *layers* of trust that do not overlap:
+
+* the overlay's handshake is **WireGuard, machine-to-machine** — headscale admits a *host* onto our own network and encrypts the node-to-node tunnel (intra-org, network layer);
+* the broker's handshake is **mTLS, agent-to-broker** — it validates an *agent's certificate* across CAs and gates what that agent may do (cross-org, application layer).
+
+A customer's edge box is another org's machine, so it never joins the overlay: it dials the service plane and the broker's mTLS carries the whole trust — headscale plays no part. Both layers apply together only when two of *our own* nodes federate (Part 1): the overlay for the network, the shared cluster CA for node-to-node mTLS.
+
 The product has two halves — a cloud SaaS super-agent (our trust domain, **CA_A**) and a customer edge box (`sudoedge`, its own **CA_B**), joined by one cross-org mTLS broker:
 
 ```mermaid

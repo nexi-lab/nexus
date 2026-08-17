@@ -87,10 +87,6 @@ class TestSearchConfigDefaults:
         config = SearchConfig()
         assert config.search_mode == "hybrid"
 
-    def test_contextual_chunking_default(self) -> None:
-        config = SearchConfig()
-        assert config.contextual_chunking is False
-
     def test_enable_attribute_boosting_default(self) -> None:
         config = SearchConfig()
         assert config.enable_attribute_boosting is True

@@ -109,9 +109,6 @@ class SearchConfig:
     # Search mode
     search_mode: str = "hybrid"
 
-    # Contextual chunking (Issue #1192)
-    contextual_chunking: bool = False
-
     # Ranking (Issue #1092)
     enable_attribute_boosting: bool = True
 
@@ -152,7 +149,6 @@ def search_config_from_env() -> SearchConfig:
         NEXUS_SEARCH_POOL_MAX: Max pool size
         NEXUS_SEARCH_POOL_RECYCLE: Pool recycle seconds
         NEXUS_SEARCH_MODE: "hybrid" | "semantic" | "keyword"
-        NEXUS_CONTEXTUAL_CHUNKING: Enable contextual chunking
         NEXUS_ATTRIBUTE_BOOSTING: Enable attribute ranking
 
     Returns:
@@ -175,7 +171,6 @@ def search_config_from_env() -> SearchConfig:
         pool_max_size=get_env_int("NEXUS_SEARCH_POOL_MAX", 50),
         pool_recycle=get_env_int("NEXUS_SEARCH_POOL_RECYCLE", 1800),
         search_mode=os.environ.get("NEXUS_SEARCH_MODE", "hybrid"),
-        contextual_chunking=get_env_bool("NEXUS_CONTEXTUAL_CHUNKING", False),
         enable_attribute_boosting=get_env_bool("NEXUS_ATTRIBUTE_BOOSTING", True),
         # Indexing pipeline (Issue #1094)
         index_max_concurrency=get_env_int("NEXUS_INDEX_MAX_CONCURRENCY", 10),

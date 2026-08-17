@@ -4981,8 +4981,6 @@ class SearchService:
         chunk_size: int = 1024,
         chunk_strategy: str = "semantic",
         async_mode: bool = True,  # noqa: ARG002
-        contextual_chunking: bool = False,  # noqa: ARG002
-        context_generator: Any | None = None,  # noqa: ARG002
         cache_url: str | None = None,
         embedding_cache_ttl: int = 86400 * 3,
     ) -> None:

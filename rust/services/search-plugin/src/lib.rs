@@ -65,6 +65,7 @@ pub mod indexed_dirs_state;
 pub mod internal_call;
 pub mod kernel_io;
 pub mod llm_chat;
+pub mod macro_expand;
 pub mod parked_state;
 pub mod peer_fanout;
 pub mod peer_registry;

@@ -22,35 +22,13 @@ use crate::contextual_chunker::{
 };
 use crate::embed_cache::{embed_query_cached, QueryEmbedCache};
 use crate::embedder::{build_default_embedder, EmbedError, Embedder};
-use crate::federation::{build_default_dispatcher, merge_ranked, SharedFederationDispatcher};
-
-// Task-local guard set by `query_with_federation` when it runs the
-// local Query branch alongside the peer fan-out.  The trait method
-// checks it at the top and, if set, skips its own federation
-// pre-dispatch — else the local branch would re-federate and loop
-// within the same process.  Task-locals propagate across await
-// within the same task (which is where the recursion lives).
-tokio::task_local! {
-    static IN_FEDERATION: ();
-}
 use crate::fts_index::FtsHit;
 use crate::fusion::{self, DEFAULT_ALPHA, DEFAULT_RRF_K};
 use crate::index_manager::IndexManager;
+use crate::internal_call::{is_internal_call, INSIDE_MIDDLEWARE};
 use crate::kernel_io::{self, DirEntry, KernelIoError, DT_DIR, DT_REG};
+use crate::peer_fanout::{build_default_dispatcher, merge_ranked, SharedPeerFanoutDispatcher};
 use crate::query_expansion::{build_default_expander, ExpansionCache, QueryExpander};
-
-// Task-local guard set by `query_with_expansion` when it fans a
-// query out into N+1 variants and recursively re-enters `query()`
-// for each.  Its purpose is one-shot re-entry suppression: the
-// trait method checks IN_EXPANSION at the top and, if set, skips
-// the expansion pre-dispatch entirely — otherwise each variant
-// call would try to expand itself and recurse forever.  Task-locals
-// propagate across `.await` within the same task (which is where
-// the recursion lives) and don't cross spawn_blocking (which is
-// fine — the blocking body doesn't touch expansion state).
-tokio::task_local! {
-    static IN_EXPANSION: ();
-}
 use crate::search_proto::search_service_server::SearchService;
 use crate::search_proto::{
     AddIndexedDirectoryRequest, AddIndexedDirectoryResponse, BatchQueryRequest, BatchQueryResponse,
@@ -195,30 +173,30 @@ pub struct SearchServiceImpl {
     /// identical queries so we only pay one LLM round-trip per
     /// distinct question.  Shared across all callers.
     expansion_cache: Arc<ExpansionCache>,
-    /// Federation dispatcher (Feature 2 of the plugin-migration plan).
-    /// `None` when `NEXUS_SEARCH_PEER_PLUGINS` is unset OR
-    /// `NEXUS_SEARCH_FEDERATED_ZONES` is empty — the common single-
-    /// node deployment stays a zero-cost pass-through.  When present,
-    /// the trait `query` handler kicks a peer fan-out concurrent with
-    /// the local pipeline and fuses the union.
-    federation: Option<SharedFederationDispatcher>,
-    /// Contextual chunking generator (Feature 3 of the plugin-
-    /// migration plan).  `None` when `NEXUS_SEARCH_CONTEXTUAL_
-    /// CHUNKING` is off — indexing runs at zero extra cost.  When
+    /// Peer-fanout dispatcher slot.  Same lazy-OnceLock shape as
+    /// [`expander_slot`]: no env parse until the first Query, single
+    /// misconfig log for the process lifetime, tests pre-populate
+    /// via `.peer_fanout()` (Some) or `.no_peer_fanout()` (None) so
+    /// stray host env can't leak in.
+    peer_fanout_slot: Arc<OnceLock<Option<SharedPeerFanoutDispatcher>>>,
+    /// Contextual chunking generator slot.  Same lazy-OnceLock shape
+    /// as [`expander_slot`] and [`peer_fanout_slot`] above.  When
     /// present, `chunk_document(text)` is followed by an LLM round-
-    /// trip per chunk that yields a short context prefix; the prefix
-    /// is prepended to `Chunk::embed_input` (not `Chunk::text`) so
-    /// semantic recall lifts without polluting BM25.
-    context_generator: Option<SharedContextGenerator>,
+    /// trip per chunk that prepends a context prefix to
+    /// `Chunk::embed_input` (not `Chunk::text`) so semantic recall
+    /// lifts without polluting BM25.
+    context_generator_slot: Arc<OnceLock<Option<SharedContextGenerator>>>,
 }
 
-/// Bundle used by the query wrapper — the live expander plus the
-/// config-derived variant cap.  Boxed together so a builder-injected
-/// mock carries the same `max_variants` control as an env-configured
-/// live expander.
+/// Bundle used by the query wrapper — the live expander plus its
+/// configuration.  Storing the full [`QueryExpansionConfig`] (rather
+/// than lifting individual fields into this struct) keeps SSOT: if
+/// query expansion grows a new knob (`min_variants`, `temperature`,
+/// per-request retry cap …) it lands in [`QueryExpansionConfig`]
+/// only, and the wrapper reads it through `handle.config.<field>`.
 pub struct ExpanderHandle {
     pub expander: Arc<dyn QueryExpander>,
-    pub max_variants: usize,
+    pub config: crate::query_expansion::QueryExpansionConfig,
 }
 
 /// RAII increment of [`SearchServiceImpl::indexing_ops`].
@@ -266,11 +244,9 @@ impl SearchServiceImpl {
             query_cache: None,
             embed_cache: None,
             title_arm: None,
-            expander: None,
-            federation: None,
-            federation_from_env: true,
-            context_generator: None,
-            context_from_env: true,
+            expander_pin: None,
+            peer_fanout_pin: None,
+            context_generator_pin: None,
         }
     }
 
@@ -321,7 +297,7 @@ impl SearchServiceImpl {
                     let expander: Arc<dyn QueryExpander> = Arc::from(expander);
                     Some(Arc::new(ExpanderHandle {
                         expander,
-                        max_variants: cfg.max_variants,
+                        config: cfg,
                     }))
                 }
                 Err(e) => {
@@ -340,11 +316,50 @@ impl SearchServiceImpl {
             .clone()
     }
 
+    /// Peer-fanout dispatcher for THIS process, or `None` if no
+    /// peers are configured / a misconfig was logged (already once)
+    /// on the first Query.  Same lazy-OnceLock story as
+    /// [`get_or_init_expander`].
+    fn get_or_init_peer_fanout(&self) -> Option<SharedPeerFanoutDispatcher> {
+        self.peer_fanout_slot
+            .get_or_init(|| match build_default_dispatcher() {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::error!(
+                        err = %e,
+                        "search-plugin: peer fan-out misconfigured — \
+                         disabled for this process; fix the env and restart",
+                    );
+                    None
+                }
+            })
+            .clone()
+    }
+
+    /// Contextual-chunking generator for THIS process, or `None` if
+    /// the kill-switch is off / misconfig was logged.  Same lazy-
+    /// OnceLock story as the sibling getters above.
+    fn get_or_init_context_generator(&self) -> Option<SharedContextGenerator> {
+        self.context_generator_slot
+            .get_or_init(|| match build_default_generator() {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::error!(
+                        err = %e,
+                        "search-plugin: contextual chunking misconfigured — \
+                         disabled for this process; fix the env and restart",
+                    );
+                    None
+                }
+            })
+            .clone()
+    }
+
     /// N+1 variant fan-out for LLM query expansion.  Called by
     /// [`SearchService::query`] when the outer request hit the
     /// expander pre-dispatch.  Runs the original query plus each
     /// LLM-produced variant through the full single-query pipeline
-    /// (each recursive call sees `IN_EXPANSION` set and skips
+    /// (each recursive call sees `INSIDE_MIDDLEWARE` set and skips
     /// re-expansion), then fuses the ranked lists with
     /// [`crate::fusion::rrf_multi`].
     ///
@@ -363,7 +378,7 @@ impl SearchServiceImpl {
             cached
         } else {
             let query_owned = req.q.clone();
-            let max = handle.max_variants;
+            let max = handle.config.max_variants;
             let expander = Arc::clone(&handle.expander);
             let joined =
                 tokio::task::spawn_blocking(move || expander.expand(&query_owned, max)).await;
@@ -377,14 +392,18 @@ impl SearchServiceImpl {
                         err = %e,
                         "search-plugin: query expansion HTTP failed — degrading to single-query path",
                     );
-                    return IN_EXPANSION.scope((), self.query(Request::new(req))).await;
+                    return INSIDE_MIDDLEWARE
+                        .scope((), self.query(Request::new(req)))
+                        .await;
                 }
                 Err(e) => {
                     tracing::warn!(
                         err = %e,
                         "search-plugin: query expansion spawn joined error — degrading to single-query path",
                     );
-                    return IN_EXPANSION.scope((), self.query(Request::new(req))).await;
+                    return INSIDE_MIDDLEWARE
+                        .scope((), self.query(Request::new(req)))
+                        .await;
                 }
             }
         };
@@ -403,7 +422,9 @@ impl SearchServiceImpl {
             // LLM returned nothing useful (empty list, or only an
             // echo of the original).  Straight-through — no fusion
             // overhead for a single arm.
-            return IN_EXPANSION.scope((), self.query(Request::new(req))).await;
+            return INSIDE_MIDDLEWARE
+                .scope((), self.query(Request::new(req)))
+                .await;
         }
 
         let limit = if req.limit == 0 {
@@ -413,26 +434,41 @@ impl SearchServiceImpl {
         };
         let rrf_k = FusionOpts::from_request(&req).rrf_k;
 
-        // Fan out sequentially — the recursive `query` call already
-        // fans keyword+semantic+title internally onto the blocking
-        // pool, and running the whole outer set concurrently would
-        // multiply worker-pool contention by (N+1) with no reduction
-        // in wall-clock (each variant hits the same cache-warmed
-        // sinks after the first).  Keep it linear until measurements
-        // demand otherwise.
-        let mut per_variant: Vec<Vec<QueryResult>> = Vec::with_capacity(all_queries.len());
-        for variant_q in all_queries {
+        // Fan out concurrently — hybrid queries already fire kw+sem
+        // +title in parallel via spawn_blocking, but running N+1
+        // variants sequentially still adds N × (LLM + query) of
+        // wall-clock even when each variant hits cache-warmed sinks.
+        // futures::join_all lets each variant's blocking legs
+        // schedule against the default tokio blocking pool (512
+        // threads) — (N+1)×3 tasks is a rounding error at N ≤ 5.
+        // Every variant runs INSIDE INSIDE_MIDDLEWARE.scope so its
+        // re-entry into query() bypasses this same wrapper.
+        let variant_futures = all_queries.into_iter().map(|variant_q| {
             let mut variant_req = req.clone();
             variant_req.q = variant_q;
-            let resp = IN_EXPANSION
-                .scope((), self.query(Request::new(variant_req)))
-                .await?
-                .into_inner();
-            // Skip broken/empty variant contributions — they add
-            // nothing to the fusion and would surface as a spurious
-            // 0-score arm that penalises real hits.
-            if resp.error.is_none() && !resp.results.is_empty() {
-                per_variant.push(resp.results);
+            INSIDE_MIDDLEWARE.scope((), self.query(Request::new(variant_req)))
+        });
+        let joined = futures_util::future::join_all(variant_futures).await;
+        let mut per_variant: Vec<Vec<QueryResult>> = Vec::with_capacity(joined.len());
+        for resp in joined {
+            // spawn_blocking join errors surface as Err(Status) here
+            // — treat those the same as the variant returning an
+            // empty result, so a single bad variant doesn't kill the
+            // whole query.  Broken/empty variant contributions are
+            // also skipped: they'd surface as spurious 0-score arms
+            // that penalise real hits.
+            let inner = match resp {
+                Ok(r) => r.into_inner(),
+                Err(status) => {
+                    tracing::warn!(
+                        err = %status,
+                        "search-plugin: variant query returned Status — dropping from fusion",
+                    );
+                    continue;
+                }
+            };
+            if inner.error.is_none() && !inner.results.is_empty() {
+                per_variant.push(inner.results);
             }
         }
 
@@ -459,19 +495,19 @@ impl SearchServiceImpl {
         }))
     }
 
-    /// Cross-node fan-out for federation.  Runs the local query
-    /// branch (via task_local-guarded recursion into the trait
-    /// `query()`) concurrently with the peer dispatch, then fuses
-    /// the union with [`crate::federation::merge_ranked`].
+    /// Cross-node peer fan-out.  Runs the local query branch (via
+    /// task_local-guarded recursion into the trait `query()`)
+    /// concurrently with the peer dispatch, then fuses the union
+    /// with [`crate::peer_fanout::merge_ranked`].
     ///
     /// Failure posture: any peer that fails logs a warning and drops
     /// out of the fusion.  A total peer outage returns local-only
-    /// results (federation must never make a query WORSE than the
-    /// pre-federation baseline).
-    async fn query_with_federation(
+    /// results (peer fan-out must never make a query WORSE than the
+    /// single-node baseline).
+    async fn query_with_peer_fanout(
         &self,
         req: QueryRequest,
-        fed: SharedFederationDispatcher,
+        fed: SharedPeerFanoutDispatcher,
     ) -> Result<Response<QueryResponse>, Status> {
         let opts = FusionOpts::from_request(&req);
         let limit = if req.limit == 0 {
@@ -481,7 +517,7 @@ impl SearchServiceImpl {
         };
         let local_req = req.clone();
         let peer_req = req.clone();
-        let local_fut = IN_FEDERATION.scope((), self.query(Request::new(local_req)));
+        let local_fut = INSIDE_MIDDLEWARE.scope((), self.query(Request::new(local_req)));
         let peer_fut = fed.fan_out(&peer_req);
         let (local_resp, peer_responses) = tokio::join!(local_fut, peer_fut);
 
@@ -492,7 +528,7 @@ impl SearchServiceImpl {
                 if inner.error.is_some() {
                     tracing::warn!(
                         err = ?inner.error,
-                        "search-plugin federation: local query returned an error — dropping from fusion",
+                        "search-plugin peer-fanout: local query returned an error — dropping from fusion",
                     );
                 } else if !inner.results.is_empty() {
                     lists.push(inner.results);
@@ -501,7 +537,7 @@ impl SearchServiceImpl {
             Err(status) => {
                 tracing::warn!(
                     err = %status,
-                    "search-plugin federation: local query joined with Status — dropping from fusion",
+                    "search-plugin peer-fanout: local query joined with Status — dropping from fusion",
                 );
             }
         }
@@ -555,19 +591,20 @@ pub struct SearchServiceBuilder {
     query_cache: Option<crate::query_cache::SharedQueryCache>,
     embed_cache: Option<Arc<QueryEmbedCache>>,
     title_arm: Option<bool>,
-    expander: Option<Arc<ExpanderHandle>>,
-    federation: Option<SharedFederationDispatcher>,
-    /// Whether an unset `.federation()` should fall back to
-    /// [`build_default_dispatcher`] (env-driven).  Tests default this
-    /// to `false` via [`SearchServiceBuilder::no_federation`] so the
-    /// process env can't leak in and race a test's expectations.
-    federation_from_env: bool,
-    context_generator: Option<SharedContextGenerator>,
-    /// Whether an unset `.context_generator()` should fall back to
-    /// [`build_default_generator`] (env-driven).  Tests default this
-    /// to `false` via [`SearchServiceBuilder::no_context_generator`]
-    /// so process env can't leak into a test's expectations.
-    context_from_env: bool,
+    /// Three-state per-feature pin:
+    /// - `None` (default)  = build() leaves the slot empty; first
+    ///   Query lazily env-parses.
+    /// - `Some(None)`      = explicit opt-out (`.no_foo()` called);
+    ///   build() pre-populates the slot with None so env is skipped.
+    /// - `Some(Some(x))`   = explicit inject (`.foo(x)` called);
+    ///   build() pre-populates the slot with Some(x).
+    ///
+    /// Same three-state shape for all three lazy features so a
+    /// first-timer reading the builder sees ONE contract, not three
+    /// bespoke ones.
+    expander_pin: Option<Option<Arc<ExpanderHandle>>>,
+    peer_fanout_pin: Option<Option<SharedPeerFanoutDispatcher>>,
+    context_generator_pin: Option<Option<SharedContextGenerator>>,
 }
 
 impl SearchServiceBuilder {
@@ -611,95 +648,53 @@ impl SearchServiceBuilder {
         self
     }
 
-    /// Pre-seed the LLM query expander slot — tests inject a mock
-    /// [`crate::query_expansion::QueryExpander`] here (wrapped in
-    /// [`ExpanderHandle`] with the desired `max_variants`) so
-    /// [`get_or_init_expander`] skips the env-driven build step.
+    // ── Lazy-feature triad: all three follow the same `.foo(x)` /
+    // `.no_foo()` shape.  Not calling either method = build() leaves
+    // the slot empty and the first Query lazily reads env.  Tests
+    // that must not race the process env call `.no_foo()`.
+
+    /// Pre-seed the LLM query-expander slot — tests inject a mock
+    /// [`crate::query_expansion::QueryExpander`] wrapped in
+    /// [`ExpanderHandle`] so [`get_or_init_expander`] skips the env
+    /// build step.
     pub fn expander(mut self, expander: Arc<ExpanderHandle>) -> Self {
-        self.expander = Some(expander);
+        self.expander_pin = Some(Some(expander));
         self
     }
 
-    /// Inject a pre-built federation dispatcher — tests use this to
-    /// point the wrapper at a locally-hosted mock peer without going
-    /// through env parsing.
-    pub fn federation(mut self, dispatcher: SharedFederationDispatcher) -> Self {
-        self.federation = Some(dispatcher);
-        self.federation_from_env = false;
+    /// Explicit opt-out: build the service with the expander slot
+    /// pinned to None so a stray `NEXUS_SEARCH_QUERY_EXPANSION=true`
+    /// in the host env can't leak in.
+    pub fn no_expander(mut self) -> Self {
+        self.expander_pin = Some(None);
         self
     }
 
-    /// Disable env-driven federation resolution for this builder.
-    /// Tests that leave `.federation()` unset must call this so a
-    /// stray `NEXUS_SEARCH_PEER_PLUGINS` in the process env doesn't
-    /// silently wire a dispatcher the test never asked for.
-    pub fn no_federation(mut self) -> Self {
-        self.federation = None;
-        self.federation_from_env = false;
+    /// Pre-seed the peer-fanout dispatcher slot.
+    pub fn peer_fanout(mut self, dispatcher: SharedPeerFanoutDispatcher) -> Self {
+        self.peer_fanout_pin = Some(Some(dispatcher));
         self
     }
 
-    /// Inject a pre-built context generator — tests hand in a mock
-    /// [`crate::contextual_chunker::ContextGenerator`] so the wrapper
-    /// doesn't need env parsing.
+    /// Explicit opt-out — see `.no_expander()` for the pattern.
+    pub fn no_peer_fanout(mut self) -> Self {
+        self.peer_fanout_pin = Some(None);
+        self
+    }
+
+    /// Pre-seed the contextual-chunking generator slot.
     pub fn context_generator(mut self, generator: SharedContextGenerator) -> Self {
-        self.context_generator = Some(generator);
-        self.context_from_env = false;
+        self.context_generator_pin = Some(Some(generator));
         self
     }
 
-    /// Disable env-driven contextual-chunking resolution.  Tests that
-    /// leave `.context_generator()` unset must call this so a stray
-    /// `NEXUS_SEARCH_CONTEXTUAL_CHUNKING=true` in the host env can't
-    /// leak into the built service.
+    /// Explicit opt-out — see `.no_expander()` for the pattern.
     pub fn no_context_generator(mut self) -> Self {
-        self.context_generator = None;
-        self.context_from_env = false;
+        self.context_generator_pin = Some(None);
         self
     }
 
     pub fn build(self) -> SearchServiceImpl {
-        // Pre-populate the OnceLock when the builder seeded an
-        // expander so tests never race the env-driven build.  A
-        // fresh (unseeded) OnceLock triggers env parse on the first
-        // Query.
-        let expander_slot: OnceLock<Option<Arc<ExpanderHandle>>> = OnceLock::new();
-        if let Some(h) = self.expander {
-            // set() only fails when already initialised; a freshly-
-            // built OnceLock is empty by construction, so ignoring
-            // the Result is safe.
-            let _ = expander_slot.set(Some(h));
-        }
-        let federation = self.federation.or_else(|| {
-            if !self.federation_from_env {
-                return None;
-            }
-            match build_default_dispatcher() {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::error!(
-                        err = %e,
-                        "search-plugin: federation misconfigured — disabling for this process",
-                    );
-                    None
-                }
-            }
-        });
-        let context_generator = self.context_generator.or_else(|| {
-            if !self.context_from_env {
-                return None;
-            }
-            match build_default_generator() {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::error!(
-                        err = %e,
-                        "search-plugin: contextual chunking misconfigured — disabling for this process",
-                    );
-                    None
-                }
-            }
-        });
         SearchServiceImpl {
             handle: self.handle,
             manager: self
@@ -714,12 +709,30 @@ impl SearchServiceBuilder {
                 .unwrap_or_else(|| Arc::new(QueryEmbedCache::from_env())),
             indexing_ops: Arc::new(std::sync::atomic::AtomicU32::new(0)),
             title_arm: self.title_arm,
-            expander_slot: Arc::new(expander_slot),
+            expander_slot: Arc::new(pin_to_once_lock(self.expander_pin)),
             expansion_cache: Arc::new(ExpansionCache::new()),
-            federation,
-            context_generator,
+            peer_fanout_slot: Arc::new(pin_to_once_lock(self.peer_fanout_pin)),
+            context_generator_slot: Arc::new(pin_to_once_lock(self.context_generator_pin)),
         }
     }
+}
+
+/// Translate a builder-side three-state pin into a `OnceLock` state:
+/// - `None` pin      → empty OnceLock (first Query lazily env-parses)
+/// - `Some(None)` pin → OnceLock pre-populated with None (env skipped)
+/// - `Some(Some(x))` pin → OnceLock pre-populated with Some(x)
+///
+/// One helper for all three lazy features so the build() body stays
+/// three lines instead of thirty.  Generic to avoid dispatching on
+/// the T type — the pin shape carries the choice.
+fn pin_to_once_lock<T>(pin: Option<Option<T>>) -> OnceLock<Option<T>> {
+    let slot = OnceLock::new();
+    if let Some(value) = pin {
+        // set() only fails when already initialised; a freshly-built
+        // OnceLock is empty, so ignoring the Result is safe.
+        let _ = slot.set(value);
+    }
+    slot
 }
 
 // ── Glob ──────────────────────────────────────────────────────────
@@ -1986,7 +1999,7 @@ fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> I
     // `chunk_document` embed_input) — indexing must never stall
     // because the LLM is down.
     if let Some(gen) = sinks.context_generator {
-        crate::contextual_chunker::apply_contexts(gen, text, &mut chunks);
+        crate::contextual_chunker::apply_contexts(gen, text, &mut chunks, gen.max_chunks_per_doc());
     }
 
     // FTS side: drop the file's old chunk set, add the fresh one.
@@ -2546,7 +2559,12 @@ fn do_index_documents(
             // insertion point).  Per-chunk LLM failure = None ⇒ that
             // chunk keeps its plain embed_input.
             if let Some(gen) = context_generator {
-                crate::contextual_chunker::apply_contexts(gen, &doc.text, &mut chunks);
+                crate::contextual_chunker::apply_contexts(
+                    gen,
+                    &doc.text,
+                    &mut chunks,
+                    gen.max_chunks_per_doc(),
+                );
             }
             // FTS: drop-old-then-add-new (mirrors do_index).
             fts.delete_all_chunks(&doc.path);
@@ -2863,15 +2881,13 @@ impl SearchService for SearchServiceImpl {
         &self,
         request: Request<QueryRequest>,
     ) -> Result<Response<QueryResponse>, Status> {
-        // Federation guard — a peer-originated request carries the
-        // FEDERATION_MARKER_HEADER so the receiving plugin's
-        // wrapper skips its own fan-out (else two nodes federate
-        // each other forever).  Read BEFORE into_inner() consumes
-        // the Request wrapper.
-        let is_peer_call = request
-            .metadata()
-            .get(crate::federation::FEDERATION_MARKER_HEADER)
-            .is_some();
+        // Outer-middleware guard.  Both peer fan-out and LLM query
+        // expansion are outer-most wrappers that MUST NOT run when
+        // this Query is an internal server-to-server call (either
+        // stamped by an upstream peer's marker header, or a
+        // recursion from our own middleware).  See internal_call.rs
+        // for the two mechanisms behind this single boolean.
+        let skip_outer_middleware = is_internal_call(&request);
         let req = request.into_inner();
         if req.q.is_empty() {
             return Ok(Response::new(QueryResponse {
@@ -2879,35 +2895,25 @@ impl SearchService for SearchServiceImpl {
                 error: Some("q must not be empty".into()),
             }));
         }
-        // Federation pre-dispatch — runs FIRST (outer-most wrapper).
-        // A peer-originated request carries the marker header so we
-        // skip our own fan-out; the local federation branch also
-        // sets IN_FEDERATION so its recursive re-entry into query()
-        // won't re-federate.  Only fires when the zone is in the
-        // NEXUS_SEARCH_FEDERATED_ZONES allowlist.  Degrades to local-
-        // only on total peer outage — federation must never make
-        // search WORSE than the pre-federation baseline.
-        let already_federating = is_peer_call || IN_FEDERATION.try_with(|_| ()).is_ok();
-        if !already_federating {
-            if let Some(fed) = self.federation.clone() {
-                if fed.should_federate(resolve_zone(&req.zone_id)) {
-                    return self.query_with_federation(req, fed).await;
+        if !skip_outer_middleware {
+            // Peer fan-out runs FIRST (outer-most wrapper).  Only
+            // fires when the zone is in the
+            // NEXUS_SEARCH_PEER_FANOUT_ZONES allowlist.  Degrades
+            // to local-only on total peer outage — fan-out must
+            // never make search WORSE than the single-node
+            // baseline.
+            if let Some(fed) = self.get_or_init_peer_fanout() {
+                if fed.should_fan_out(resolve_zone(&req.zone_id)) {
+                    return self.query_with_peer_fanout(req, fed).await;
                 }
             }
-        }
-        // LLM query-expansion pre-dispatch — runs AFTER the federation
-        // check so the local branch of a federated fan-out still
-        // benefits from expansion.  Peer receivers see the marker
-        // header (which also implies they should skip expansion on
-        // their side to avoid N*M LLM calls across the fleet) —
-        // easiest way is to gate on the same is_peer_call flag.
-        // Variant fan-out sets IN_EXPANSION so each recursive re-
-        // entry drops straight to the single-query pipeline.  Any
-        // expander error (misconfigured / HTTP / timeout) falls
-        // through to single-query — a broken LLM endpoint never
-        // takes base search down with it.
-        let already_expanding = is_peer_call || IN_EXPANSION.try_with(|_| ()).is_ok();
-        if !already_expanding {
+            // LLM query expansion runs SECOND.  The local branch of
+            // a fan-out (which sets INSIDE_MIDDLEWARE) skips this
+            // wrapper via the outer guard above, so a federated
+            // query still gets one expansion pass at the top —
+            // never N*M passes down the fleet.  Any expander error
+            // (misconfigured / HTTP / timeout) falls through to
+            // single-query.
             if let Some(handle) = self.get_or_init_expander() {
                 return self.query_with_expansion(req, handle).await;
             }
@@ -3334,7 +3340,7 @@ impl SearchService for SearchServiceImpl {
         // and re-runs Index.  This matches the "graceful degradation"
         // posture SemanticQuery uses.
         let (embedder, embed_broken) = self.indexing_embedder();
-        let context_generator = self.context_generator.clone();
+        let context_generator = self.get_or_init_context_generator();
         // Retain the zone id for post-outcome cache invalidation
         // (the closure below moves the owned copy into
         // spawn_blocking).
@@ -3403,7 +3409,7 @@ impl SearchService for SearchServiceImpl {
         // embedder means ANN stays unchanged this Refresh; keyword
         // side still incrementally updates.
         let (embedder, embed_broken) = self.indexing_embedder();
-        let context_generator = self.context_generator.clone();
+        let context_generator = self.get_or_init_context_generator();
         let zone_for_invalidate = zone_id.clone();
         let outcome = tokio::task::spawn_blocking(move || {
             let _indexing = indexing; // held until the WORK ends, not the RPC
@@ -3543,7 +3549,7 @@ impl SearchService for SearchServiceImpl {
         let default_zone = resolve_zone(&req.zone_id).to_string();
         let manager = Arc::clone(&self.manager);
         let (embedder, embed_broken) = self.indexing_embedder();
-        let context_generator = self.context_generator.clone();
+        let context_generator = self.get_or_init_context_generator();
         let cache = Arc::clone(&self.query_cache);
         let outcome = tokio::task::spawn_blocking(move || {
             let _indexing = indexing; // held until the WORK ends, not the RPC

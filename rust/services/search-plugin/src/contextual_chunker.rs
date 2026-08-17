@@ -5,14 +5,6 @@
 //! recall lifts on ambiguous queries; BM25 stays clean because the
 //! context never enters `chunk_text`.
 //!
-//! # Why it lives inside the plugin
-//!
-//! Mirrors the Python
-//! `nexus.bricks.search.contextual_chunking.ContextualChunker`.
-//! Pulling it into the plugin's indexing path makes a pure-cluster
-//! deployment feature-complete for contextual chunking without
-//! needing the `nexus-server` container.
-//!
 //! # Contract
 //!
 //! Opt-in ONLY.  `NEXUS_SEARCH_CONTEXTUAL_CHUNKING=true` gates the
@@ -50,9 +42,10 @@
 //! with 50 chunks doesn't serialise 50 × 3 s HTTP round-trips.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::OnceLock;
 use std::time::Duration;
 
-use parking_lot::Mutex;
+use parking_lot::{Condvar, Mutex};
 
 /// Kill-switch — set to `true`/`1`/`yes` to enable contextual
 /// chunking.  Absent or any other value = DISABLED (the default).
@@ -60,25 +53,42 @@ pub const CONTEXTUAL_ENABLED_ENV: &str = "NEXUS_SEARCH_CONTEXTUAL_CHUNKING";
 /// OpenAI-compatible chat-completions endpoint URL.  Separate from
 /// query expansion's endpoint so operators can point contextual
 /// chunking at a cheaper/faster model.
-pub const CONTEXTUAL_ENDPOINT_ENV: &str = "NEXUS_SEARCH_CONTEXTUAL_ENDPOINT";
+pub const CONTEXTUAL_ENDPOINT_ENV: &str = "NEXUS_SEARCH_CONTEXTUAL_CHUNKING_ENDPOINT";
 /// Chat model name (e.g. `anthropic/claude-3-haiku`,
 /// `openai/gpt-4o-mini`).
-pub const CONTEXTUAL_MODEL_ENV: &str = "NEXUS_SEARCH_CONTEXTUAL_MODEL";
+pub const CONTEXTUAL_MODEL_ENV: &str = "NEXUS_SEARCH_CONTEXTUAL_CHUNKING_MODEL";
 /// Bearer token for the endpoint.
-pub const CONTEXTUAL_API_KEY_ENV: &str = "NEXUS_SEARCH_CONTEXTUAL_API_KEY";
+pub const CONTEXTUAL_API_KEY_ENV: &str = "NEXUS_SEARCH_CONTEXTUAL_CHUNKING_API_KEY";
 /// Per-request timeout in milliseconds (default 5000 ms).  Larger
 /// than query expansion's 3 s — contextual chunking runs at
 /// indexing time (background), not on the caller-visible query path.
-pub const CONTEXTUAL_TIMEOUT_MS_ENV: &str = "NEXUS_SEARCH_CONTEXTUAL_TIMEOUT_MS";
+pub const CONTEXTUAL_TIMEOUT_MS_ENV: &str = "NEXUS_SEARCH_CONTEXTUAL_CHUNKING_TIMEOUT_MS";
 /// Bounded intra-doc parallelism — default 4.  A doc with N chunks
 /// runs `min(N, concurrency)` HTTP round-trips at a time via a
 /// `std::thread::scope` fan-out.
-pub const CONTEXTUAL_CONCURRENCY_ENV: &str = "NEXUS_SEARCH_CONTEXTUAL_CONCURRENCY";
+pub const CONTEXTUAL_CONCURRENCY_ENV: &str = "NEXUS_SEARCH_CONTEXTUAL_CHUNKING_CONCURRENCY";
 /// Cap on how much of the surrounding document is sent to the LLM
 /// alongside each chunk (default 8 KB).  Truncation keeps the LLM
 /// bill bounded — a monster README shouldn't cost 100 KB of context
 /// per chunk.
-pub const CONTEXTUAL_DOC_CAP_ENV: &str = "NEXUS_SEARCH_CONTEXTUAL_DOC_CAP_BYTES";
+pub const CONTEXTUAL_DOC_CAP_ENV: &str = "NEXUS_SEARCH_CONTEXTUAL_CHUNKING_DOC_CAP_BYTES";
+/// Cap on how many chunks per document get LLM-generated context
+/// (default 100).  A 5 MB document that chunks into 500 pieces
+/// would otherwise trigger 500 LLM calls — the audit's cost-warning
+/// language was loud but the code had no ceiling.  Chunks past the
+/// cap keep their plain `embed_input` (identical semantics to a
+/// generator that returned None for them).
+pub const CONTEXTUAL_MAX_CHUNKS_PER_DOC_ENV: &str =
+    "NEXUS_SEARCH_CONTEXTUAL_CHUNKING_MAX_CHUNKS_PER_DOC";
+/// Cap on total in-flight LLM calls across ALL concurrently-indexing
+/// documents.  Per-doc concurrency × M docs indexed in parallel by
+/// the outer spawn_blocking pool would otherwise scale unbounded
+/// (default tokio blocking pool = 512; × per-doc 4 = 2048 concurrent
+/// LLM calls in the worst case).  Default 16 — small enough to keep
+/// provider rate limits happy, large enough to keep indexing
+/// throughput reasonable.
+pub const CONTEXTUAL_GLOBAL_CONCURRENCY_ENV: &str =
+    "NEXUS_SEARCH_CONTEXTUAL_CHUNKING_GLOBAL_CONCURRENCY";
 
 const DEFAULT_TIMEOUT_MS: u64 = 5_000;
 const DEFAULT_CONCURRENCY: usize = 4;
@@ -86,6 +96,13 @@ const DEFAULT_CONCURRENCY: usize = 4;
 /// thread count on a small-corpus host.
 const HARD_MAX_CONCURRENCY: usize = 32;
 const DEFAULT_DOC_CAP_BYTES: usize = 8 * 1024;
+const DEFAULT_MAX_CHUNKS_PER_DOC: usize = 100;
+const DEFAULT_GLOBAL_CONCURRENCY: usize = 16;
+/// Ceiling on the global-concurrency env value.  A runaway 10 000
+/// here would still be gated by the provider's per-key rate limit,
+/// but the plugin's own memory + thread footprint has an interest
+/// in a hard cap.
+const HARD_MAX_GLOBAL_CONCURRENCY: usize = 256;
 
 /// Errors from the contextual-chunking layer.  All variants keep
 /// indexing alive — the caller (`index_one` / `do_index_documents`)
@@ -112,6 +129,8 @@ pub struct ContextualChunkingConfig {
     pub timeout: Duration,
     pub concurrency: usize,
     pub doc_cap_bytes: usize,
+    pub max_chunks_per_doc: usize,
+    pub global_concurrency: usize,
 }
 
 impl ContextualChunkingConfig {
@@ -164,6 +183,17 @@ impl ContextualChunkingConfig {
                 .min(HARD_MAX_CONCURRENCY);
         let doc_cap_bytes =
             parse_positive_usize(&get, CONTEXTUAL_DOC_CAP_ENV, DEFAULT_DOC_CAP_BYTES)?;
+        let max_chunks_per_doc = parse_positive_usize(
+            &get,
+            CONTEXTUAL_MAX_CHUNKS_PER_DOC_ENV,
+            DEFAULT_MAX_CHUNKS_PER_DOC,
+        )?;
+        let global_concurrency = parse_positive_usize(
+            &get,
+            CONTEXTUAL_GLOBAL_CONCURRENCY_ENV,
+            DEFAULT_GLOBAL_CONCURRENCY,
+        )?
+        .min(HARD_MAX_GLOBAL_CONCURRENCY);
         Ok(Some(Self {
             endpoint,
             model,
@@ -171,6 +201,8 @@ impl ContextualChunkingConfig {
             timeout: Duration::from_millis(timeout_ms),
             concurrency,
             doc_cap_bytes,
+            max_chunks_per_doc,
+            global_concurrency,
         }))
     }
 }
@@ -228,40 +260,19 @@ pub trait ContextGenerator: Send + Sync {
     /// order.  `None` = generation failed for that chunk; the caller
     /// leaves the chunk's `embed_input` unchanged.
     fn generate_batch(&self, document_text: &str, chunk_texts: &[&str]) -> Vec<Option<String>>;
+
+    /// Cap on how many chunks per document the caller sends into
+    /// `generate_batch`.  The live HTTP generator returns its
+    /// config's `max_chunks_per_doc`; mocks default to `usize::MAX`
+    /// so they never truncate.
+    fn max_chunks_per_doc(&self) -> usize {
+        usize::MAX
+    }
 }
 
 // ── HttpContextGenerator ─────────────────────────────────────────
 
-#[derive(serde::Serialize)]
-struct ChatMessage<'a> {
-    role: &'a str,
-    content: &'a str,
-}
-
-#[derive(serde::Serialize)]
-struct ChatRequest<'a> {
-    model: &'a str,
-    messages: Vec<ChatMessage<'a>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    temperature: Option<f32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    max_tokens: Option<u32>,
-}
-
-#[derive(serde::Deserialize)]
-struct ChatResponse {
-    choices: Vec<ChatChoice>,
-}
-
-#[derive(serde::Deserialize)]
-struct ChatChoice {
-    message: ChatChoiceMessage,
-}
-
-#[derive(serde::Deserialize)]
-struct ChatChoiceMessage {
-    content: String,
-}
+use crate::llm_chat::{self, ChatMessage, ChatRequest};
 
 /// System prompt — cargo-culted from Anthropic's original contextual-
 /// retrieval blog and tightened for our indexing pipeline.  Kept
@@ -288,10 +299,8 @@ impl HttpContextGenerator {
     /// Build the HTTP client for `config`.  No network I/O happens
     /// here.
     pub fn new(config: ContextualChunkingConfig) -> Result<Self, ContextualError> {
-        let client = reqwest::blocking::Client::builder()
-            .timeout(config.timeout)
-            .build()
-            .map_err(|e| ContextualError::Http(format!("generator HTTP client: {e}")))?;
+        let client = llm_chat::build_client(config.timeout)
+            .map_err(|e| ContextualError::Http(e.to_string()))?;
         Ok(Self { client, config })
     }
 
@@ -320,37 +329,17 @@ impl HttpContextGenerator {
                     content: &user,
                 },
             ],
+            response_format: None,
             temperature: Some(0.0),
             max_tokens: Some(120),
         };
-        let resp = self
-            .client
-            .post(&self.config.endpoint)
-            .bearer_auth(&self.config.api_key)
-            .json(&body)
-            .send()
-            .map_err(|e| {
-                ContextualError::Http(format!(
-                    "contextual request to {}: {e}",
-                    self.config.endpoint
-                ))
-            })?;
-        let status = resp.status();
-        if !status.is_success() {
-            let excerpt: String = resp.text().unwrap_or_default().chars().take(300).collect();
-            return Err(ContextualError::Http(format!(
-                "contextual endpoint returned {status}: {excerpt}",
-            )));
-        }
-        let parsed: ChatResponse = resp
-            .json()
-            .map_err(|e| ContextualError::Http(format!("contextual response parse: {e}")))?;
-        let content = parsed
-            .choices
-            .into_iter()
-            .next()
-            .map(|c| c.message.content)
-            .unwrap_or_default();
+        let content = llm_chat::chat_completion(
+            &self.client,
+            &self.config.endpoint,
+            &self.config.api_key,
+            &body,
+        )
+        .map_err(|e| ContextualError::Http(e.to_string()))?;
         let trimmed = content.trim();
         if trimmed.is_empty() {
             return Ok(None);
@@ -360,6 +349,10 @@ impl HttpContextGenerator {
 }
 
 impl ContextGenerator for HttpContextGenerator {
+    fn max_chunks_per_doc(&self) -> usize {
+        self.config.max_chunks_per_doc
+    }
+
     fn generate_batch(&self, document_text: &str, chunk_texts: &[&str]) -> Vec<Option<String>> {
         if chunk_texts.is_empty() {
             return Vec::new();
@@ -372,6 +365,17 @@ impl ContextGenerator for HttpContextGenerator {
         let out: Mutex<Vec<Option<String>>> = Mutex::new(vec![None; chunk_texts.len()]);
         let next = AtomicUsize::new(0);
 
+        // GLOBAL semaphore across all concurrently-indexing documents.
+        // Per-doc `concurrency` bounds intra-doc parallelism; without
+        // a global cap, N docs indexed in parallel by the outer
+        // spawn_blocking pool would run N × concurrency LLM calls
+        // simultaneously — enough to trip provider rate limits and
+        // blow the plugin's thread footprint.  Initialized from the
+        // config of the FIRST HttpContextGenerator built, on the
+        // reasonable assumption that all plugin generators share
+        // provider limits.
+        let sem = global_llm_semaphore(self.config.global_concurrency);
+
         std::thread::scope(|s| {
             for _ in 0..concurrency {
                 s.spawn(|| loop {
@@ -379,6 +383,9 @@ impl ContextGenerator for HttpContextGenerator {
                     if i >= chunk_texts.len() {
                         return;
                     }
+                    // Acquire before HTTP; RAII releases on scope
+                    // exit even if the request panics (Drop runs).
+                    let _permit = sem.acquire();
                     match self.generate_one(&doc_excerpt, chunk_texts[i]) {
                         Ok(v) => {
                             out.lock()[i] = v;
@@ -398,6 +405,62 @@ impl ContextGenerator for HttpContextGenerator {
 
         out.into_inner()
     }
+}
+
+// ── Global LLM concurrency semaphore ─────────────────────────────
+
+/// Hand-rolled counting semaphore backed by `parking_lot::{Mutex,
+/// Condvar}`.  Used to cap TOTAL in-flight contextual-chunking LLM
+/// calls across every concurrently-indexing document.  We hand-roll
+/// (rather than pull `tokio::sync::Semaphore`) because the caller is
+/// a `std::thread::scope` closure inside `spawn_blocking` — an async
+/// semaphore would need to bridge back into tokio, which is exactly
+/// what the blocking design deliberately avoids.
+struct BlockingSemaphore {
+    permits: Mutex<usize>,
+    cvar: Condvar,
+}
+
+impl BlockingSemaphore {
+    fn new(permits: usize) -> Self {
+        Self {
+            permits: Mutex::new(permits),
+            cvar: Condvar::new(),
+        }
+    }
+
+    fn acquire(&self) -> SemPermit<'_> {
+        let mut g = self.permits.lock();
+        while *g == 0 {
+            self.cvar.wait(&mut g);
+        }
+        *g -= 1;
+        SemPermit(self)
+    }
+}
+
+/// RAII guard — releases the permit on Drop.
+struct SemPermit<'a>(&'a BlockingSemaphore);
+
+impl Drop for SemPermit<'_> {
+    fn drop(&mut self) {
+        let mut g = self.0.permits.lock();
+        *g += 1;
+        self.0.cvar.notify_one();
+    }
+}
+
+/// Process-wide semaphore, initialized on first use.  All
+/// `HttpContextGenerator` instances in the process share it; the
+/// first one initializes it with its own `global_concurrency`
+/// value.  Rationale: multiple generators per plugin process are
+/// unusual (the plugin builds one via `build_default_generator`);
+/// when they exist, they share the same provider limits so a global
+/// cap is exactly the invariant we want.
+static GLOBAL_LLM_SEM: OnceLock<BlockingSemaphore> = OnceLock::new();
+
+fn global_llm_semaphore(permits: usize) -> &'static BlockingSemaphore {
+    GLOBAL_LLM_SEM.get_or_init(|| BlockingSemaphore::new(permits))
 }
 
 /// Truncate to at most `max` characters, on a char boundary.
@@ -438,18 +501,33 @@ pub fn build_default_generator() -> Result<Option<SharedContextGenerator>, Conte
 /// point of the split-input design in `chunker::Chunk`.
 ///
 /// Chunks whose generator returned `None` pass through untouched
-/// (graceful degradation).
+/// (graceful degradation).  Chunks past `max_chunks_per_doc` also
+/// pass through untouched — a 5 MB document that chunks into 500
+/// pieces would otherwise trigger 500 LLM calls per index pass; the
+/// cap ensures the LLM bill scales with the doc count, not the
+/// chunk count, above the cap.
 pub fn apply_contexts(
     generator: &dyn ContextGenerator,
     document_text: &str,
     chunks: &mut [crate::chunker::Chunk],
+    max_chunks_per_doc: usize,
 ) {
     if chunks.is_empty() {
         return;
     }
-    let chunk_texts: Vec<&str> = chunks.iter().map(|c| c.text.as_str()).collect();
+    // Send at most `max_chunks_per_doc` chunks to the LLM; the tail
+    // keeps its plain heading-prefixed `embed_input`.
+    let n = chunks.len().min(max_chunks_per_doc);
+    if n < chunks.len() {
+        tracing::debug!(
+            total_chunks = chunks.len(),
+            capped_at = n,
+            "search-plugin: contextual chunking capped at max_chunks_per_doc — tail chunks keep plain embed_input",
+        );
+    }
+    let chunk_texts: Vec<&str> = chunks[..n].iter().map(|c| c.text.as_str()).collect();
     let contexts = generator.generate_batch(document_text, &chunk_texts);
-    for (chunk, maybe_ctx) in chunks.iter_mut().zip(contexts) {
+    for (chunk, maybe_ctx) in chunks.iter_mut().take(n).zip(contexts) {
         if let Some(ctx) = maybe_ctx {
             let new_input = format!("{ctx}\n\n{}", chunk.embed_input);
             chunk.embed_input = new_input;
@@ -532,6 +610,8 @@ mod tests {
         assert_eq!(cfg.timeout, Duration::from_millis(DEFAULT_TIMEOUT_MS));
         assert_eq!(cfg.concurrency, DEFAULT_CONCURRENCY);
         assert_eq!(cfg.doc_cap_bytes, DEFAULT_DOC_CAP_BYTES);
+        assert_eq!(cfg.max_chunks_per_doc, DEFAULT_MAX_CHUNKS_PER_DOC);
+        assert_eq!(cfg.global_concurrency, DEFAULT_GLOBAL_CONCURRENCY);
     }
 
     #[test]
@@ -554,6 +634,8 @@ mod tests {
             CONTEXTUAL_TIMEOUT_MS_ENV,
             CONTEXTUAL_CONCURRENCY_ENV,
             CONTEXTUAL_DOC_CAP_ENV,
+            CONTEXTUAL_MAX_CHUNKS_PER_DOC_ENV,
+            CONTEXTUAL_GLOBAL_CONCURRENCY_ENV,
         ] {
             let err = ContextualChunkingConfig::from_lookup(lookup(&[
                 (CONTEXTUAL_ENABLED_ENV, "true"),
@@ -608,7 +690,7 @@ mod tests {
         let gen = MockContextGenerator {
             prefixes: vec![Some("ctx-A".into()), Some("ctx-B".into())],
         };
-        apply_contexts(&gen, "the whole document", &mut chunks);
+        apply_contexts(&gen, "the whole document", &mut chunks, usize::MAX);
 
         // text UNCHANGED.
         assert_eq!(chunks[0].text, "body A");
@@ -628,7 +710,7 @@ mod tests {
         let gen = MockContextGenerator {
             prefixes: vec![Some("ctx-A".into()), None, Some("ctx-C".into())],
         };
-        apply_contexts(&gen, "doc", &mut chunks);
+        apply_contexts(&gen, "doc", &mut chunks, usize::MAX);
 
         assert_eq!(chunks[0].embed_input, "ctx-A\n\nembed A");
         // None -> chunk B unchanged.
@@ -640,58 +722,66 @@ mod tests {
     fn apply_contexts_no_op_on_empty_chunks() {
         let mut chunks: Vec<crate::chunker::Chunk> = Vec::new();
         let gen = MockContextGenerator { prefixes: vec![] };
-        apply_contexts(&gen, "doc", &mut chunks);
+        apply_contexts(&gen, "doc", &mut chunks, usize::MAX);
         assert!(chunks.is_empty());
+    }
+
+    #[test]
+    fn apply_contexts_caps_at_max_chunks_per_doc() {
+        // 5 chunks in the input, cap at 2: first two get prefixed,
+        // remaining three keep their plain embed_input.  This is
+        // the cost-safety valve for large docs.
+        let mut chunks = make_chunks(&[
+            ("body 0", "embed 0"),
+            ("body 1", "embed 1"),
+            ("body 2", "embed 2"),
+            ("body 3", "embed 3"),
+            ("body 4", "embed 4"),
+        ]);
+        // Mock always returns "OK-<idx>" for whatever it's asked to
+        // process — but with cap=2 it must only see chunks 0 and 1.
+        let gen = CountingMockGenerator::default();
+        apply_contexts(&gen, "doc", &mut chunks, 2);
+
+        assert_eq!(chunks[0].embed_input, "OK-0\n\nembed 0");
+        assert_eq!(chunks[1].embed_input, "OK-1\n\nembed 1");
+        for i in 2..5 {
+            assert_eq!(
+                chunks[i].embed_input,
+                format!("embed {i}"),
+                "chunk {i} past the cap should be untouched"
+            );
+        }
+        assert_eq!(
+            gen.batches_seen.lock().len(),
+            1,
+            "generate_batch called exactly once with the capped slice"
+        );
+        assert_eq!(
+            gen.batches_seen.lock()[0],
+            2,
+            "generate_batch received exactly 2 chunk texts",
+        );
+    }
+
+    /// Mock that records how many chunk_texts each generate_batch
+    /// call received, so tests can prove the cap was applied at the
+    /// caller (not that the mock silently ignored the tail).
+    #[derive(Default)]
+    struct CountingMockGenerator {
+        batches_seen: Mutex<Vec<usize>>,
+    }
+
+    impl ContextGenerator for CountingMockGenerator {
+        fn generate_batch(&self, _doc: &str, chunks: &[&str]) -> Vec<Option<String>> {
+            self.batches_seen.lock().push(chunks.len());
+            (0..chunks.len()).map(|i| Some(format!("OK-{i}"))).collect()
+        }
     }
 
     // ── HttpContextGenerator over one-shot server ───────────────
 
-    fn spawn_one_shot_http(
-        status_line: &'static str,
-        body: String,
-    ) -> (std::net::SocketAddr, std::thread::JoinHandle<String>) {
-        use std::io::{Read, Write};
-
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let handle = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut buf = Vec::new();
-            let mut tmp = [0u8; 4096];
-            let header_end = loop {
-                let n = stream.read(&mut tmp).unwrap();
-                assert!(n > 0, "client closed before end of headers");
-                buf.extend_from_slice(&tmp[..n]);
-                if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
-                    break pos + 4;
-                }
-            };
-            let headers = String::from_utf8_lossy(&buf[..header_end]).to_string();
-            let content_length = headers
-                .lines()
-                .find_map(|l| {
-                    let (k, v) = l.split_once(':')?;
-                    k.eq_ignore_ascii_case("content-length")
-                        .then(|| v.trim().parse::<usize>().ok())
-                        .flatten()
-                })
-                .unwrap_or(0);
-            while buf.len() < header_end + content_length {
-                let n = stream.read(&mut tmp).unwrap();
-                assert!(n > 0, "client closed mid-body");
-                buf.extend_from_slice(&tmp[..n]);
-            }
-            let request = String::from_utf8_lossy(&buf).to_string();
-            let resp = format!(
-                "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\n\
-                 Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len(),
-            );
-            stream.write_all(resp.as_bytes()).unwrap();
-            request
-        });
-        (addr, handle)
-    }
+    use crate::llm_chat::test_http::spawn_one_shot;
 
     fn test_config(endpoint: String) -> ContextualChunkingConfig {
         ContextualChunkingConfig {
@@ -701,6 +791,8 @@ mod tests {
             timeout: Duration::from_secs(5),
             concurrency: 1,
             doc_cap_bytes: 4096,
+            max_chunks_per_doc: usize::MAX,
+            global_concurrency: 4,
         }
     }
 
@@ -712,7 +804,7 @@ mod tests {
             }]
         })
         .to_string();
-        let (addr, handle) = spawn_one_shot_http("200 OK", body);
+        let (addr, handle) = spawn_one_shot("200 OK", body);
         let gen =
             HttpContextGenerator::new(test_config(format!("http://{addr}/v1/chat/completions")))
                 .unwrap();
@@ -734,7 +826,7 @@ mod tests {
             "choices": [{"message": {"content": "  "}}]
         })
         .to_string();
-        let (addr, _) = spawn_one_shot_http("200 OK", body);
+        let (addr, _) = spawn_one_shot("200 OK", body);
         let gen =
             HttpContextGenerator::new(test_config(format!("http://{addr}/v1/chat/completions")))
                 .unwrap();
@@ -744,7 +836,7 @@ mod tests {
 
     #[test]
     fn http_generator_non_2xx_returns_none_slot() {
-        let (addr, _) = spawn_one_shot_http("500 Internal Server Error", "boom".to_string());
+        let (addr, _) = spawn_one_shot("500 Internal Server Error", "boom".to_string());
         let gen =
             HttpContextGenerator::new(test_config(format!("http://{addr}/v1/chat/completions")))
                 .unwrap();

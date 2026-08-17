@@ -1,12 +1,12 @@
-//! Peer-plugin registry — env-driven address list + federated-zone
-//! allowlist consumed by the federation dispatcher (Feature 2).
+//! Peer-plugin registry — env-driven address list + fan-out-zone
+//! allowlist consumed by the peer-fanout dispatcher.
 //!
 //! # Why env, not the kernel
 //!
 //! `KernelHandle` currently exposes only file-level syscalls
 //! (`sys_read`, `sys_readdir`, `sys_stat`, …).  There is no
 //! `sys_list_peers` / `sys_get_zones` today, and the plan explicitly
-//! carves peer discovery as a plugin-owned concern so the federation
+//! carves peer discovery as a plugin-owned concern so the fan-out
 //! roll-out does not need a kernel-ABI bump.  A future kernel-team
 //! item may add dynamic discovery; when that lands we'll opt into it
 //! behind the same [`PeerRegistry`] shape, and the env path stays as
@@ -16,13 +16,13 @@
 //!
 //! - `NEXUS_SEARCH_PEER_PLUGINS` — comma-separated `host:port`
 //!   entries (e.g. `win.tailnet:2126,mac.tailnet:2126`).  Empty /
-//!   unset ⇒ no peers ⇒ federation is a no-op (queries stay local).
+//!   unset ⇒ no peers ⇒ fan-out is a no-op (queries stay local).
 //!
-//! - `NEXUS_SEARCH_FEDERATED_ZONES` — comma-separated zone id
+//! - `NEXUS_SEARCH_PEER_FANOUT_ZONES` — comma-separated zone id
 //!   allowlist.  A query whose `zone_id` is in the list fans out to
 //!   peers; queries against any other zone stay local (backwards-
 //!   compatible with today's single-node behaviour).  Empty / unset
-//!   ⇒ no zone federates.
+//!   ⇒ no zone fans out.
 //!
 //! - `NEXUS_SEARCH_PEER_TLS=true` — opt into TLS to peers.  Off by
 //!   default because a plugin fleet on a private overlay (Tailnet)
@@ -31,9 +31,9 @@
 //!
 //! - `NEXUS_SEARCH_ALLOW_INSECURE_PEER=true` — escape hatch that
 //!   suppresses the standing "refuse plaintext off-loopback" gate.
-//!   The gate applies at DIAL time in [`federation`] — this module
-//!   just exposes the flag through the registry so callers use one
-//!   surface.
+//!   The gate applies at DIAL time in [`crate::peer_fanout`] — this
+//!   module just exposes the flag through the registry so callers use
+//!   one surface.
 //!
 //! # Fail-loud posture
 //!
@@ -48,7 +48,7 @@ use std::collections::HashSet;
 pub const PEER_PLUGINS_ENV: &str = "NEXUS_SEARCH_PEER_PLUGINS";
 
 /// Environment variable — comma-separated zone id allowlist.
-pub const FEDERATED_ZONES_ENV: &str = "NEXUS_SEARCH_FEDERATED_ZONES";
+pub const FANOUT_ZONES_ENV: &str = "NEXUS_SEARCH_PEER_FANOUT_ZONES";
 
 /// Environment variable — opt into TLS on peer dials.
 pub const PEER_TLS_ENV: &str = "NEXUS_SEARCH_PEER_TLS";
@@ -109,14 +109,14 @@ pub enum RegistryError {
     BadPeer { entry: String, reason: String },
 }
 
-/// Snapshot of the federation topology as configured by env at
+/// Snapshot of the peer-fanout topology as configured by env at
 /// plugin startup.  Immutable after construction — a `RwLock` or
 /// dynamic-discovery mechanism would need to REPLACE the entire
 /// registry, not mutate this struct in place.
 #[derive(Debug, Clone)]
 pub struct PeerRegistry {
     peers: Vec<PeerAddress>,
-    federated_zones: HashSet<String>,
+    fanout_zones: HashSet<String>,
     require_tls: bool,
     allow_insecure_peer: bool,
 }
@@ -131,7 +131,7 @@ impl PeerRegistry {
     /// race process-global env across parallel test threads.
     pub fn from_lookup(get: impl Fn(&str) -> Option<String>) -> Result<Self, RegistryError> {
         let peers = parse_peer_list(get(PEER_PLUGINS_ENV).as_deref().unwrap_or(""))?;
-        let federated_zones: HashSet<String> = get(FEDERATED_ZONES_ENV)
+        let fanout_zones: HashSet<String> = get(FANOUT_ZONES_ENV)
             .unwrap_or_default()
             .split(',')
             .map(|s| s.trim())
@@ -142,7 +142,7 @@ impl PeerRegistry {
         let allow_insecure_peer = parse_bool(get(ALLOW_INSECURE_PEER_ENV).as_deref().unwrap_or(""));
         Ok(Self {
             peers,
-            federated_zones,
+            fanout_zones,
             require_tls,
             allow_insecure_peer,
         })
@@ -152,30 +152,30 @@ impl PeerRegistry {
     /// every field without going through env.
     pub fn new(
         peers: Vec<PeerAddress>,
-        federated_zones: HashSet<String>,
+        fanout_zones: HashSet<String>,
         require_tls: bool,
         allow_insecure_peer: bool,
     ) -> Self {
         Self {
             peers,
-            federated_zones,
+            fanout_zones,
             require_tls,
             allow_insecure_peer,
         }
     }
 
     /// Configured peers.  Empty when `NEXUS_SEARCH_PEER_PLUGINS` was
-    /// unset — callers should treat that as "no federation" and skip
+    /// unset — callers should treat that as "no fan-out" and skip
     /// dispatch entirely.
     pub fn peers(&self) -> &[PeerAddress] {
         &self.peers
     }
 
     /// True if the given zone id is in the allowlist.  Callers gate
-    /// federation on this — zones outside the allowlist keep today's
-    /// local-only behaviour.
-    pub fn zone_is_federated(&self, zone_id: &str) -> bool {
-        self.federated_zones.contains(zone_id)
+    /// peer fan-out on this — zones outside the allowlist keep the
+    /// single-node behaviour.
+    pub fn zone_fans_out(&self, zone_id: &str) -> bool {
+        self.fanout_zones.contains(zone_id)
     }
 
     /// Whether peer dials must use TLS.
@@ -190,12 +190,12 @@ impl PeerRegistry {
         self.allow_insecure_peer
     }
 
-    /// Convenience — federation runs iff there are peers AND at
+    /// Convenience — peer fan-out runs iff there are peers AND at
     /// least one zone is in the allowlist.  Query-time hot path uses
     /// this before the zone check to skip a HashSet lookup when
-    /// federation is turned off entirely.
+    /// fan-out is turned off entirely.
     pub fn is_active(&self) -> bool {
-        !self.peers.is_empty() && !self.federated_zones.is_empty()
+        !self.peers.is_empty() && !self.fanout_zones.is_empty()
     }
 }
 
@@ -280,7 +280,7 @@ mod tests {
     fn empty_env_is_inactive() {
         let r = PeerRegistry::from_lookup(lookup(&[])).unwrap();
         assert!(r.peers().is_empty());
-        assert!(!r.zone_is_federated("root"));
+        assert!(!r.zone_fans_out("root"));
         assert!(!r.is_active());
     }
 
@@ -288,7 +288,7 @@ mod tests {
     fn peers_and_zones_parse_and_trim() {
         let r = PeerRegistry::from_lookup(lookup(&[
             (PEER_PLUGINS_ENV, " win.tailnet:2126 , mac.tailnet:2127 , "),
-            (FEDERATED_ZONES_ENV, "root, shared , "),
+            (FANOUT_ZONES_ENV, "root, shared , "),
         ]))
         .unwrap();
         assert_eq!(
@@ -304,9 +304,9 @@ mod tests {
                 },
             ]
         );
-        assert!(r.zone_is_federated("root"));
-        assert!(r.zone_is_federated("shared"));
-        assert!(!r.zone_is_federated("other"));
+        assert!(r.zone_fans_out("root"));
+        assert!(r.zone_fans_out("shared"));
+        assert!(!r.zone_fans_out("other"));
         assert!(r.is_active());
     }
 
@@ -351,8 +351,7 @@ mod tests {
     fn is_active_requires_both_peers_and_zones() {
         let peers_only = PeerRegistry::from_lookup(lookup(&[(PEER_PLUGINS_ENV, "x:1")])).unwrap();
         assert!(!peers_only.is_active(), "no zones ⇒ inactive");
-        let zones_only =
-            PeerRegistry::from_lookup(lookup(&[(FEDERATED_ZONES_ENV, "root")])).unwrap();
+        let zones_only = PeerRegistry::from_lookup(lookup(&[(FANOUT_ZONES_ENV, "root")])).unwrap();
         assert!(!zones_only.is_active(), "no peers ⇒ inactive");
     }
 
@@ -360,7 +359,7 @@ mod tests {
     fn tls_flags_parse() {
         let r = PeerRegistry::from_lookup(lookup(&[
             (PEER_PLUGINS_ENV, "x:1"),
-            (FEDERATED_ZONES_ENV, "root"),
+            (FANOUT_ZONES_ENV, "root"),
             (PEER_TLS_ENV, "true"),
             (ALLOW_INSECURE_PEER_ENV, "no"),
         ]))

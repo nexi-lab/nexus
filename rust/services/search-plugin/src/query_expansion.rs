@@ -2,15 +2,6 @@
 //! that widens a single user query into N paraphrased variants
 //! before the Query pipeline fans them out and fuses the union.
 //!
-//! # Why it lives inside the plugin
-//!
-//! The Python `nexus.bricks.search.query_expansion.QueryExpansionService`
-//! ran the same job upstream of the (now-deleted) Python SearchDaemon.
-//! Pulling it into the plugin's `Query` handler makes a pure-cluster
-//! deployment — nexusd-cluster + `nexus-search-plugin` cdylib alone —
-//! feature-complete for LLM-widened search without needing the
-//! `nexus-server` container.
-//!
 //! # Contract
 //!
 //! Opt-in ONLY.  `NEXUS_SEARCH_QUERY_EXPANSION=true` gates the
@@ -217,49 +208,8 @@ pub trait QueryExpander: Send + Sync {
 }
 
 // ── HttpQueryExpander ─────────────────────────────────────────────
-//
-// Blocking HTTP against an OpenAI-compatible chat-completions
-// endpoint.  Same reasoning as `RemoteEmbedder`: every call site in
-// the service runs inside `spawn_blocking`, and reqwest::blocking
-// drives its own dedicated runtime thread — the plugin's tokio pool
-// is never re-entered by a synchronous send.
 
-#[derive(serde::Serialize)]
-struct ChatMessage<'a> {
-    role: &'a str,
-    content: &'a str,
-}
-
-#[derive(serde::Serialize)]
-struct ChatRequest<'a> {
-    model: &'a str,
-    messages: Vec<ChatMessage<'a>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    response_format: Option<ResponseFormat<'a>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    temperature: Option<f32>,
-}
-
-#[derive(serde::Serialize)]
-struct ResponseFormat<'a> {
-    #[serde(rename = "type")]
-    type_: &'a str,
-}
-
-#[derive(serde::Deserialize)]
-struct ChatResponse {
-    choices: Vec<ChatChoice>,
-}
-
-#[derive(serde::Deserialize)]
-struct ChatChoice {
-    message: ChatChoiceMessage,
-}
-
-#[derive(serde::Deserialize)]
-struct ChatChoiceMessage {
-    content: String,
-}
+use crate::llm_chat::{self, ChatMessage, ChatRequest, ResponseFormat};
 
 /// Live HTTP query expander.  Sends a single chat-completion request
 /// asking for JSON `{"variants": [...]}` and parses the assistant's
@@ -275,10 +225,8 @@ impl HttpQueryExpander {
     /// Build the HTTP client for `config`.  No network I/O happens
     /// here.
     pub fn new(config: QueryExpansionConfig) -> Result<Self, ExpansionError> {
-        let client = reqwest::blocking::Client::builder()
-            .timeout(config.timeout)
-            .build()
-            .map_err(|e| ExpansionError::Http(format!("expander HTTP client: {e}")))?;
+        let client = llm_chat::build_client(config.timeout)
+            .map_err(|e| ExpansionError::Http(e.to_string()))?;
         Ok(Self { client, config })
     }
 }
@@ -320,33 +268,15 @@ impl QueryExpander for HttpQueryExpander {
                 type_: "json_object",
             }),
             temperature: Some(0.3),
+            max_tokens: None,
         };
-        let resp = self
-            .client
-            .post(&self.config.endpoint)
-            .bearer_auth(&self.config.api_key)
-            .json(&body)
-            .send()
-            .map_err(|e| {
-                ExpansionError::Http(format!("expand request to {}: {e}", self.config.endpoint))
-            })?;
-
-        let status = resp.status();
-        if !status.is_success() {
-            let excerpt: String = resp.text().unwrap_or_default().chars().take(300).collect();
-            return Err(ExpansionError::Http(format!(
-                "expand endpoint returned {status}: {excerpt}",
-            )));
-        }
-        let parsed: ChatResponse = resp
-            .json()
-            .map_err(|e| ExpansionError::Http(format!("expand response parse: {e}")))?;
-        let content = parsed
-            .choices
-            .into_iter()
-            .next()
-            .map(|c| c.message.content)
-            .ok_or_else(|| ExpansionError::Http("expand response had no choices".to_string()))?;
+        let content = llm_chat::chat_completion(
+            &self.client,
+            &self.config.endpoint,
+            &self.config.api_key,
+            &body,
+        )
+        .map_err(|e| ExpansionError::Http(e.to_string()))?;
         parse_variants(&content, capped)
             .map_err(|e| ExpansionError::Http(format!("expand content parse: {e}")))
     }
@@ -689,56 +619,7 @@ mod tests {
 
     // ── HttpQueryExpander end-to-end via one-shot HTTP server ─────
 
-    /// One-request localhost HTTP server — mirrors the same helper
-    /// in embedder.rs tests.  Accepts a single connection, reads the
-    /// full request (headers + Content-Length body), writes the
-    /// canned response, returns the raw request text for assertions.
-    fn spawn_one_shot_http(
-        status_line: &'static str,
-        body: String,
-    ) -> (std::net::SocketAddr, std::thread::JoinHandle<String>) {
-        use std::io::{Read, Write};
-
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let handle = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut buf = Vec::new();
-            let mut tmp = [0u8; 4096];
-            let header_end = loop {
-                let n = stream.read(&mut tmp).unwrap();
-                assert!(n > 0, "client closed before end of headers");
-                buf.extend_from_slice(&tmp[..n]);
-                if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
-                    break pos + 4;
-                }
-            };
-            let headers = String::from_utf8_lossy(&buf[..header_end]).to_string();
-            let content_length = headers
-                .lines()
-                .find_map(|l| {
-                    let (k, v) = l.split_once(':')?;
-                    k.eq_ignore_ascii_case("content-length")
-                        .then(|| v.trim().parse::<usize>().ok())
-                        .flatten()
-                })
-                .unwrap_or(0);
-            while buf.len() < header_end + content_length {
-                let n = stream.read(&mut tmp).unwrap();
-                assert!(n > 0, "client closed mid-body");
-                buf.extend_from_slice(&tmp[..n]);
-            }
-            let request = String::from_utf8_lossy(&buf).to_string();
-            let resp = format!(
-                "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\n\
-                 Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len(),
-            );
-            stream.write_all(resp.as_bytes()).unwrap();
-            request
-        });
-        (addr, handle)
-    }
+    use crate::llm_chat::test_http::spawn_one_shot;
 
     fn test_config(endpoint: String) -> QueryExpansionConfig {
         QueryExpansionConfig {
@@ -760,7 +641,7 @@ mod tests {
             }]
         })
         .to_string();
-        let (addr, handle) = spawn_one_shot_http("200 OK", body);
+        let (addr, handle) = spawn_one_shot("200 OK", body);
         let expander =
             HttpQueryExpander::new(test_config(format!("http://{addr}/v1/chat/completions")))
                 .unwrap();
@@ -785,7 +666,7 @@ mod tests {
 
     #[test]
     fn http_expander_surfaces_non_2xx_as_http_error() {
-        let (addr, handle) = spawn_one_shot_http(
+        let (addr, handle) = spawn_one_shot(
             "429 Too Many Requests",
             r#"{"error":{"message":"quota exceeded"}}"#.to_string(),
         );
@@ -811,7 +692,7 @@ mod tests {
             "choices": [{"message": {"content": "sorry, I can't do that"}}]
         })
         .to_string();
-        let (addr, handle) = spawn_one_shot_http("200 OK", body);
+        let (addr, handle) = spawn_one_shot("200 OK", body);
         let expander =
             HttpQueryExpander::new(test_config(format!("http://{addr}/v1/chat/completions")))
                 .unwrap();

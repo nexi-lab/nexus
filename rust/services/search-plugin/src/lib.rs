@@ -54,6 +54,7 @@ pub mod search_proto {
 
 pub mod ann_index;
 pub mod chunker;
+pub mod contextual_chunker;
 pub mod embed_cache;
 pub mod embedder;
 pub mod federation;

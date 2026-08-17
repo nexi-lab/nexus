@@ -330,6 +330,7 @@ impl<E: Embedder + 'static> Harness<E> {
         }
     }
 
+    #[allow(clippy::mut_from_ref)]
     fn mock_mut(&self) -> &mut MockKernel {
         unsafe { &mut *self.mock }
     }

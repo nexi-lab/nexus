@@ -672,7 +672,7 @@ mod tests {
         let dir = tempdir().join("ann");
         let idx = AnnIndex::open_or_create(dir, 4).expect("open");
         let err = idx
-            .add_vector("/x", 0, &vec![0.0; 4])
+            .add_vector("/x", 0, &[0.0; 4])
             .expect_err("must reject zero vec");
         assert!(
             matches!(err, AnnError::ZeroVector(_)),

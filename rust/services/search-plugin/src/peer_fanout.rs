@@ -1,22 +1,31 @@
-//! Federation dispatcher — fan a Query out to peer plugins,
-//! collect their responses, and merge the ranked lists.
+//! Peer fan-out — send a Query to every configured peer plugin
+//! concurrently with the local query, then merge the ranked lists.
+//!
+//! # Name
+//!
+//! This module is deliberately NOT called `federation` because that
+//! word is already taken in the wider tree for cross-machine VFS
+//! zone federation (mounting a remote zone, replicating identity).
+//! Two very different concepts wearing the same shirt is a first-
+//! timer trap; "peer fan-out" describes exactly what happens here —
+//! one plugin, many peer plugins, one merged result.
 //!
 //! # Where it plugs in
 //!
 //! `SearchServiceImpl::query` checks [`PeerRegistry::is_active`]
-//! after the empty-q gate; if federation is on AND `zone_id` is in
-//! the allowlist, the dispatcher runs alongside the local Query
-//! (both branches fire concurrently via `tokio::join!`), then fuses
-//! the union with `fusion::rrf_multi`.  When federation is off or
-//! the zone isn't allowlisted, the wrapper is a straight no-op — the
-//! current local-only pipeline runs unchanged.
+//! after the empty-q gate; if fan-out is on AND `zone_id` is in the
+//! allowlist, the dispatcher runs alongside the local Query (both
+//! branches fire concurrently via `tokio::join!`), then fuses the
+//! union with `fusion::rrf_multi`.  When fan-out is off or the zone
+//! isn't allowlisted, the wrapper is a straight no-op — the local-
+//! only pipeline runs unchanged.
 //!
 //! # Failure posture
 //!
 //! Per-peer failures are LOGGED as warnings and the offending peer
-//! drops out of the fusion.  A total-federation-outage (every peer
-//! dead) returns local-only results — federation must never make a
-//! query WORSE than the pre-federation baseline.
+//! drops out of the fusion.  A total peer outage returns local-only
+//! results — peer fan-out must never make a query WORSE than the
+//! single-node baseline.
 //!
 //! # Transport
 //!
@@ -38,16 +47,22 @@ use crate::peer_registry::{PeerAddress, PeerRegistry};
 use crate::search_proto::search_service_client::SearchServiceClient;
 use crate::search_proto::{QueryRequest, QueryResponse, QueryResult};
 
-/// gRPC metadata header set on outgoing peer fan-out requests.
-/// Receiving plugins skip federation when this header is present,
-/// so a two-node fleet cannot loop forever with each node fanning
-/// its own query out to the other.  Header is opaque to gRPC —
-/// tonic lower-cases and forwards it transparently.
-pub const FEDERATION_MARKER_HEADER: &str = "x-nexus-search-federated";
+/// gRPC metadata header set on outgoing peer fan-out requests so
+/// the receiving plugin knows this is an internal server-to-server
+/// call, not an external client request.  Receivers skip their own
+/// fan-out (else a two-node fleet loops forever) and skip other
+/// outer middleware (e.g. LLM query expansion — a fleet-wide LLM
+/// call storm is a real production hazard).  Header is opaque to
+/// gRPC; tonic lower-cases and forwards it transparently.
+///
+/// Commit 6 of this audit-cleanup PR promotes this constant to a
+/// shared `internal_call` module alongside the task-local guard;
+/// keeping it here for the rename commit keeps the diff focused.
+pub const PEER_FANOUT_MARKER_HEADER: &str = "x-nexus-search-internal";
 
 /// Per-peer dial timeout — the connect side of the gRPC channel.
-/// Kept tight so a hosed peer stops the federation fan-out fast
-/// instead of stretching the caller's p99.
+/// Kept tight so a hosed peer stops the fan-out fast instead of
+/// stretching the caller's p99.
 const CONNECT_TIMEOUT: Duration = Duration::from_millis(1_500);
 
 /// Per-peer request timeout — the send + response wait side.
@@ -56,15 +71,15 @@ const CONNECT_TIMEOUT: Duration = Duration::from_millis(1_500);
 /// predictable.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(8);
 
-/// Errors surfaced to callers of [`FederationDispatcher::query`].
+/// Errors surfaced to callers of [`PeerFanoutDispatcher::query`].
 /// Kept simple — all callers log-and-drop, so the enum is a debugging
 /// aid rather than a control-flow signal.
 #[derive(Debug, thiserror::Error)]
-pub enum FederationError {
+pub enum PeerFanoutError {
     /// A peer was configured with a scheme/URL that tonic couldn't
     /// turn into a valid Endpoint.  Signals a misconfig — treat as
     /// permanent (this peer will never dial) but keep the rest of
-    /// the federation alive.
+    /// the fan-out alive.
     #[error("bad peer endpoint {peer}: {source}")]
     BadEndpoint {
         peer: String,
@@ -103,15 +118,15 @@ pub enum FederationError {
     },
 }
 
-/// Live federation dispatcher — one per [`SearchServiceImpl`].
+/// Live peer-fanout dispatcher — one per [`SearchServiceImpl`].
 /// Cheap to construct; expensive work (dialing peers, holding
 /// channels) is lazy and cached.
-pub struct FederationDispatcher {
+pub struct PeerFanoutDispatcher {
     registry: PeerRegistry,
     channels: Mutex<HashMap<PeerAddress, Channel>>,
 }
 
-impl FederationDispatcher {
+impl PeerFanoutDispatcher {
     /// Wrap a registry.  No I/O happens here.
     pub fn new(registry: PeerRegistry) -> Self {
         Self {
@@ -120,11 +135,11 @@ impl FederationDispatcher {
         }
     }
 
-    /// Whether federation should run for the given zone.  Hot-path
+    /// Whether peer fan-out should run for the given zone.  Hot-path
     /// callers use this to skip the whole dispatcher when the query
     /// is against a local-only zone.
-    pub fn should_federate(&self, zone_id: &str) -> bool {
-        self.registry.is_active() && self.registry.zone_is_federated(zone_id)
+    pub fn should_fan_out(&self, zone_id: &str) -> bool {
+        self.registry.is_active() && self.registry.zone_fans_out(zone_id)
     }
 
     /// Registry accessor for tests that need to inspect config.
@@ -153,7 +168,7 @@ impl FederationDispatcher {
                     tracing::warn!(
                         peer = %peer_url_for_log,
                         err = %e,
-                        "search-plugin federation: peer connect failed — dropping from fusion",
+                        "search-plugin peer-fanout: peer connect failed — dropping from fusion",
                     );
                     continue;
                 }
@@ -163,11 +178,12 @@ impl FederationDispatcher {
                     SearchServiceClient::new(channel).max_decoding_message_size(64 * 1024 * 1024);
                 let mut request = tonic::Request::new(req_clone);
                 request.set_timeout(REQUEST_TIMEOUT);
-                // Stamp the federation-marker header so the receiving
-                // plugin's query() wrapper skips its own federation
-                // fan-out — a fleet must not loop.
+                // Stamp the internal-call marker so the receiving
+                // plugin skips its own outer middleware (fan-out +
+                // LLM expansion) — a fleet must not loop, and it
+                // must not run N*M LLM calls.
                 if let Ok(v) = tonic::metadata::MetadataValue::try_from("1") {
-                    request.metadata_mut().insert(FEDERATION_MARKER_HEADER, v);
+                    request.metadata_mut().insert(PEER_FANOUT_MARKER_HEADER, v);
                 }
                 let resp = client.query(request).await;
                 (peer_url_for_log, resp)
@@ -181,13 +197,13 @@ impl FederationDispatcher {
                     tracing::warn!(
                         peer = %peer,
                         err = %status,
-                        "search-plugin federation: peer RPC failed — dropping from fusion",
+                        "search-plugin peer-fanout: peer RPC failed — dropping from fusion",
                     );
                 }
                 Err(join) => {
                     tracing::warn!(
                         err = %join,
-                        "search-plugin federation: peer task joined with error",
+                        "search-plugin peer-fanout: peer task joined with error",
                     );
                 }
             }
@@ -199,8 +215,9 @@ impl FederationDispatcher {
     /// forever.  Locking is coarse (a single Mutex around the whole
     /// map) but the critical section is HashMap lookup + optional
     /// build, both microsecond-scale; per-peer sharding is over-kill
-    /// for the ≤ handful of peers a federation typically has.
-    async fn get_or_dial(&self, peer: &PeerAddress) -> Result<Channel, FederationError> {
+    /// at the current ≤10-peer scale.  TODO(perf): shard to a
+    /// DashMap or per-peer OnceLock if peer fleets grow beyond that.
+    async fn get_or_dial(&self, peer: &PeerAddress) -> Result<Channel, PeerFanoutError> {
         {
             let g = self.channels.lock();
             if let Some(c) = g.get(peer) {
@@ -218,20 +235,20 @@ impl FederationDispatcher {
     }
 
     /// Build a Channel to `peer`, gated by the TLS + loopback rules.
-    async fn dial(&self, peer: &PeerAddress) -> Result<Channel, FederationError> {
+    async fn dial(&self, peer: &PeerAddress) -> Result<Channel, PeerFanoutError> {
         let tls = self.registry.require_tls();
         // Standing rule — plaintext to a non-loopback peer is
         // REFUSED unless explicitly opted out.  The escape hatch
         // exists because tests + short-lived dev clusters on the
         // loopback interface must not fight the gate.
         if !tls && !peer.is_loopback() && !self.registry.allow_insecure_peer() {
-            return Err(FederationError::PlaintextOffLoopback {
+            return Err(PeerFanoutError::PlaintextOffLoopback {
                 peer: format!("{}:{}", peer.host, peer.port),
             });
         }
         let url = peer.url(tls);
         let mut endpoint =
-            Endpoint::from_shared(url.clone()).map_err(|e| FederationError::BadEndpoint {
+            Endpoint::from_shared(url.clone()).map_err(|e| PeerFanoutError::BadEndpoint {
                 peer: url.clone(),
                 source: e,
             })?;
@@ -248,7 +265,7 @@ impl FederationDispatcher {
             endpoint =
                 endpoint
                     .tls_config(tls_config)
-                    .map_err(|e| FederationError::BadEndpoint {
+                    .map_err(|e| PeerFanoutError::BadEndpoint {
                         peer: url.clone(),
                         source: e,
                     })?;
@@ -256,7 +273,7 @@ impl FederationDispatcher {
         let channel = endpoint
             .connect()
             .await
-            .map_err(|e| FederationError::ConnectFailed {
+            .map_err(|e| PeerFanoutError::ConnectFailed {
                 peer: url,
                 source: e,
             })?;
@@ -266,10 +283,10 @@ impl FederationDispatcher {
 
 /// Merge a set of ranked lists from local + peers.  Wraps the
 /// existing [`crate::fusion::rrf_multi`] with the small mapping
-/// glue federation needs (each source list is a full [`QueryResult`]
-/// arm; every arm registers as `ArmKind::Chunk` since federation
-/// does not distinguish title vs body — that's a within-node fusion
-/// concern).
+/// glue peer fan-out needs (each source list is a full
+/// [`QueryResult`] arm; every arm registers as `ArmKind::Chunk`
+/// since fan-out does not distinguish title vs body — that's a
+/// within-node fusion concern).
 pub fn merge_ranked(
     lists: &[Vec<QueryResult>],
     rrf_k: u32,
@@ -295,14 +312,14 @@ pub fn merge_ranked(
 
 /// Shared handle so the service builds the dispatcher once and hands
 /// out `Arc` clones (matches [`crate::embedder::Embedder`] posture).
-pub type SharedFederationDispatcher = Arc<FederationDispatcher>;
+pub type SharedPeerFanoutDispatcher = Arc<PeerFanoutDispatcher>;
 
 /// Best-effort builder — reads the registry from env, wraps it in a
 /// dispatcher.  Returns `Ok(None)` when the registry is inactive so
 /// the caller can skip wiring the dispatcher entirely (zero-cost
 /// path for the common single-node deployment).
 pub fn build_default_dispatcher(
-) -> Result<Option<SharedFederationDispatcher>, crate::peer_registry::RegistryError> {
+) -> Result<Option<SharedPeerFanoutDispatcher>, crate::peer_registry::RegistryError> {
     let registry = PeerRegistry::from_env()?;
     if !registry.is_active() {
         return Ok(None);
@@ -311,9 +328,9 @@ pub fn build_default_dispatcher(
         peers = registry.peers().len(),
         require_tls = registry.require_tls(),
         allow_insecure_peer = registry.allow_insecure_peer(),
-        "search-plugin: federation active",
+        "search-plugin: peer fan-out active",
     );
-    Ok(Some(Arc::new(FederationDispatcher::new(registry))))
+    Ok(Some(Arc::new(PeerFanoutDispatcher::new(registry))))
 }
 
 #[cfg(test)]
@@ -340,18 +357,18 @@ mod tests {
     }
 
     #[test]
-    fn should_federate_requires_active_and_allowlisted_zone() {
+    fn should_fan_out_requires_active_and_allowlisted_zone() {
         let reg = registry_with(vec![("a", 1)], vec!["root"], false, true);
-        let d = FederationDispatcher::new(reg);
-        assert!(d.should_federate("root"));
-        assert!(!d.should_federate("other"));
+        let d = PeerFanoutDispatcher::new(reg);
+        assert!(d.should_fan_out("root"));
+        assert!(!d.should_fan_out("other"));
     }
 
     #[test]
-    fn should_federate_false_when_inactive() {
+    fn should_fan_out_false_when_inactive() {
         let reg = registry_with(vec![], vec!["root"], false, true);
-        let d = FederationDispatcher::new(reg);
-        assert!(!d.should_federate("root"), "no peers ⇒ never federate");
+        let d = PeerFanoutDispatcher::new(reg);
+        assert!(!d.should_fan_out("root"), "no peers ⇒ never federate");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -361,10 +378,10 @@ mod tests {
         // directly rather than driving fan_out — fan_out would just
         // log-and-drop, hiding the specific error variant.
         let reg = registry_with(vec![("example.internal", 2126)], vec!["root"], false, false);
-        let d = FederationDispatcher::new(reg);
+        let d = PeerFanoutDispatcher::new(reg);
         let peer = &d.registry.peers()[0].clone();
         let err = d.dial(peer).await.unwrap_err();
-        assert!(matches!(err, FederationError::PlaintextOffLoopback { .. }));
+        assert!(matches!(err, PeerFanoutError::PlaintextOffLoopback { .. }));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -374,11 +391,11 @@ mod tests {
         // The connect itself will fail (nothing listens on port 1),
         // but the failure is ConnectFailed, NOT PlaintextOffLoopback.
         let reg = registry_with(vec![("127.0.0.1", 1)], vec!["root"], false, false);
-        let d = FederationDispatcher::new(reg);
+        let d = PeerFanoutDispatcher::new(reg);
         let peer = &d.registry.peers()[0].clone();
         let err = d.dial(peer).await.unwrap_err();
         assert!(
-            matches!(err, FederationError::ConnectFailed { .. }),
+            matches!(err, PeerFanoutError::ConnectFailed { .. }),
             "loopback plaintext must pass the gate; got {err:?}"
         );
     }
@@ -386,7 +403,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn dial_allows_plaintext_off_loopback_with_escape_flag() {
         let reg = registry_with(vec![("example.internal", 2126)], vec!["root"], false, true);
-        let d = FederationDispatcher::new(reg);
+        let d = PeerFanoutDispatcher::new(reg);
         let peer = &d.registry.peers()[0].clone();
         let err = d.dial(peer).await.unwrap_err();
         // With allow_insecure_peer=true we PASS the gate and try to
@@ -395,7 +412,7 @@ mod tests {
         assert!(
             matches!(
                 err,
-                FederationError::ConnectFailed { .. } | FederationError::BadEndpoint { .. }
+                PeerFanoutError::ConnectFailed { .. } | PeerFanoutError::BadEndpoint { .. }
             ),
             "escape flag must pass the gate; got {err:?}"
         );

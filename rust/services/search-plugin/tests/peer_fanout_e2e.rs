@@ -1,6 +1,5 @@
-//! End-to-end integration test for the search-plugin federation
-//! wrapper (Feature 2 of the "fold nexus-server search runtime into
-//! the plugin" migration).
+//! End-to-end integration test for the search-plugin peer-fanout
+//! wrapper.
 //!
 //! Two SearchServiceImpl instances live in-process — one is the
 //! "local" node under test, one is served as the "peer" over a
@@ -11,8 +10,8 @@
 //!
 //! The peer is deliberately a REAL tonic server on a REAL port —
 //! not a mock trait object — because the recursion-guard that
-//! prevents federation loops lives in tonic metadata (see
-//! `federation::FEDERATION_MARKER_HEADER`), and a trait mock would
+//! prevents fan-out loops lives in tonic metadata (see
+//! `peer_fanout::PEER_FANOUT_MARKER_HEADER`), and a trait mock would
 //! bypass it and hide the loop-prevention bug the test is here to
 //! catch.
 
@@ -23,8 +22,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use nexus_plugin_abi::KernelHandle;
-use nexus_search_plugin::federation::FederationDispatcher;
 use nexus_search_plugin::index_manager::IndexManager;
+use nexus_search_plugin::peer_fanout::PeerFanoutDispatcher;
 use nexus_search_plugin::peer_registry::{PeerAddress, PeerRegistry};
 use nexus_search_plugin::search_proto::search_service_server::{
     SearchService, SearchServiceServer,
@@ -117,10 +116,10 @@ async fn spawn_peer_plugin(seed_paths: &[(&str, &str)]) -> PeerFixture {
     let manager = Arc::new(IndexManager::with_root(dir.path().to_path_buf()));
     // A peer's own service must NOT federate — else two peers with
     // each other in their registries loop through the metadata guard
-    // twice per query.  Belt-and-suspenders: also call .no_federation().
+    // twice per query.  Belt-and-suspenders: also call .no_peer_fanout().
     let svc = SearchServiceImpl::builder(Arc::new(poison_handle()))
         .manager(Arc::clone(&manager))
-        .no_federation()
+        .no_peer_fanout()
         .build();
 
     // Seed the peer's root zone with (path, text) pairs.
@@ -170,19 +169,19 @@ struct LocalNode {
 }
 
 impl LocalNode {
-    fn new(peers: Vec<PeerAddress>, federated_zones: Vec<&str>) -> Self {
+    fn new(peers: Vec<PeerAddress>, fanout_zones: Vec<&str>) -> Self {
         let dir = TempDir::new().expect("tempdir");
         let manager = Arc::new(IndexManager::with_root(dir.path().to_path_buf()));
-        let zones: HashSet<String> = federated_zones.into_iter().map(String::from).collect();
+        let zones: HashSet<String> = fanout_zones.into_iter().map(String::from).collect();
         // allow_insecure_peer=true so plaintext loopback dials pass
         // the standing "refuse plaintext off-loopback" gate (the
         // in-test peers are on 127.0.0.1 anyway; this is defence in
         // depth for CI systems whose 127.0.0.1 detection might miss).
         let registry = PeerRegistry::new(peers, zones, false, true);
-        let fed = Arc::new(FederationDispatcher::new(registry));
+        let fed = Arc::new(PeerFanoutDispatcher::new(registry));
         let svc = SearchServiceImpl::builder(Arc::new(poison_handle()))
             .manager(Arc::clone(&manager))
-            .federation(fed)
+            .peer_fanout(fed)
             .build();
         Self {
             _dir: dir,
@@ -191,12 +190,12 @@ impl LocalNode {
         }
     }
 
-    fn new_without_federation() -> Self {
+    fn new_without_peer_fanout() -> Self {
         let dir = TempDir::new().expect("tempdir");
         let manager = Arc::new(IndexManager::with_root(dir.path().to_path_buf()));
         let svc = SearchServiceImpl::builder(Arc::new(poison_handle()))
             .manager(Arc::clone(&manager))
-            .no_federation()
+            .no_peer_fanout()
             .build();
         Self {
             _dir: dir,
@@ -239,7 +238,7 @@ fn peer_addr(fixture: &PeerFixture) -> PeerAddress {
 // ── Tests ───────────────────────────────────────────────────────
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn federation_unions_local_and_peer_hits() {
+async fn peer_fanout_unions_local_and_peer_hits() {
     // Local has doc-a + doc-b(overlap); Peer has doc-b(overlap) + doc-c.
     // The fused response must contain all three, with doc-b deduped.
     let peer =
@@ -259,7 +258,7 @@ async fn federation_unions_local_and_peer_hits() {
         "local-only doc missing: {paths:?}"
     );
     assert!(paths.contains(&"/b.md"), "shared doc missing: {paths:?}");
-    // Federation dedupes on (path, chunk_index).
+    // Peer fan-out dedupes on (path, chunk_index).
     assert_eq!(
         paths.iter().filter(|p| **p == "/b.md").count(),
         1,
@@ -268,8 +267,8 @@ async fn federation_unions_local_and_peer_hits() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn federation_pulls_peer_only_hits_when_local_has_nothing() {
-    // "gamma" matches only in the peer's corpus.  Federation must
+async fn peer_fanout_pulls_peer_only_hits_when_local_has_nothing() {
+    // "gamma" matches only in the peer's corpus.  Peer fan-out must
     // surface it even though local has zero hits.
     let peer = spawn_peer_plugin(&[("/c.md", "gamma widget in peer")]).await;
     let local = LocalNode::new(vec![peer_addr(&peer)], vec!["root"]);
@@ -283,9 +282,9 @@ async fn federation_pulls_peer_only_hits_when_local_has_nothing() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn federation_degrades_gracefully_when_peer_is_offline() {
+async fn peer_fanout_degrades_gracefully_when_peer_is_offline() {
     // Point the local node at an ephemeral port that nothing is
-    // bound to → peer dial FAILS on connect.  Federation must log
+    // bound to → peer dial FAILS on connect.  Fan-out must log
     // the warning and return LOCAL-only results, not surface an
     // RPC-level error.
     let dead_peer = PeerAddress {
@@ -308,15 +307,15 @@ async fn federation_degrades_gracefully_when_peer_is_offline() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn federation_skipped_for_zones_not_in_allowlist() {
-    // Federation IS active (peer + zone list configured), but the
+async fn peer_fanout_skipped_for_zones_not_in_allowlist() {
+    // Fan-out IS active (peer + zone list configured), but the
     // query targets a zone NOT on the allowlist.  Expected: peer is
     // NOT dialled, only local results come back.
     let peer = spawn_peer_plugin(&[("/peer-only.md", "the peer widget")]).await;
     let local = LocalNode::new(vec![peer_addr(&peer)], vec!["shared"]);
     local.seed(&[("/a.md", "alpha widget")]);
 
-    // Query targets root, not shared — federation should skip.
+    // Query targets root, not shared — fan-out should skip.
     let resp = local
         .svc
         .query(Request::new(QueryRequest {
@@ -334,15 +333,15 @@ async fn federation_skipped_for_zones_not_in_allowlist() {
     assert!(paths.contains(&"/a.md"), "local hit missing: {paths:?}");
     assert!(
         !paths.contains(&"/peer-only.md"),
-        "peer hit leaked into non-federated zone: {paths:?}",
+        "peer hit leaked into non-fanout zone: {paths:?}",
     );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn federation_no_op_when_no_peers_configured() {
-    // No .federation() and .no_federation() explicitly — validates
+async fn peer_fanout_no_op_when_no_peers_configured() {
+    // No .peer_fanout() and .no_peer_fanout() explicitly — validates
     // that a single-node deployment costs nothing in the query path.
-    let local = LocalNode::new_without_federation();
+    let local = LocalNode::new_without_peer_fanout();
     local.seed(&[("/a.md", "alpha widget")]);
 
     let resp = local.query("widget").await;
@@ -352,9 +351,9 @@ async fn federation_no_op_when_no_peers_configured() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn federation_marker_header_short_circuits_receiver() {
+async fn peer_fanout_marker_header_short_circuits_receiver() {
     // Regression guard for the loop-prevention header — a call
-    // arriving WITH the marker must skip its own federation fan-out.
+    // arriving WITH the marker must skip its own peer fan-out.
     // We drive the peer directly (bypassing the local node) with a
     // request that carries the marker; the peer has NO peers
     // configured anyway, so this test is defence-in-depth against a
@@ -376,10 +375,10 @@ async fn federation_marker_header_short_circuits_receiver() {
         false,
         true,
     );
-    let fed = Arc::new(FederationDispatcher::new(registry));
+    let fed = Arc::new(PeerFanoutDispatcher::new(registry));
     let svc = SearchServiceImpl::builder(Arc::new(poison_handle()))
         .manager(Arc::clone(&manager))
-        .federation(fed)
+        .peer_fanout(fed)
         .build();
 
     // Query with the marker header — must NOT federate; must return
@@ -392,7 +391,7 @@ async fn federation_marker_header_short_circuits_receiver() {
         ..Default::default()
     });
     req.metadata_mut().insert(
-        nexus_search_plugin::federation::FEDERATION_MARKER_HEADER,
+        nexus_search_plugin::peer_fanout::PEER_FANOUT_MARKER_HEADER,
         tonic::metadata::MetadataValue::try_from("1").unwrap(),
     );
 
@@ -401,6 +400,6 @@ async fn federation_marker_header_short_circuits_receiver() {
     assert!(paths.contains(&"/x.md"), "local hit missing: {paths:?}");
     assert!(
         !paths.contains(&"/pa.md") && !paths.contains(&"/pb.md"),
-        "marker header failed to suppress federation: {paths:?}",
+        "marker header failed to suppress peer fan-out: {paths:?}",
     );
 }

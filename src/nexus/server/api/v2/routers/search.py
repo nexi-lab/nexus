@@ -278,7 +278,7 @@ async def search_query(
     raw_zone_set = tuple(auth_result.get("zone_set") or ())
     zone_set = raw_zone_set or (zone_id,)
     # #4542 rounds 8-10: readable allow-list (None = admin/root/unbounded).
-    from nexus.bricks.search.federated_search import token_zone_filter_from_auth
+    from nexus.bricks.search.search_auth import token_zone_filter_from_auth
 
     token_zone_filter = token_zone_filter_from_auth(auth_result, root_zone_id=ROOT_ZONE_ID)
     # #3785: auto-promote to federated when token grants multiple zones,
@@ -711,10 +711,14 @@ async def _handle_federated_search(
     ``SearchService._semantic_with_sandbox_fallback`` so the response
     surfaces BM25S results stamped with ``semantic_degraded=True``.
     """
-    from nexus.bricks.search.federated_search import (
-        FederatedSearchDispatcher,
-        is_all_peers_failed,
-    )
+    # NOTE: FederatedSearchDispatcher is scheduled for removal in the
+    # follow-up commit that collapses this whole helper to a single-
+    # daemon call (the Rust nexus-search-plugin does the peer fan-out
+    # inside its own gRPC handler now — see the plugin's peer_fanout
+    # module).  This import stays local for that transitional commit;
+    # the is_all_peers_failed guard already moved.
+    from nexus.bricks.search.federated_search import FederatedSearchDispatcher
+    from nexus.bricks.search.search_degraded import is_all_peers_failed
 
     # Issue #4269 (Codex R3): the SANDBOX BM25S fallback below runs AFTER the
     # dispatcher returns and is not in fed_response.latency_ms, so track its
@@ -793,7 +797,7 @@ async def _handle_federated_search(
             # Issue #4542 round-6: this all-peers-failed fallback replaces the
             # dispatcher's capped results wholesale, so it must honor the
             # per-document cap itself — fetch wider, cap, trim.
-            from nexus.bricks.search.federated_search import daemon_pooling_cap
+            from nexus.bricks.search.daemon import daemon_pooling_cap
 
             _fb_cap = daemon_pooling_cap(search_daemon)
             fallback_start = time.perf_counter()
@@ -934,7 +938,7 @@ async def search_query_batch(
     # could read via /query/batch even though /query fails it closed.
     # Batch takes no ``federated`` param (single-zone-only), so both of
     # /query's single-zone checks apply unconditionally here.
-    from nexus.bricks.search.federated_search import token_zone_filter_from_auth
+    from nexus.bricks.search.search_auth import token_zone_filter_from_auth
 
     token_zone_filter = token_zone_filter_from_auth(auth_result, root_zone_id=ROOT_ZONE_ID)
     if token_zone_filter is not None:

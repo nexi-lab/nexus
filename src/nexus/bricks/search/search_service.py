@@ -3896,7 +3896,7 @@ class SearchService:
             results are returned as-is (``semantic_degraded`` unset).
         """
         # Defer imports so the main code path doesn't pay for them.
-        from nexus.bricks.search.federated_search import is_all_peers_failed
+        from nexus.bricks.search.search_degraded import is_all_peers_failed
 
         fed_response = await federation_call()
 
@@ -4295,7 +4295,7 @@ class SearchService:
         if context is not None and not (
             getattr(context, "is_admin", False) or getattr(context, "is_system", False)
         ):
-            from nexus.bricks.search.federated_search import readable_zone_filter
+            from nexus.bricks.search.search_auth import readable_zone_filter
 
             _readable_scope = readable_zone_filter(
                 getattr(context, "zone_set", None) or (),
@@ -4329,7 +4329,7 @@ class SearchService:
         # otherwise synthesise an empty FederatedSearchResponse so the
         # shared fallback wrapper invokes the BM25S callable and stamps
         # ``semantic_degraded=True`` on every result.
-        from nexus.bricks.search.federated_search import (
+        from nexus.bricks.search.search_degraded import (
             FederatedSearchResponse,
             ZoneFailure,
         )
@@ -4362,7 +4362,7 @@ class SearchService:
                     # Round-8 review: search is a READ — write-only zone
                     # grants must not be searchable, so derive the filter
                     # from zone_perms (r/x only) when present.
-                    from nexus.bricks.search.federated_search import (
+                    from nexus.bricks.search.search_auth import (
                         readable_zone_filter,
                     )
 

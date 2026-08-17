@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.bricks.search.federated_search import (
+from nexus.bricks.search.search_degraded import (
     FederatedSearchResponse,
     FederationUnreachableError,
     ZoneFailure,
@@ -260,12 +260,12 @@ class TestReadableZoneFilter:
     """Issue #4542 round-8 review: write-only zone grants are not searchable."""
 
     def test_write_only_grant_fails_closed(self) -> None:
-        from nexus.bricks.search.federated_search import readable_zone_filter
+        from nexus.bricks.search.search_auth import readable_zone_filter
 
         assert readable_zone_filter(("eng",), (("eng", "w"),)) == frozenset()
 
     def test_mixed_grants_keep_readable_only(self) -> None:
-        from nexus.bricks.search.federated_search import readable_zone_filter
+        from nexus.bricks.search.search_auth import readable_zone_filter
 
         out = readable_zone_filter(
             ("eng", "legal", "ops"),
@@ -274,12 +274,12 @@ class TestReadableZoneFilter:
         assert out == frozenset({"eng", "ops"})
 
     def test_zone_set_without_perms_kept_whole(self) -> None:
-        from nexus.bricks.search.federated_search import readable_zone_filter
+        from nexus.bricks.search.search_auth import readable_zone_filter
 
         assert readable_zone_filter(["eng", "legal"], None) == frozenset({"eng", "legal"})
 
     def test_no_grants_means_unbounded(self) -> None:
-        from nexus.bricks.search.federated_search import readable_zone_filter
+        from nexus.bricks.search.search_auth import readable_zone_filter
 
         assert readable_zone_filter((), ()) is None
 

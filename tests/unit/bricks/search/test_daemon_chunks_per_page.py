@@ -15,8 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from nexus.bricks.search.daemon import SearchDaemon
-from nexus.bricks.search.federated_search import daemon_pooling_cap
+from nexus.bricks.search.daemon import SearchDaemon, daemon_pooling_cap
 from nexus.contracts.search_types import SearchRequest
 from nexus.grpc.search.v1 import search_pb2
 

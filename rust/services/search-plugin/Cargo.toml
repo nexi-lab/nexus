@@ -150,3 +150,10 @@ tempfile = "3"
 # resolution + `nexus_plugin_grpc_services` JSON contract on all
 # three `libloading`-supported platforms.
 libloading = "0.8"
+# TcpListenerStream — federation_e2e.rs binds a peer plugin to a
+# loopback ephemeral port + wraps it as a Stream so tonic's
+# `serve_with_incoming` can drive it (Server::serve wants a
+# SocketAddr, but we need the ephemeral port BEFORE the serve call
+# so tests can dial it).  Only needed by that one test; dev-dep so
+# the plugin's release build stays lean.
+tokio-stream = { version = "0.1", features = ["net"] }

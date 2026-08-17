@@ -5,13 +5,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from nexus.bricks.search.results import BaseSearchResult
 from nexus.bricks.search.search_degraded import (
     FederatedSearchResponse,
     FederationUnreachableError,
     ZoneFailure,
     is_all_peers_failed,
 )
-from nexus.bricks.search.results import BaseSearchResult
 from nexus.bricks.search.search_service import SearchService
 
 

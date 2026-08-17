@@ -223,9 +223,7 @@ async def _collect_docs_for_plugin(
 
     docs: list[dict[str, Any]] = []
     for entry in files:
-        file_path = (
-            entry if isinstance(entry, str) else entry.get("path") or entry.get("name", "")
-        )
+        file_path = entry if isinstance(entry, str) else entry.get("path") or entry.get("name", "")
         if not file_path or file_path.endswith("/"):
             continue
         if file_path.endswith(_BINARY_EXTENSIONS):
@@ -4884,8 +4882,7 @@ class SearchService:
                 docs = await _collect_docs_for_plugin(indexer, path, recursive)
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
-                    "enumerate for plugin index at %s failed (%s); "
-                    "falling back to SANDBOX indexer",
+                    "enumerate for plugin index at %s failed (%s); falling back to SANDBOX indexer",
                     path,
                     exc,
                 )
@@ -4900,8 +4897,7 @@ class SearchService:
                     resp = await daemon.index_documents(docs)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(
-                        "plugin index_documents at %s failed (%s); "
-                        "falling back to SANDBOX indexer",
+                        "plugin index_documents at %s failed (%s); falling back to SANDBOX indexer",
                         path,
                         exc,
                     )

@@ -107,38 +107,41 @@ The box is a *client*, not a provisioner: when it needs a public control plane i
 
 ### The VM
 
-* Host `sudowork-saas` · Tencent Cloud **Beijing** · Ubuntu 24.04 x86_64 · 4c/8G/60G. Public IP `152.136.139.254`; overlay IP `100.64.0.1`. Provisioned by Hu Xuetao. It joins the **same headscale overlay** as every other node — enroll it per **Part 1 §1h** (the overlay and its gotchas are documented once, there; headscale itself runs on this same Tencent infra).
+* Host `sudowork-saas` · Tencent Cloud **Beijing** · Ubuntu 24.04 x86_64 · 4c/8G/60G. Public IP `152.136.139.254`; overlay IP `100.64.0.1`. Provisioned by Hu Xuetao. It joins the **same headscale overlay** as every other node — enroll it per **Part 1 §1h** (the overlay and its gotchas are documented once, there).
 * **Access rides the overlay**: `ssh ubuntu@100.64.0.1`.  The public interface serves traffic — `80/443` (moss web, `agent.sudoprivacy.com`) and `8443` (broker, `broker.sudoprivacy.com`).  Credentials live in the password vault (`SSH - sudowork SaaS VM`, `Headscale overlay (nexus mesh) enrollment`).
 
 ### Bring up the cross-org broker (`nexusd-cluster` founder)
 
 The broker is the **nexus half** of the SaaS — the *same* cluster binary as Part 1, run as the **founder with TLS on**, which auto-generates the cluster CA (**CA_A**) and exposes the mTLS data-plane a foreign org's agent dials.
 
-**1. Get the binary (prebuilt release — no build).** The cluster profile carries the cross-org code; the latest release ships a linux binary:
+**1. Get the binary (prebuilt — no build).** The cluster profile carries the cross-org code. Grab a `nexusd-cluster-linux-x86_64` built **past #225** (the create-gate) so the containment gates are present — the latest release, or the `cluster-binary-build` CI artifact from a `main` commit:
 
 ```bash
 # on a machine with gh + reliable GitHub (e.g. pc-2; the CN VM's GitHub reach is flaky)
-gh release download v0.7.2 -R nexi-lab/nexus-vfs -p 'nexusd-cluster-linux-x86_64.tar.gz'
+gh release download -R nexi-lab/nexus-vfs -p 'nexusd-cluster-linux-x86_64.tar.gz'   # latest release
 tar -xzf nexusd-cluster-linux-x86_64.tar.gz
 scp nexusd-cluster-linux-x86_64/nexusd-cluster ubuntu@100.64.0.1:~/   # over the overlay
 ```
 
-**2. Boot the founder** (generates CA_A, binds the broker):
+**2. Boot the founder** (generates CA_A, binds the broker). **`NEXUS_API_KEY_SECRET` is required** — without it the daemon falls to `AuthPosture::Open`, no auth provider is armed, and `classify_peer_cert` / stamping / containment never run (a foreign agent would connect unclassified):
 
 ```bash
 mkdir -p ~/nexus-broker/data ~/nexus-broker/identity
+export NEXUS_API_KEY_SECRET="$(openssl rand -hex 32)"   # REQUIRED for auth-on; persist it (Step 5)
 nexusd-cluster \
   --cluster-init saas \
-  --hostname <SAN-host> \
+  --hostname <label> \
   --advertise-addr <addr>:8443 \
   --data-dir     ~/nexus-broker/data \
   --identity-dir ~/nexus-broker/identity \
   --accept-enrollments
 ```
 
+Confirm auth-on engaged (needs `RUST_LOG=info`; unset and these lines are suppressed): `sk- API-key auth armed` + `cross-org foreign-CA trust wired`.
+
 * **TLS is on by default → the founder generates CA_A** at `~/nexus-broker/data/tls/ca.pem` (+ `ca-key.pem`, and the node's server cert `node.pem`).
 * Binds `0.0.0.0:8443` (mTLS data-plane = the broker the DGX dials) and `0.0.0.0:8444` (the enrollment plane, `+1` offset).
-* **`--hostname` sets the server cert SAN.** For a DGX that verifies the hostname, set `--hostname broker.sudoprivacy.com` so the cert is *valid for that name* — CA_A is unchanged, only the node cert re-signs. If the DGX pins CA_A and skips the hostname check (common for pinned-CA mTLS), any hostname works. This is the "public SAN" step.
+* **The server cert SAN is fixed, not per-host.** It is the cluster server name (`nexus-node`) plus `localhost` / `127.0.0.1`; `--hostname` only sets the cert's CN *display label*, it does **not** add a DNS SAN. A foreign worker connects by pinning **CA_A** and expecting the cluster server name (`CLUSTER_SERVER_NAME = "nexus-node"`), which the fixed SAN already satisfies — no per-deployment re-sign for a public DNS name is needed.
 
 **3. Register the foreign org's CA (the forward anchor)** — the broker now trusts the customer's CA_B. `foreign-ca` connects to the *running* daemon, so pass the SAME `--advertise-addr` as the daemon (default control port is 2126; override to your bind port):
 
@@ -153,7 +156,22 @@ nexusd-cluster foreign-ca list --advertise-addr <addr>:8443 --data-dir ~/nexus-b
 
 **4. Reverse anchor** — hand the customer your **CA_A** (`~/nexus-broker/data/tls/ca.pem`) to register on their side, so their agent validates the broker's server cert.
 
-**5. Persist it** — run the founder under a **systemd unit** so it survives reboot.
+**5. Persist it** — run the founder under a **systemd unit** (survives reboot + restarts on crash). Keep the secret in an `EnvironmentFile` (mode 600), not in the unit:
+
+```ini
+# /etc/systemd/system/nexus-broker.service   →   systemctl enable --now nexus-broker
+[Unit]
+After=network-online.target
+Wants=network-online.target
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/nexus-broker
+EnvironmentFile=/home/ubuntu/nexus-broker/broker.env   # NEXUS_API_KEY_SECRET=…  RUST_LOG=info
+ExecStart=/home/ubuntu/nexusd-cluster --cluster-init saas --hostname sudowork-saas --advertise-addr 100.64.0.1:8443 --data-dir /home/ubuntu/nexus-broker/data --identity-dir /home/ubuntu/nexus-broker/identity --accept-enrollments
+Restart=always
+[Install]
+WantedBy=multi-user.target
+```
 
 ### What cross-org authN does on connect
 
@@ -329,7 +347,7 @@ cargo build --release -p nexus-cluster
 
 That's it — no Python wheel needed.  The `nexusd-cluster` profile is the canonical entry; the Python runtime is no longer built or tested in this workspace.
 
-Windows extra: open a Developer Command Prompt for VS Build Tools first so `cl.exe` / `link.exe` are on the linker search path.  See [Rust Build Env (Windows)](#) memory note if links fail with `LNK1181`.
+Windows extra: open a Developer Command Prompt for VS Build Tools first so `cl.exe` / `link.exe` are on the linker search path.  If links fail with `LNK1181`, export `LIB` / `INCLUDE` / `PATH` for the VS Build Tools + Windows Kit.
 
 ### Step 3 — Bootstrap the cluster
 

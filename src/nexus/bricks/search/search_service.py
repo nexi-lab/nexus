@@ -194,48 +194,15 @@ async def _collect_docs_for_plugin(
     path: str,
     recursive: bool,
 ) -> list[dict[str, Any]]:
-    """Enumerate + read files under ``path`` via the SANDBOX indexer's
-    file_reader, producing the ``[{path, text, ...}]`` payload the
-    plugin's ``IndexDocuments`` RPC (and ``SearchDaemon.index_documents``
-    shim) expects.
+    """Thin adapter around ``IndexingService.collect_plugin_documents``.
 
-    Reuses ``indexer._file_reader`` for enumeration + read because that
-    reader resolves paths via THIS container's kernel VFS — which does
-    contain the files, unlike the plugin sidecar's disjoint kernel.
-    Filters binaries the same way the sandbox indexer does.
-
-    Returns an empty list when nothing indexable is under ``path``;
-    callers short-circuit rather than sending an empty POST.
+    Kept as a module-level function so callers that hold an ``indexer``
+    reference don't need to know about the internal type; the actual
+    enumeration + read + binary-filter logic lives on the indexer per
+    issue #4130 review R6 (was reaching into private ``_file_reader`` +
+    ``_read_content`` here).
     """
-    from nexus.bricks.search.indexing_service import _BINARY_EXTENSIONS
-
-    reader = indexer._file_reader  # noqa: SLF001
-
-    if not recursive:
-        # Single-file caller — read directly; the underlying reader
-        # raises for a non-existent or non-text file, which the caller
-        # already handles as a fallback trigger.
-        content = await indexer._read_content(path)  # noqa: SLF001
-        return [{"path": path, "text": content}]
-
-    files_result = await reader.list_files(path, recursive=True)
-    files = files_result.items if hasattr(files_result, "items") else files_result
-
-    docs: list[dict[str, Any]] = []
-    for entry in files:
-        file_path = entry if isinstance(entry, str) else entry.get("path") or entry.get("name", "")
-        if not file_path or file_path.endswith("/"):
-            continue
-        if file_path.endswith(_BINARY_EXTENSIONS):
-            continue
-        try:
-            content = await indexer._read_content(file_path)  # noqa: SLF001
-        except Exception:
-            # Skip individually rather than failing the whole seed —
-            # matches the sandbox indexer's per-file try/except.
-            continue
-        docs.append({"path": file_path, "text": content})
-    return docs
+    return await indexer.collect_plugin_documents(path, recursive)
 
 
 class SearchService:

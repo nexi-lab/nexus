@@ -587,52 +587,7 @@ mod tests {
 
     // ── HttpContextGenerator over one-shot server ───────────────
 
-    fn spawn_one_shot_http(
-        status_line: &'static str,
-        body: String,
-    ) -> (std::net::SocketAddr, std::thread::JoinHandle<String>) {
-        use std::io::{Read, Write};
-
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let handle = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut buf = Vec::new();
-            let mut tmp = [0u8; 4096];
-            let header_end = loop {
-                let n = stream.read(&mut tmp).unwrap();
-                assert!(n > 0, "client closed before end of headers");
-                buf.extend_from_slice(&tmp[..n]);
-                if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
-                    break pos + 4;
-                }
-            };
-            let headers = String::from_utf8_lossy(&buf[..header_end]).to_string();
-            let content_length = headers
-                .lines()
-                .find_map(|l| {
-                    let (k, v) = l.split_once(':')?;
-                    k.eq_ignore_ascii_case("content-length")
-                        .then(|| v.trim().parse::<usize>().ok())
-                        .flatten()
-                })
-                .unwrap_or(0);
-            while buf.len() < header_end + content_length {
-                let n = stream.read(&mut tmp).unwrap();
-                assert!(n > 0, "client closed mid-body");
-                buf.extend_from_slice(&tmp[..n]);
-            }
-            let request = String::from_utf8_lossy(&buf).to_string();
-            let resp = format!(
-                "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\n\
-                 Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len(),
-            );
-            stream.write_all(resp.as_bytes()).unwrap();
-            request
-        });
-        (addr, handle)
-    }
+    use crate::llm_chat::test_http::spawn_one_shot;
 
     fn test_config(endpoint: String) -> ContextualChunkingConfig {
         ContextualChunkingConfig {
@@ -653,7 +608,7 @@ mod tests {
             }]
         })
         .to_string();
-        let (addr, handle) = spawn_one_shot_http("200 OK", body);
+        let (addr, handle) = spawn_one_shot("200 OK", body);
         let gen =
             HttpContextGenerator::new(test_config(format!("http://{addr}/v1/chat/completions")))
                 .unwrap();
@@ -675,7 +630,7 @@ mod tests {
             "choices": [{"message": {"content": "  "}}]
         })
         .to_string();
-        let (addr, _) = spawn_one_shot_http("200 OK", body);
+        let (addr, _) = spawn_one_shot("200 OK", body);
         let gen =
             HttpContextGenerator::new(test_config(format!("http://{addr}/v1/chat/completions")))
                 .unwrap();
@@ -685,7 +640,7 @@ mod tests {
 
     #[test]
     fn http_generator_non_2xx_returns_none_slot() {
-        let (addr, _) = spawn_one_shot_http("500 Internal Server Error", "boom".to_string());
+        let (addr, _) = spawn_one_shot("500 Internal Server Error", "boom".to_string());
         let gen =
             HttpContextGenerator::new(test_config(format!("http://{addr}/v1/chat/completions")))
                 .unwrap();

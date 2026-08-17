@@ -127,3 +127,63 @@ pub fn chat_completion(
         .map(|c| c.message.content)
         .ok_or_else(|| LlmChatError::Http("response had no choices".to_string()))
 }
+
+/// One-shot in-process HTTP server used by unit tests to exercise
+/// the real `reqwest::blocking::Client` code path without a dev-dep
+/// on wiremock/mockito.  Accepts a single connection, reads the full
+/// request (headers + Content-Length body), writes the canned
+/// response, and hands back the raw request text so callers can
+/// assert on the outgoing shape.
+///
+/// Exposed here (rather than duplicated in `query_expansion` and
+/// `contextual_chunker` tests) so the two LLM features and any
+/// future LLM helper share the exact same fixture.
+#[cfg(test)]
+pub(crate) mod test_http {
+    use std::io::{Read, Write};
+
+    pub fn spawn_one_shot(
+        status_line: &'static str,
+        body: String,
+    ) -> (std::net::SocketAddr, std::thread::JoinHandle<String>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = Vec::new();
+            let mut tmp = [0u8; 4096];
+            let header_end = loop {
+                let n = stream.read(&mut tmp).unwrap();
+                assert!(n > 0, "client closed before end of headers");
+                buf.extend_from_slice(&tmp[..n]);
+                if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                    break pos + 4;
+                }
+            };
+            let headers = String::from_utf8_lossy(&buf[..header_end]).to_string();
+            let content_length = headers
+                .lines()
+                .find_map(|l| {
+                    let (k, v) = l.split_once(':')?;
+                    k.eq_ignore_ascii_case("content-length")
+                        .then(|| v.trim().parse::<usize>().ok())
+                        .flatten()
+                })
+                .unwrap_or(0);
+            while buf.len() < header_end + content_length {
+                let n = stream.read(&mut tmp).unwrap();
+                assert!(n > 0, "client closed mid-body");
+                buf.extend_from_slice(&tmp[..n]);
+            }
+            let request = String::from_utf8_lossy(&buf).to_string();
+            let resp = format!(
+                "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\n\
+                 Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len(),
+            );
+            stream.write_all(resp.as_bytes()).unwrap();
+            request
+        });
+        (addr, handle)
+    }
+}

@@ -4799,6 +4799,38 @@ class SearchService:
         Raises:
             ValueError: If semantic search is not initialized
         """
+        # Prefer the P12 plugin when a plugin-transport daemon is wired
+        # (#4628 residual — the shim gate at ``semantic_search``
+        # recognises ``_target`` for the QUERY path, but the INDEX path
+        # here stayed SANDBOX-only until now).  Without this arm the
+        # CLI ``nexus search index <dir>`` reports "Files indexed: N"
+        # from the SANDBOX in-process indexer while the plugin sees
+        # zero — an edge deployment's HERB gate hits hybrid on an
+        # unseeded plugin and returns 0/8 (Docker Publish HERB gate
+        # 2026-08-11..).
+        #
+        # Plugin-less deployments and SANDBOX-only builds are
+        # unaffected: they take the ``_indexing_service`` /
+        # ``_pipeline_indexer`` arms below unchanged.
+        daemon = getattr(self, "_search_daemon", None)
+        if daemon is not None and getattr(daemon, "_target", None) is not None:
+            try:
+                resp = await daemon.index(path, recursive=recursive)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "plugin index at %s failed (%s); falling back to SANDBOX indexer",
+                    path,
+                    exc,
+                )
+            else:
+                # Return per-path count shape that callers already read.
+                # The plugin's IndexResponse is aggregate (indexed_count
+                # + skipped_count), not per-path — synthesize a
+                # single-entry mapping keyed by the request root so the
+                # CLI's "Files indexed" tally stays meaningful.
+                indexed = int(resp.get("indexed_count", 0))
+                return {path: indexed} if indexed >= 0 else {}
+
         # Prefer IndexingService (Issue #2075)
         if self._indexing_service is not None:
             try:

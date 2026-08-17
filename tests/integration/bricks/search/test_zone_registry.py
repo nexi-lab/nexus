@@ -42,20 +42,30 @@ class TestZoneSearchCapabilities:
         assert "hybrid" in caps.search_modes
         assert "keyword" in caps.search_modes
 
-    def test_from_daemon_stats_no_db(self) -> None:
+    def test_from_daemon_stats_ignores_stats_post_p12(self) -> None:
+        # Post-P12 the sole SearchDaemon shape is the Rust plugin
+        # proxy, which always supports keyword + semantic + hybrid.
+        # from_daemon_stats no longer inspects daemon.get_stats() —
+        # the capability set is fixed.  The pre-P12 tests asserted
+        # keyword-only fallbacks based on db_pool_size / zoekt flags;
+        # those degradation modes no longer exist.
         daemon = MagicMock()
         daemon.get_stats.return_value = {
             "db_pool_size": 0,
             "zoekt_available": False,
         }
         caps = ZoneSearchCapabilities.from_daemon_stats("phone_1", daemon)
-        assert caps.search_modes == ("keyword",)
-        assert not caps.supports_semantic
+        assert caps.search_modes == ("keyword", "semantic", "hybrid")
+        assert caps.supports_semantic
+        assert caps.supports_keyword
 
     def test_from_daemon_stats_no_stats_method(self) -> None:
+        # Same post-P12 semantics: capability set is fixed; the
+        # classmethod does not read daemon.get_stats at all, so a
+        # daemon without a get_stats method is still fine.
         daemon = MagicMock(spec=[])  # No get_stats
         caps = ZoneSearchCapabilities.from_daemon_stats("zone_x", daemon)
-        assert caps.search_modes == ("keyword",)
+        assert caps.search_modes == ("keyword", "semantic", "hybrid")
 
     def test_frozen(self) -> None:
         caps = ZoneSearchCapabilities(zone_id="z")

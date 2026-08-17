@@ -14,7 +14,7 @@ Covers the three verified gaps in the #4542/#4558 read-attenuation logic:
 
 from __future__ import annotations
 
-from nexus.bricks.search.federated_search import (
+from nexus.bricks.search.search_auth import (
     readable_zone_filter,
     token_zone_filter_from_auth,
 )

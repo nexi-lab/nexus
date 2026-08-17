@@ -41,21 +41,17 @@ def _make_result(path: str, score: float, zone_id: str | None = None) -> MockSea
 
 
 def _make_daemon(zone_results: dict[str, list[MockSearchResult]]) -> AsyncMock:
-    """Create a mock daemon that returns different results per zone_id."""
+    """Create a mock daemon that returns different results per zone_id.
+
+    The dispatcher calls ``daemon.search(SearchRequest(zone_id=..., ...))``
+    with a single positional bundled request; the mock unpacks
+    ``request.zone_id`` and returns the matching canned list.
+    """
     daemon = AsyncMock()
     daemon.is_initialized = True
 
-    async def mock_search(
-        query,
-        search_type="hybrid",
-        limit=10,
-        path_filter=None,
-        alpha=0.5,
-        fusion_method="rrf",
-        zone_id=None,
-        **kwargs,
-    ):
-        return zone_results.get(zone_id, [])
+    async def mock_search(request: Any) -> list[MockSearchResult]:
+        return zone_results.get(request.zone_id, [])
 
     daemon.search = mock_search
     return daemon
@@ -279,19 +275,10 @@ class TestPartialFailure:
         daemon = AsyncMock()
         daemon.is_initialized = True
 
-        async def mock_search(
-            query,
-            search_type="hybrid",
-            limit=10,
-            path_filter=None,
-            alpha=0.5,
-            fusion_method="rrf",
-            zone_id=None,
-            **kwargs,
-        ):
-            if zone_id == "zone_bad":
+        async def mock_search(request: Any) -> list[MockSearchResult]:
+            if request.zone_id == "zone_bad":
                 raise ConnectionError("zone offline")
-            return [_make_result(f"{zone_id}/doc.txt", 5.0)]
+            return [_make_result(f"{request.zone_id}/doc.txt", 5.0)]
 
         daemon.search = mock_search
         rebac = _make_rebac(["zone_good", "zone_bad"])
@@ -310,7 +297,7 @@ class TestPartialFailure:
         daemon = AsyncMock()
         daemon.is_initialized = True
 
-        async def mock_search(**kwargs):
+        async def mock_search(_request: Any, /, **kwargs):
             raise TimeoutError("timed out")
 
         daemon.search = mock_search
@@ -329,7 +316,7 @@ class TestPartialFailure:
         daemon = AsyncMock()
         daemon.is_initialized = True
 
-        async def mock_search(**kwargs):
+        async def mock_search(_request: Any, /, **kwargs):
             raise RuntimeError("broken")
 
         daemon.search = mock_search
@@ -750,7 +737,7 @@ class TestResultCaching:
         daemon = AsyncMock()
         daemon.is_initialized = True
 
-        async def mock_search(**kwargs):
+        async def mock_search(_request: Any, /, **kwargs):
             return degraded_empty
 
         daemon.search = mock_search
@@ -1459,7 +1446,7 @@ class TestRound10Hardening:
         daemon = AsyncMock()
         daemon.is_initialized = True
 
-        async def mock_search(**kwargs):
+        async def mock_search(_request: Any, /, **kwargs):
             return degraded_empty
 
         daemon.search = mock_search
@@ -1476,19 +1463,23 @@ class TestRound10Hardening:
         assert hit.semantic_degraded is True
 
     @pytest.mark.asyncio
-    async def test_leaky_keyword_promotion_avoids_weighted_fusion(self) -> None:
-        """#4541 review round 10: the 13B keyword->hybrid safety promotion
-        must not run weighted fusion (shard-local normalized scores would be
-        raw-merged); it substitutes rrf_weighted, which honours the alpha=1.0
-        override with cross-zone-comparable scores."""
+    async def test_leaky_keyword_no_longer_promoted_post_p12(self) -> None:
+        """Post-P12 the sole daemon shape is the Rust plugin proxy, which
+        routes keyword through a zone-filtered tantivy index — there's no
+        BM25S/Zoekt cross-zone leak like the retired Python daemon had.
+        Decision 13B's forced keyword→hybrid promotion no longer applies;
+        the requested type + fusion method now pass through unchanged.
+        See _get_effective_search_type in federated_search.py."""
         seen: dict[str, Any] = {}
 
         daemon = AsyncMock()
         daemon.is_initialized = True
         daemon.get_stats = lambda: {"bm25_documents": 5, "zoekt_available": False}
 
-        async def mock_search(**kwargs):
-            seen.update(kwargs)
+        async def mock_search(request: Any) -> list[Any]:
+            seen["search_type"] = request.search_type
+            seen["alpha"] = request.alpha
+            seen["fusion_method"] = request.fusion_method
             return [_make_result("a.txt", 5.0)]
 
         daemon.search = mock_search
@@ -1502,9 +1493,10 @@ class TestRound10Hardening:
             alpha=0.3,
         )
 
-        assert seen["search_type"] == "hybrid"  # 13B promotion happened
-        assert seen["alpha"] == 1.0
-        assert seen["fusion_method"] == "rrf_weighted"  # not weighted
+        # Post-P12: no promotion, pass-through of caller-requested params.
+        assert seen["search_type"] == "keyword"
+        assert seen["alpha"] == 0.3
+        assert seen["fusion_method"] == "weighted"
 
 
 class TestRecencyKnobs:
@@ -1559,10 +1551,12 @@ class TestRecencyKnobs:
             recency_weight=0.4,
             recency_half_life_days=14.0,
         )
-        kwargs = daemon.search.call_args.kwargs
-        assert kwargs["recency"] == "auto"
-        assert kwargs["recency_weight"] == 0.4
-        assert kwargs["recency_half_life_days"] == 14.0
+        # Post-#4553: dispatcher bundles all knobs into a single
+        # SearchRequest positional arg passed to daemon.search().
+        request = daemon.search.call_args.args[0]
+        assert request.recency == "auto"
+        assert request.recency_weight == 0.4
+        assert request.recency_half_life_days == 14.0
 
     def test_strip_none_recency_boost_from_federated_dicts(self) -> None:
         from nexus.bricks.search.federated_search import _result_to_dict

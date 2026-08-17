@@ -278,7 +278,7 @@ async def search_query(
     raw_zone_set = tuple(auth_result.get("zone_set") or ())
     zone_set = raw_zone_set or (zone_id,)
     # #4542 rounds 8-10: readable allow-list (None = admin/root/unbounded).
-    from nexus.bricks.search.federated_search import token_zone_filter_from_auth
+    from nexus.bricks.search.search_auth import token_zone_filter_from_auth
 
     token_zone_filter = token_zone_filter_from_auth(auth_result, root_zone_id=ROOT_ZONE_ID)
     # #3785: auto-promote to federated when token grants multiple zones,
@@ -711,10 +711,13 @@ async def _handle_federated_search(
     ``SearchService._semantic_with_sandbox_fallback`` so the response
     surfaces BM25S results stamped with ``semantic_degraded=True``.
     """
-    from nexus.bricks.search.federated_search import (
-        FederatedSearchDispatcher,
-        is_all_peers_failed,
-    )
+    # FederatedSearchDispatcher stays: it does cross-ZONE ReBAC-aware
+    # auth intersection + per-zone capability routing + short-lived
+    # SearchDelegation minting for remote-zone RPCs.  The Rust plugin's
+    # peer fan-out is orthogonal — same-zone, cross-plugin-instance —
+    # and does not replace this dispatcher.
+    from nexus.bricks.search.federated_search import FederatedSearchDispatcher
+    from nexus.bricks.search.search_degraded import is_all_peers_failed
 
     # Issue #4269 (Codex R3): the SANDBOX BM25S fallback below runs AFTER the
     # dispatcher returns and is not in fed_response.latency_ms, so track its
@@ -793,7 +796,7 @@ async def _handle_federated_search(
             # Issue #4542 round-6: this all-peers-failed fallback replaces the
             # dispatcher's capped results wholesale, so it must honor the
             # per-document cap itself — fetch wider, cap, trim.
-            from nexus.bricks.search.federated_search import daemon_pooling_cap
+            from nexus.bricks.search.daemon import daemon_pooling_cap
 
             _fb_cap = daemon_pooling_cap(search_daemon)
             fallback_start = time.perf_counter()
@@ -934,7 +937,7 @@ async def search_query_batch(
     # could read via /query/batch even though /query fails it closed.
     # Batch takes no ``federated`` param (single-zone-only), so both of
     # /query's single-zone checks apply unconditionally here.
-    from nexus.bricks.search.federated_search import token_zone_filter_from_auth
+    from nexus.bricks.search.search_auth import token_zone_filter_from_auth
 
     token_zone_filter = token_zone_filter_from_auth(auth_result, root_zone_id=ROOT_ZONE_ID)
     if token_zone_filter is not None:
@@ -1832,84 +1835,6 @@ async def search_refresh_notify(
         return {"status": "accepted", "path": path, "change_type": change_type}
 
     return await run_zone_scoped(_get_zone_registry(request), target_zone, _work)
-
-
-@router.post("/expand")
-async def search_expand(
-    request: Request,
-    q: str = Query(..., description="Query to expand", min_length=1),
-    context: str | None = Query(None, description="Optional context about the collection"),
-    model: str = Query("deepseek/deepseek-chat", description="LLM model to use"),
-    max_lex: int = Query(2, description="Max lexical variants", ge=0, le=5),
-    max_vec: int = Query(2, description="Max vector variants", ge=0, le=5),
-    max_hyde: int = Query(2, description="Max HyDE passages", ge=0, le=5),
-    auth_result: dict[str, Any] = Depends(require_auth),
-) -> dict[str, Any]:
-    """Expand a search query using LLM-based query expansion."""
-    import os
-
-    from nexus.bricks.search.query_expansion import (
-        OpenAIQueryExpander,
-        OpenRouterQueryExpander,
-        QueryExpansionConfig,
-    )
-
-    # Try OpenRouter first, fall back to OpenAI
-    openrouter_key = os.environ.get("OPENROUTER_API_KEY")
-    openai_key = os.environ.get("OPENAI_API_KEY")
-    if not openrouter_key and not openai_key:
-        raise HTTPException(
-            status_code=503,
-            detail="No API key configured for query expansion (need OPENROUTER_API_KEY or OPENAI_API_KEY)",
-        )
-
-    async def _work() -> dict[str, Any]:
-        start_time = time.perf_counter()
-
-        try:
-            if openrouter_key:
-                config = QueryExpansionConfig(
-                    model=model,
-                    max_lex_variants=max_lex,
-                    max_vec_variants=max_vec,
-                    max_hyde_passages=max_hyde,
-                    timeout=15.0,
-                )
-                expander = OpenRouterQueryExpander(config=config, api_key=openrouter_key)
-            else:
-                # Use OpenAI directly with gpt-4o-mini
-                openai_model = model if "/" not in model else "gpt-4o-mini"
-                config = QueryExpansionConfig(
-                    model=openai_model,
-                    max_lex_variants=max_lex,
-                    max_vec_variants=max_vec,
-                    max_hyde_passages=max_hyde,
-                    timeout=15.0,
-                    fallback_models=[],
-                )
-                expander = OpenAIQueryExpander(config=config, api_key=openai_key)
-            expansions = await expander.expand(q, context=context)
-            await expander.close()
-
-            latency_ms = (time.perf_counter() - start_time) * 1000
-
-            return {
-                "query": q,
-                "context": context,
-                "model": model,
-                "expansions": [
-                    {"type": e.expansion_type.value, "text": e.text, "weight": e.weight}
-                    for e in expansions
-                ],
-                "total": len(expansions),
-                "latency_ms": round(latency_ms, 2),
-            }
-
-        except Exception as e:
-            logger.error("Query expansion error: %s", e, exc_info=True)
-            raise HTTPException(status_code=500, detail="Query expansion failed") from e
-
-    return await run_zone_scoped(_get_zone_registry(request), _auth_target_zone(auth_result), _work)
 
 
 # =============================================================================

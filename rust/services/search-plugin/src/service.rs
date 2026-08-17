@@ -450,7 +450,16 @@ impl SearchServiceImpl {
         });
         let joined = futures_util::future::join_all(variant_futures).await;
         let mut per_variant: Vec<Vec<QueryResult>> = Vec::with_capacity(joined.len());
-        for resp in joined {
+        // Stamp `expansion_variant_index` on each surviving arm's
+        // hits BEFORE fusion.  The arm index is the arm's POSITION
+        // in `all_queries` (0 = original, 1..N = LLM variants) —
+        // NOT the surviving-arm index — so a dropped/empty arm
+        // doesn't shift the numbering downstream ("this hit came
+        // from variant #2" must always mean the same query text).
+        // `rrf_multi` keeps the first-seen template, so when the
+        // original AND a variant both vote for the same doc the
+        // original wins the attribution.
+        for (arm_pos, resp) in joined.into_iter().enumerate() {
             // spawn_blocking join errors surface as Err(Status) here
             // — treat those the same as the variant returning an
             // empty result, so a single bad variant doesn't kill the
@@ -468,7 +477,12 @@ impl SearchServiceImpl {
                 }
             };
             if inner.error.is_none() && !inner.results.is_empty() {
-                per_variant.push(inner.results);
+                let mut results = inner.results;
+                let idx = arm_pos as u32;
+                for r in &mut results {
+                    r.expansion_variant_index = Some(idx);
+                }
+                per_variant.push(results);
             }
         }
 
@@ -1253,6 +1267,7 @@ fn enrich_ann_hit(
         keyword_score: None,
         tier_boost: None,
         recency_boost: None,
+        expansion_variant_index: None,
     })
 }
 
@@ -1287,6 +1302,7 @@ fn fts_hit_to_result(hit: FtsHit, zone_id: &str) -> QueryResult {
         vector_score: None,
         tier_boost: None,
         recency_boost: None,
+        expansion_variant_index: None,
     }
 }
 
@@ -1621,6 +1637,7 @@ fn hydrate_title_hits(
                 vector_score: None,
                 tier_boost: None,
                 recency_boost: None,
+                expansion_variant_index: None,
             })
         })
         .collect()

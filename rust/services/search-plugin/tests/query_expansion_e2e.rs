@@ -402,3 +402,76 @@ async fn expansion_wrapper_preserves_empty_q_early_return() {
     assert!(resp.error.is_some(), "empty q must error");
     assert_eq!(mock.calls(), 0, "expander must NOT be called for empty q");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn expansion_stamps_variant_index_on_fused_hits() {
+    // Issue #4130 review R7: every hit that survives fusion carries
+    // an `expansion_variant_index` telling the caller which arm
+    // surfaced it — 0 = original, 1..N = LLM variant N.  When a doc
+    // is voted for by both the original and a variant, the ORIGINAL
+    // wins the attribution because `rrf_multi` keeps the first-seen
+    // template and arms are pushed in `all_queries` order.
+    //
+    // Corpus: seed_default_corpus() is arranged so
+    //   "authentication" (arm 0)      → auth.md
+    //   "widget"          (arm 1, var) → hello.md, x.log
+    //   "password reset"  (arm 2, var) → login.md
+    // and no doc is shared across arms, so each surviving arm
+    // stamps its own hits and we can assert the exact mapping.
+    let mock = MockExpander::fixed(vec!["widget", "password reset"]);
+    let h = Harness::start(mock.clone(), 3);
+    h.seed_default_corpus();
+
+    let resp = h.query("authentication").await;
+    assert!(resp.error.is_none(), "unexpected error: {:?}", resp.error);
+
+    let mut by_path: std::collections::HashMap<&str, Option<u32>> =
+        std::collections::HashMap::new();
+    for r in &resp.results {
+        by_path.insert(r.path.as_str(), r.expansion_variant_index);
+    }
+
+    assert_eq!(
+        by_path.get("/notes/auth.md"),
+        Some(&Some(0)),
+        "auth.md must be stamped as arm 0 (original 'authentication'); got {by_path:?}",
+    );
+    assert_eq!(
+        by_path.get("/notes/hello.md"),
+        Some(&Some(1)),
+        "hello.md must be stamped as arm 1 (variant 'widget'); got {by_path:?}",
+    );
+    assert_eq!(
+        by_path.get("/logs/x.log"),
+        Some(&Some(1)),
+        "x.log must be stamped as arm 1 (variant 'widget'); got {by_path:?}",
+    );
+    assert_eq!(
+        by_path.get("/notes/login.md"),
+        Some(&Some(2)),
+        "login.md must be stamped as arm 2 (variant 'password reset'); got {by_path:?}",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn expansion_variant_index_absent_on_single_shot_path() {
+    // Fallback single-shot paths — no expander wired, empty variants,
+    // echo-only variants, LLM failure — must NOT stamp
+    // expansion_variant_index (there is no fusion arm to attribute
+    // to).  Assert absence explicitly so callers can distinguish
+    // "expansion ran, stamped arm 0" from "expansion never ran".
+    let h = Harness::start_without_expander();
+    h.seed_default_corpus();
+
+    let resp = h.query("widget").await;
+    assert!(resp.error.is_none());
+    assert!(!resp.results.is_empty(), "widget must find hits");
+    for r in &resp.results {
+        assert!(
+            r.expansion_variant_index.is_none(),
+            "single-shot hit {} must not carry an expansion index, got {:?}",
+            r.path,
+            r.expansion_variant_index,
+        );
+    }
+}

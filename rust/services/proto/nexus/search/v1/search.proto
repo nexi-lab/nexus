@@ -419,6 +419,24 @@ message QueryResult {
   // (#4543).  Absent when recency scoring was off or the hit has no
   // mtime.
   optional float recency_boost = 12;
+
+  // LLM query-expansion attribution (issue #4130 review R7).  Set
+  // only on hits that came through `query_with_expansion` — i.e.
+  // when `NEXUS_SEARCH_QUERY_EXPANSION=true` produced at least one
+  // variant and the fused output had multiple arms.  0 = surfaced
+  // by the ORIGINAL query text; 1..N = surfaced by LLM variant N
+  // (1-based).  When the same doc is voted for by both the
+  // original arm and a variant arm, the ORIGINAL wins the
+  // attribution because `rrf_multi` iterates arms in order and
+  // keeps the first-seen template.
+  //
+  // Absent on:
+  //  - single-query hits (expansion disabled / partial config)
+  //  - hits from the fallback single-shot when LLM failed
+  //  - peer-fanout hits (the peer-side plugin may or may not
+  //    stamp its own attribution; the outer merge preserves what
+  //    each peer sent).
+  optional uint32 expansion_variant_index = 13;
 }
 
 message QueryResponse {

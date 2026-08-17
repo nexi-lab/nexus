@@ -60,4 +60,10 @@ def _serialize_search_result(result: Any) -> dict[str, Any]:
     recency_boost = getattr(result, "recency_boost", None)
     if recency_boost is not None:
         out["recency_boost"] = round(recency_boost, 4)
+    # Issue #4130 R7: LLM query-expansion arm attribution — 0 = original
+    # query, 1..N = LLM variant N.  Omitted when the hit did not flow
+    # through the plugin's expansion wrapper.
+    expansion_variant_index = getattr(result, "expansion_variant_index", None)
+    if expansion_variant_index is not None:
+        out["expansion_variant_index"] = int(expansion_variant_index)
     return out

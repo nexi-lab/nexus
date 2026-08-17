@@ -90,6 +90,12 @@ class BaseSearchResult:
     # Issue #4543: recency-decay attribution — the multiplier applied to
     # ``score`` when the post-fusion recency boost fired; None otherwise.
     recency_boost: float | None = None
+    # Issue #4130 review R7: LLM query-expansion attribution — which arm
+    # of the fused fan-out surfaced this hit.  0 = the ORIGINAL query
+    # text; 1..N = LLM variant N (1-based).  Absent (None) when the hit
+    # did NOT flow through the plugin's expansion wrapper (expansion
+    # disabled / single-shot fallback / peer-fanout hit).
+    expansion_variant_index: int | None = None
 
     @property
     def zone_qualified_path(self) -> str | None:

@@ -155,16 +155,31 @@ def _resolve_chunks_per_page() -> int:
 
 @dataclass(frozen=True)
 class _ProxyPoolingConfig:
-    """Minimal ``daemon.config`` surface for helpers that still read the
-    old DaemonConfig shape — specifically
-    ``federated_search.daemon_pooling_cap`` (its strict ``is True`` /
-    ``isinstance`` guards, #4542) — so the federated flat-merge's
-    Python-side ``cap_chunks_per_page`` engages again on the P12 proxy.
-    Deliberately NOT a full DaemonConfig: only the pooling fields have a
-    meaningful proxy-side answer."""
+    """Minimal ``daemon.config`` surface that :func:`daemon_pooling_cap`
+    (below) reads via strict ``is True`` / ``isinstance`` guards
+    (Issue #4542).  Kept on the daemon so the flat-merge's Python-side
+    ``cap_chunks_per_page`` engages on the P12 proxy.  Deliberately NOT
+    a full DaemonConfig — only the pooling fields have a meaningful
+    proxy-side answer."""
 
     page_aggregation: bool
     chunks_per_page: int
+
+
+def daemon_pooling_cap(daemon: Any) -> int | None:
+    """Resolve the per-document pooling cap from a daemon's config.
+
+    Strict ``is True`` / ``isinstance`` guards keep Mock daemons
+    (tests) from enabling pooling via auto-created attributes
+    (Issue #4542).  Moved here from the deleted ``federated_search``
+    module — this is where the daemon lives, so this is where the
+    daemon-side cap resolver belongs.
+    """
+    cfg = getattr(daemon, "config", None)
+    if getattr(cfg, "page_aggregation", None) is not True:
+        return None
+    cap = getattr(cfg, "chunks_per_page", None)
+    return cap if isinstance(cap, int) and cap > 0 else None
 
 
 _QUERY_TYPE_MAP = {
@@ -195,9 +210,9 @@ class SearchDaemon:
         self._initialized = True  # matches Python daemon's boot posture
         # Pooling cap resolved once at construction (env is boot-time
         # config).  Exposed BOTH as the pb default for every plugin
-        # request and as a ``config`` shim so
-        # ``federated_search.daemon_pooling_cap`` sees the same answer —
-        # one source, the two capping layers cannot drift.
+        # request and as a ``config`` shim so :func:`daemon_pooling_cap`
+        # (above) sees the same answer — one source, the two capping
+        # layers cannot drift.
         self._chunks_per_page = _resolve_chunks_per_page()
         self.config = _ProxyPoolingConfig(
             page_aggregation=self._chunks_per_page > 0,

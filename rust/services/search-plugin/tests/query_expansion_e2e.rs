@@ -20,6 +20,7 @@ use nexus_search_plugin::index_manager::IndexManager;
 use nexus_search_plugin::query_expansion::{ExpansionError, QueryExpander};
 use nexus_search_plugin::search_proto::search_service_server::SearchService;
 use nexus_search_plugin::search_proto::{QueryRequest, QueryType};
+use nexus_search_plugin::query_expansion::QueryExpansionConfig;
 use nexus_search_plugin::service::{ExpanderHandle, SearchServiceImpl};
 use tempfile::TempDir;
 use tonic::Request;
@@ -166,9 +167,16 @@ impl Harness {
     fn start(expander: Arc<MockExpander>, max_variants: usize) -> Self {
         let dir = TempDir::new().expect("tempdir");
         let manager = Arc::new(IndexManager::with_root(dir.path().to_path_buf()));
+        let config = QueryExpansionConfig {
+            endpoint: "http://mock.invalid/v1/chat/completions".to_string(),
+            model: "mock".to_string(),
+            api_key: "sk-mock".to_string(),
+            timeout: std::time::Duration::from_secs(5),
+            max_variants,
+        };
         let handle = Arc::new(ExpanderHandle {
             expander: expander as Arc<dyn QueryExpander>,
-            max_variants,
+            config,
         });
         let svc = SearchServiceImpl::builder(Arc::new(poison_handle()))
             .manager(Arc::clone(&manager))

@@ -189,13 +189,15 @@ pub struct SearchServiceImpl {
     context_generator: Option<SharedContextGenerator>,
 }
 
-/// Bundle used by the query wrapper — the live expander plus the
-/// config-derived variant cap.  Boxed together so a builder-injected
-/// mock carries the same `max_variants` control as an env-configured
-/// live expander.
+/// Bundle used by the query wrapper — the live expander plus its
+/// configuration.  Storing the full [`QueryExpansionConfig`] (rather
+/// than lifting individual fields into this struct) keeps SSOT: if
+/// query expansion grows a new knob (`min_variants`, `temperature`,
+/// per-request retry cap …) it lands in [`QueryExpansionConfig`]
+/// only, and the wrapper reads it through `handle.config.<field>`.
 pub struct ExpanderHandle {
     pub expander: Arc<dyn QueryExpander>,
-    pub max_variants: usize,
+    pub config: crate::query_expansion::QueryExpansionConfig,
 }
 
 /// RAII increment of [`SearchServiceImpl::indexing_ops`].
@@ -298,7 +300,7 @@ impl SearchServiceImpl {
                     let expander: Arc<dyn QueryExpander> = Arc::from(expander);
                     Some(Arc::new(ExpanderHandle {
                         expander,
-                        max_variants: cfg.max_variants,
+                        config: cfg,
                     }))
                 }
                 Err(e) => {
@@ -340,7 +342,7 @@ impl SearchServiceImpl {
             cached
         } else {
             let query_owned = req.q.clone();
-            let max = handle.max_variants;
+            let max = handle.config.max_variants;
             let expander = Arc::clone(&handle.expander);
             let joined =
                 tokio::task::spawn_blocking(move || expander.expand(&query_owned, max)).await;

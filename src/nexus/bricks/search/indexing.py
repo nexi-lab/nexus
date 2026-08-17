@@ -14,15 +14,11 @@ Features:
 import asyncio
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from nexus.bricks.search.chunk_store import ChunkRecord, ChunkStore
 from nexus.bricks.search.chunking import DocumentChunker, EntropyAwareChunker
-from nexus.bricks.search.contextual_chunking import (
-    ContextualChunker,
-    ContextualChunkResult,
-)
 from nexus.bricks.search.mutation_events import extract_zone_id, strip_zone_prefix
 
 # Removed: txtai handles this (Issue #2663)
@@ -62,10 +58,6 @@ class _ChunkedDoc:
     path_id: str
     chunks: list[Any]
     chunk_texts: list[str]
-    contextual_result: ContextualChunkResult | None = None
-    source_document_id: str | None = None
-    context_jsons: list[str | None] = field(default_factory=list)
-    context_positions: list[int | None] = field(default_factory=list)
 
 
 class IndexingPipeline:
@@ -82,7 +74,6 @@ class IndexingPipeline:
         chunker: DocumentChunker,
         embedding_provider: EmbeddingProvider | None = None,
         entropy_chunker: EntropyAwareChunker | None = None,
-        contextual_chunker: ContextualChunker | None = None,
         db_type: str = "sqlite",
         async_session_factory: Any | None = None,
         max_concurrency: int = 10,
@@ -94,7 +85,6 @@ class IndexingPipeline:
         self._chunker = chunker
         self._embedding_provider = embedding_provider
         self._entropy_chunker = entropy_chunker
-        self._contextual_chunker = contextual_chunker
         self._db_type = db_type
         self._async_session_factory = async_session_factory
         self._max_concurrency = max_concurrency
@@ -308,31 +298,14 @@ class IndexingPipeline:
     # ------------------------------------------------------------------
 
     async def _chunk_document(self, path: str, content: str, path_id: str) -> _ChunkedDoc:
-        """Chunk a single document (CPU-bound work offloaded to thread)."""
-        contextual_result: ContextualChunkResult | None = None
-        source_document_id: str | None = None
-        context_jsons: list[str | None] = []
-        context_positions: list[int | None] = []
+        """Chunk a single document (CPU-bound work offloaded to thread).
 
-        if self._contextual_chunker is not None:
-            doc_summary = (
-                content[:500].rsplit(". ", 1)[0] + "." if ". " in content[:500] else content[:500]
-            )
-            contextual_result = await self._contextual_chunker.chunk_with_context(
-                document=content,
-                doc_summary=doc_summary,
-                file_path=path,
-                compute_lines=True,
-            )
-            source_document_id = contextual_result.source_document_id
-            chunks = [cc.chunk for cc in contextual_result.chunks]
-            chunk_texts = [cc.contextual_text for cc in contextual_result.chunks]
-            for cc in contextual_result.chunks:
-                context_positions.append(cc.position)
-                context_jsons.append(
-                    cc.context.model_dump_json() if cc.context is not None else None
-                )
-        elif self._entropy_chunker is not None:
+        LLM-driven contextual chunking used to live here as a third
+        branch; the Rust nexus-search-plugin now owns that at its own
+        indexing layer (see contextual_chunker.rs in the plugin), so
+        this pipeline no longer duplicates the LLM round-trip.
+        """
+        if self._entropy_chunker is not None:
             entropy_result = await self._entropy_chunker.chunk_with_filtering(
                 content, path, compute_lines=True
             )
@@ -343,25 +316,19 @@ class IndexingPipeline:
             chunks = await asyncio.to_thread(self._chunker.chunk, content, path)
             chunk_texts = [c.text for c in chunks]
 
-        # Issue #3719: When chunks carry heading_prefix (markdown-aware strategy),
-        # prepend it to chunk_texts for embedding enrichment while keeping
-        # chunk.text raw for storage.  Skipped when contextual chunking is
-        # active because LLM-generated context is strictly richer.
-        if contextual_result is None:
-            chunk_texts = [
-                f"{c.heading_prefix} {t}" if getattr(c, "heading_prefix", None) else t
-                for c, t in zip(chunks, chunk_texts, strict=True)
-            ]
+        # Issue #3719: When chunks carry heading_prefix (markdown-aware
+        # strategy), prepend it to chunk_texts for embedding enrichment
+        # while keeping chunk.text raw for storage.
+        chunk_texts = [
+            f"{c.heading_prefix} {t}" if getattr(c, "heading_prefix", None) else t
+            for c, t in zip(chunks, chunk_texts, strict=True)
+        ]
 
         return _ChunkedDoc(
             path=path,
             path_id=path_id,
             chunks=chunks,
             chunk_texts=chunk_texts,
-            contextual_result=contextual_result,
-            source_document_id=source_document_id,
-            context_jsons=context_jsons,
-            context_positions=context_positions,
         )
 
     # ------------------------------------------------------------------
@@ -450,9 +417,13 @@ class IndexingPipeline:
                 heading_prefix=chunk.heading_prefix,
                 embedding=embeddings[i] if embeddings else None,
                 embedding_model=embedding_model,
-                chunk_context=doc.context_jsons[i] if doc.context_jsons else None,
-                chunk_position=doc.context_positions[i] if doc.context_positions else None,
-                source_document_id=doc.source_document_id,
+                # chunk_context / chunk_position / source_document_id
+                # default to None on ChunkRecord.  They used to be
+                # populated by the Python contextual-chunking branch;
+                # the Rust nexus-search-plugin now owns that at its
+                # own indexing layer and does not write back to this
+                # Python ChunkStore, so leaving them None here is a
+                # clean pass-through.
             )
             for i, chunk in enumerate(doc.chunks)
         ]

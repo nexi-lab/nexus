@@ -590,11 +590,7 @@ unsafe extern "C" fn unused_mkdir(_: *const c_void, _: *const c_char) -> i32 {
 unsafe extern "C" fn unused_rmdir(_: *const c_void, _: *const c_char) -> i32 {
     -1
 }
-unsafe extern "C" fn unused_rename(
-    _: *const c_void,
-    _: *const c_char,
-    _: *const c_char,
-) -> i32 {
+unsafe extern "C" fn unused_rename(_: *const c_void, _: *const c_char, _: *const c_char) -> i32 {
     -1
 }
 unsafe extern "C" fn unused_stat_batch(
@@ -672,8 +668,14 @@ async fn contextual_prefix_applied_by_index_walker() {
     // assert the mock generator was called and the embedder saw
     // prefixed inputs.  Covers the do_index insertion point.
     let h = WalkerHarness::start(&[
-        ("/notes/a.md", b"# heading A\n\nbody of file A that is long enough to chunk"),
-        ("/notes/b.md", b"# heading B\n\nbody of file B, also non-trivial"),
+        (
+            "/notes/a.md",
+            b"# heading A\n\nbody of file A that is long enough to chunk",
+        ),
+        (
+            "/notes/b.md",
+            b"# heading B\n\nbody of file B, also non-trivial",
+        ),
     ]);
 
     let resp = h
@@ -689,7 +691,11 @@ async fn contextual_prefix_applied_by_index_walker() {
         .expect("index")
         .into_inner();
     assert!(resp.error.is_none(), "index errored: {:?}", resp.error);
-    assert!(resp.indexed_count >= 2, "expected ≥2 docs indexed, got {}", resp.indexed_count);
+    assert!(
+        resp.indexed_count >= 2,
+        "expected ≥2 docs indexed, got {}",
+        resp.indexed_count
+    );
 
     assert!(
         h.generator.calls() >= 1,

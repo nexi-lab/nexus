@@ -758,7 +758,8 @@ mod tests {
             "generate_batch called exactly once with the capped slice"
         );
         assert_eq!(
-            gen.batches_seen.lock()[0], 2,
+            gen.batches_seen.lock()[0],
+            2,
             "generate_batch received exactly 2 chunk texts",
         );
     }
@@ -772,11 +773,7 @@ mod tests {
     }
 
     impl ContextGenerator for CountingMockGenerator {
-        fn generate_batch(
-            &self,
-            _doc: &str,
-            chunks: &[&str],
-        ) -> Vec<Option<String>> {
+        fn generate_batch(&self, _doc: &str, chunks: &[&str]) -> Vec<Option<String>> {
             self.batches_seen.lock().push(chunks.len());
             (0..chunks.len()).map(|i| Some(format!("OK-{i}"))).collect()
         }

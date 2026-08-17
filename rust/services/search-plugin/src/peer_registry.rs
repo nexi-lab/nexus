@@ -351,8 +351,7 @@ mod tests {
     fn is_active_requires_both_peers_and_zones() {
         let peers_only = PeerRegistry::from_lookup(lookup(&[(PEER_PLUGINS_ENV, "x:1")])).unwrap();
         assert!(!peers_only.is_active(), "no zones ⇒ inactive");
-        let zones_only =
-            PeerRegistry::from_lookup(lookup(&[(FANOUT_ZONES_ENV, "root")])).unwrap();
+        let zones_only = PeerRegistry::from_lookup(lookup(&[(FANOUT_ZONES_ENV, "root")])).unwrap();
         assert!(!zones_only.is_active(), "no peers ⇒ inactive");
     }
 

@@ -17,10 +17,10 @@ use std::sync::Arc;
 
 use nexus_plugin_abi::KernelHandle;
 use nexus_search_plugin::index_manager::IndexManager;
+use nexus_search_plugin::query_expansion::QueryExpansionConfig;
 use nexus_search_plugin::query_expansion::{ExpansionError, QueryExpander};
 use nexus_search_plugin::search_proto::search_service_server::SearchService;
 use nexus_search_plugin::search_proto::{QueryRequest, QueryType};
-use nexus_search_plugin::query_expansion::QueryExpansionConfig;
 use nexus_search_plugin::service::{ExpanderHandle, SearchServiceImpl};
 use tempfile::TempDir;
 use tonic::Request;

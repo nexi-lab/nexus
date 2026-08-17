@@ -270,9 +270,13 @@ impl QueryExpander for HttpQueryExpander {
             temperature: Some(0.3),
             max_tokens: None,
         };
-        let content =
-            llm_chat::chat_completion(&self.client, &self.config.endpoint, &self.config.api_key, &body)
-                .map_err(|e| ExpansionError::Http(e.to_string()))?;
+        let content = llm_chat::chat_completion(
+            &self.client,
+            &self.config.endpoint,
+            &self.config.api_key,
+            &body,
+        )
+        .map_err(|e| ExpansionError::Http(e.to_string()))?;
         parse_variants(&content, capped)
             .map_err(|e| ExpansionError::Http(format!("expand content parse: {e}")))
     }

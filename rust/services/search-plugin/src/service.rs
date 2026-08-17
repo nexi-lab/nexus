@@ -392,14 +392,18 @@ impl SearchServiceImpl {
                         err = %e,
                         "search-plugin: query expansion HTTP failed — degrading to single-query path",
                     );
-                    return INSIDE_MIDDLEWARE.scope((), self.query(Request::new(req))).await;
+                    return INSIDE_MIDDLEWARE
+                        .scope((), self.query(Request::new(req)))
+                        .await;
                 }
                 Err(e) => {
                     tracing::warn!(
                         err = %e,
                         "search-plugin: query expansion spawn joined error — degrading to single-query path",
                     );
-                    return INSIDE_MIDDLEWARE.scope((), self.query(Request::new(req))).await;
+                    return INSIDE_MIDDLEWARE
+                        .scope((), self.query(Request::new(req)))
+                        .await;
                 }
             }
         };
@@ -418,7 +422,9 @@ impl SearchServiceImpl {
             // LLM returned nothing useful (empty list, or only an
             // echo of the original).  Straight-through — no fusion
             // overhead for a single arm.
-            return INSIDE_MIDDLEWARE.scope((), self.query(Request::new(req))).await;
+            return INSIDE_MIDDLEWARE
+                .scope((), self.query(Request::new(req)))
+                .await;
         }
 
         let limit = if req.limit == 0 {
@@ -1993,12 +1999,7 @@ fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> I
     // `chunk_document` embed_input) — indexing must never stall
     // because the LLM is down.
     if let Some(gen) = sinks.context_generator {
-        crate::contextual_chunker::apply_contexts(
-            gen,
-            text,
-            &mut chunks,
-            gen.max_chunks_per_doc(),
-        );
+        crate::contextual_chunker::apply_contexts(gen, text, &mut chunks, gen.max_chunks_per_doc());
     }
 
     // FTS side: drop the file's old chunk set, add the fresh one.

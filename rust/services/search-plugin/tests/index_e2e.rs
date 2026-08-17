@@ -278,6 +278,7 @@ impl Harness {
         }
     }
 
+    #[allow(clippy::mut_from_ref)]
     fn mock_mut(&self) -> &mut MockKernel {
         // SAFETY: `self` owns the box; no other reference exists
         // (tests are single-threaded per-test).

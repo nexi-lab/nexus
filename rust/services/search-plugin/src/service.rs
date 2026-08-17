@@ -2034,7 +2034,7 @@ fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> I
     // mtime while the zone's OLD vectors stay live — when the
     // embedder returns, Refresh reads Unchanged forever and
     // semantic/hybrid ranking silently serves pre-edit vectors.
-    let mut ann_complete = !sinks.embed_broken && !(sinks.embedder.is_none() && sinks.zone_has_ann);
+    let mut ann_complete = !(sinks.embed_broken || sinks.embedder.is_none() && sinks.zone_has_ann);
     if let (Some(ann), Some(embedder)) = (sinks.ann, sinks.embedder) {
         let inputs: Vec<&str> = chunks.iter().map(|c| c.embed_input.as_str()).collect();
         match embedder.embed_batch(&inputs) {
@@ -2593,7 +2593,7 @@ fn do_index_documents(
             // forever-keyword-only doc; review R1).
             // Same completion invariant as index_one (review R7):
             // embedder absent + existing ann-* dirs ⇒ stay retryable.
-            let mut ann_complete = !embed_broken && !(embedder.is_none() && zone_has_ann);
+            let mut ann_complete = !(embed_broken || embedder.is_none() && zone_has_ann);
             if let (Some(ann), Some(emb)) = (ann.as_ref(), embedder) {
                 let inputs: Vec<&str> = chunks.iter().map(|c| c.embed_input.as_str()).collect();
                 match emb.embed_batch(&inputs) {

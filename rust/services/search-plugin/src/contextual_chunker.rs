@@ -745,9 +745,9 @@ mod tests {
 
         assert_eq!(chunks[0].embed_input, "OK-0\n\nembed 0");
         assert_eq!(chunks[1].embed_input, "OK-1\n\nembed 1");
-        for i in 2..5 {
+        for (i, chunk) in chunks.iter().enumerate().take(5).skip(2) {
             assert_eq!(
-                chunks[i].embed_input,
+                chunk.embed_input,
                 format!("embed {i}"),
                 "chunk {i} past the cap should be untouched"
             );

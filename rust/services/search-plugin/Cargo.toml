@@ -133,6 +133,15 @@ reqwest = { version = "0.13", default-features = false, features = [
 # so contention is negligible, and parking_lot avoids poisoning.
 parking_lot = "0.12"
 
+# Sharded concurrent hashmap for the peer-fanout dispatcher's
+# per-peer Channel cache.  Same 6.1 pin the sibling `rust/services`
+# crate uses (see rust/services/Cargo.toml).  The old
+# `Mutex<HashMap>` shape serialised every peer's channel lookup on
+# one lock — fine at ≤10 peers, painful past that; DashMap's shard-
+# per-bucket lets independent peers dial concurrently without ever
+# contending.
+dashmap = "6.1"
+
 # Ergonomic error enums for the fts_index module.
 thiserror = "1"
 

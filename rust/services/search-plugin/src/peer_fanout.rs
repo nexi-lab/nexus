@@ -36,11 +36,10 @@
 //! REFUSED unless `NEXUS_SEARCH_ALLOW_INSECURE_PEER=true` per the
 //! standing "refuse plaintext off-loopback" rule.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use parking_lot::Mutex;
+use dashmap::DashMap;
 use tonic::transport::{Channel, ClientTlsConfig, Endpoint};
 
 use crate::peer_registry::{PeerAddress, PeerRegistry};
@@ -116,7 +115,15 @@ pub enum PeerFanoutError {
 /// channels) is lazy and cached.
 pub struct PeerFanoutDispatcher {
     registry: PeerRegistry,
-    channels: Mutex<HashMap<PeerAddress, Channel>>,
+    /// Per-peer cached `Channel`.  DashMap shards internally so
+    /// independent peers dial concurrently — the previous
+    /// `Mutex<HashMap>` serialised every lookup on one lock, which
+    /// caps parallelism at whichever peer wakes the sleeper first
+    /// and only starts to bite past ≤10 peers.  DashMap keeps the
+    /// lookup lock-free for readers and the write side sharded per
+    /// bucket, so a slow peer's dial no longer stalls a fast peer's
+    /// cache hit.
+    channels: DashMap<PeerAddress, Channel>,
 }
 
 impl PeerFanoutDispatcher {
@@ -124,7 +131,7 @@ impl PeerFanoutDispatcher {
     pub fn new(registry: PeerRegistry) -> Self {
         Self {
             registry,
-            channels: Mutex::new(HashMap::new()),
+            channels: DashMap::new(),
         }
     }
 
@@ -204,27 +211,25 @@ impl PeerFanoutDispatcher {
         out
     }
 
-    /// Lazy channel lookup — dial once per peer, reuse the Channel
-    /// forever.  Locking is coarse (a single Mutex around the whole
-    /// map) but the critical section is HashMap lookup + optional
-    /// build, both microsecond-scale; per-peer sharding is over-kill
-    /// at the current ≤10-peer scale.  TODO(perf): shard to a
-    /// DashMap or per-peer OnceLock if peer fleets grow beyond that.
+    /// Lazy channel lookup — dial once per peer, reuse the `Channel`
+    /// forever.  The cache is a [`DashMap`] so independent peer
+    /// lookups never contend, and the read-fast-path holds a per-
+    /// bucket shard lock for the length of a single hash + clone.
+    ///
+    /// Race note: two concurrent misses on the same peer can BOTH
+    /// dial before either publishes.  We accept the extra dial (it
+    /// is bounded by [`CONNECT_TIMEOUT`] and the winner just replaces
+    /// itself in the map) — using [`DashMap::entry`] to serialise
+    /// dials would hold a shard write-lock across an `.await`, which
+    /// would starve every other peer sharing that shard.  Redundant
+    /// dial → transient bandwidth; held lock across await → deadlock
+    /// risk for the sibling peers.  Trade the former.
     async fn get_or_dial(&self, peer: &PeerAddress) -> Result<Channel, PeerFanoutError> {
-        {
-            let g = self.channels.lock();
-            if let Some(c) = g.get(peer) {
-                return Ok(c.clone());
-            }
+        if let Some(c) = self.channels.get(peer) {
+            return Ok(c.clone());
         }
         let channel = self.dial(peer).await?;
-        let mut g = self.channels.lock();
-        // Race — another task may have dialled while we were awaiting.
-        if let Some(existing) = g.get(peer) {
-            return Ok(existing.clone());
-        }
-        g.insert(peer.clone(), channel.clone());
-        Ok(channel)
+        Ok(self.channels.entry(peer.clone()).or_insert(channel).clone())
     }
 
     /// Build a Channel to `peer`, gated by the TLS + loopback rules.

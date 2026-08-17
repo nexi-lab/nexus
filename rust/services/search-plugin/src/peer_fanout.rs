@@ -47,18 +47,11 @@ use crate::peer_registry::{PeerAddress, PeerRegistry};
 use crate::search_proto::search_service_client::SearchServiceClient;
 use crate::search_proto::{QueryRequest, QueryResponse, QueryResult};
 
-/// gRPC metadata header set on outgoing peer fan-out requests so
-/// the receiving plugin knows this is an internal server-to-server
-/// call, not an external client request.  Receivers skip their own
-/// fan-out (else a two-node fleet loops forever) and skip other
-/// outer middleware (e.g. LLM query expansion — a fleet-wide LLM
-/// call storm is a real production hazard).  Header is opaque to
-/// gRPC; tonic lower-cases and forwards it transparently.
-///
-/// Commit 6 of this audit-cleanup PR promotes this constant to a
-/// shared `internal_call` module alongside the task-local guard;
-/// keeping it here for the rename commit keeps the diff focused.
-pub const PEER_FANOUT_MARKER_HEADER: &str = "x-nexus-search-internal";
+/// Re-export of the shared internal-call marker header for backward
+/// compatibility with call sites and tests that already reach through
+/// `peer_fanout::PEER_FANOUT_MARKER_HEADER`.  The SSOT lives in
+/// [`crate::internal_call::INTERNAL_CALL_HEADER`].
+pub use crate::internal_call::INTERNAL_CALL_HEADER as PEER_FANOUT_MARKER_HEADER;
 
 /// Per-peer dial timeout — the connect side of the gRPC channel.
 /// Kept tight so a hosed peer stops the fan-out fast instead of

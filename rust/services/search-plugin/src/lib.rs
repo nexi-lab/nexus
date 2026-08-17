@@ -62,6 +62,7 @@ pub mod fusion;
 pub mod index_manager;
 pub mod index_state;
 pub mod indexed_dirs_state;
+pub mod internal_call;
 pub mod kernel_io;
 pub mod llm_chat;
 pub mod parked_state;

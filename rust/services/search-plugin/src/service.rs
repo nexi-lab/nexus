@@ -22,35 +22,13 @@ use crate::contextual_chunker::{
 };
 use crate::embed_cache::{embed_query_cached, QueryEmbedCache};
 use crate::embedder::{build_default_embedder, EmbedError, Embedder};
-use crate::peer_fanout::{build_default_dispatcher, merge_ranked, SharedPeerFanoutDispatcher};
-
-// Task-local guard set by `query_with_peer_fanout` when it runs the
-// local Query branch alongside the peer fan-out.  The trait method
-// checks it at the top and, if set, skips its own fan-out pre-
-// dispatch — else the local branch would re-fanout and loop within
-// the same process.  Task-locals propagate across await within the
-// same task (which is where the recursion lives).
-tokio::task_local! {
-    static IN_PEER_FANOUT: ();
-}
 use crate::fts_index::FtsHit;
 use crate::fusion::{self, DEFAULT_ALPHA, DEFAULT_RRF_K};
 use crate::index_manager::IndexManager;
+use crate::internal_call::{is_internal_call, INSIDE_MIDDLEWARE};
 use crate::kernel_io::{self, DirEntry, KernelIoError, DT_DIR, DT_REG};
+use crate::peer_fanout::{build_default_dispatcher, merge_ranked, SharedPeerFanoutDispatcher};
 use crate::query_expansion::{build_default_expander, ExpansionCache, QueryExpander};
-
-// Task-local guard set by `query_with_expansion` when it fans a
-// query out into N+1 variants and recursively re-enters `query()`
-// for each.  Its purpose is one-shot re-entry suppression: the
-// trait method checks IN_EXPANSION at the top and, if set, skips
-// the expansion pre-dispatch entirely — otherwise each variant
-// call would try to expand itself and recurse forever.  Task-locals
-// propagate across `.await` within the same task (which is where
-// the recursion lives) and don't cross spawn_blocking (which is
-// fine — the blocking body doesn't touch expansion state).
-tokio::task_local! {
-    static IN_EXPANSION: ();
-}
 use crate::search_proto::search_service_server::SearchService;
 use crate::search_proto::{
     AddIndexedDirectoryRequest, AddIndexedDirectoryResponse, BatchQueryRequest, BatchQueryResponse,
@@ -343,7 +321,7 @@ impl SearchServiceImpl {
     /// [`SearchService::query`] when the outer request hit the
     /// expander pre-dispatch.  Runs the original query plus each
     /// LLM-produced variant through the full single-query pipeline
-    /// (each recursive call sees `IN_EXPANSION` set and skips
+    /// (each recursive call sees `INSIDE_MIDDLEWARE` set and skips
     /// re-expansion), then fuses the ranked lists with
     /// [`crate::fusion::rrf_multi`].
     ///
@@ -376,14 +354,14 @@ impl SearchServiceImpl {
                         err = %e,
                         "search-plugin: query expansion HTTP failed — degrading to single-query path",
                     );
-                    return IN_EXPANSION.scope((), self.query(Request::new(req))).await;
+                    return INSIDE_MIDDLEWARE.scope((), self.query(Request::new(req))).await;
                 }
                 Err(e) => {
                     tracing::warn!(
                         err = %e,
                         "search-plugin: query expansion spawn joined error — degrading to single-query path",
                     );
-                    return IN_EXPANSION.scope((), self.query(Request::new(req))).await;
+                    return INSIDE_MIDDLEWARE.scope((), self.query(Request::new(req))).await;
                 }
             }
         };
@@ -402,7 +380,7 @@ impl SearchServiceImpl {
             // LLM returned nothing useful (empty list, or only an
             // echo of the original).  Straight-through — no fusion
             // overhead for a single arm.
-            return IN_EXPANSION.scope((), self.query(Request::new(req))).await;
+            return INSIDE_MIDDLEWARE.scope((), self.query(Request::new(req))).await;
         }
 
         let limit = if req.limit == 0 {
@@ -423,7 +401,7 @@ impl SearchServiceImpl {
         for variant_q in all_queries {
             let mut variant_req = req.clone();
             variant_req.q = variant_q;
-            let resp = IN_EXPANSION
+            let resp = INSIDE_MIDDLEWARE
                 .scope((), self.query(Request::new(variant_req)))
                 .await?
                 .into_inner();
@@ -480,7 +458,7 @@ impl SearchServiceImpl {
         };
         let local_req = req.clone();
         let peer_req = req.clone();
-        let local_fut = IN_PEER_FANOUT.scope((), self.query(Request::new(local_req)));
+        let local_fut = INSIDE_MIDDLEWARE.scope((), self.query(Request::new(local_req)));
         let peer_fut = fed.fan_out(&peer_req);
         let (local_resp, peer_responses) = tokio::join!(local_fut, peer_fut);
 
@@ -2862,17 +2840,13 @@ impl SearchService for SearchServiceImpl {
         &self,
         request: Request<QueryRequest>,
     ) -> Result<Response<QueryResponse>, Status> {
-        // Internal-call marker — a peer-originated request carries
-        // the PEER_FANOUT_MARKER_HEADER so the receiving plugin
-        // knows to skip its OWN outer middleware (peer fan-out AND
-        // LLM query expansion).  Two reasons: (1) two nodes must
-        // not fan out to each other forever, and (2) a fleet must
-        // not amplify a single client query into N*M LLM calls.
-        // Read BEFORE into_inner() consumes the Request wrapper.
-        let is_internal_call = request
-            .metadata()
-            .get(crate::peer_fanout::PEER_FANOUT_MARKER_HEADER)
-            .is_some();
+        // Outer-middleware guard.  Both peer fan-out and LLM query
+        // expansion are outer-most wrappers that MUST NOT run when
+        // this Query is an internal server-to-server call (either
+        // stamped by an upstream peer's marker header, or a
+        // recursion from our own middleware).  See internal_call.rs
+        // for the two mechanisms behind this single boolean.
+        let skip_outer_middleware = is_internal_call(&request);
         let req = request.into_inner();
         if req.q.is_empty() {
             return Ok(Response::new(QueryResponse {
@@ -2880,34 +2854,25 @@ impl SearchService for SearchServiceImpl {
                 error: Some("q must not be empty".into()),
             }));
         }
-        // Peer fan-out pre-dispatch — runs FIRST (outer-most wrapper).
-        // Internal calls carry the marker header so we skip our own
-        // fan-out; the local branch of a fan-out also sets
-        // IN_PEER_FANOUT so its recursive re-entry into query()
-        // won't re-fanout.  Only fires when the zone is in the
-        // NEXUS_SEARCH_PEER_FANOUT_ZONES allowlist.  Degrades to
-        // local-only on total peer outage — fan-out must never make
-        // search WORSE than the single-node baseline.
-        let already_fanning_out = is_internal_call || IN_PEER_FANOUT.try_with(|_| ()).is_ok();
-        if !already_fanning_out {
+        if !skip_outer_middleware {
+            // Peer fan-out runs FIRST (outer-most wrapper).  Only
+            // fires when the zone is in the
+            // NEXUS_SEARCH_PEER_FANOUT_ZONES allowlist.  Degrades
+            // to local-only on total peer outage — fan-out must
+            // never make search WORSE than the single-node
+            // baseline.
             if let Some(fed) = self.peer_fanout.clone() {
                 if fed.should_fan_out(resolve_zone(&req.zone_id)) {
                     return self.query_with_peer_fanout(req, fed).await;
                 }
             }
-        }
-        // LLM query-expansion pre-dispatch — runs AFTER the fan-out
-        // check so the local branch of a fan-out still benefits from
-        // expansion.  Internal calls (peer-received) skip expansion
-        // for the same reason they skip fan-out: fleet-wide amplif-
-        // ication of LLM cost is a real production hazard.  The
-        // variant fan-out sets IN_EXPANSION so each recursive re-
-        // entry drops straight to the single-query pipeline.  Any
-        // expander error (misconfigured / HTTP / timeout) falls
-        // through to single-query — a broken LLM endpoint never
-        // takes base search down with it.
-        let already_expanding = is_internal_call || IN_EXPANSION.try_with(|_| ()).is_ok();
-        if !already_expanding {
+            // LLM query expansion runs SECOND.  The local branch of
+            // a fan-out (which sets INSIDE_MIDDLEWARE) skips this
+            // wrapper via the outer guard above, so a federated
+            // query still gets one expansion pass at the top —
+            // never N*M passes down the fleet.  Any expander error
+            // (misconfigured / HTTP / timeout) falls through to
+            // single-query.
             if let Some(handle) = self.get_or_init_expander() {
                 return self.query_with_expansion(req, handle).await;
             }

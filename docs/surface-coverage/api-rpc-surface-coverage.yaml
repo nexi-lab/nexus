@@ -4906,26 +4906,6 @@ operations:
   perf_link: human-invoked metadata or inventory surface; not on a request hot path
   gap_issue: null
   owning_issue: 4138
-- id: hub.status
-  module: hub
-  summary: Report hub health / server state via the CLI + MCP admin surface; underpins the sandbox federation control-plane workflow.
-  transports:
-    cli:
-      name: nexus hub status
-      source: src/nexus/cli/commands/hub.py:426
-    mcp:
-      name: nexus_hub_status
-      source: src/nexus/config/tool_profiles.yaml:1
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: 'CLI: nexus hub status [--remote https://hub.example.com/mcp --admin-token "$NEXUS_HUB_ADMIN_TOKEN"]; MCP: tools/call nexus_hub_status {}'
-  correctness_test: tests/unit/cli/test_hub_remote.py::test_remote_status_calls_mcp_tool_and_renders_json
-  perf_class: control
-  perf_link: admin/control-plane status check; not on a query hot path
-  gap_issue: null
-  owning_issue: 4130
 - id: hub.deploy
   module: hub
   summary: Bootstrap a hub deployment from CLI (currently helm/manual).

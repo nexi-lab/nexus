@@ -34,7 +34,6 @@ from nexus.bricks.search.result_builders import cap_chunks_per_page
 from nexus.bricks.search.results import BACKEND_LEG_TIMING_KEYS as _TIMING_LEG_KEYS
 from nexus.bricks.search.search_degraded import (
     FederatedSearchResponse,
-    FederationUnreachableError,
     ZoneFailure,
 )
 from nexus.contracts.protocols.activity import EventKind, Result, emit

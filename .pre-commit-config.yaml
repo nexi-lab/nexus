@@ -83,7 +83,7 @@ repos:
 
       - id: extensions-index-verify
         name: Verify extensions.json is up to date
-        entry: bash -c 'PYTHONPATH=src python -m nexus.extensions.index verify'
+        entry: bash -c 'PYTHONPATH=src python3 -m nexus.extensions.index verify'
         language: system
         pass_filenames: false
         files: ^(src/nexus/extensions/|src/nexus/(backends|bricks|plugins)/.*/_manifest\.py$)

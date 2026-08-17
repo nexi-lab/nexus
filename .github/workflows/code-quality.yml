@@ -173,8 +173,8 @@ jobs:
           find src -name '*.py' -exec wc -l {} \; | sort -rn | head -10 >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
 
-  brick-imports-check:
-    name: Brick Import Boundary Check (regex)
+  service-imports-check:
+    name: Service Import Boundary Check (regex)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -186,12 +186,12 @@ jobs:
 
       - name: Check brick imports
         run: |
-          python .pre-commit-hooks/check_brick_imports.py
+          python .pre-commit-hooks/check_service_imports.py
 
       - name: Report violations
         if: failure()
         run: |
-          echo "::error::Brick import boundary violations detected. See NEXUS-LEGO-ARCHITECTURE.md §1.2."
+          echo "::error::Service import boundary violations detected. See NEXUS-LEGO-ARCHITECTURE.md §1.2."
 
   import-linter:
     name: Architecture Boundary Check (import-linter)

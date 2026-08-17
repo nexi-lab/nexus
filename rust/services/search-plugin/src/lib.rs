@@ -64,6 +64,7 @@ pub mod indexed_dirs_state;
 pub mod kernel_io;
 pub mod parked_state;
 pub mod query_cache;
+pub mod query_expansion;
 pub mod scoring;
 pub mod service;
 pub mod title_index;

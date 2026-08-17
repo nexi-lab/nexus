@@ -17,6 +17,9 @@ use parking_lot::Mutex;
 use tonic::{async_trait, Request, Response, Status};
 
 use crate::ann_index::AnnHit;
+use crate::contextual_chunker::{
+    build_default_generator, ContextGenerator, SharedContextGenerator,
+};
 use crate::embed_cache::{embed_query_cached, QueryEmbedCache};
 use crate::embedder::{build_default_embedder, EmbedError, Embedder};
 use crate::federation::{build_default_dispatcher, merge_ranked, SharedFederationDispatcher};
@@ -199,6 +202,14 @@ pub struct SearchServiceImpl {
     /// the trait `query` handler kicks a peer fan-out concurrent with
     /// the local pipeline and fuses the union.
     federation: Option<SharedFederationDispatcher>,
+    /// Contextual chunking generator (Feature 3 of the plugin-
+    /// migration plan).  `None` when `NEXUS_SEARCH_CONTEXTUAL_
+    /// CHUNKING` is off — indexing runs at zero extra cost.  When
+    /// present, `chunk_document(text)` is followed by an LLM round-
+    /// trip per chunk that yields a short context prefix; the prefix
+    /// is prepended to `Chunk::embed_input` (not `Chunk::text`) so
+    /// semantic recall lifts without polluting BM25.
+    context_generator: Option<SharedContextGenerator>,
 }
 
 /// Bundle used by the query wrapper — the live expander plus the
@@ -258,6 +269,8 @@ impl SearchServiceImpl {
             expander: None,
             federation: None,
             federation_from_env: true,
+            context_generator: None,
+            context_from_env: true,
         }
     }
 
@@ -549,6 +562,12 @@ pub struct SearchServiceBuilder {
     /// to `false` via [`SearchServiceBuilder::no_federation`] so the
     /// process env can't leak in and race a test's expectations.
     federation_from_env: bool,
+    context_generator: Option<SharedContextGenerator>,
+    /// Whether an unset `.context_generator()` should fall back to
+    /// [`build_default_generator`] (env-driven).  Tests default this
+    /// to `false` via [`SearchServiceBuilder::no_context_generator`]
+    /// so process env can't leak into a test's expectations.
+    context_from_env: bool,
 }
 
 impl SearchServiceBuilder {
@@ -620,6 +639,25 @@ impl SearchServiceBuilder {
         self
     }
 
+    /// Inject a pre-built context generator — tests hand in a mock
+    /// [`crate::contextual_chunker::ContextGenerator`] so the wrapper
+    /// doesn't need env parsing.
+    pub fn context_generator(mut self, generator: SharedContextGenerator) -> Self {
+        self.context_generator = Some(generator);
+        self.context_from_env = false;
+        self
+    }
+
+    /// Disable env-driven contextual-chunking resolution.  Tests that
+    /// leave `.context_generator()` unset must call this so a stray
+    /// `NEXUS_SEARCH_CONTEXTUAL_CHUNKING=true` in the host env can't
+    /// leak into the built service.
+    pub fn no_context_generator(mut self) -> Self {
+        self.context_generator = None;
+        self.context_from_env = false;
+        self
+    }
+
     pub fn build(self) -> SearchServiceImpl {
         // Pre-populate the OnceLock when the builder seeded an
         // expander so tests never race the env-driven build.  A
@@ -647,6 +685,21 @@ impl SearchServiceBuilder {
                 }
             }
         });
+        let context_generator = self.context_generator.or_else(|| {
+            if !self.context_from_env {
+                return None;
+            }
+            match build_default_generator() {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::error!(
+                        err = %e,
+                        "search-plugin: contextual chunking misconfigured — disabling for this process",
+                    );
+                    None
+                }
+            }
+        });
         SearchServiceImpl {
             handle: self.handle,
             manager: self
@@ -664,6 +717,7 @@ impl SearchServiceBuilder {
             expander_slot: Arc::new(expander_slot),
             expansion_cache: Arc::new(ExpansionCache::new()),
             federation,
+            context_generator,
         }
     }
 }
@@ -1636,6 +1690,11 @@ struct IndexSinks<'a> {
     /// (safe to finalize) from "vectors exist but the ANN sink is
     /// unreachable" (keep a retry tombstone) — review R6.
     zone_has_ann: bool,
+    /// Feature 3 — optional contextual-chunking generator.  When
+    /// present, `chunk_document(text)` results are enriched via one
+    /// LLM call per chunk (bounded parallelism per doc) BEFORE they
+    /// hit the embedder.  `None` = plain chunk_document output.
+    context_generator: Option<&'a dyn ContextGenerator>,
 }
 
 /// Walk `root_path` and index every regular file.  Same walker Glob +
@@ -1657,6 +1716,7 @@ fn do_index(
     manager: &IndexManager,
     embedder: Option<&Arc<dyn Embedder>>,
     embed_broken: bool,
+    context_generator: Option<&dyn ContextGenerator>,
     root_path: &str,
     zone_id: &str,
     recursive: bool,
@@ -1716,6 +1776,7 @@ fn do_index(
         state: &state,
         embed_broken,
         zone_has_ann: zone_has_ann_dir(manager, zone_id),
+        context_generator,
     };
 
     let mut indexed: u32 = 0;
@@ -1911,11 +1972,21 @@ fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> I
     // P4: chunk the file into semantically-coherent pieces.  The
     // chunker respects markdown-ish heading + code-fence structure
     // and keeps each chunk under the embedder's soft budget.
-    let chunks = crate::chunker::chunk_document(text);
+    let mut chunks = crate::chunker::chunk_document(text);
     if chunks.is_empty() {
         // Whitespace-only file — nothing to index; purge any prior
         // chunks + record per ANN reachability (review R6).
         return record_content_skip(handle, sinks, vfs_path);
+    }
+    // Feature 3 — contextual chunking.  Prepends an LLM-generated
+    // context prefix to every chunk's `embed_input` (leaving `text`
+    // alone so BM25 stays clean).  Only runs when
+    // NEXUS_SEARCH_CONTEXTUAL_CHUNKING=true wired a generator; per-
+    // chunk failures pass through silently (chunk keeps the plain
+    // `chunk_document` embed_input) — indexing must never stall
+    // because the LLM is down.
+    if let Some(gen) = sinks.context_generator {
+        crate::contextual_chunker::apply_contexts(gen, text, &mut chunks);
     }
 
     // FTS side: drop the file's old chunk set, add the fresh one.
@@ -2110,6 +2181,7 @@ fn do_refresh(
     manager: &IndexManager,
     embedder: Option<&Arc<dyn Embedder>>,
     embed_broken: bool,
+    context_generator: Option<&dyn ContextGenerator>,
     root_path: &str,
     zone_id: &str,
     recursive: bool,
@@ -2158,6 +2230,7 @@ fn do_refresh(
         state: &state,
         embed_broken,
         zone_has_ann: zone_has_ann_dir(manager, zone_id),
+        context_generator,
     };
 
     let mut counts = RefreshCounts::default();
@@ -2353,10 +2426,12 @@ fn do_refresh(
 /// the caller rather than sys_read.  Each doc's `zone_id` overrides
 /// the request-level default.  Groups by zone so we open each
 /// zone's FTS + ANN + IndexState once, not per doc.
+#[allow(clippy::too_many_arguments)]
 fn do_index_documents(
     manager: &IndexManager,
     embedder: Option<&Arc<dyn Embedder>>,
     embed_broken: bool,
+    context_generator: Option<&dyn ContextGenerator>,
     default_zone: &str,
     documents: Vec<crate::search_proto::DocumentInput>,
     cache: &crate::query_cache::SharedQueryCache,
@@ -2459,13 +2534,19 @@ fn do_index_documents(
                 total_skipped += 1;
                 continue;
             }
-            let chunks = crate::chunker::chunk_document(&doc.text);
+            let mut chunks = crate::chunker::chunk_document(&doc.text);
             if chunks.is_empty() {
                 if content_skip(&doc.path) {
                     zone_transient += 1;
                 }
                 total_skipped += 1;
                 continue;
+            }
+            // Feature 3 — contextual chunking (see index_one's twin
+            // insertion point).  Per-chunk LLM failure = None ⇒ that
+            // chunk keeps its plain embed_input.
+            if let Some(gen) = context_generator {
+                crate::contextual_chunker::apply_contexts(gen, &doc.text, &mut chunks);
             }
             // FTS: drop-old-then-add-new (mirrors do_index).
             fts.delete_all_chunks(&doc.path);
@@ -3253,6 +3334,7 @@ impl SearchService for SearchServiceImpl {
         // and re-runs Index.  This matches the "graceful degradation"
         // posture SemanticQuery uses.
         let (embedder, embed_broken) = self.indexing_embedder();
+        let context_generator = self.context_generator.clone();
         // Retain the zone id for post-outcome cache invalidation
         // (the closure below moves the owned copy into
         // spawn_blocking).
@@ -3264,6 +3346,7 @@ impl SearchService for SearchServiceImpl {
                 &manager,
                 embedder.as_ref(),
                 embed_broken,
+                context_generator.as_deref(),
                 &root,
                 &zone_id,
                 recursive,
@@ -3320,6 +3403,7 @@ impl SearchService for SearchServiceImpl {
         // embedder means ANN stays unchanged this Refresh; keyword
         // side still incrementally updates.
         let (embedder, embed_broken) = self.indexing_embedder();
+        let context_generator = self.context_generator.clone();
         let zone_for_invalidate = zone_id.clone();
         let outcome = tokio::task::spawn_blocking(move || {
             let _indexing = indexing; // held until the WORK ends, not the RPC
@@ -3328,6 +3412,7 @@ impl SearchService for SearchServiceImpl {
                 &manager,
                 embedder.as_ref(),
                 embed_broken,
+                context_generator.as_deref(),
                 &root,
                 &zone_id,
                 recursive,
@@ -3458,6 +3543,7 @@ impl SearchService for SearchServiceImpl {
         let default_zone = resolve_zone(&req.zone_id).to_string();
         let manager = Arc::clone(&self.manager);
         let (embedder, embed_broken) = self.indexing_embedder();
+        let context_generator = self.context_generator.clone();
         let cache = Arc::clone(&self.query_cache);
         let outcome = tokio::task::spawn_blocking(move || {
             let _indexing = indexing; // held until the WORK ends, not the RPC
@@ -3465,6 +3551,7 @@ impl SearchService for SearchServiceImpl {
                 &manager,
                 embedder.as_ref(),
                 embed_broken,
+                context_generator.as_deref(),
                 &default_zone,
                 req.documents,
                 &cache,

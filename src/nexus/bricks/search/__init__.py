@@ -1,33 +1,19 @@
 """Search module for Nexus.
 
-Kernel-tier surfaces (``SearchService`` for grep/glob + federation
-dispatch) live here alongside the ``QueryRouter`` / ``QueryExpansion``
-helpers and the ``PgFtsBackend`` / ``SqliteFtsBackend`` / ``Zoekt``
-backends that the router and CLI still use.
+Kernel-tier surfaces (``SearchService`` for grep/glob + cross-zone
+federated dispatch) live here alongside the ``QueryRouter`` helpers
+and the ``PgFtsBackend`` / ``SqliteFtsBackend`` / ``Zoekt`` backends
+that the router and CLI still use.
 
 Semantic + hybrid ``/query`` are served by the Rust
 ``nexus-search-plugin`` cdylib; boot wiring lives in
 ``nexus.server.lifespan.search`` and the Python-side proxy is
-``nexus.bricks.search.rust_daemon.RustSearchDaemon``.
+``nexus.bricks.search.rust_daemon.RustSearchDaemon``.  The plugin
+also owns LLM query expansion and contextual chunking internally.
 """
 
 from nexus.bricks.search.config import SearchConfig, search_config_from_env
 from nexus.bricks.search.pg_fts_backend import PgFtsBackend
-from nexus.bricks.search.query_expansion import (
-    CachedQueryExpander,
-    ExpansionResult,
-    ExpansionType,
-    OpenRouterQueryExpander,
-    QueryExpander,
-    QueryExpansion,
-    QueryExpansionConfig,
-    QueryExpansionService,
-    SignalDetector,
-    create_cached_query_expander,
-    create_query_expander,
-    create_query_expansion_service,
-    get_expansion_config_from_env,
-)
 from nexus.bricks.search.query_router import (
     QueryRouter,
     RoutedQuery,
@@ -63,9 +49,6 @@ __all__ = [
     "BaseSearchResult",
     "COMPARISON_WORDS",
     "COMPLEX_PATTERNS",
-    "CachedQueryExpander",
-    "ExpansionResult",
-    "ExpansionType",
     "GLOB_RUST_THRESHOLD",
     "GREP_CACHED_TEXT_RATIO",
     "GREP_PARALLEL_THRESHOLD",
@@ -74,19 +57,13 @@ __all__ = [
     "GREP_ZOEKT_THRESHOLD",
     "GlobStrategy",
     "MULTIHOP_PATTERNS",
-    "OpenRouterQueryExpander",
     "PgFtsBackend",
-    "QueryExpander",
-    "QueryExpansion",
-    "QueryExpansionConfig",
-    "QueryExpansionService",
     "QueryRouter",
     "RoutedQuery",
     "RoutingConfig",
     "SearchConfig",
     "SearchService",
     "SearchStrategy",
-    "SignalDetector",
     "SqliteFtsBackend",
     "TEMPORAL_WORDS",
     "ZoektClient",
@@ -94,10 +71,6 @@ __all__ = [
     "ZoektMatch",
     "build_result_from_row",
     "build_semantic_result",
-    "create_cached_query_expander",
-    "create_query_expander",
-    "create_query_expansion_service",
     "detect_matched_field",
-    "get_expansion_config_from_env",
     "search_config_from_env",
 ]

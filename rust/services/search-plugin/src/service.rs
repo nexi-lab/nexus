@@ -173,20 +173,19 @@ pub struct SearchServiceImpl {
     /// identical queries so we only pay one LLM round-trip per
     /// distinct question.  Shared across all callers.
     expansion_cache: Arc<ExpansionCache>,
-    /// Peer-fanout dispatcher.  `None` when `NEXUS_SEARCH_PEER_PLUGINS`
-    /// is unset OR `NEXUS_SEARCH_PEER_FANOUT_ZONES` is empty — the
-    /// common single-node deployment stays a zero-cost pass-through.
-    /// When present, the trait `query` handler kicks a peer fan-out
-    /// concurrent with the local pipeline and fuses the union.
-    peer_fanout: Option<SharedPeerFanoutDispatcher>,
-    /// Contextual chunking generator (Feature 3 of the plugin-
-    /// migration plan).  `None` when `NEXUS_SEARCH_CONTEXTUAL_
-    /// CHUNKING` is off — indexing runs at zero extra cost.  When
+    /// Peer-fanout dispatcher slot.  Same lazy-OnceLock shape as
+    /// [`expander_slot`]: no env parse until the first Query, single
+    /// misconfig log for the process lifetime, tests pre-populate
+    /// via `.peer_fanout()` (Some) or `.no_peer_fanout()` (None) so
+    /// stray host env can't leak in.
+    peer_fanout_slot: Arc<OnceLock<Option<SharedPeerFanoutDispatcher>>>,
+    /// Contextual chunking generator slot.  Same lazy-OnceLock shape
+    /// as [`expander_slot`] and [`peer_fanout_slot`] above.  When
     /// present, `chunk_document(text)` is followed by an LLM round-
-    /// trip per chunk that yields a short context prefix; the prefix
-    /// is prepended to `Chunk::embed_input` (not `Chunk::text`) so
-    /// semantic recall lifts without polluting BM25.
-    context_generator: Option<SharedContextGenerator>,
+    /// trip per chunk that prepends a context prefix to
+    /// `Chunk::embed_input` (not `Chunk::text`) so semantic recall
+    /// lifts without polluting BM25.
+    context_generator_slot: Arc<OnceLock<Option<SharedContextGenerator>>>,
 }
 
 /// Bundle used by the query wrapper — the live expander plus its
@@ -245,11 +244,9 @@ impl SearchServiceImpl {
             query_cache: None,
             embed_cache: None,
             title_arm: None,
-            expander: None,
-            peer_fanout: None,
-            peer_fanout_from_env: true,
-            context_generator: None,
-            context_from_env: true,
+            expander_pin: None,
+            peer_fanout_pin: None,
+            context_generator_pin: None,
         }
     }
 
@@ -311,6 +308,45 @@ impl SearchServiceImpl {
                     tracing::error!(
                         err = %e,
                         "search-plugin: query expansion misconfigured — \
+                         disabled for this process; fix the env and restart",
+                    );
+                    None
+                }
+            })
+            .clone()
+    }
+
+    /// Peer-fanout dispatcher for THIS process, or `None` if no
+    /// peers are configured / a misconfig was logged (already once)
+    /// on the first Query.  Same lazy-OnceLock story as
+    /// [`get_or_init_expander`].
+    fn get_or_init_peer_fanout(&self) -> Option<SharedPeerFanoutDispatcher> {
+        self.peer_fanout_slot
+            .get_or_init(|| match build_default_dispatcher() {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::error!(
+                        err = %e,
+                        "search-plugin: peer fan-out misconfigured — \
+                         disabled for this process; fix the env and restart",
+                    );
+                    None
+                }
+            })
+            .clone()
+    }
+
+    /// Contextual-chunking generator for THIS process, or `None` if
+    /// the kill-switch is off / misconfig was logged.  Same lazy-
+    /// OnceLock story as the sibling getters above.
+    fn get_or_init_context_generator(&self) -> Option<SharedContextGenerator> {
+        self.context_generator_slot
+            .get_or_init(|| match build_default_generator() {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::error!(
+                        err = %e,
+                        "search-plugin: contextual chunking misconfigured — \
                          disabled for this process; fix the env and restart",
                     );
                     None
@@ -534,19 +570,20 @@ pub struct SearchServiceBuilder {
     query_cache: Option<crate::query_cache::SharedQueryCache>,
     embed_cache: Option<Arc<QueryEmbedCache>>,
     title_arm: Option<bool>,
-    expander: Option<Arc<ExpanderHandle>>,
-    peer_fanout: Option<SharedPeerFanoutDispatcher>,
-    /// Whether an unset `.peer_fanout()` should fall back to
-    /// [`build_default_dispatcher`] (env-driven).  Tests default this
-    /// to `false` via [`SearchServiceBuilder::no_peer_fanout`] so the
-    /// process env can't leak in and race a test's expectations.
-    peer_fanout_from_env: bool,
-    context_generator: Option<SharedContextGenerator>,
-    /// Whether an unset `.context_generator()` should fall back to
-    /// [`build_default_generator`] (env-driven).  Tests default this
-    /// to `false` via [`SearchServiceBuilder::no_context_generator`]
-    /// so process env can't leak into a test's expectations.
-    context_from_env: bool,
+    /// Three-state per-feature pin:
+    /// - `None` (default)  = build() leaves the slot empty; first
+    ///   Query lazily env-parses.
+    /// - `Some(None)`      = explicit opt-out (`.no_foo()` called);
+    ///   build() pre-populates the slot with None so env is skipped.
+    /// - `Some(Some(x))`   = explicit inject (`.foo(x)` called);
+    ///   build() pre-populates the slot with Some(x).
+    ///
+    /// Same three-state shape for all three lazy features so a
+    /// first-timer reading the builder sees ONE contract, not three
+    /// bespoke ones.
+    expander_pin: Option<Option<Arc<ExpanderHandle>>>,
+    peer_fanout_pin: Option<Option<SharedPeerFanoutDispatcher>>,
+    context_generator_pin: Option<Option<SharedContextGenerator>>,
 }
 
 impl SearchServiceBuilder {
@@ -590,95 +627,53 @@ impl SearchServiceBuilder {
         self
     }
 
-    /// Pre-seed the LLM query expander slot — tests inject a mock
-    /// [`crate::query_expansion::QueryExpander`] here (wrapped in
-    /// [`ExpanderHandle`] with the desired `max_variants`) so
-    /// [`get_or_init_expander`] skips the env-driven build step.
+    // ── Lazy-feature triad: all three follow the same `.foo(x)` /
+    // `.no_foo()` shape.  Not calling either method = build() leaves
+    // the slot empty and the first Query lazily reads env.  Tests
+    // that must not race the process env call `.no_foo()`.
+
+    /// Pre-seed the LLM query-expander slot — tests inject a mock
+    /// [`crate::query_expansion::QueryExpander`] wrapped in
+    /// [`ExpanderHandle`] so [`get_or_init_expander`] skips the env
+    /// build step.
     pub fn expander(mut self, expander: Arc<ExpanderHandle>) -> Self {
-        self.expander = Some(expander);
+        self.expander_pin = Some(Some(expander));
         self
     }
 
-    /// Inject a pre-built peer-fanout dispatcher — tests use this to
-    /// point the wrapper at a locally-hosted mock peer without going
-    /// through env parsing.
+    /// Explicit opt-out: build the service with the expander slot
+    /// pinned to None so a stray `NEXUS_SEARCH_QUERY_EXPANSION=true`
+    /// in the host env can't leak in.
+    pub fn no_expander(mut self) -> Self {
+        self.expander_pin = Some(None);
+        self
+    }
+
+    /// Pre-seed the peer-fanout dispatcher slot.
     pub fn peer_fanout(mut self, dispatcher: SharedPeerFanoutDispatcher) -> Self {
-        self.peer_fanout = Some(dispatcher);
-        self.peer_fanout_from_env = false;
+        self.peer_fanout_pin = Some(Some(dispatcher));
         self
     }
 
-    /// Disable env-driven peer-fanout resolution for this builder.
-    /// Tests that leave `.peer_fanout()` unset must call this so a
-    /// stray `NEXUS_SEARCH_PEER_PLUGINS` in the process env doesn't
-    /// silently wire a dispatcher the test never asked for.
+    /// Explicit opt-out — see `.no_expander()` for the pattern.
     pub fn no_peer_fanout(mut self) -> Self {
-        self.peer_fanout = None;
-        self.peer_fanout_from_env = false;
+        self.peer_fanout_pin = Some(None);
         self
     }
 
-    /// Inject a pre-built context generator — tests hand in a mock
-    /// [`crate::contextual_chunker::ContextGenerator`] so the wrapper
-    /// doesn't need env parsing.
+    /// Pre-seed the contextual-chunking generator slot.
     pub fn context_generator(mut self, generator: SharedContextGenerator) -> Self {
-        self.context_generator = Some(generator);
-        self.context_from_env = false;
+        self.context_generator_pin = Some(Some(generator));
         self
     }
 
-    /// Disable env-driven contextual-chunking resolution.  Tests that
-    /// leave `.context_generator()` unset must call this so a stray
-    /// `NEXUS_SEARCH_CONTEXTUAL_CHUNKING=true` in the host env can't
-    /// leak into the built service.
+    /// Explicit opt-out — see `.no_expander()` for the pattern.
     pub fn no_context_generator(mut self) -> Self {
-        self.context_generator = None;
-        self.context_from_env = false;
+        self.context_generator_pin = Some(None);
         self
     }
 
     pub fn build(self) -> SearchServiceImpl {
-        // Pre-populate the OnceLock when the builder seeded an
-        // expander so tests never race the env-driven build.  A
-        // fresh (unseeded) OnceLock triggers env parse on the first
-        // Query.
-        let expander_slot: OnceLock<Option<Arc<ExpanderHandle>>> = OnceLock::new();
-        if let Some(h) = self.expander {
-            // set() only fails when already initialised; a freshly-
-            // built OnceLock is empty by construction, so ignoring
-            // the Result is safe.
-            let _ = expander_slot.set(Some(h));
-        }
-        let peer_fanout = self.peer_fanout.or_else(|| {
-            if !self.peer_fanout_from_env {
-                return None;
-            }
-            match build_default_dispatcher() {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::error!(
-                        err = %e,
-                        "search-plugin: peer fan-out misconfigured — disabling for this process",
-                    );
-                    None
-                }
-            }
-        });
-        let context_generator = self.context_generator.or_else(|| {
-            if !self.context_from_env {
-                return None;
-            }
-            match build_default_generator() {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::error!(
-                        err = %e,
-                        "search-plugin: contextual chunking misconfigured — disabling for this process",
-                    );
-                    None
-                }
-            }
-        });
         SearchServiceImpl {
             handle: self.handle,
             manager: self
@@ -693,12 +688,30 @@ impl SearchServiceBuilder {
                 .unwrap_or_else(|| Arc::new(QueryEmbedCache::from_env())),
             indexing_ops: Arc::new(std::sync::atomic::AtomicU32::new(0)),
             title_arm: self.title_arm,
-            expander_slot: Arc::new(expander_slot),
+            expander_slot: Arc::new(pin_to_once_lock(self.expander_pin)),
             expansion_cache: Arc::new(ExpansionCache::new()),
-            peer_fanout,
-            context_generator,
+            peer_fanout_slot: Arc::new(pin_to_once_lock(self.peer_fanout_pin)),
+            context_generator_slot: Arc::new(pin_to_once_lock(self.context_generator_pin)),
         }
     }
+}
+
+/// Translate a builder-side three-state pin into a `OnceLock` state:
+/// - `None` pin      → empty OnceLock (first Query lazily env-parses)
+/// - `Some(None)` pin → OnceLock pre-populated with None (env skipped)
+/// - `Some(Some(x))` pin → OnceLock pre-populated with Some(x)
+///
+/// One helper for all three lazy features so the build() body stays
+/// three lines instead of thirty.  Generic to avoid dispatching on
+/// the T type — the pin shape carries the choice.
+fn pin_to_once_lock<T>(pin: Option<Option<T>>) -> OnceLock<Option<T>> {
+    let slot = OnceLock::new();
+    if let Some(value) = pin {
+        // set() only fails when already initialised; a freshly-built
+        // OnceLock is empty, so ignoring the Result is safe.
+        let _ = slot.set(value);
+    }
+    slot
 }
 
 // ── Glob ──────────────────────────────────────────────────────────
@@ -2863,7 +2876,7 @@ impl SearchService for SearchServiceImpl {
             // to local-only on total peer outage — fan-out must
             // never make search WORSE than the single-node
             // baseline.
-            if let Some(fed) = self.peer_fanout.clone() {
+            if let Some(fed) = self.get_or_init_peer_fanout() {
                 if fed.should_fan_out(resolve_zone(&req.zone_id)) {
                     return self.query_with_peer_fanout(req, fed).await;
                 }
@@ -3301,7 +3314,7 @@ impl SearchService for SearchServiceImpl {
         // and re-runs Index.  This matches the "graceful degradation"
         // posture SemanticQuery uses.
         let (embedder, embed_broken) = self.indexing_embedder();
-        let context_generator = self.context_generator.clone();
+        let context_generator = self.get_or_init_context_generator();
         // Retain the zone id for post-outcome cache invalidation
         // (the closure below moves the owned copy into
         // spawn_blocking).
@@ -3370,7 +3383,7 @@ impl SearchService for SearchServiceImpl {
         // embedder means ANN stays unchanged this Refresh; keyword
         // side still incrementally updates.
         let (embedder, embed_broken) = self.indexing_embedder();
-        let context_generator = self.context_generator.clone();
+        let context_generator = self.get_or_init_context_generator();
         let zone_for_invalidate = zone_id.clone();
         let outcome = tokio::task::spawn_blocking(move || {
             let _indexing = indexing; // held until the WORK ends, not the RPC
@@ -3510,7 +3523,7 @@ impl SearchService for SearchServiceImpl {
         let default_zone = resolve_zone(&req.zone_id).to_string();
         let manager = Arc::clone(&self.manager);
         let (embedder, embed_broken) = self.indexing_embedder();
-        let context_generator = self.context_generator.clone();
+        let context_generator = self.get_or_init_context_generator();
         let cache = Arc::clone(&self.query_cache);
         let outcome = tokio::task::spawn_blocking(move || {
             let _indexing = indexing; // held until the WORK ends, not the RPC

@@ -66,6 +66,4 @@ def is_all_peers_failed(response: FederatedSearchResponse) -> bool:
     """
     if not response.zones_searched and not response.zones_failed:
         return True
-    return bool(
-        not response.results and len(response.zones_failed) >= len(response.zones_searched)
-    )
+    return bool(not response.results and len(response.zones_failed) >= len(response.zones_searched))

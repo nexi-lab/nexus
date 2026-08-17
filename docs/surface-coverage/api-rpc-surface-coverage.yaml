@@ -7698,7 +7698,7 @@ operations:
       source: src/nexus/bricks/search/search_service.py:1841
     http:
       name: POST /api/v2/search/glob
-      source: src/nexus/server/api/v2/routers/search.py:1624
+      source: src/nexus/server/api/v2/routers/search.py:1627
     mcp:
       name: nexus_glob
       source: src/nexus/config/tool_profiles.yaml:1
@@ -7725,7 +7725,7 @@ operations:
       source: src/nexus/bricks/search/search_service.py:2151
     http:
       name: POST /api/v2/search/grep
-      source: src/nexus/server/api/v2/routers/search.py:1501
+      source: src/nexus/server/api/v2/routers/search.py:1504
     mcp:
       name: nexus_grep
       source: src/nexus/config/tool_profiles.yaml:1
@@ -7778,7 +7778,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/index
-      source: src/nexus/server/api/v2/routers/search.py:1686
+      source: src/nexus/server/api/v2/routers/search.py:1689
   profiles:
     lite: supported
     sandbox: supported
@@ -7813,7 +7813,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/query/batch
-      source: src/nexus/server/api/v2/routers/search.py:873
+      source: src/nexus/server/api/v2/routers/search.py:876
   profiles:
     lite: supported
     sandbox: supported
@@ -7830,7 +7830,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/refresh
-      source: src/nexus/server/api/v2/routers/search.py:1793
+      source: src/nexus/server/api/v2/routers/search.py:1796
   profiles:
     lite: supported
     sandbox: supported
@@ -12201,14 +12201,6 @@ parity_warnings:
   missing:
   - grpc_typed
   - http
-  - mcp
-  - sdk
-- operation_id: search.expand
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
   - mcp
   - sdk
 - operation_id: search.glob

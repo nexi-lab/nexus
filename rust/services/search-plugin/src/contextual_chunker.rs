@@ -5,14 +5,6 @@
 //! recall lifts on ambiguous queries; BM25 stays clean because the
 //! context never enters `chunk_text`.
 //!
-//! # Why it lives inside the plugin
-//!
-//! Mirrors the Python
-//! `nexus.bricks.search.contextual_chunking.ContextualChunker`.
-//! Pulling it into the plugin's indexing path makes a pure-cluster
-//! deployment feature-complete for contextual chunking without
-//! needing the `nexus-server` container.
-//!
 //! # Contract
 //!
 //! Opt-in ONLY.  `NEXUS_SEARCH_CONTEXTUAL_CHUNKING=true` gates the

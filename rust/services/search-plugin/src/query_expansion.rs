@@ -2,15 +2,6 @@
 //! that widens a single user query into N paraphrased variants
 //! before the Query pipeline fans them out and fuses the union.
 //!
-//! # Why it lives inside the plugin
-//!
-//! The Python `nexus.bricks.search.query_expansion.QueryExpansionService`
-//! ran the same job upstream of the (now-deleted) Python SearchDaemon.
-//! Pulling it into the plugin's `Query` handler makes a pure-cluster
-//! deployment — nexusd-cluster + `nexus-search-plugin` cdylib alone —
-//! feature-complete for LLM-widened search without needing the
-//! `nexus-server` container.
-//!
 //! # Contract
 //!
 //! Opt-in ONLY.  `NEXUS_SEARCH_QUERY_EXPANSION=true` gates the

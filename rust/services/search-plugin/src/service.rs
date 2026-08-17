@@ -428,26 +428,41 @@ impl SearchServiceImpl {
         };
         let rrf_k = FusionOpts::from_request(&req).rrf_k;
 
-        // Fan out sequentially — the recursive `query` call already
-        // fans keyword+semantic+title internally onto the blocking
-        // pool, and running the whole outer set concurrently would
-        // multiply worker-pool contention by (N+1) with no reduction
-        // in wall-clock (each variant hits the same cache-warmed
-        // sinks after the first).  Keep it linear until measurements
-        // demand otherwise.
-        let mut per_variant: Vec<Vec<QueryResult>> = Vec::with_capacity(all_queries.len());
-        for variant_q in all_queries {
+        // Fan out concurrently — hybrid queries already fire kw+sem
+        // +title in parallel via spawn_blocking, but running N+1
+        // variants sequentially still adds N × (LLM + query) of
+        // wall-clock even when each variant hits cache-warmed sinks.
+        // futures::join_all lets each variant's blocking legs
+        // schedule against the default tokio blocking pool (512
+        // threads) — (N+1)×3 tasks is a rounding error at N ≤ 5.
+        // Every variant runs INSIDE INSIDE_MIDDLEWARE.scope so its
+        // re-entry into query() bypasses this same wrapper.
+        let variant_futures = all_queries.into_iter().map(|variant_q| {
             let mut variant_req = req.clone();
             variant_req.q = variant_q;
-            let resp = INSIDE_MIDDLEWARE
-                .scope((), self.query(Request::new(variant_req)))
-                .await?
-                .into_inner();
-            // Skip broken/empty variant contributions — they add
-            // nothing to the fusion and would surface as a spurious
-            // 0-score arm that penalises real hits.
-            if resp.error.is_none() && !resp.results.is_empty() {
-                per_variant.push(resp.results);
+            INSIDE_MIDDLEWARE.scope((), self.query(Request::new(variant_req)))
+        });
+        let joined = futures_util::future::join_all(variant_futures).await;
+        let mut per_variant: Vec<Vec<QueryResult>> = Vec::with_capacity(joined.len());
+        for resp in joined {
+            // spawn_blocking join errors surface as Err(Status) here
+            // — treat those the same as the variant returning an
+            // empty result, so a single bad variant doesn't kill the
+            // whole query.  Broken/empty variant contributions are
+            // also skipped: they'd surface as spurious 0-score arms
+            // that penalise real hits.
+            let inner = match resp {
+                Ok(r) => r.into_inner(),
+                Err(status) => {
+                    tracing::warn!(
+                        err = %status,
+                        "search-plugin: variant query returned Status — dropping from fusion",
+                    );
+                    continue;
+                }
+            };
+            if inner.error.is_none() && !inner.results.is_empty() {
+                per_variant.push(inner.results);
             }
         }
 

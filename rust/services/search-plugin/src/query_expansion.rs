@@ -208,49 +208,8 @@ pub trait QueryExpander: Send + Sync {
 }
 
 // ── HttpQueryExpander ─────────────────────────────────────────────
-//
-// Blocking HTTP against an OpenAI-compatible chat-completions
-// endpoint.  Same reasoning as `RemoteEmbedder`: every call site in
-// the service runs inside `spawn_blocking`, and reqwest::blocking
-// drives its own dedicated runtime thread — the plugin's tokio pool
-// is never re-entered by a synchronous send.
 
-#[derive(serde::Serialize)]
-struct ChatMessage<'a> {
-    role: &'a str,
-    content: &'a str,
-}
-
-#[derive(serde::Serialize)]
-struct ChatRequest<'a> {
-    model: &'a str,
-    messages: Vec<ChatMessage<'a>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    response_format: Option<ResponseFormat<'a>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    temperature: Option<f32>,
-}
-
-#[derive(serde::Serialize)]
-struct ResponseFormat<'a> {
-    #[serde(rename = "type")]
-    type_: &'a str,
-}
-
-#[derive(serde::Deserialize)]
-struct ChatResponse {
-    choices: Vec<ChatChoice>,
-}
-
-#[derive(serde::Deserialize)]
-struct ChatChoice {
-    message: ChatChoiceMessage,
-}
-
-#[derive(serde::Deserialize)]
-struct ChatChoiceMessage {
-    content: String,
-}
+use crate::llm_chat::{self, ChatMessage, ChatRequest, ResponseFormat};
 
 /// Live HTTP query expander.  Sends a single chat-completion request
 /// asking for JSON `{"variants": [...]}` and parses the assistant's
@@ -266,10 +225,8 @@ impl HttpQueryExpander {
     /// Build the HTTP client for `config`.  No network I/O happens
     /// here.
     pub fn new(config: QueryExpansionConfig) -> Result<Self, ExpansionError> {
-        let client = reqwest::blocking::Client::builder()
-            .timeout(config.timeout)
-            .build()
-            .map_err(|e| ExpansionError::Http(format!("expander HTTP client: {e}")))?;
+        let client = llm_chat::build_client(config.timeout)
+            .map_err(|e| ExpansionError::Http(e.to_string()))?;
         Ok(Self { client, config })
     }
 }
@@ -311,33 +268,11 @@ impl QueryExpander for HttpQueryExpander {
                 type_: "json_object",
             }),
             temperature: Some(0.3),
+            max_tokens: None,
         };
-        let resp = self
-            .client
-            .post(&self.config.endpoint)
-            .bearer_auth(&self.config.api_key)
-            .json(&body)
-            .send()
-            .map_err(|e| {
-                ExpansionError::Http(format!("expand request to {}: {e}", self.config.endpoint))
-            })?;
-
-        let status = resp.status();
-        if !status.is_success() {
-            let excerpt: String = resp.text().unwrap_or_default().chars().take(300).collect();
-            return Err(ExpansionError::Http(format!(
-                "expand endpoint returned {status}: {excerpt}",
-            )));
-        }
-        let parsed: ChatResponse = resp
-            .json()
-            .map_err(|e| ExpansionError::Http(format!("expand response parse: {e}")))?;
-        let content = parsed
-            .choices
-            .into_iter()
-            .next()
-            .map(|c| c.message.content)
-            .ok_or_else(|| ExpansionError::Http("expand response had no choices".to_string()))?;
+        let content =
+            llm_chat::chat_completion(&self.client, &self.config.endpoint, &self.config.api_key, &body)
+                .map_err(|e| ExpansionError::Http(e.to_string()))?;
         parse_variants(&content, capped)
             .map_err(|e| ExpansionError::Http(format!("expand content parse: {e}")))
     }

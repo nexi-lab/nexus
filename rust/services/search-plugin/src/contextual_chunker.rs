@@ -224,36 +224,7 @@ pub trait ContextGenerator: Send + Sync {
 
 // ── HttpContextGenerator ─────────────────────────────────────────
 
-#[derive(serde::Serialize)]
-struct ChatMessage<'a> {
-    role: &'a str,
-    content: &'a str,
-}
-
-#[derive(serde::Serialize)]
-struct ChatRequest<'a> {
-    model: &'a str,
-    messages: Vec<ChatMessage<'a>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    temperature: Option<f32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    max_tokens: Option<u32>,
-}
-
-#[derive(serde::Deserialize)]
-struct ChatResponse {
-    choices: Vec<ChatChoice>,
-}
-
-#[derive(serde::Deserialize)]
-struct ChatChoice {
-    message: ChatChoiceMessage,
-}
-
-#[derive(serde::Deserialize)]
-struct ChatChoiceMessage {
-    content: String,
-}
+use crate::llm_chat::{self, ChatMessage, ChatRequest};
 
 /// System prompt — cargo-culted from Anthropic's original contextual-
 /// retrieval blog and tightened for our indexing pipeline.  Kept
@@ -280,10 +251,8 @@ impl HttpContextGenerator {
     /// Build the HTTP client for `config`.  No network I/O happens
     /// here.
     pub fn new(config: ContextualChunkingConfig) -> Result<Self, ContextualError> {
-        let client = reqwest::blocking::Client::builder()
-            .timeout(config.timeout)
-            .build()
-            .map_err(|e| ContextualError::Http(format!("generator HTTP client: {e}")))?;
+        let client = llm_chat::build_client(config.timeout)
+            .map_err(|e| ContextualError::Http(e.to_string()))?;
         Ok(Self { client, config })
     }
 
@@ -312,37 +281,17 @@ impl HttpContextGenerator {
                     content: &user,
                 },
             ],
+            response_format: None,
             temperature: Some(0.0),
             max_tokens: Some(120),
         };
-        let resp = self
-            .client
-            .post(&self.config.endpoint)
-            .bearer_auth(&self.config.api_key)
-            .json(&body)
-            .send()
-            .map_err(|e| {
-                ContextualError::Http(format!(
-                    "contextual request to {}: {e}",
-                    self.config.endpoint
-                ))
-            })?;
-        let status = resp.status();
-        if !status.is_success() {
-            let excerpt: String = resp.text().unwrap_or_default().chars().take(300).collect();
-            return Err(ContextualError::Http(format!(
-                "contextual endpoint returned {status}: {excerpt}",
-            )));
-        }
-        let parsed: ChatResponse = resp
-            .json()
-            .map_err(|e| ContextualError::Http(format!("contextual response parse: {e}")))?;
-        let content = parsed
-            .choices
-            .into_iter()
-            .next()
-            .map(|c| c.message.content)
-            .unwrap_or_default();
+        let content = llm_chat::chat_completion(
+            &self.client,
+            &self.config.endpoint,
+            &self.config.api_key,
+            &body,
+        )
+        .map_err(|e| ContextualError::Http(e.to_string()))?;
         let trimmed = content.trim();
         if trimmed.is_empty() {
             return Ok(None);

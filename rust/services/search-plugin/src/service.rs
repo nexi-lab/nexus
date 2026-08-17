@@ -1978,7 +1978,12 @@ fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> I
     // `chunk_document` embed_input) — indexing must never stall
     // because the LLM is down.
     if let Some(gen) = sinks.context_generator {
-        crate::contextual_chunker::apply_contexts(gen, text, &mut chunks);
+        crate::contextual_chunker::apply_contexts(
+            gen,
+            text,
+            &mut chunks,
+            gen.max_chunks_per_doc(),
+        );
     }
 
     // FTS side: drop the file's old chunk set, add the fresh one.
@@ -2538,7 +2543,12 @@ fn do_index_documents(
             // insertion point).  Per-chunk LLM failure = None ⇒ that
             // chunk keeps its plain embed_input.
             if let Some(gen) = context_generator {
-                crate::contextual_chunker::apply_contexts(gen, &doc.text, &mut chunks);
+                crate::contextual_chunker::apply_contexts(
+                    gen,
+                    &doc.text,
+                    &mut chunks,
+                    gen.max_chunks_per_doc(),
+                );
             }
             // FTS: drop-old-then-add-new (mirrors do_index).
             fts.delete_all_chunks(&doc.path);

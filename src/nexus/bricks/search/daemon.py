@@ -344,42 +344,6 @@ class SearchDaemon:
             "skipped_count": resp.skipped_count,
         }
 
-    async def index(
-        self,
-        root_path: str,
-        *,
-        zone_id: str | None = None,
-        recursive: bool = True,
-        max_docs: int = 0,
-    ) -> dict[str, Any]:
-        """Forward a walker-driven Index request to the Rust plugin.
-
-        Post-P12 companion to :meth:`index_documents` — the plugin walks
-        the VFS from ``root_path`` via ``sys_readdir``, reads each file,
-        chunks + indexes.  Used by ``SearchService.semantic_search_index``
-        when the wired daemon is the plugin proxy (this shim), so the
-        pre-existing ``nexus search index <path>`` CLI seeds the plugin
-        instead of only the SANDBOX in-process indexer (#4628 residual —
-        the P12 shim gate #4628 landed the query-path routing but the
-        index-path routing was still SANDBOX-only).
-
-        ``max_docs=0`` maps to the plugin's server-side default (10_000).
-        """
-        req = search_pb2.IndexRequest(
-            root_path=root_path,
-            zone_id=zone_id or "",
-            recursive=recursive,
-            max_docs=max_docs,
-        )
-        resp = await self._get_stub().Index(req)
-        # Fail closed on populated error, matching index_documents.
-        if resp.HasField("error"):
-            raise RuntimeError(f"plugin index failed: {resp.error}")
-        return {
-            "indexed_count": resp.indexed_count,
-            "skipped_count": resp.skipped_count,
-        }
-
     async def notify_file_change(
         self,
         path: str,

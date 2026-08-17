@@ -18,7 +18,8 @@ These tests pin the fixed gate:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from unittest.mock import MagicMock
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -42,26 +43,27 @@ class _FakePluginShim:
         self._target = "localhost:2126"
         self.requests: list[object] = []
         self._rows = rows
-        self.index_calls: list[tuple[str, bool]] = []
-        self.index_result: dict[str, int] = {"indexed_count": 22, "skipped_count": 0}
-        self.index_should_raise: Exception | None = None
+        # Recorded documents that the index_documents RPC received —
+        # tests inspect this to confirm the fanout enumerated the
+        # right corpus before POSTing.
+        self.index_documents_calls: list[list[dict[str, Any]]] = []
+        self.index_documents_result: dict[str, Any] = {"indexed": 3, "skipped": [], "skipped_count": 0}
+        self.index_documents_should_raise: Exception | None = None
 
     async def search(self, request: object) -> list[_DaemonRow]:
         self.requests.append(request)
         return self._rows
 
-    async def index(
+    async def index_documents(
         self,
-        root_path: str,
+        documents: list[dict[str, Any]],
         *,
         zone_id: str | None = None,  # noqa: ARG002
-        recursive: bool = True,
-        max_docs: int = 0,  # noqa: ARG002
-    ) -> dict[str, int]:
-        self.index_calls.append((root_path, recursive))
-        if self.index_should_raise is not None:
-            raise self.index_should_raise
-        return self.index_result
+    ) -> dict[str, Any]:
+        self.index_documents_calls.append(documents)
+        if self.index_documents_should_raise is not None:
+            raise self.index_documents_should_raise
+        return self.index_documents_result
 
 
 def _make_service(daemon: object | None) -> SearchService:
@@ -110,35 +112,71 @@ class TestPluginShimGate:
     async def test_index_path_routes_through_plugin_when_wired(self) -> None:
         """#4628 residual: the P12 shim gate at ``semantic_search``
         (query path) recognises ``_target`` and delegates to the plugin.
-        The companion ``semantic_search_index`` (index path) had NO such
-        gate — the CLI ``nexus search index <dir>`` fell into SANDBOX
-        indexing while the plugin saw zero docs, and the HERB QUALITY
-        GATE hit 0/8 on the edge topology (Docker Publish red since
-        2026-08-11).  This test pins that the index path now prefers
-        the plugin when a plugin-transport daemon is wired."""
+        The companion ``semantic_search_index`` (index path) had NO
+        such gate — the CLI ``nexus search index <dir>`` fell into
+        SANDBOX indexing while the plugin saw zero docs, and the HERB
+        QUALITY GATE hit 0/8 on the edge topology (Docker Publish red
+        since 2026-08-11).
+
+        The plugin path enumerates + reads through the SANDBOX
+        indexer's ``file_reader`` (nexus-server's own kernel VFS —
+        which the plugin's sidecar kernel cannot see through the
+        shared /workspace bind mount) and POSTs the bytes via
+        IndexDocuments, so the fanout is topology-independent."""
         shim = _FakePluginShim(rows=[])
         svc = _make_service(shim)
-        result = await svc.semantic_search_index("/workspace/demo", recursive=True)
-        assert shim.index_calls == [("/workspace/demo", True)]
-        # Aggregate indexed_count is synthesized into the per-path
-        # mapping shape callers already read from the SANDBOX arms.
-        assert result == {"/workspace/demo": 22}
+
+        # Fake SANDBOX indexer supplies the file_reader shim +
+        # _read_content coroutine that the plugin-arm re-uses for
+        # enumeration.  ``_indexing_service`` is a real attribute on
+        # SearchService, so wire it via setattr.
+        indexer = MagicMock()
+        indexer._file_reader = MagicMock()
+        indexer._file_reader.list_files = AsyncMock(
+            return_value=[
+                {"path": "/w/a.md"},
+                {"path": "/w/b.md"},
+                {"path": "/w/skip.png"},  # binary — filtered
+            ]
+        )
+        indexer._read_content = AsyncMock(side_effect=lambda p: f"body-of-{p}")
+        svc._indexing_service = indexer  # noqa: SLF001
+
+        result = await svc.semantic_search_index("/w", recursive=True)
+
+        # Binary is filtered; two text docs POSTed to plugin.
+        assert len(shim.index_documents_calls) == 1
+        posted = shim.index_documents_calls[0]
+        assert [d["path"] for d in posted] == ["/w/a.md", "/w/b.md"]
+        assert posted[0]["text"] == "body-of-/w/a.md"
+        # Aggregate indexed count is surfaced via the per-path mapping
+        # shape callers already read from the SANDBOX arms.
+        assert result == {"/w": 3}
 
     @pytest.mark.asyncio
     async def test_index_path_falls_back_to_sandbox_on_plugin_error(self) -> None:
-        """A plugin index() raise (server down, transient RPC failure)
-        must not fail the CLI — the SANDBOX arm below still runs, so
-        a mixed-topology deployment retains at least the local
-        indexing capability."""
+        """A plugin index_documents() raise (server down, transient RPC
+        failure) must not fail the CLI — the SANDBOX arm below still
+        runs, so a mixed-topology deployment retains at least the
+        local indexing capability."""
         shim = _FakePluginShim(rows=[])
-        shim.index_should_raise = RuntimeError("plugin unreachable")
+        shim.index_documents_should_raise = RuntimeError("plugin unreachable")
         svc = _make_service(shim)
-        # No _indexing_service / _pipeline_indexer wired → returns {}
-        # instead of raising; the CLI reports "Files indexed: 0"
-        # rather than crashing.
-        result = await svc.semantic_search_index("/workspace/demo")
+
+        indexer = MagicMock()
+        indexer._file_reader = MagicMock()
+        indexer._file_reader.list_files = AsyncMock(return_value=[{"path": "/w/a.md"}])
+        indexer._read_content = AsyncMock(return_value="body")
+        # Wire index_directory too so the SANDBOX fallback can run and
+        # produces a documented shape.
+        indexer.index_directory = AsyncMock(return_value={})
+        indexer.index_document = AsyncMock(side_effect=ValueError("dir not file"))
+        svc._indexing_service = indexer  # noqa: SLF001
+
+        result = await svc.semantic_search_index("/w", recursive=True)
+        # Plugin was tried once + raised; SANDBOX ran too (empty result).
+        assert len(shim.index_documents_calls) == 1
         assert result == {}
-        assert shim.index_calls == [("/workspace/demo", True)]
 
     @pytest.mark.asyncio
     async def test_index_path_no_daemon_uses_sandbox(self) -> None:

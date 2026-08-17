@@ -189,6 +189,57 @@ def _result_to_dict(r: Any) -> dict[str, Any]:
     }
 
 
+async def _collect_docs_for_plugin(
+    indexer: Any,
+    path: str,
+    recursive: bool,
+) -> list[dict[str, Any]]:
+    """Enumerate + read files under ``path`` via the SANDBOX indexer's
+    file_reader, producing the ``[{path, text, ...}]`` payload the
+    plugin's ``IndexDocuments`` RPC (and ``SearchDaemon.index_documents``
+    shim) expects.
+
+    Reuses ``indexer._file_reader`` for enumeration + read because that
+    reader resolves paths via THIS container's kernel VFS — which does
+    contain the files, unlike the plugin sidecar's disjoint kernel.
+    Filters binaries the same way the sandbox indexer does.
+
+    Returns an empty list when nothing indexable is under ``path``;
+    callers short-circuit rather than sending an empty POST.
+    """
+    from nexus.bricks.search.indexing_service import _BINARY_EXTENSIONS
+
+    reader = indexer._file_reader  # noqa: SLF001
+
+    if not recursive:
+        # Single-file caller — read directly; the underlying reader
+        # raises for a non-existent or non-text file, which the caller
+        # already handles as a fallback trigger.
+        content = await indexer._read_content(path)  # noqa: SLF001
+        return [{"path": path, "text": content}]
+
+    files_result = await reader.list_files(path, recursive=True)
+    files = files_result.items if hasattr(files_result, "items") else files_result
+
+    docs: list[dict[str, Any]] = []
+    for entry in files:
+        file_path = (
+            entry if isinstance(entry, str) else entry.get("path") or entry.get("name", "")
+        )
+        if not file_path or file_path.endswith("/"):
+            continue
+        if file_path.endswith(_BINARY_EXTENSIONS):
+            continue
+        try:
+            content = await indexer._read_content(file_path)  # noqa: SLF001
+        except Exception:
+            # Skip individually rather than failing the whole seed —
+            # matches the sandbox indexer's per-file try/except.
+            continue
+        docs.append({"path": file_path, "text": content})
+    return docs
+
+
 class SearchService:
     """Independent search service extracted from NexusFS.
 
@@ -4799,37 +4850,64 @@ class SearchService:
         Raises:
             ValueError: If semantic search is not initialized
         """
-        # Prefer the P12 plugin when a plugin-transport daemon is wired
-        # (#4628 residual — the shim gate at ``semantic_search``
-        # recognises ``_target`` for the QUERY path, but the INDEX path
-        # here stayed SANDBOX-only until now).  Without this arm the
-        # CLI ``nexus search index <dir>`` reports "Files indexed: N"
-        # from the SANDBOX in-process indexer while the plugin sees
-        # zero — an edge deployment's HERB gate hits hybrid on an
-        # unseeded plugin and returns 0/8 (Docker Publish HERB gate
-        # 2026-08-11..).
+        # Prefer the P12 plugin when a plugin-transport daemon is
+        # wired (#4628 residual — the shim gate at ``semantic_search``
+        # recognises ``_target`` for the QUERY path, but the INDEX
+        # path here stayed SANDBOX-only until now).  Without this arm
+        # the CLI ``nexus search index <dir>`` reports "Files indexed:
+        # N" from the SANDBOX in-process indexer while the plugin
+        # sees zero — an edge deployment's HERB gate hits hybrid on
+        # an unseeded plugin and returns 0/8 (Docker Publish HERB
+        # gate 2026-08-11..).
+        #
+        # We use the EXPLICIT-payload path (``IndexDocuments``), not
+        # the plugin's walker (``Index`` RPC).  In the sidecar edge
+        # topology the plugin runs in a separate container whose
+        # kernel VFS is disjoint from nexus-server's — a shared
+        # /workspace bind mount populates the OS FS but NOT the
+        # plugin's in-memory VFS, so the plugin's own walk finds
+        # nothing.  Reading files here (via ``_indexing_service``'s
+        # file_reader, which resolves from THIS container's VFS) and
+        # POSTing the bytes is topology-independent.
         #
         # Plugin-less deployments and SANDBOX-only builds are
         # unaffected: they take the ``_indexing_service`` /
         # ``_pipeline_indexer`` arms below unchanged.
         daemon = getattr(self, "_search_daemon", None)
-        if daemon is not None and getattr(daemon, "_target", None) is not None:
+        indexer = self._indexing_service
+        if (
+            daemon is not None
+            and getattr(daemon, "_target", None) is not None
+            and indexer is not None
+        ):
             try:
-                resp = await daemon.index(path, recursive=recursive)
+                docs = await _collect_docs_for_plugin(indexer, path, recursive)
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
-                    "plugin index at %s failed (%s); falling back to SANDBOX indexer",
+                    "enumerate for plugin index at %s failed (%s); "
+                    "falling back to SANDBOX indexer",
                     path,
                     exc,
                 )
-            else:
-                # Return per-path count shape that callers already read.
-                # The plugin's IndexResponse is aggregate (indexed_count
-                # + skipped_count), not per-path — synthesize a
-                # single-entry mapping keyed by the request root so the
-                # CLI's "Files indexed" tally stays meaningful.
-                indexed = int(resp.get("indexed_count", 0))
-                return {path: indexed} if indexed >= 0 else {}
+                docs = None
+
+            if docs is not None:
+                if not docs:
+                    # Nothing indexable under ``path`` — SANDBOX would
+                    # also find nothing; short-circuit with a clean 0.
+                    return {path: 0}
+                try:
+                    resp = await daemon.index_documents(docs)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "plugin index_documents at %s failed (%s); "
+                        "falling back to SANDBOX indexer",
+                        path,
+                        exc,
+                    )
+                else:
+                    indexed = int(resp.get("indexed", 0))
+                    return {path: indexed} if indexed >= 0 else {}
 
         # Prefer IndexingService (Issue #2075)
         if self._indexing_service is not None:

@@ -19,6 +19,17 @@ use tonic::{async_trait, Request, Response, Status};
 use crate::ann_index::AnnHit;
 use crate::embed_cache::{embed_query_cached, QueryEmbedCache};
 use crate::embedder::{build_default_embedder, EmbedError, Embedder};
+use crate::federation::{build_default_dispatcher, merge_ranked, SharedFederationDispatcher};
+
+// Task-local guard set by `query_with_federation` when it runs the
+// local Query branch alongside the peer fan-out.  The trait method
+// checks it at the top and, if set, skips its own federation
+// pre-dispatch — else the local branch would re-federate and loop
+// within the same process.  Task-locals propagate across await
+// within the same task (which is where the recursion lives).
+tokio::task_local! {
+    static IN_FEDERATION: ();
+}
 use crate::fts_index::FtsHit;
 use crate::fusion::{self, DEFAULT_ALPHA, DEFAULT_RRF_K};
 use crate::index_manager::IndexManager;
@@ -181,6 +192,13 @@ pub struct SearchServiceImpl {
     /// identical queries so we only pay one LLM round-trip per
     /// distinct question.  Shared across all callers.
     expansion_cache: Arc<ExpansionCache>,
+    /// Federation dispatcher (Feature 2 of the plugin-migration plan).
+    /// `None` when `NEXUS_SEARCH_PEER_PLUGINS` is unset OR
+    /// `NEXUS_SEARCH_FEDERATED_ZONES` is empty — the common single-
+    /// node deployment stays a zero-cost pass-through.  When present,
+    /// the trait `query` handler kicks a peer fan-out concurrent with
+    /// the local pipeline and fuses the union.
+    federation: Option<SharedFederationDispatcher>,
 }
 
 /// Bundle used by the query wrapper — the live expander plus the
@@ -238,6 +256,8 @@ impl SearchServiceImpl {
             embed_cache: None,
             title_arm: None,
             expander: None,
+            federation: None,
+            federation_from_env: true,
         }
     }
 
@@ -426,6 +446,64 @@ impl SearchServiceImpl {
         }))
     }
 
+    /// Cross-node fan-out for federation.  Runs the local query
+    /// branch (via task_local-guarded recursion into the trait
+    /// `query()`) concurrently with the peer dispatch, then fuses
+    /// the union with [`crate::federation::merge_ranked`].
+    ///
+    /// Failure posture: any peer that fails logs a warning and drops
+    /// out of the fusion.  A total peer outage returns local-only
+    /// results (federation must never make a query WORSE than the
+    /// pre-federation baseline).
+    async fn query_with_federation(
+        &self,
+        req: QueryRequest,
+        fed: SharedFederationDispatcher,
+    ) -> Result<Response<QueryResponse>, Status> {
+        let opts = FusionOpts::from_request(&req);
+        let limit = if req.limit == 0 {
+            DEFAULT_QUERY_LIMIT
+        } else {
+            req.limit as usize
+        };
+        let local_req = req.clone();
+        let peer_req = req.clone();
+        let local_fut = IN_FEDERATION.scope((), self.query(Request::new(local_req)));
+        let peer_fut = fed.fan_out(&peer_req);
+        let (local_resp, peer_responses) = tokio::join!(local_fut, peer_fut);
+
+        let mut lists: Vec<Vec<QueryResult>> = Vec::new();
+        match local_resp {
+            Ok(resp) => {
+                let inner = resp.into_inner();
+                if inner.error.is_some() {
+                    tracing::warn!(
+                        err = ?inner.error,
+                        "search-plugin federation: local query returned an error — dropping from fusion",
+                    );
+                } else if !inner.results.is_empty() {
+                    lists.push(inner.results);
+                }
+            }
+            Err(status) => {
+                tracing::warn!(
+                    err = %status,
+                    "search-plugin federation: local query joined with Status — dropping from fusion",
+                );
+            }
+        }
+        for resp in peer_responses {
+            if resp.error.is_none() && !resp.results.is_empty() {
+                lists.push(resp.results);
+            }
+        }
+        let fused = merge_ranked(&lists, opts.rrf_k, opts.chunks_per_page, limit);
+        Ok(Response::new(QueryResponse {
+            results: fused,
+            error: None,
+        }))
+    }
+
     /// Embedder resolution for INDEXING paths (review R2).  Returns
     /// `(embedder, embed_broken)` — distinguishing "no embedder
     /// configured" (clean NotAvailable ⇒ keyword-only mode, docs
@@ -465,6 +543,12 @@ pub struct SearchServiceBuilder {
     embed_cache: Option<Arc<QueryEmbedCache>>,
     title_arm: Option<bool>,
     expander: Option<Arc<ExpanderHandle>>,
+    federation: Option<SharedFederationDispatcher>,
+    /// Whether an unset `.federation()` should fall back to
+    /// [`build_default_dispatcher`] (env-driven).  Tests default this
+    /// to `false` via [`SearchServiceBuilder::no_federation`] so the
+    /// process env can't leak in and race a test's expectations.
+    federation_from_env: bool,
 }
 
 impl SearchServiceBuilder {
@@ -517,6 +601,25 @@ impl SearchServiceBuilder {
         self
     }
 
+    /// Inject a pre-built federation dispatcher — tests use this to
+    /// point the wrapper at a locally-hosted mock peer without going
+    /// through env parsing.
+    pub fn federation(mut self, dispatcher: SharedFederationDispatcher) -> Self {
+        self.federation = Some(dispatcher);
+        self.federation_from_env = false;
+        self
+    }
+
+    /// Disable env-driven federation resolution for this builder.
+    /// Tests that leave `.federation()` unset must call this so a
+    /// stray `NEXUS_SEARCH_PEER_PLUGINS` in the process env doesn't
+    /// silently wire a dispatcher the test never asked for.
+    pub fn no_federation(mut self) -> Self {
+        self.federation = None;
+        self.federation_from_env = false;
+        self
+    }
+
     pub fn build(self) -> SearchServiceImpl {
         // Pre-populate the OnceLock when the builder seeded an
         // expander so tests never race the env-driven build.  A
@@ -529,6 +632,21 @@ impl SearchServiceBuilder {
             // the Result is safe.
             let _ = expander_slot.set(Some(h));
         }
+        let federation = self.federation.or_else(|| {
+            if !self.federation_from_env {
+                return None;
+            }
+            match build_default_dispatcher() {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::error!(
+                        err = %e,
+                        "search-plugin: federation misconfigured — disabling for this process",
+                    );
+                    None
+                }
+            }
+        });
         SearchServiceImpl {
             handle: self.handle,
             manager: self
@@ -545,6 +663,7 @@ impl SearchServiceBuilder {
             title_arm: self.title_arm,
             expander_slot: Arc::new(expander_slot),
             expansion_cache: Arc::new(ExpansionCache::new()),
+            federation,
         }
     }
 }
@@ -2663,6 +2782,15 @@ impl SearchService for SearchServiceImpl {
         &self,
         request: Request<QueryRequest>,
     ) -> Result<Response<QueryResponse>, Status> {
+        // Federation guard — a peer-originated request carries the
+        // FEDERATION_MARKER_HEADER so the receiving plugin's
+        // wrapper skips its own fan-out (else two nodes federate
+        // each other forever).  Read BEFORE into_inner() consumes
+        // the Request wrapper.
+        let is_peer_call = request
+            .metadata()
+            .get(crate::federation::FEDERATION_MARKER_HEADER)
+            .is_some();
         let req = request.into_inner();
         if req.q.is_empty() {
             return Ok(Response::new(QueryResponse {
@@ -2670,13 +2798,34 @@ impl SearchService for SearchServiceImpl {
                 error: Some("q must not be empty".into()),
             }));
         }
-        // LLM query-expansion pre-dispatch.  Runs ONLY at the outer
-        // call — variant fan-out sets IN_EXPANSION so each recursive
-        // re-entry drops straight to the single-query pipeline.  The
-        // wrapper itself degrades to single-query on any expander
-        // error (misconfigured / HTTP / timeout), so a broken LLM
-        // endpoint never takes base search down with it.
-        let already_expanding = IN_EXPANSION.try_with(|_| ()).is_ok();
+        // Federation pre-dispatch — runs FIRST (outer-most wrapper).
+        // A peer-originated request carries the marker header so we
+        // skip our own fan-out; the local federation branch also
+        // sets IN_FEDERATION so its recursive re-entry into query()
+        // won't re-federate.  Only fires when the zone is in the
+        // NEXUS_SEARCH_FEDERATED_ZONES allowlist.  Degrades to local-
+        // only on total peer outage — federation must never make
+        // search WORSE than the pre-federation baseline.
+        let already_federating = is_peer_call || IN_FEDERATION.try_with(|_| ()).is_ok();
+        if !already_federating {
+            if let Some(fed) = self.federation.clone() {
+                if fed.should_federate(resolve_zone(&req.zone_id)) {
+                    return self.query_with_federation(req, fed).await;
+                }
+            }
+        }
+        // LLM query-expansion pre-dispatch — runs AFTER the federation
+        // check so the local branch of a federated fan-out still
+        // benefits from expansion.  Peer receivers see the marker
+        // header (which also implies they should skip expansion on
+        // their side to avoid N*M LLM calls across the fleet) —
+        // easiest way is to gate on the same is_peer_call flag.
+        // Variant fan-out sets IN_EXPANSION so each recursive re-
+        // entry drops straight to the single-query pipeline.  Any
+        // expander error (misconfigured / HTTP / timeout) falls
+        // through to single-query — a broken LLM endpoint never
+        // takes base search down with it.
+        let already_expanding = is_peer_call || IN_EXPANSION.try_with(|_| ()).is_ok();
         if !already_expanding {
             if let Some(handle) = self.get_or_init_expander() {
                 return self.query_with_expansion(req, handle).await;

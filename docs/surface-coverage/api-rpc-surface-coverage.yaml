@@ -7686,24 +7686,6 @@ operations:
   perf_link: thin CLI wrapper; underlying grep/query/index paths carry the performance classification
   gap_issue: null
   owning_issue: 4129
-- id: search.expand
-  module: search
-  summary: HTTP query-expansion endpoint for improving weak search queries through provider-backed expansion.
-  transports:
-    http:
-      name: POST /api/v2/search/expand
-      source: src/nexus/server/api/v2/routers/search.py:1837
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: POST /api/v2/search/expand {"query":"kubernetes deployment troubleshooting"}
-  correctness_test: tests/e2e/server/test_query_expansion_e2e.py; tests/unit/bricks/search/test_sandbox_hybrid_rrf.py; tests/e2e/self_contained/test_search_surface_live_e2e.py
-  perf_class: control
-  perf_link: provider-dependent expansion path; tests/e2e/self_contained/test_search_surface_live_e2e.py verifies no-key failure
-    path
-  gap_issue: null
-  owning_issue: 4135
 - id: search.glob
   module: search
   summary: Find accessible file paths by glob pattern across CLI, HTTP, RPC, and MCP surfaces.

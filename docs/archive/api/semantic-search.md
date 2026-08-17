@@ -2,6 +2,16 @@
 
 ← [API Documentation](README.md)
 
+> **⚠️ Archived (2026-08-17):** the code samples on this page still
+> reference `nexus.bricks.search.contextual_chunking`, `query_expansion`,
+> and the `initialize_semantic_search(contextual_chunking=True, ...)`
+> parameters — all removed.  Contextual chunking and LLM query
+> expansion now live inside the Rust `nexus-search-plugin` cdylib
+> and are configured via `NEXUS_SEARCH_CONTEXTUAL_CHUNKING*` and
+> `NEXUS_SEARCH_QUERY_EXPANSION*` env vars on the plugin side.
+> This page is kept for historical context; do not follow the code
+> samples verbatim.
+
 This document describes semantic search capabilities using vector embeddings.
 
 Nexus provides semantic search capabilities using vector embeddings for natural language queries.

@@ -172,7 +172,10 @@ class GlobStrategy(StrEnum):
 # Query Analysis Patterns (Issue #1499)
 # =============================================================================
 # Shared constants for query complexity estimation and routing.
-# Used by query_router.py and available for query_expansion.py, ranking.py.
+# Used by query_router.py and ranking.py.  LLM-driven query expansion
+# has moved into the Rust nexus-search-plugin (its own query_expansion
+# module reads these directly if needed; there is no in-tree Python
+# expansion consumer any more).
 
 COMPARISON_WORDS: frozenset[str] = frozenset(
     {"vs", "versus", "compare", "comparison", "difference", "between"}

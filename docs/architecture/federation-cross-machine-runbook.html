@@ -89,6 +89,20 @@ Two anchors, registered out-of-band, make the trust *mutual*: the **forward** an
 
 ---
 
+## Customer-side connectivity
+
+A customer whose machines must mesh across NAT or multiple sites needs an overlay control plane of its own — the customer-side analogue of our headscale. It always lives in the customer's own **CA_B** trust domain: the corporate `headscale.sudoprivacy.com` never extends across the org boundary, so network isolation follows the same edge as CA isolation — one control plane per customer, never a shared multi-tenant one. The edge box ships the headscale image, and `deploy` places the control plane by topology:
+
+| Customer topology | Control plane runs | Public IP |
+|---|---|---|
+| **Single site** — machines + box on one LAN | on the box, on its LAN IP (the bundled image) | none |
+| **Multi-site** — machines across the internet | a per-customer instance we host (`mesh-<customer>.sudoprivacy.com`, its own DB + ACL) that the box and the customer's machines join | yes |
+| **Sovereign / air-gapped** — no control metadata may leave the customer | on the customer's own VM, or on the box on-prem behind a reverse-tunnel ingress we front | customer-side |
+
+The box is a *client*, not a provisioner: when it needs a public control plane it requests one over the broker channel, our orchestration stands the per-customer instance up and returns its control URL + a pre-auth key, and the box and the customer's machines enroll against it. Only the control metadata (node registration, key coordination, netmap) transits that instance — the actual node-to-node traffic is peer-to-peer WireGuard and never reaches us. The box carries the image so the *same* artifact serves both placements: it runs locally for a single site, or the customer's machines join the instance we host for a multi-site fleet.
+
+---
+
 ## Part 2 — Cloud SaaS super-agent + cross-org broker (Tencent Beijing)
 
 ### The VM

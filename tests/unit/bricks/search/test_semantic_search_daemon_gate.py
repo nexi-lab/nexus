@@ -47,7 +47,11 @@ class _FakePluginShim:
         # tests inspect this to confirm the fanout enumerated the
         # right corpus before POSTing.
         self.index_documents_calls: list[list[dict[str, Any]]] = []
-        self.index_documents_result: dict[str, Any] = {"indexed": 3, "skipped": [], "skipped_count": 0}
+        self.index_documents_result: dict[str, Any] = {
+            "indexed": 3,
+            "skipped": [],
+            "skipped_count": 0,
+        }
         self.index_documents_should_raise: Exception | None = None
 
     async def search(self, request: object) -> list[_DaemonRow]:

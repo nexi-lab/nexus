@@ -9,6 +9,7 @@
 //! starving another gRPC request handling on the same executor.
 
 use std::sync::Arc;
+use std::sync::OnceLock;
 
 use futures_util::StreamExt;
 use nexus_plugin_abi::KernelHandle;
@@ -22,6 +23,20 @@ use crate::fts_index::FtsHit;
 use crate::fusion::{self, DEFAULT_ALPHA, DEFAULT_RRF_K};
 use crate::index_manager::IndexManager;
 use crate::kernel_io::{self, DirEntry, KernelIoError, DT_DIR, DT_REG};
+use crate::query_expansion::{build_default_expander, ExpansionCache, QueryExpander};
+
+// Task-local guard set by `query_with_expansion` when it fans a
+// query out into N+1 variants and recursively re-enters `query()`
+// for each.  Its purpose is one-shot re-entry suppression: the
+// trait method checks IN_EXPANSION at the top and, if set, skips
+// the expansion pre-dispatch entirely — otherwise each variant
+// call would try to expand itself and recurse forever.  Task-locals
+// propagate across `.await` within the same task (which is where
+// the recursion lives) and don't cross spawn_blocking (which is
+// fine — the blocking body doesn't touch expansion state).
+tokio::task_local! {
+    static IN_EXPANSION: ();
+}
 use crate::search_proto::search_service_server::SearchService;
 use crate::search_proto::{
     AddIndexedDirectoryRequest, AddIndexedDirectoryResponse, BatchQueryRequest, BatchQueryResponse,
@@ -154,6 +169,27 @@ pub struct SearchServiceImpl {
     /// read `NEXUS_SEARCH_TITLE_ARM` per query (production);
     /// `Some(_)` pins it (tests must not race the process env).
     title_arm: Option<bool>,
+    /// LLM query-expansion state.  Lazily populated on the first
+    /// Query — `None` inside means the kill-switch is off (or
+    /// misconfiguration was logged once and disabled for the process
+    /// lifetime, per the standing "fail loud on partial config"
+    /// rule); `Some` means expansion runs.  A single `OnceLock`
+    /// means: no re-parse of env per query, no double-logging on
+    /// misconfig, no runtime-reconfig via env (change env ⇒ restart).
+    expander_slot: Arc<OnceLock<Option<Arc<ExpanderHandle>>>>,
+    /// Small bounded cache of `(query → variants)` — dedups repeated
+    /// identical queries so we only pay one LLM round-trip per
+    /// distinct question.  Shared across all callers.
+    expansion_cache: Arc<ExpansionCache>,
+}
+
+/// Bundle used by the query wrapper — the live expander plus the
+/// config-derived variant cap.  Boxed together so a builder-injected
+/// mock carries the same `max_variants` control as an env-configured
+/// live expander.
+pub struct ExpanderHandle {
+    pub expander: Arc<dyn QueryExpander>,
+    pub max_variants: usize,
 }
 
 /// RAII increment of [`SearchServiceImpl::indexing_ops`].
@@ -201,6 +237,7 @@ impl SearchServiceImpl {
             query_cache: None,
             embed_cache: None,
             title_arm: None,
+            expander: None,
         }
     }
 
@@ -230,6 +267,163 @@ impl SearchServiceImpl {
         }
         *slot = Some(Arc::clone(&built));
         Ok(built)
+    }
+
+    /// LLM query expander for THIS process, or `None` if the
+    /// kill-switch is off / config was misconfigured (already logged
+    /// once at first-call time so a second query does not re-log).
+    /// Init is lazy — a keyword-only deployment that never wires the
+    /// expander pays nothing.
+    fn get_or_init_expander(&self) -> Option<Arc<ExpanderHandle>> {
+        self.expander_slot
+            .get_or_init(|| match build_default_expander() {
+                Ok(None) => None,
+                Ok(Some((expander, cfg))) => {
+                    tracing::info!(
+                        endpoint = %cfg.endpoint,
+                        model = %cfg.model,
+                        max_variants = cfg.max_variants,
+                        "search-plugin: query expansion enabled",
+                    );
+                    let expander: Arc<dyn QueryExpander> = Arc::from(expander);
+                    Some(Arc::new(ExpanderHandle {
+                        expander,
+                        max_variants: cfg.max_variants,
+                    }))
+                }
+                Err(e) => {
+                    // Log ONCE — subsequent get_or_init calls hit the
+                    // cached None and stay silent.  Env-triggered
+                    // reconfig requires a plugin restart, deliberate
+                    // (op-side simplicity > log flood suppression).
+                    tracing::error!(
+                        err = %e,
+                        "search-plugin: query expansion misconfigured — \
+                         disabled for this process; fix the env and restart",
+                    );
+                    None
+                }
+            })
+            .clone()
+    }
+
+    /// N+1 variant fan-out for LLM query expansion.  Called by
+    /// [`SearchService::query`] when the outer request hit the
+    /// expander pre-dispatch.  Runs the original query plus each
+    /// LLM-produced variant through the full single-query pipeline
+    /// (each recursive call sees `IN_EXPANSION` set and skips
+    /// re-expansion), then fuses the ranked lists with
+    /// [`crate::fusion::rrf_multi`].
+    ///
+    /// Failure posture: any expander error (misconfig / HTTP / bad
+    /// JSON / spawn-join) degrades to a single-shot original-query
+    /// call.  The trait method's contract to the caller is
+    /// preserved regardless of LLM health.
+    async fn query_with_expansion(
+        &self,
+        req: QueryRequest,
+        handle: Arc<ExpanderHandle>,
+    ) -> Result<Response<QueryResponse>, Status> {
+        // Cache lookup first — dedupes the LLM round-trip across
+        // callers who hit the plugin with the same phrasing.
+        let variants: Vec<String> = if let Some(cached) = self.expansion_cache.get(&req.q) {
+            cached
+        } else {
+            let query_owned = req.q.clone();
+            let max = handle.max_variants;
+            let expander = Arc::clone(&handle.expander);
+            let joined =
+                tokio::task::spawn_blocking(move || expander.expand(&query_owned, max)).await;
+            match joined {
+                Ok(Ok(v)) => {
+                    self.expansion_cache.insert(req.q.clone(), v.clone());
+                    v
+                }
+                Ok(Err(e)) => {
+                    tracing::warn!(
+                        err = %e,
+                        "search-plugin: query expansion HTTP failed — degrading to single-query path",
+                    );
+                    return IN_EXPANSION.scope((), self.query(Request::new(req))).await;
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        err = %e,
+                        "search-plugin: query expansion spawn joined error — degrading to single-query path",
+                    );
+                    return IN_EXPANSION.scope((), self.query(Request::new(req))).await;
+                }
+            }
+        };
+
+        // Union `[original + distinct-variants]` — drop echoes of the
+        // original so we don't double-weight it in the fusion.
+        let mut all_queries: Vec<String> = Vec::with_capacity(variants.len() + 1);
+        all_queries.push(req.q.clone());
+        for v in variants {
+            let trimmed = v.trim();
+            if !trimmed.is_empty() && trimmed != req.q.trim() {
+                all_queries.push(trimmed.to_string());
+            }
+        }
+        if all_queries.len() == 1 {
+            // LLM returned nothing useful (empty list, or only an
+            // echo of the original).  Straight-through — no fusion
+            // overhead for a single arm.
+            return IN_EXPANSION.scope((), self.query(Request::new(req))).await;
+        }
+
+        let limit = if req.limit == 0 {
+            DEFAULT_QUERY_LIMIT
+        } else {
+            req.limit as usize
+        };
+        let rrf_k = FusionOpts::from_request(&req).rrf_k;
+
+        // Fan out sequentially — the recursive `query` call already
+        // fans keyword+semantic+title internally onto the blocking
+        // pool, and running the whole outer set concurrently would
+        // multiply worker-pool contention by (N+1) with no reduction
+        // in wall-clock (each variant hits the same cache-warmed
+        // sinks after the first).  Keep it linear until measurements
+        // demand otherwise.
+        let mut per_variant: Vec<Vec<QueryResult>> = Vec::with_capacity(all_queries.len());
+        for variant_q in all_queries {
+            let mut variant_req = req.clone();
+            variant_req.q = variant_q;
+            let resp = IN_EXPANSION
+                .scope((), self.query(Request::new(variant_req)))
+                .await?
+                .into_inner();
+            // Skip broken/empty variant contributions — they add
+            // nothing to the fusion and would surface as a spurious
+            // 0-score arm that penalises real hits.
+            if resp.error.is_none() && !resp.results.is_empty() {
+                per_variant.push(resp.results);
+            }
+        }
+
+        if per_variant.is_empty() {
+            // Every arm (including original) returned empty or
+            // errored — legitimate empty response.
+            return Ok(Response::new(QueryResponse {
+                results: Vec::new(),
+                error: None,
+            }));
+        }
+
+        let arms: Vec<(fusion::ArmKind, &[QueryResult])> = per_variant
+            .iter()
+            .map(|r| (fusion::ArmKind::Chunk, r.as_slice()))
+            .collect();
+        let mut fused = fusion::rrf_multi(&arms, rrf_k);
+        if fused.len() > limit {
+            fused.truncate(limit);
+        }
+        Ok(Response::new(QueryResponse {
+            results: fused,
+            error: None,
+        }))
     }
 
     /// Embedder resolution for INDEXING paths (review R2).  Returns
@@ -270,6 +464,7 @@ pub struct SearchServiceBuilder {
     query_cache: Option<crate::query_cache::SharedQueryCache>,
     embed_cache: Option<Arc<QueryEmbedCache>>,
     title_arm: Option<bool>,
+    expander: Option<Arc<ExpanderHandle>>,
 }
 
 impl SearchServiceBuilder {
@@ -313,7 +508,27 @@ impl SearchServiceBuilder {
         self
     }
 
+    /// Pre-seed the LLM query expander slot — tests inject a mock
+    /// [`crate::query_expansion::QueryExpander`] here (wrapped in
+    /// [`ExpanderHandle`] with the desired `max_variants`) so
+    /// [`get_or_init_expander`] skips the env-driven build step.
+    pub fn expander(mut self, expander: Arc<ExpanderHandle>) -> Self {
+        self.expander = Some(expander);
+        self
+    }
+
     pub fn build(self) -> SearchServiceImpl {
+        // Pre-populate the OnceLock when the builder seeded an
+        // expander so tests never race the env-driven build.  A
+        // fresh (unseeded) OnceLock triggers env parse on the first
+        // Query.
+        let expander_slot: OnceLock<Option<Arc<ExpanderHandle>>> = OnceLock::new();
+        if let Some(h) = self.expander {
+            // set() only fails when already initialised; a freshly-
+            // built OnceLock is empty by construction, so ignoring
+            // the Result is safe.
+            let _ = expander_slot.set(Some(h));
+        }
         SearchServiceImpl {
             handle: self.handle,
             manager: self
@@ -328,6 +543,8 @@ impl SearchServiceBuilder {
                 .unwrap_or_else(|| Arc::new(QueryEmbedCache::from_env())),
             indexing_ops: Arc::new(std::sync::atomic::AtomicU32::new(0)),
             title_arm: self.title_arm,
+            expander_slot: Arc::new(expander_slot),
+            expansion_cache: Arc::new(ExpansionCache::new()),
         }
     }
 }
@@ -2452,6 +2669,18 @@ impl SearchService for SearchServiceImpl {
                 results: Vec::new(),
                 error: Some("q must not be empty".into()),
             }));
+        }
+        // LLM query-expansion pre-dispatch.  Runs ONLY at the outer
+        // call — variant fan-out sets IN_EXPANSION so each recursive
+        // re-entry drops straight to the single-query pipeline.  The
+        // wrapper itself degrades to single-query on any expander
+        // error (misconfigured / HTTP / timeout), so a broken LLM
+        // endpoint never takes base search down with it.
+        let already_expanding = IN_EXPANSION.try_with(|_| ()).is_ok();
+        if !already_expanding {
+            if let Some(handle) = self.get_or_init_expander() {
+                return self.query_with_expansion(req, handle).await;
+            }
         }
         // Canonicalise the zone BEFORE cache lookup so the cache
         // and Index/Refresh invalidation agree on the key.  Wire

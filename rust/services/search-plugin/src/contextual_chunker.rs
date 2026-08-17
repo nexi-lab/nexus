@@ -52,25 +52,25 @@ pub const CONTEXTUAL_ENABLED_ENV: &str = "NEXUS_SEARCH_CONTEXTUAL_CHUNKING";
 /// OpenAI-compatible chat-completions endpoint URL.  Separate from
 /// query expansion's endpoint so operators can point contextual
 /// chunking at a cheaper/faster model.
-pub const CONTEXTUAL_ENDPOINT_ENV: &str = "NEXUS_SEARCH_CONTEXTUAL_ENDPOINT";
+pub const CONTEXTUAL_ENDPOINT_ENV: &str = "NEXUS_SEARCH_CONTEXTUAL_CHUNKING_ENDPOINT";
 /// Chat model name (e.g. `anthropic/claude-3-haiku`,
 /// `openai/gpt-4o-mini`).
-pub const CONTEXTUAL_MODEL_ENV: &str = "NEXUS_SEARCH_CONTEXTUAL_MODEL";
+pub const CONTEXTUAL_MODEL_ENV: &str = "NEXUS_SEARCH_CONTEXTUAL_CHUNKING_MODEL";
 /// Bearer token for the endpoint.
-pub const CONTEXTUAL_API_KEY_ENV: &str = "NEXUS_SEARCH_CONTEXTUAL_API_KEY";
+pub const CONTEXTUAL_API_KEY_ENV: &str = "NEXUS_SEARCH_CONTEXTUAL_CHUNKING_API_KEY";
 /// Per-request timeout in milliseconds (default 5000 ms).  Larger
 /// than query expansion's 3 s — contextual chunking runs at
 /// indexing time (background), not on the caller-visible query path.
-pub const CONTEXTUAL_TIMEOUT_MS_ENV: &str = "NEXUS_SEARCH_CONTEXTUAL_TIMEOUT_MS";
+pub const CONTEXTUAL_TIMEOUT_MS_ENV: &str = "NEXUS_SEARCH_CONTEXTUAL_CHUNKING_TIMEOUT_MS";
 /// Bounded intra-doc parallelism — default 4.  A doc with N chunks
 /// runs `min(N, concurrency)` HTTP round-trips at a time via a
 /// `std::thread::scope` fan-out.
-pub const CONTEXTUAL_CONCURRENCY_ENV: &str = "NEXUS_SEARCH_CONTEXTUAL_CONCURRENCY";
+pub const CONTEXTUAL_CONCURRENCY_ENV: &str = "NEXUS_SEARCH_CONTEXTUAL_CHUNKING_CONCURRENCY";
 /// Cap on how much of the surrounding document is sent to the LLM
 /// alongside each chunk (default 8 KB).  Truncation keeps the LLM
 /// bill bounded — a monster README shouldn't cost 100 KB of context
 /// per chunk.
-pub const CONTEXTUAL_DOC_CAP_ENV: &str = "NEXUS_SEARCH_CONTEXTUAL_DOC_CAP_BYTES";
+pub const CONTEXTUAL_DOC_CAP_ENV: &str = "NEXUS_SEARCH_CONTEXTUAL_CHUNKING_DOC_CAP_BYTES";
 
 const DEFAULT_TIMEOUT_MS: u64 = 5_000;
 const DEFAULT_CONCURRENCY: usize = 4;

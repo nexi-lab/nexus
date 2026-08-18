@@ -786,3 +786,87 @@ class TestGetIndexStats:
         assert "embedding_provider" in stats
         assert "vector_db" in stats
         assert stats["vector_db"] == {"backend": "mock"}
+
+
+class TestCollectPluginDocuments:
+    """Issue #4130 R6: public replacement for the private-surface leak
+    ``search_service._collect_docs_for_plugin`` had against
+    ``_file_reader`` + ``_read_content``."""
+
+    @pytest.mark.asyncio
+    async def test_single_file_returns_one_doc(self) -> None:
+        service, _, _, _ = _build_service(
+            content="hello world",
+            searchable_text=None,
+        )
+
+        docs = await service.collect_plugin_documents("/a.md", recursive=False)
+
+        assert docs == [{"path": "/a.md", "text": "hello world"}]
+
+    @pytest.mark.asyncio
+    async def test_recursive_walks_and_reads_each_file(self) -> None:
+        service, _, _, reader = _build_service(
+            file_list=["/x/a.md", "/x/b.py", "/x/sub/c.txt"],
+            content="body",
+            searchable_text=None,
+        )
+
+        docs = await service.collect_plugin_documents("/x", recursive=True)
+
+        assert [d["path"] for d in docs] == ["/x/a.md", "/x/b.py", "/x/sub/c.txt"]
+        assert all(d["text"] == "body" for d in docs)
+
+    @pytest.mark.asyncio
+    async def test_recursive_skips_binary_extensions(self) -> None:
+        service, _, _, _ = _build_service(
+            file_list=["/x/a.md", "/x/blob.zip", "/x/img.png"],
+            content="body",
+        )
+
+        docs = await service.collect_plugin_documents("/x", recursive=True)
+
+        # Only the .md survives; .zip + .png filtered by _BINARY_EXTENSIONS.
+        assert [d["path"] for d in docs] == ["/x/a.md"]
+
+    @pytest.mark.asyncio
+    async def test_recursive_ignores_directory_entries(self) -> None:
+        service, _, _, _ = _build_service(
+            # Trailing slash marks a directory entry — must not be read.
+            file_list=["/x/a.md", "/x/sub/", ""],
+        )
+
+        docs = await service.collect_plugin_documents("/x", recursive=True)
+
+        assert [d["path"] for d in docs] == ["/x/a.md"]
+
+    @pytest.mark.asyncio
+    async def test_recursive_skips_per_file_read_errors(self) -> None:
+        service, _, _, reader = _build_service(
+            file_list=["/x/a.md", "/x/b.md", "/x/c.md"],
+        )
+
+        # First and third read succeed with "body"; middle raises.
+        reader.read_text = AsyncMock(
+            side_effect=["body", RuntimeError("io fail"), "body"],
+        )
+        reader.get_searchable_text.return_value = None
+
+        docs = await service.collect_plugin_documents("/x", recursive=True)
+
+        assert [d["path"] for d in docs] == ["/x/a.md", "/x/c.md"]
+
+    @pytest.mark.asyncio
+    async def test_recursive_accepts_dict_entries_from_reader(self) -> None:
+        # Some FileReader implementations return dicts (path/name);
+        # collect_plugin_documents must extract .path or .name — the
+        # same shape ``index_batch`` handles.
+        service, _, _, _ = _build_service(
+            file_list=[{"path": "/x/a.md"}, {"name": "/x/b.md"}],
+            content="body",
+            searchable_text=None,
+        )
+
+        docs = await service.collect_plugin_documents("/x", recursive=True)
+
+        assert sorted(d["path"] for d in docs) == ["/x/a.md", "/x/b.md"]

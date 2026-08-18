@@ -529,6 +529,58 @@ class IndexingService:
             content = await self._file_reader.read_text(path)
         return content
 
+    async def collect_plugin_documents(
+        self,
+        path: str,
+        recursive: bool,
+    ) -> list[dict[str, Any]]:
+        """Enumerate + read files under ``path`` and produce the
+        ``[{path, text}, ...]`` payload the plugin's ``IndexDocuments``
+        RPC (and ``SearchDaemon.index_documents`` shim) expects.
+
+        The plugin's cdylib sidecar runs against a DIFFERENT kernel VFS
+        than the Python nexus-server container — so cross-node
+        replication that lands files here doesn't automatically make
+        them readable by the plugin's walker.  Enumerate + read on THIS
+        side and POST the payload, so the plugin ingests documents
+        without ever having to resolve them through its own file
+        surface.
+
+        Filters the same binary-extension set the sandbox indexer
+        already filters; skips per-file read errors rather than failing
+        the whole seed (matches ``index_batch``'s per-file
+        try/except).  Non-recursive callers pass ``recursive=False``
+        and get exactly one ``{path, text}`` dict — the underlying
+        reader raises for missing/non-text paths, which callers already
+        treat as a fallback trigger.
+
+        Public because ``search_service._collect_docs_for_plugin`` used
+        to reach into ``_file_reader`` + ``_read_content`` directly (an
+        SLF001 leak); consolidating the read here also dedupes the
+        list-then-read loop shape with ``index_batch``.
+        """
+        if not recursive:
+            content = await self._read_content(path)
+            return [{"path": path, "text": content}]
+
+        files_result = await self._file_reader.list_files(path, recursive=True)
+        files = files_result.items if hasattr(files_result, "items") else files_result
+        docs: list[dict[str, Any]] = []
+        for entry in files:
+            file_path = (
+                entry if isinstance(entry, str) else entry.get("path") or entry.get("name", "")
+            )
+            if not file_path or file_path.endswith("/"):
+                continue
+            if file_path.endswith(_BINARY_EXTENSIONS):
+                continue
+            try:
+                content = await self._read_content(file_path)
+            except Exception:
+                continue
+            docs.append({"path": file_path, "text": content})
+        return docs
+
     @staticmethod
     def _query_file_model(
         session: Any,

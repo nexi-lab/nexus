@@ -130,20 +130,18 @@ class TestPluginShimGate:
         shim = _FakePluginShim(rows=[])
         svc = _make_service(shim)
 
-        # Fake SANDBOX indexer supplies the file_reader shim +
-        # _read_content coroutine that the plugin-arm re-uses for
-        # enumeration.  ``_indexing_service`` is a real attribute on
-        # SearchService, so wire it via setattr.
+        # Fake SANDBOX indexer supplies the public
+        # ``collect_plugin_documents`` coroutine the plugin-arm calls
+        # for enumeration.  ``_indexing_service`` is a real attribute
+        # on SearchService, so wire it via setattr.
         indexer = MagicMock()
-        indexer._file_reader = MagicMock()
-        indexer._file_reader.list_files = AsyncMock(
+        indexer.collect_plugin_documents = AsyncMock(
             return_value=[
-                {"path": "/w/a.md"},
-                {"path": "/w/b.md"},
-                {"path": "/w/skip.png"},  # binary — filtered
+                {"path": "/w/a.md", "text": "body-of-/w/a.md"},
+                {"path": "/w/b.md", "text": "body-of-/w/b.md"},
+                # Binary already filtered inside collect_plugin_documents.
             ]
         )
-        indexer._read_content = AsyncMock(side_effect=lambda p: f"body-of-{p}")
         svc._indexing_service = indexer  # noqa: SLF001
 
         result = await svc.semantic_search_index("/w", recursive=True)
@@ -168,9 +166,9 @@ class TestPluginShimGate:
         svc = _make_service(shim)
 
         indexer = MagicMock()
-        indexer._file_reader = MagicMock()
-        indexer._file_reader.list_files = AsyncMock(return_value=[{"path": "/w/a.md"}])
-        indexer._read_content = AsyncMock(return_value="body")
+        indexer.collect_plugin_documents = AsyncMock(
+            return_value=[{"path": "/w/a.md", "text": "body"}]
+        )
         # Wire index_directory too so the SANDBOX fallback can run and
         # produces a documented shape.
         indexer.index_directory = AsyncMock(return_value={})

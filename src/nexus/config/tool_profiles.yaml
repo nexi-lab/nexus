@@ -60,5 +60,6 @@ profiles:
       - nexus_discovery_get_tool_details
       - nexus_discovery_load_tools
       - nexus_hub_admin
+      - nexus_hub_status
 
 default_profile: minimal

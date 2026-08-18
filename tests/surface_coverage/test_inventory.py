@@ -69,7 +69,7 @@ def test_freshness(tmp_path: Path, existing_coverage):
         "Then commit the updated YAML."
     )
     if COVERAGE_HTML.exists():
-        assert render_html(fresh) == COVERAGE_HTML.read_text(), (
+        assert render_html(fresh) == COVERAGE_HTML.read_text(encoding="utf-8"), (
             "api-rpc-surface-coverage drift: committed HTML differs from regenerated YAML.\n"
             "Run: uv run python scripts/render_api_surface_coverage.py\n"
             "The local HTML is generated and should not be committed."
@@ -82,7 +82,7 @@ def test_render_determinism(existing_coverage):
     if not COVERAGE_HTML.exists():
         pytest.skip("no coverage HTML committed yet")
     rendered = render_html(existing_coverage)
-    committed = COVERAGE_HTML.read_text()
+    committed = COVERAGE_HTML.read_text(encoding="utf-8")
     assert rendered == committed, (
         "api-rpc-surface-coverage drift: committed HTML differs from re-render.\n"
         "Run: uv run python scripts/render_api_surface_coverage.py\n"

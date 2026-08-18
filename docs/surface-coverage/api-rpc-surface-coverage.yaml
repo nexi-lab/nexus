@@ -4920,6 +4920,23 @@ operations:
   perf_link: null
   gap_issue: 4205
   owning_issue: 4138
+- id: hub.status
+  module: hub
+  summary: Read hub health via the MCP admin surface; sandbox federation control plane.
+  transports:
+    mcp:
+      name: nexus_hub_status
+      source: src/nexus/config/tool_profiles.yaml:1
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: 'MCP: tools/call nexus_hub_status {}; CLI: nexus hub status'
+  correctness_test: tests/unit/cli/test_hub_remote.py::test_remote_status_calls_mcp_tool_and_renders_json
+  perf_class: control
+  perf_link: admin/control-plane status check; not on a query hot path
+  gap_issue: null
+  owning_issue: 4130
 - id: identity.brick
   module: identity
   summary: ''
@@ -11482,6 +11499,14 @@ parity_warnings:
   - grpc_typed
   - http
   - mcp
+  - sdk
+- operation_id: hub.status
+  has:
+  - mcp
+  missing:
+  - cli
+  - grpc_typed
+  - http
   - sdk
 - operation_id: identity.cli
   has:

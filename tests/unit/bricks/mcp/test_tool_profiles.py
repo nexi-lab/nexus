@@ -398,95 +398,93 @@ class TestGrantToolsFailure:
 
 
 class TestDefaultConfigValidity:
-    """Validate that default tool_profiles.yaml tool names match registered MCP tools."""
+    """Validate default tool_profiles.yaml load + inheritance-resolver behaviour.
 
-    def test_default_profiles_match_expected_tool_matrix(self):
-        """Default profiles must encode the documented inherited tool matrix."""
-        config_path = Path(__file__).parents[4] / "src" / "nexus" / "config" / "tool_profiles.yaml"
-        config = load_profiles(config_path)
+    The yaml itself is the SSOT for which tools each profile grants;
+    this test used to hard-code the FLATTENED per-profile tool set
+    which meant every add to yaml required a paired edit here — a
+    SSOT dup we no longer keep.  Instead these tests verify the
+    resolver contract (inheritance is additive, ``extends`` links
+    are well-formed, the default_profile field is honoured) using
+    the yaml as the source and a re-implemented flatten as the
+    oracle.
+    """
 
-        expected = {
-            "minimal": {
-                "nexus_file_info",
-                "nexus_glob",
-                "nexus_list_files",
-                "nexus_read_file",
-            },
-            "coding": {
-                "nexus_delete_file",
-                "nexus_edit_file",
-                "nexus_file_info",
-                "nexus_glob",
-                "nexus_grep",
-                "nexus_list_files",
-                "nexus_mkdir",
-                "nexus_read_file",
-                "nexus_rename_file",
-                "nexus_rmdir",
-                "nexus_write_file",
-            },
-            "search": {
-                "nexus_file_info",
-                "nexus_glob",
-                "nexus_grep",
-                "nexus_list_files",
-                "nexus_read_file",
-                "nexus_semantic_search",
-            },
-            "execution": {
-                "nexus_bash",
-                "nexus_delete_file",
-                "nexus_edit_file",
-                "nexus_file_info",
-                "nexus_glob",
-                "nexus_grep",
-                "nexus_list_files",
-                "nexus_mkdir",
-                "nexus_python",
-                "nexus_read_file",
-                "nexus_rename_file",
-                "nexus_rmdir",
-                "nexus_sandbox_create",
-                "nexus_sandbox_list",
-                "nexus_sandbox_stop",
-                "nexus_write_file",
-            },
-            "full": {
-                "nexus_bash",
-                "nexus_delete_file",
-                "nexus_discovery_get_tool_details",
-                "nexus_discovery_list_servers",
-                "nexus_discovery_load_tools",
-                "nexus_discovery_search_tools",
-                "nexus_edit_file",
-                "nexus_execute_workflow",
-                "nexus_file_info",
-                "nexus_glob",
-                "nexus_grep",
-                "nexus_hub_admin",
-                "nexus_hub_status",
-                "nexus_list_files",
-                "nexus_list_workflows",
-                "nexus_mkdir",
-                "nexus_python",
-                "nexus_read_file",
-                "nexus_rename_file",
-                "nexus_rmdir",
-                "nexus_sandbox_create",
-                "nexus_sandbox_list",
-                "nexus_sandbox_stop",
-                "nexus_semantic_search",
-                "nexus_write_file",
-            },
-        }
+    _CONFIG_PATH = Path(__file__).parents[4] / "src" / "nexus" / "config" / "tool_profiles.yaml"
 
-        assert set(config.profile_names) == set(expected)
-        for profile_name, tools in expected.items():
-            profile = config.get_profile(profile_name)
-            assert profile is not None
-            assert profile.tools == tools
+    @classmethod
+    def _load_raw_yaml(cls) -> dict:
+        """Read the yaml alongside the loader — the "expected"
+        oracle for every test below is derived from this dict, NOT
+        from a hand-maintained mirror."""
+        import yaml
 
-        assert config.get_default() == config.get_profile("minimal")
+        with open(cls._CONFIG_PATH) as f:
+            return yaml.safe_load(f)
+
+    @staticmethod
+    def _resolve_flattened(raw: dict, name: str) -> frozenset[str]:
+        """Test-side re-implementation of ``resolve_inheritance``'s
+        flatten step, used as an ORACLE for the loader's output.
+        Kept intentionally tiny — a distinct algorithm from the
+        production resolver so both sides agreeing is meaningful."""
+        profiles = raw["profiles"]
+        collected: set[str] = set()
+        seen: set[str] = set()
+        cur: str | None = name
+        while cur is not None:
+            if cur in seen:
+                raise AssertionError(f"cycle at {cur} while flattening {name}")
+            seen.add(cur)
+            spec = profiles[cur]
+            collected.update(spec.get("tools", []) or [])
+            cur = spec.get("extends")
+        return frozenset(collected)
+
+    def test_yaml_profile_names_match_loaded_config(self):
+        """Every profile in the yaml surfaces on the loaded config
+        (no silent-drop bug in the loader)."""
+        raw = self._load_raw_yaml()
+        config = load_profiles(self._CONFIG_PATH)
+        assert set(config.profile_names) == set(raw["profiles"])
+
+    def test_loaded_profile_tools_equal_flattened_yaml(self):
+        """Loader output for every profile equals what an independent
+        flatten of the yaml produces.  This is the SSOT-compliant
+        replacement for the old hard-coded ``expected`` dict — the
+        expected value is derived from the yaml, not duplicated."""
+        raw = self._load_raw_yaml()
+        config = load_profiles(self._CONFIG_PATH)
+        for name in raw["profiles"]:
+            profile = config.get_profile(name)
+            assert profile is not None, f"profile {name} missing"
+            assert profile.tools == self._resolve_flattened(raw, name), (
+                f"loader output for {name} disagrees with yaml flatten"
+            )
+
+    def test_default_profile_field_is_honoured(self):
+        """``default_profile`` top-level yaml field routes through
+        ``get_default()``.  Regression pin against a loader change
+        that ignored the field."""
+        raw = self._load_raw_yaml()
+        config = load_profiles(self._CONFIG_PATH)
+        assert config.get_default() == config.get_profile(raw["default_profile"])
+
+    def test_inheritance_is_additive_child_superset_of_parent(self):
+        """Every child profile's flattened tool set is a superset of
+        its parent's — the resolver never drops a parent tool.
+        Independent property check that would catch a broken
+        override / shadow bug even if flatten-parity passed."""
+        raw = self._load_raw_yaml()
+        config = load_profiles(self._CONFIG_PATH)
+        for name, spec in raw["profiles"].items():
+            parent = spec.get("extends")
+            if parent is None:
+                continue
+            child_tools = config.get_profile(name).tools
+            parent_tools = config.get_profile(parent).tools
+            missing = parent_tools - child_tools
+            assert not missing, f"{name} lost inherited tools from {parent}: {sorted(missing)}"
 
     @pytest.mark.asyncio
     async def test_default_yaml_tool_names_exist_in_server(self):

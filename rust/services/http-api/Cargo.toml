@@ -22,9 +22,13 @@ tower = { version = "0.5", features = ["util"] }
 tracing = "0.1"
 
 [dev-dependencies]
-# axum's own test helpers require reqwest + a live listener.  Using
-# `tower::ServiceExt::oneshot` keeps the smoke test in-process (no
-# port binding), which is what the router's contract needs pinned
-# anyway — the caller ↔ handler pathway, not the TCP layer.
+# In-process router pathway pinning (unit tests use
+# `tower::ServiceExt::oneshot`).
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
+# Real-TCP integration cover — `tests/serve_e2e.rs` binds an
+# ephemeral port with `axum::serve` and hits it via `reqwest` so the
+# hyper listener + tower service composition is exercised end-to-end
+# alongside the in-process handler tests (rustls off; only need HTTP
+# to a loopback listener).
+reqwest = { version = "0.12", default-features = false, features = ["json"] }

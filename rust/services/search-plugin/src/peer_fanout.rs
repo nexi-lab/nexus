@@ -115,14 +115,12 @@ pub enum PeerFanoutError {
 /// channels) is lazy and cached.
 pub struct PeerFanoutDispatcher {
     registry: PeerRegistry,
-    /// Per-peer cached `Channel`.  DashMap shards internally so
-    /// independent peers dial concurrently — the previous
-    /// `Mutex<HashMap>` serialised every lookup on one lock, which
-    /// caps parallelism at whichever peer wakes the sleeper first
-    /// and only starts to bite past ≤10 peers.  DashMap keeps the
-    /// lookup lock-free for readers and the write side sharded per
-    /// bucket, so a slow peer's dial no longer stalls a fast peer's
-    /// cache hit.
+    /// Per-peer cached `Channel`.  DashMap shards per bucket so
+    /// independent peers dial concurrently — a slow peer's dial
+    /// does not stall a fast peer's cache hit, and readers hold
+    /// their shard's lock for only a hash + clone.  See
+    /// [`Self::get_or_dial`] for the race-vs-starvation trade
+    /// on concurrent misses.
     channels: DashMap<PeerAddress, Channel>,
 }
 

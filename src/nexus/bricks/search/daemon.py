@@ -503,4 +503,11 @@ def _result_to_base(pb: search_pb2.QueryResult) -> BaseSearchResult:
         vector_score=float(pb.vector_score) if pb.HasField("vector_score") else None,
         tier_boost=float(pb.tier_boost) if pb.HasField("tier_boost") else None,
         recency_boost=float(pb.recency_boost) if pb.HasField("recency_boost") else None,
+        # #4130 R7: LLM query-expansion arm attribution — 0 = original
+        # query, 1..N = LLM variant N.  Optional in proto; presence
+        # decides None so "expansion never ran" stays observably distinct
+        # from "expansion ran and this hit came from the original arm".
+        expansion_variant_index=int(pb.expansion_variant_index)
+        if pb.HasField("expansion_variant_index")
+        else None,
     )

@@ -237,6 +237,7 @@ class QueryResult(_message.Message):
         "vector_score",
         "tier_boost",
         "recency_boost",
+        "expansion_variant_index",
     )
     PATH_FIELD_NUMBER: _ClassVar[int]
     CHUNK_INDEX_FIELD_NUMBER: _ClassVar[int]
@@ -250,6 +251,7 @@ class QueryResult(_message.Message):
     VECTOR_SCORE_FIELD_NUMBER: _ClassVar[int]
     TIER_BOOST_FIELD_NUMBER: _ClassVar[int]
     RECENCY_BOOST_FIELD_NUMBER: _ClassVar[int]
+    EXPANSION_VARIANT_INDEX_FIELD_NUMBER: _ClassVar[int]
     path: str
     chunk_index: int
     chunk_text: str
@@ -262,6 +264,7 @@ class QueryResult(_message.Message):
     vector_score: float
     tier_boost: float
     recency_boost: float
+    expansion_variant_index: int
     def __init__(
         self,
         path: str | None = ...,
@@ -276,6 +279,7 @@ class QueryResult(_message.Message):
         vector_score: float | None = ...,
         tier_boost: float | None = ...,
         recency_boost: float | None = ...,
+        expansion_variant_index: int | None = ...,
     ) -> None: ...
 
 class QueryResponse(_message.Message):

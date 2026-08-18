@@ -27,6 +27,11 @@ members = [
     # walk over `sys_readdir` + `sys_read` in v1, trigram / streaming
     # / adaptive-strategy variants land in v2.
     "rust/services/search-plugin",
+    # nexus-http-api — PoC axum HTTP router for the pure-Rust
+    # nexus-server replacement epic (#4674 R10).  v0 ships only
+    # `GET /v2/status` so the axum + JSON + test-harness pattern
+    # is proven before the search/documents/auth routes land.
+    "rust/services/http-api",
     # nexusd — the nexus cluster-profile daemon assembly binary
     # (`nexusd-cluster`). Composes the nexus-vfs cluster boot
     # (`nexus_cluster::run_with_services`) with the managed_agent control

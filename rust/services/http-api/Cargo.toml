@@ -1,0 +1,30 @@
+[package]
+name = "nexus-http-api"
+version = "0.1.0"
+edition = "2021"
+description = "PoC axum-based HTTP-API crate for the nexus-server → pure-Rust migration (epic #4674).  v0 ships a single /v2/status handler so the crate + axum plumbing pattern is proven end-to-end before the router surface grows."
+
+[lib]
+name = "nexus_http_api"
+crate-type = ["rlib"]
+
+[dependencies]
+# axum HTTP surface.  Feature set matches the sibling
+# `service-matrix-adapter` axum pin in rust/services/Cargo.toml
+# (0.8 + json/http1/tokio/matched-path/query) so both crates
+# share the same tower + hyper stack when linked into the same
+# binary.
+axum = { version = "0.8", default-features = false, features = ["json", "http1", "tokio", "matched-path", "query"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tower = { version = "0.5", features = ["util"] }
+tracing = "0.1"
+
+[dev-dependencies]
+# axum's own test helpers require reqwest + a live listener.  Using
+# `tower::ServiceExt::oneshot` keeps the smoke test in-process (no
+# port binding), which is what the router's contract needs pinned
+# anyway — the caller ↔ handler pathway, not the TCP layer.
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"

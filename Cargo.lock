@@ -3006,6 +3006,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "nexus-http-api"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "http-body-util",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower",
+ "tracing",
+]
+
+[[package]]
 name = "nexus-local-connector"
 version = "0.1.1"
 dependencies = [

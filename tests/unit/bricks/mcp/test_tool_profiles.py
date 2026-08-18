@@ -464,6 +464,7 @@ class TestDefaultConfigValidity:
                 "nexus_glob",
                 "nexus_grep",
                 "nexus_hub_admin",
+                "nexus_hub_status",
                 "nexus_list_files",
                 "nexus_list_workflows",
                 "nexus_mkdir",

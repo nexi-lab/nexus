@@ -1,44 +1,43 @@
 //! Read-side macro-chunk (neighbour-context) expansion for hybrid
-//! search — Rust port of the Python `nexus.bricks.search.macro_chunk`
-//! heuristic (issue #4130 review R5).
+//! search.  Given a ranked hit at `(path, chunk_index)` and the
+//! full chunk set for that path, pick a window of neighbouring
+//! chunks bounded by a token budget and stitch their text into
+//! [`QueryResult::expanded_context`].
 //!
-//! # Why upgrade
+//! # Contract
 //!
-//! The pre-R5 [`apply_expand`] hard-coded a ±1 window: for every hit
-//! at (path, N), it stitched chunks N-1, N, N+1.  That works for a
-//! narrow prev/next glance, but Python's `macro_chunk.py` had already
-//! taken the same feature (#4398) further:
+//! For each hit:
 //!
-//!   * configurable window (default ±8, not ±1),
-//!   * token budget (default 1024 tokens, not "however big three
-//!     chunks are"),
-//!   * bidirectional expansion — walk back AND forward until the
-//!     budget is spent,
+//!   * configurable window (default ±8 chunks) capping the reach
+//!     around the anchor,
+//!   * token budget (default 1024 tokens) capping the aggregate
+//!     stitched size,
+//!   * bidirectional walk — expand back AND forward until the
+//!     budget is spent, alternating one step at a time,
 //!   * code-file forward-bias — for `.py` / `.rs` / `.ts` / …
-//!     files, expand *forward* first (subsequent code lines usually
-//!     matter more than the definitions above),
-//!   * section awareness — bound the walk by same-heading contiguity.
-//!
-//! The Python surface is now dead (post-P12), but its callers in
-//! nexus-server expected the smarter expand shape.  Ship parity.
+//!     files, expand *forward* first (subsequent lines usually
+//!     matter more than the definitions above), then backfill
+//!     backwards when the forward side hits the section boundary,
+//!   * section awareness — the walk stays within a contiguous run
+//!     of chunks sharing a heading prefix (currently degrades to
+//!     "same file" until the FTS schema stamps `heading_prefix` —
+//!     see [Known gap](#known-gap)).
 //!
 //! # Known gap
 //!
-//! Section awareness needs a `heading_prefix` field on chunks — the
-//! FTS schema doesn't have one yet, so this port treats "same
-//! section" as "same file" (section bounds = full chunk set).  Same
-//! for `line_start` / `line_end`: no schema fields, no attribution.
-//! Both are a schema-bump follow-up when the indexer starts emitting
-//! them.  The window + budget + forward-bias upgrades stand on their
-//! own and give the +7 chunk headroom callers were configured for.
+//! `FtsHit` has no `heading_prefix` / `line_start` / `line_end`
+//! fields yet, so [`window_for_anchor`] treats "same section" as
+//! "same file" and skips line-range attribution.  Both graduate to
+//! true section-aware behaviour once the indexer starts stamping
+//! those fields; the algorithm above already handles the schema
+//! shape.
 //!
 //! # Config
 //!
-//! * `NEXUS_SEARCH_MACRO_EXPAND_WINDOW`         (default 8)
-//! * `NEXUS_SEARCH_MACRO_EXPAND_TOKEN_BUDGET`   (default 1024)
-//! * `NEXUS_SEARCH_MACRO_EXPAND_CODE_FORWARD_BIAS` (default true)
+//! * `NEXUS_SEARCH_MACRO_EXPAND_WINDOW`             (default 8)
+//! * `NEXUS_SEARCH_MACRO_EXPAND_TOKEN_BUDGET`       (default 1024)
+//! * `NEXUS_SEARCH_MACRO_EXPAND_CODE_FORWARD_BIAS`  (default true)
 //!
-//! All defaults keep the feature on with the Python-parity shape.
 //! Env parse errors log a warning and use the default; a hosed env
 //! must not break search.
 

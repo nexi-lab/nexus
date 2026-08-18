@@ -484,9 +484,7 @@ class TestDefaultConfigValidity:
             child_tools = config.get_profile(name).tools
             parent_tools = config.get_profile(parent).tools
             missing = parent_tools - child_tools
-            assert not missing, (
-                f"{name} lost inherited tools from {parent}: {sorted(missing)}"
-            )
+            assert not missing, f"{name} lost inherited tools from {parent}: {sorted(missing)}"
 
     @pytest.mark.asyncio
     async def test_default_yaml_tool_names_exist_in_server(self):

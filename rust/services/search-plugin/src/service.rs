@@ -1342,71 +1342,10 @@ impl FusionOpts {
     }
 }
 
-/// Read-side context expansion mode (P4, #4398).  Sourced from
-/// `QueryRequest.expand`; unknown values fall back to `None` so a
-/// forgetful caller gets the pre-P4 shape.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ExpandMode {
-    /// No enrichment; `QueryResult.expanded_context` stays empty.
-    None,
-    /// Fill `expanded_context` with `prev + current + next` chunk
-    /// text under the same path.
-    Macro,
-}
-
-impl ExpandMode {
-    fn from_str(s: &str) -> Self {
-        match s {
-            "macro" => Self::Macro,
-            _ => Self::None,
-        }
-    }
-}
-
-/// Fill `expanded_context` on each hit when the caller asked for
-/// `expand=macro`.  For each hit we fetch the file's full chunk
-/// set via [`FtsIndex::get_chunks_by_path`] (cheap; typical files
-/// have < 20 chunks) and concatenate previous + current + next.
-/// A hit whose file only has one chunk gets an empty
-/// `expanded_context` — same shape as `ExpandMode::None`, so
-/// callers don't need to special-case.
-///
-/// Chunks-per-path cache within one Query call: a hit at
-/// (path, chunk 2) and another at (path, chunk 5) would otherwise
-/// each re-fetch the file's chunk set.  The cache avoids that.
-fn apply_expand(manager: &IndexManager, zone_id: &str, mode: ExpandMode, hits: &mut [QueryResult]) {
-    if matches!(mode, ExpandMode::None) {
-        return;
-    }
-    let Ok(fts) = manager.get_or_open(zone_id) else {
-        return;
-    };
-    let mut cache: std::collections::HashMap<String, Vec<crate::fts_index::FtsHit>> =
-        std::collections::HashMap::new();
-    for hit in hits.iter_mut() {
-        let chunks = cache
-            .entry(hit.path.clone())
-            .or_insert_with(|| fts.get_chunks_by_path(&hit.path).unwrap_or_default());
-        if chunks.len() <= 1 {
-            continue;
-        }
-        let mut assembled = String::new();
-        let mut wrote_any = false;
-        for c in chunks.iter() {
-            let delta = c.chunk_index as i64 - hit.chunk_index as i64;
-            if (-1..=1).contains(&delta) {
-                if wrote_any {
-                    assembled.push_str("\n\n");
-                }
-                assembled.push_str(&c.chunk_text);
-                wrote_any = true;
-            }
-        }
-        if wrote_any {
-            hit.expanded_context = assembled;
-        }
-    }
-}
+// Read-side context expansion — the smart section-aware window
+// (issue #4130 review R5) lives in [`crate::macro_expand`].  Re-
+// export the mode enum so pre-R5 call-sites keep compiling.
+use crate::macro_expand::{apply_expand, ExpandMode};
 
 /// Over-fetch multiplier per source for hybrid.  A doc that ranks
 /// 8 in keyword and 9 in semantic scores highly under RRF, but
@@ -2989,7 +2928,7 @@ impl SearchService for SearchServiceImpl {
             }
         }
         let fusion_opts = FusionOpts::from_request(&req);
-        let expand_mode = ExpandMode::from_str(&req.expand);
+        let expand_mode = ExpandMode::parse(&req.expand);
         let recency_mode = crate::scoring::RecencyMode::parse_wire(&req.recency_mode);
         let recency_weight = if req.recency_weight == 0.0 {
             crate::scoring::DEFAULT_RECENCY_WEIGHT

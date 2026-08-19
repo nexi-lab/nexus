@@ -21,6 +21,33 @@ serde_json = { workspace = true }
 tower = { version = "0.5", features = ["util"] }
 tracing = "0.1"
 
+# tonic client for talking to the upstream search-plugin (and
+# eventually other gRPC services).  Version pinned to the workspace
+# `tonic = 0.14` shipping in rust/services/Cargo.toml so the two
+# crates share the same hyper stack when co-hosted in one binary.
+tonic = { workspace = true }
+prost = { workspace = true }
+tonic-prost = { workspace = true }
+
+# Sharded cache for per-upstream tonic Channel — one Channel per
+# backend address, dialed lazily on first use.  Same 6.1 pin the
+# sibling search-plugin peer-fanout uses (search-plugin/Cargo.toml).
+dashmap = "6.1"
+
+# Parked-error surfacing at the handler boundary (Ok/Err in the
+# lib, mapped to HTTP status in the axum extractor).  Same 1.0 pin
+# the sibling search-plugin uses.
+thiserror = "1"
+
+[build-dependencies]
+# Client-only proto codegen from the workspace's search proto SSOT
+# (`rust/services/proto/nexus/search/v1/search.proto`).  Same tool
+# stack the sibling search-plugin build.rs uses; the vendored
+# `protoc` keeps the build hermetic on hosts without a
+# system-installed protobuf-compiler.
+tonic-prost-build = "0.14"
+protoc-bin-vendored = "3"
+
 [dev-dependencies]
 # In-process router pathway pinning (unit tests use
 # `tower::ServiceExt::oneshot`).
@@ -32,3 +59,9 @@ http-body-util = "0.1"
 # alongside the in-process handler tests (rustls off; only need HTTP
 # to a loopback listener).
 reqwest = { version = "0.12", default-features = false, features = ["json"] }
+# `tests/glob_e2e.rs` runs a mock `SearchService` implementation on
+# an ephemeral tonic server so the axum → tonic-client → gRPC-server
+# chain is exercised end-to-end.  The mock only needs the server
+# side of tonic + the wrapping stream adapter for the listener.
+serde_json = { workspace = true }
+tokio-stream = { version = "0.1", features = ["net"] }

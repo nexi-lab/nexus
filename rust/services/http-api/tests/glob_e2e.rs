@@ -32,7 +32,7 @@ use nexus_http_api::search_proto::{
     RefreshRequest, RefreshResponse, RemoveIndexedDirectoryRequest, RemoveIndexedDirectoryResponse,
     SetZoneIndexingModeRequest, SetZoneIndexingModeResponse, StatsRequest, StatsResponse,
 };
-use nexus_http_api::{router, AppState, SearchBackend};
+use nexus_http_api::{bind_and_serve, AppState, SearchBackend};
 use tokio::net::TcpListener;
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::{Request, Response, Status};
@@ -188,45 +188,79 @@ struct Harness {
 }
 
 impl Harness {
+    /// Wire a mock gRPC server + an axum listener pointed at it,
+    /// both on OS-picked ephemeral ports.  Uses the crate's public
+    /// [`bind_and_serve`] helper for the HTTP half — same call
+    /// production uses, so a regression in the helper trips this
+    /// test alongside anything else that binds.
     async fn start(behaviour: MockBehaviour) -> Self {
-        // 1. Mock gRPC server on ephemeral port.
-        let grpc_listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind grpc listener");
-        let grpc_addr = grpc_listener.local_addr().expect("grpc addr");
-        let grpc_target = format!("http://{grpc_addr}");
-        let log = RequestLog::default();
-        let mock = MockSearchService {
-            log: log.clone(),
-            behaviour,
-        };
-        tokio::spawn(async move {
-            tonic::transport::Server::builder()
-                .add_service(SearchServiceServer::new(mock))
-                .serve_with_incoming(TcpListenerStream::new(grpc_listener))
-                .await
-                .expect("mock grpc serve");
-        });
+        let (grpc_target, log) = spawn_mock_grpc_server(behaviour).await;
+        let http_base = spawn_http_listener(grpc_target).await;
+        Self { http_base, log }
+    }
 
-        // 2. axum listener with SearchBackend pointed at the mock.
-        let http_listener = TcpListener::bind("127.0.0.1:0")
+    /// Same shape as [`Self::start`] but skips the mock gRPC server
+    /// — the backend points at an address that refuses connections,
+    /// exercising the "upstream down" branch of the handler's error
+    /// mapping.  The `log` is a placeholder (no mock = no requests
+    /// to record); tests using this constructor inspect only the
+    /// HTTP response, never the log.
+    async fn start_pointing_at_dead_backend() -> Self {
+        // Reserve an ephemeral port, then drop the listener — no
+        // one is now listening on that port, so any dial refuses
+        // immediately (deterministic vs picking a "hopefully
+        // unused" fixed port that could occasionally collide).
+        let listener = TcpListener::bind("127.0.0.1:0")
             .await
-            .expect("bind http listener");
-        let http_addr = http_listener.local_addr().expect("http addr");
-        let state = AppState {
-            search: SearchBackend::new(grpc_target),
-        };
-        tokio::spawn(async move {
-            axum::serve(http_listener, router(state))
-                .await
-                .expect("axum::serve");
-        });
-
+            .expect("bind + release ephemeral port");
+        let dead_addr = listener.local_addr().expect("dead addr");
+        drop(listener);
+        let http_base = spawn_http_listener(format!("http://{dead_addr}")).await;
         Self {
-            http_base: format!("http://{http_addr}"),
-            log,
+            http_base,
+            log: RequestLog::default(),
         }
     }
+}
+
+/// Spawn an HTTP listener bound to an OS-picked ephemeral port,
+/// pointed at `grpc_target`; return its base URL.
+async fn spawn_http_listener(grpc_target: String) -> String {
+    let state = AppState {
+        search: SearchBackend::new(grpc_target),
+    };
+    let (http_addr, fut) = bind_and_serve("127.0.0.1:0".parse().unwrap(), state)
+        .await
+        .expect("bind http listener");
+    tokio::spawn(async move {
+        fut.await.expect("axum::serve");
+    });
+    format!("http://{http_addr}")
+}
+
+/// Spawn a mock `SearchService` implementation on an ephemeral
+/// tonic port; return the gRPC target URL + the request log the
+/// mock stamps every incoming request onto.  Extracted so
+/// [`Harness::start`] and any future backend-touching test can
+/// share the mock lifecycle.
+async fn spawn_mock_grpc_server(behaviour: MockBehaviour) -> (String, RequestLog) {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind grpc listener");
+    let addr = listener.local_addr().expect("grpc addr");
+    let log = RequestLog::default();
+    let mock = MockSearchService {
+        log: log.clone(),
+        behaviour,
+    };
+    tokio::spawn(async move {
+        tonic::transport::Server::builder()
+            .add_service(SearchServiceServer::new(mock))
+            .serve_with_incoming(TcpListenerStream::new(listener))
+            .await
+            .expect("mock grpc serve");
+    });
+    (format!("http://{addr}"), log)
 }
 
 // ── Tests ───────────────────────────────────────────────────────
@@ -356,4 +390,96 @@ async fn glob_defaults_root_path_to_slash_when_absent() {
         "absent root_path must default to '/'",
     );
     assert_eq!(recorded[0].pattern, "*.md");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn glob_upstream_down_maps_to_503() {
+    // No mock server; the backend points at a port that refuses
+    // connections.  tonic's dial surfaces as `Status::Unavailable`,
+    // which `grpc_status_to_http` maps to HTTP 503.  Verifies the
+    // handler surfaces a retry-friendly status instead of hanging
+    // or returning 500 when the upstream is down.
+    let h = Harness::start_pointing_at_dead_backend().await;
+
+    let resp = reqwest::Client::new()
+        .get(format!(
+            "{}/v2/search/glob?root_path=/&pattern=*.rs",
+            h.http_base
+        ))
+        .send()
+        .await
+        .expect("send");
+    assert_eq!(
+        resp.status(),
+        reqwest::StatusCode::SERVICE_UNAVAILABLE,
+        "connection refused must surface as 503, not 500 or hang",
+    );
+    let body: serde_json::Value = resp.json().await.expect("parse json");
+    assert!(
+        body["error"].as_str().is_some(),
+        "503 body must carry an error message for operators; got: {body}",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn glob_sort_recency_false_propagates_to_backend() {
+    // Serde bool default is `false`; verify `sort_recency=false`
+    // reaches the backend as `false` (not silently `true` from a
+    // default-derivation bug).  Paired with the happy-path test
+    // asserting `sort_recency=true` reaches the backend.
+    let h = Harness::start(MockBehaviour::Success {
+        paths: vec![],
+        truncated: false,
+        error: None,
+    })
+    .await;
+
+    let resp = reqwest::Client::new()
+        .get(format!(
+            "{}/v2/search/glob?root_path=/&pattern=*.rs&sort_recency=false",
+            h.http_base
+        ))
+        .send()
+        .await
+        .expect("send");
+    assert_eq!(resp.status(), reqwest::StatusCode::OK);
+
+    let recorded = h.log.globs.lock().unwrap().clone();
+    assert_eq!(recorded.len(), 1);
+    assert!(
+        !recorded[0].sort_recency,
+        "sort_recency=false must reach backend as false",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn glob_max_results_zero_propagates_to_backend() {
+    // `max_results=0` is the wire-level "server default" sentinel
+    // (documented on GlobQuery); verify it reaches the backend
+    // as 0 rather than being silently rewritten to some client-
+    // side cap.  Fresh callers relying on the sentinel behaviour
+    // would get quietly wrong page sizes without this pin.
+    let h = Harness::start(MockBehaviour::Success {
+        paths: vec![],
+        truncated: false,
+        error: None,
+    })
+    .await;
+
+    let resp = reqwest::Client::new()
+        .get(format!(
+            "{}/v2/search/glob?root_path=/&pattern=*.rs&max_results=0",
+            h.http_base
+        ))
+        .send()
+        .await
+        .expect("send");
+    assert_eq!(resp.status(), reqwest::StatusCode::OK);
+
+    let recorded = h.log.globs.lock().unwrap().clone();
+    assert_eq!(recorded.len(), 1);
+    assert_eq!(
+        recorded[0].max_results, 0,
+        "max_results=0 (server-default sentinel) must reach backend as 0",
+    );
 }

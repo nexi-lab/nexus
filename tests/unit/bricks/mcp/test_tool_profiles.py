@@ -400,14 +400,13 @@ class TestGrantToolsFailure:
 class TestDefaultConfigValidity:
     """Validate default tool_profiles.yaml load + inheritance-resolver behaviour.
 
-    The yaml itself is the SSOT for which tools each profile grants;
-    this test used to hard-code the FLATTENED per-profile tool set
-    which meant every add to yaml required a paired edit here — a
-    SSOT dup we no longer keep.  Instead these tests verify the
-    resolver contract (inheritance is additive, ``extends`` links
-    are well-formed, the default_profile field is honoured) using
-    the yaml as the source and a re-implemented flatten as the
-    oracle.
+    The yaml is the sole SSOT for which tools each profile grants.
+    Tests verify the resolver contract — every yaml profile surfaces
+    on the loaded config, loader output matches an independent
+    test-side flatten of the yaml, inheritance is additive, and the
+    ``default_profile`` field routes through ``get_default()`` —
+    with the yaml as the source of truth and a re-implemented
+    flatten as the oracle.
     """
 
     _CONFIG_PATH = Path(__file__).parents[4] / "src" / "nexus" / "config" / "tool_profiles.yaml"

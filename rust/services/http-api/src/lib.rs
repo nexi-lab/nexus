@@ -27,7 +27,11 @@
 //!   justifies the wiring step.  Standalone-testable today via
 //!   `axum::serve` + `tests/*_e2e.rs`.
 
+use std::io;
+use std::net::SocketAddr;
+
 use axum::Router;
+use tokio::net::TcpListener;
 
 pub mod handlers;
 pub mod search_backend;
@@ -62,4 +66,39 @@ pub fn router(state: AppState) -> Router {
         .merge(handlers::status::router())
         .merge(handlers::search::router())
         .with_state(state)
+}
+
+/// Bind `addr` and serve [`router(state)`](router) until the returned
+/// future completes.  Convenience wrapper over
+/// [`axum::serve`] + [`tokio::net::TcpListener::bind`] so callers
+/// (integration tests, the future `nexusd-cluster` assembly
+/// binary) do not each re-implement the two-line startup dance.
+///
+/// Returns the [`SocketAddr`] actually bound so callers who pass
+/// `127.0.0.1:0` can learn the OS-picked port.  A shutdown hook is
+/// deliberately absent from this signature — tests drop the future
+/// when the runtime tears down, and the production binary wires
+/// its own graceful-shutdown signal on top of the raw future via
+/// [`axum::serve::Serve::with_graceful_shutdown`].
+pub async fn serve(addr: SocketAddr, state: AppState) -> io::Result<()> {
+    let listener = TcpListener::bind(addr).await?;
+    axum::serve(listener, router(state)).await
+}
+
+/// Same shape as [`serve`] but binds ahead of time so the caller
+/// can read `local_addr()` (the OS-picked port when `addr.port() == 0`)
+/// before the serve future starts.  Convenience for tests + any
+/// production caller that needs to log the bound port before the
+/// event loop runs.
+pub async fn bind_and_serve(
+    addr: SocketAddr,
+    state: AppState,
+) -> io::Result<(
+    SocketAddr,
+    impl std::future::Future<Output = io::Result<()>>,
+)> {
+    let listener = TcpListener::bind(addr).await?;
+    let bound = listener.local_addr()?;
+    let fut = async move { axum::serve(listener, router(state)).await };
+    Ok((bound, fut))
 }

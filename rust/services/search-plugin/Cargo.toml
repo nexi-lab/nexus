@@ -159,6 +159,13 @@ tempfile = "3"
 # resolution + `nexus_plugin_grpc_services` JSON contract on all
 # three `libloading`-supported platforms.
 libloading = "0.8"
+# cross_allocator_free_e2e.rs sets mimalloc as the test binary's global
+# allocator (mirroring the cluster host) so a Grep across the FFI
+# boundary into the system-allocator cdylib faithfully reproduces the
+# Windows cross-heap free bug (nexus-vfs#236).  prost encodes the Grep
+# request / decodes the response through the same plugin-ABI path.
+mimalloc = { workspace = true }
+prost = { workspace = true }
 # TcpListenerStream — federation_e2e.rs binds a peer plugin to a
 # loopback ephemeral port + wraps it as a Stream so tonic's
 # `serve_with_incoming` can drive it (Server::serve wants a

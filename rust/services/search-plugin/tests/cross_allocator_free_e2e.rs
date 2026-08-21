@@ -23,12 +23,20 @@
 //!
 //! A clean pass (match found, process alive) proves both directions of
 //! the ownership rule hold across two real allocators.
+//!
+//! The test does NOT rely solely on the Windows crash: it also counts the
+//! plugin's `free_buf` calls and asserts they happened, so a regression to
+//! the plugin's own `nexus_free` fails DETERMINISTICALLY on Linux too —
+//! where the workspace `cargo test` CI runs and the cross-heap free is
+//! otherwise masked. That closes the gap where the guard bites only on a
+//! Windows runner.
 
 use std::collections::HashMap;
 use std::ffi::{c_void, CStr, CString};
 use std::os::raw::c_char;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use nexus_plugin_abi::{KernelHandle, NexusFreeFn, ServiceCreateFn, ServiceDispatchFn};
 use nexus_search_plugin::search_proto::{GrepRequest, GrepResponse};
@@ -90,7 +98,15 @@ unsafe fn yield_buf(bytes: Vec<u8>, out_buf: *mut *mut u8, out_len: *mut usize) 
     *out_buf = Box::into_raw(boxed) as *mut u8;
 }
 
+/// Counts how many host buffers the plugin released through `free_buf`.
+/// A regression that reverts to the plugin's own `nexus_free` never calls
+/// this, so the count stays 0 — a DETERMINISTIC failure on every platform,
+/// not just a Windows heap-corruption crash (the free is masked on Linux,
+/// where the workspace `cargo test` CI runs).
+static FREE_BUF_CALLS: AtomicUsize = AtomicUsize::new(0);
+
 unsafe extern "C" fn host_free_buf(ptr: *mut u8, len: usize) {
+    FREE_BUF_CALLS.fetch_add(1, Ordering::SeqCst);
     if !ptr.is_null() && len > 0 {
         drop(Vec::from_raw_parts(ptr, len, len));
     }
@@ -278,6 +294,17 @@ fn grep_over_cdylib_survives_cross_allocator_free() {
                 .any(|m| m.path == "/notes.txt" && m.line.contains("NEEDLE")),
             "grep did not surface the seeded match; got {:?}",
             resp.matches,
+        );
+
+        // The grep read the file (match found), so the plugin MUST have
+        // released the host buffers through `free_buf`. A regression that
+        // freed them with the plugin's own `nexus_free` leaves this at 0 —
+        // caught deterministically here even on Linux, where the cross-heap
+        // free is silently masked instead of crashing.
+        assert!(
+            FREE_BUF_CALLS.load(Ordering::SeqCst) > 0,
+            "plugin never called handle.free_buf — it freed host buffers on \
+             its own allocator (the nexus-vfs#236 regression)",
         );
 
         destroy(svc);

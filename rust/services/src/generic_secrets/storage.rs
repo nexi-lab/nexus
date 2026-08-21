@@ -281,7 +281,12 @@ impl SecretStorage {
         key: &str,
     ) -> Result<Vec<StoredEntry>, PasswordVaultError> {
         let dir = self.versions_dir(namespace, key);
-        let entries = self.kernel.sys_readdir(&dir, "root", true);
+        let entries = self.kernel.sys_readdir(
+            &dir,
+            "root",
+            true,
+            kernel::kernel::syscall::ReaddirOpts::default(),
+        );
         let mut out = Vec::new();
         for (child_path, _etype) in entries {
             match KernelConvenience::read(&*self.kernel, &child_path, &self.ctx, 0, 0) {
@@ -321,7 +326,12 @@ impl SecretStorage {
         let root = format!("{}/entries", self.root);
         let ns_paths: Vec<String> = self
             .kernel
-            .sys_readdir(&root, "root", true)
+            .sys_readdir(
+                &root,
+                "root",
+                true,
+                kernel::kernel::syscall::ReaddirOpts::default(),
+            )
             .into_iter()
             .map(|(p, _)| p)
             .collect();
@@ -337,7 +347,12 @@ impl SecretStorage {
 
             let key_paths: Vec<String> = self
                 .kernel
-                .sys_readdir(&ns_path, "root", true)
+                .sys_readdir(
+                    &ns_path,
+                    "root",
+                    true,
+                    kernel::kernel::syscall::ReaddirOpts::default(),
+                )
                 .into_iter()
                 .map(|(p, _)| p)
                 .collect();
@@ -374,7 +389,12 @@ impl SecretStorage {
         let root = format!("{}/versions", self.root);
         let ns_paths: Vec<String> = self
             .kernel
-            .sys_readdir(&root, "root", true)
+            .sys_readdir(
+                &root,
+                "root",
+                true,
+                kernel::kernel::syscall::ReaddirOpts::default(),
+            )
             .into_iter()
             .map(|(p, _)| p)
             .collect();
@@ -390,7 +410,12 @@ impl SecretStorage {
 
             let key_paths: Vec<String> = self
                 .kernel
-                .sys_readdir(&ns_path, "root", true)
+                .sys_readdir(
+                    &ns_path,
+                    "root",
+                    true,
+                    kernel::kernel::syscall::ReaddirOpts::default(),
+                )
                 .into_iter()
                 .map(|(p, _)| p)
                 .collect();
@@ -405,7 +430,12 @@ impl SecretStorage {
 
                 let version_paths: Vec<String> = self
                     .kernel
-                    .sys_readdir(&key_path, "root", true)
+                    .sys_readdir(
+                        &key_path,
+                        "root",
+                        true,
+                        kernel::kernel::syscall::ReaddirOpts::default(),
+                    )
                     .into_iter()
                     .map(|(p, _)| p)
                     .collect();
@@ -498,7 +528,12 @@ impl SecretStorage {
                 // List all namespace directories.
                 let dir = format!("{}/entries", self.root);
                 self.kernel
-                    .sys_readdir(&dir, "root", true)
+                    .sys_readdir(
+                        &dir,
+                        "root",
+                        true,
+                        kernel::kernel::syscall::ReaddirOpts::default(),
+                    )
                     .into_iter()
                     .filter_map(|(path, _)| path.rsplit('/').next().map(unescape_path_component))
                     .filter(|s| !s.is_empty())
@@ -508,7 +543,12 @@ impl SecretStorage {
 
         for ns in &namespaces {
             let ns_dir = self.ns_dir_path(ns);
-            let entries = self.kernel.sys_readdir(&ns_dir, "root", true);
+            let entries = self.kernel.sys_readdir(
+                &ns_dir,
+                "root",
+                true,
+                kernel::kernel::syscall::ReaddirOpts::default(),
+            );
             for (child_path, _etype) in entries {
                 let key = match child_path.rsplit('/').next() {
                     Some(k) if !k.is_empty() => unescape_path_component(k),

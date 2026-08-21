@@ -723,7 +723,14 @@ jobs:
         # gate exists to catch.
         run: |
           BIN="$HOME/.cargo/bin/nexusd-cluster"
-          MAX=16252928  # 15.5 MiB — matches the nexus-vfs linux cluster budget
+          # 16.5 MiB. Tracks the nexus-vfs linux cluster budget (17039360 =
+          # 16.25 MiB at pin b98c08e62, itself raised for the DT_STREAM P3
+          # series) PLUS the managed_agent control-plane overhead this
+          # nexus-local binary adds on top. Raised from 15.5 MiB when the
+          # nexus-vfs pin advanced to b98c08e62 (P3 kernel growth). Still a
+          # tight leak-catcher: a driver/connector leaking into the slim build
+          # is far more than the ~0.2 MiB headroom here.
+          MAX=17301504
           actual=$(stat -c%s "$BIN")
           echo "nexusd-cluster size: $actual bytes (max: $MAX)"
           if [ "$actual" -gt "$MAX" ]; then

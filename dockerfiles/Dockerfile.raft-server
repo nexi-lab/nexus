@@ -25,7 +25,7 @@ WORKDIR /build
 # (CI preflight enforces agreement) — an unpinned install tracks HEAD
 # and can skew the raft contract against the cluster/witness images.
 # --locked honors the source tree's Cargo.lock.
-ARG NEXUS_VFS_REV=c9ecc9da2b755039a1028bbb619ee7cbb86f5dad
+ARG NEXUS_VFS_REV=b98c08e62fe0bb1f3474a78a89b0c7864639e521
 RUN cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --rev "${NEXUS_VFS_REV}" --bin nexus-raft-server raft
 
 # ---------- Production image ----------

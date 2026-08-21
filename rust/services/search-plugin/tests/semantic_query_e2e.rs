@@ -75,6 +75,25 @@ impl MockKernel {
             .or_default()
             .push((name, 0 /* DT_REG */));
     }
+    /// Register a DT_STREAM (entry_type 4) whose `sys_read` returns its WHOLE
+    /// collected log — the host C-ABI shim's contract (nexus-vfs#235). To the
+    /// plugin a stream is just another path-addressed document, so it indexes +
+    /// embeds identically to a file; only the readdir entry_type differs, which
+    /// is what the plugin's `searchable_content_type` gate keys off.
+    fn add_stream(&mut self, path: &str, bytes: &[u8], mtime_ms: i64) {
+        self.files.insert(
+            path.to_string(),
+            FileEntry {
+                bytes: bytes.to_vec(),
+                mtime_ms,
+            },
+        );
+        let (parent, name) = split_parent(path);
+        self.dirs
+            .entry(parent)
+            .or_default()
+            .push((name, 4 /* DT_STREAM */));
+    }
     fn add_dir(&mut self, path: &str) {
         if !self.dirs.contains_key(path) {
             self.dirs.insert(path.to_string(), Vec::new());
@@ -359,6 +378,57 @@ async fn semantic_finds_exact_match_after_index() {
     assert_eq!(q.results[0].chunk_text, "widget alpha payload");
     // mtime survives the roundtrip.
     assert_eq!(q.results[0].mtime_ms, Some(1));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn semantic_indexes_and_finds_stream_document() {
+    // A DT_STREAM (entry_type 4) must ride the SAME semantic (embed + ANN)
+    // index/query path as a file — that is the whole point of opening search
+    // to streams (nexus-vfs#235). The host shim hands the plugin the stream's
+    // WHOLE collected log via sys_read, so downstream it is indistinguishable
+    // from a document; here we prove the embed → ANN → FTS-enrich round-trip
+    // surfaces a stream by its content, side-by-side with a real file.
+    let h = Harness::start();
+    let mock = h.mock_mut();
+    mock.add_dir("/");
+    mock.add_dir("/mail");
+    // The mailbox stream — its content is what a semantic query must match.
+    mock.add_stream("/mail/inbox.wal", b"quokka rendezvous dispatch ledger", 7);
+    // A plain file alongside it, semantically unrelated.
+    mock.add_file("/mail/readme.md", b"orange banana grape basket", 2);
+
+    let idx = index_root(&h.svc).await;
+    assert!(
+        idx.error.is_none(),
+        "unexpected index error: {:?}",
+        idx.error
+    );
+    // BOTH the stream and the file are searchable content → both indexed.
+    assert_eq!(idx.indexed_count, 2);
+
+    // Query the stream's EXACT text — deterministic mock embed ⇒ distance ≈ 0
+    // ⇒ the stream ranks first with score ≈ 1.
+    let q = semantic_query(&h.svc, "quokka rendezvous dispatch ledger", "").await;
+    assert!(
+        q.error.is_none(),
+        "unexpected semantic error: {:?}",
+        q.error
+    );
+    assert!(!q.results.is_empty(), "expected the stream to be found");
+    assert_eq!(
+        q.results[0].path, "/mail/inbox.wal",
+        "the DT_STREAM document should be the top semantic hit"
+    );
+    assert!(
+        (q.results[0].score - 1.0).abs() < 0.001,
+        "exact-text stream hit should score ≈ 1, got {}",
+        q.results[0].score,
+    );
+    // FTS enrichment carries the stream's chunk_text back through the sibling
+    // index — proving the stream is present in BOTH the ANN and FTS indices.
+    assert_eq!(q.results[0].chunk_text, "quokka rendezvous dispatch ledger");
+    // Stream mtime survives the round-trip like any document.
+    assert_eq!(q.results[0].mtime_ms, Some(7));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

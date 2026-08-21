@@ -401,16 +401,21 @@ mod tests {
         let reg = registry_with(vec![("example.internal", 2126)], vec!["root"], false, true);
         let d = PeerFanoutDispatcher::new(reg);
         let peer = &d.registry.peers()[0].clone();
-        let err = d.dial(peer).await.unwrap_err();
-        // With allow_insecure_peer=true we PASS the gate and try to
-        // connect; the connect fails (unresolvable host), which is
-        // the expected downstream failure.
+        let res = d.dial(peer).await;
+        // The ONLY thing under test is the security gate: with
+        // allow_insecure_peer=true the plaintext-off-loopback refusal
+        // must NOT fire. Whatever happens downstream is environment-
+        // dependent and must not be asserted on — the gate is checked
+        // before any DNS/connect, and `dial` does an eager `connect()`,
+        // so the downstream result is `ConnectFailed` on a normal
+        // network (host is NXDOMAIN) but `Ok` behind a hijacking
+        // resolver/TUN proxy that fakes the A record AND accepts the
+        // TCP handshake. Asserting a specific downstream error made the
+        // test fail in the latter environment for a reason that has
+        // nothing to do with the gate it exists to lock down.
         assert!(
-            matches!(
-                err,
-                PeerFanoutError::ConnectFailed { .. } | PeerFanoutError::BadEndpoint { .. }
-            ),
-            "escape flag must pass the gate; got {err:?}"
+            !matches!(res, Err(PeerFanoutError::PlaintextOffLoopback { .. })),
+            "escape flag must pass the plaintext-off-loopback gate; got {res:?}"
         );
     }
 

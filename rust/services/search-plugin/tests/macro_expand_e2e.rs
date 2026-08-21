@@ -96,6 +96,7 @@ fn poison_handle() -> KernelHandle {
         sys_rmdir: poison_rmdir,
         sys_rename: poison_rename,
         sys_stat_batch: poison_stat_batch,
+        free_buf: nexus_plugin_abi::nexus_free,
         kernel_ptr: std::ptr::null(),
     }
 }

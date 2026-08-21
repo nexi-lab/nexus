@@ -176,6 +176,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         sys_rmdir: deny_rmdir,
         sys_rename: deny_rename,
         sys_stat_batch: deny_stat_batch,
+        free_buf: nexus_plugin_abi::nexus_free,
         kernel_ptr: kernel as *const c_void,
     };
 

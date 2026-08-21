@@ -556,6 +556,7 @@ mod dylib_e2e {
             sys_rmdir: noop_rmdir,
             sys_rename: noop_rename,
             sys_stat_batch: noop_stat_batch,
+            free_buf: nexus_plugin_abi::nexus_free,
             kernel_ptr: std::ptr::null(),
         }
     }

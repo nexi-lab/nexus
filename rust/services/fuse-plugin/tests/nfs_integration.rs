@@ -259,6 +259,7 @@ fn mock_kernel_handle(mock: &MockKernel) -> KernelHandle {
         sys_rmdir: mock_sys_rmdir,
         sys_rename: mock_sys_rename,
         sys_stat_batch: mock_sys_stat_batch,
+        free_buf: nexus_plugin_abi::nexus_free,
         kernel_ptr: mock as *const MockKernel as *const c_void,
     }
 }
@@ -682,6 +683,7 @@ fn slow_mock_kernel_handle(mock: &SlowMockKernel) -> KernelHandle {
         sys_rmdir: mock_sys_rmdir_for_slow,
         sys_rename: mock_sys_rename_for_slow,
         sys_stat_batch: mock_sys_stat_batch_for_slow,
+        free_buf: nexus_plugin_abi::nexus_free,
         kernel_ptr: mock as *const SlowMockKernel as *const c_void,
     }
 }

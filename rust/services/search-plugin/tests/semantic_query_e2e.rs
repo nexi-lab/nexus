@@ -253,6 +253,7 @@ fn handle_for(kernel: *const MockKernel) -> KernelHandle {
         sys_rmdir: unused_sys_rmdir,
         sys_rename: unused_sys_rename,
         sys_stat_batch: unused_sys_stat_batch,
+        free_buf: nexus_plugin_abi::nexus_free,
         kernel_ptr: kernel as *const c_void,
     }
 }

@@ -115,6 +115,7 @@ fn dup_kernel_handle(h: &KernelHandle) -> KernelHandle {
         sys_rmdir: h.sys_rmdir,
         sys_rename: h.sys_rename,
         sys_stat_batch: h.sys_stat_batch,
+        free_buf: h.free_buf,
         kernel_ptr: h.kernel_ptr,
     }
 }

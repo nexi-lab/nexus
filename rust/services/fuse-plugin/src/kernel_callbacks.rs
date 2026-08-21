@@ -6,8 +6,10 @@
 //! for writes), translates Rust `&str` ↔ `CString`, dispatches
 //! through the `extern "C"` fn pointer on the handle, and on success
 //! takes ownership of the kernel-allocated out-buffer + frees it via
-//! [`nexus_plugin_abi::nexus_free`] before returning a Rust-side
-//! `String` / `Vec<u8>`.
+//! the handle's [`KernelHandle::free_buf`] callback (NOT the plugin's
+//! own `nexus_free` — these buffers are HOST-allocated and the kernel
+//! links a different global allocator; a cross-heap free segfaults on
+//! Windows) before returning a Rust-side `String` / `Vec<u8>`.
 //!
 //! The returned `Err(i32)` is the raw C-ABI rc — mapping to a
 //! platform-specific error code (Errno for fuser, NTSTATUS for
@@ -25,7 +27,7 @@
 
 use std::ffi::CString;
 
-use nexus_plugin_abi::{nexus_free, KernelHandle};
+use nexus_plugin_abi::{KernelHandle, NexusFreeFn};
 
 /// Raw `i32` "I/O error" used when the kernel callback can't be
 /// invoked at all (e.g. NUL in the path string).  Maps to
@@ -52,7 +54,7 @@ pub fn sys_stat(kernel: &KernelHandle, path: &str) -> Result<String, i32> {
     if rc != 0 {
         return Err(rc);
     }
-    consume_string_out(out_buf, out_len)
+    consume_string_out(kernel.free_buf, out_buf, out_len)
 }
 
 /// Wrapper around the C `sys_read` callback.  Returns the full file
@@ -72,7 +74,7 @@ pub fn sys_read(kernel: &KernelHandle, path: &str) -> Result<Vec<u8>, i32> {
     if rc != 0 {
         return Err(rc);
     }
-    consume_bytes_out(out_buf, out_len)
+    consume_bytes_out(kernel.free_buf, out_buf, out_len)
 }
 
 /// Wrapper around the C `sys_write` callback.
@@ -109,7 +111,7 @@ pub fn sys_readdir(kernel: &KernelHandle, parent_path: &str) -> Result<String, i
     if rc != 0 {
         return Err(rc);
     }
-    consume_string_out(out_buf, out_len)
+    consume_string_out(kernel.free_buf, out_buf, out_len)
 }
 
 /// Wrapper around the C `sys_unlink` callback.
@@ -194,7 +196,7 @@ pub fn sys_stat_batch(
     if rc != 0 {
         return Err(rc);
     }
-    let json = consume_string_out(out_buf, out_len)?;
+    let json = consume_string_out(kernel.free_buf, out_buf, out_len)?;
     Ok(parse_stat_batch_output(&json))
 }
 
@@ -303,6 +305,7 @@ mod nfs_async {
     pub async fn sys_stat_async(kernel: &KernelHandle, path: &str) -> Result<String, i32> {
         let c_path = CString::new(path).map_err(|_| ERRNO_IO_RAW)?;
         let fn_ptr = kernel.sys_stat;
+        let free_buf = kernel.free_buf;
         let kptr = kernel.kernel_ptr as usize;
         tokio::task::spawn_blocking(move || {
             let kptr = kptr as *const std::ffi::c_void;
@@ -312,7 +315,7 @@ mod nfs_async {
             if rc != 0 {
                 return Err(rc);
             }
-            consume_string_out(out_buf, out_len)
+            consume_string_out(free_buf, out_buf, out_len)
         })
         .await
         .unwrap_or(Err(ERRNO_IO_RAW))
@@ -322,6 +325,7 @@ mod nfs_async {
     pub async fn sys_read_async(kernel: &KernelHandle, path: &str) -> Result<Vec<u8>, i32> {
         let c_path = CString::new(path).map_err(|_| ERRNO_IO_RAW)?;
         let fn_ptr = kernel.sys_read;
+        let free_buf = kernel.free_buf;
         let kptr = kernel.kernel_ptr as usize;
         tokio::task::spawn_blocking(move || {
             let kptr = kptr as *const std::ffi::c_void;
@@ -331,7 +335,7 @@ mod nfs_async {
             if rc != 0 {
                 return Err(rc);
             }
-            consume_bytes_out(out_buf, out_len)
+            consume_bytes_out(free_buf, out_buf, out_len)
         })
         .await
         .unwrap_or(Err(ERRNO_IO_RAW))
@@ -368,6 +372,7 @@ mod nfs_async {
     ) -> Result<String, i32> {
         let c_path = CString::new(parent_path).map_err(|_| ERRNO_IO_RAW)?;
         let fn_ptr = kernel.sys_readdir;
+        let free_buf = kernel.free_buf;
         let kptr = kernel.kernel_ptr as usize;
         tokio::task::spawn_blocking(move || {
             let kptr = kptr as *const std::ffi::c_void;
@@ -377,7 +382,7 @@ mod nfs_async {
             if rc != 0 {
                 return Err(rc);
             }
-            consume_string_out(out_buf, out_len)
+            consume_string_out(free_buf, out_buf, out_len)
         })
         .await
         .unwrap_or(Err(ERRNO_IO_RAW))
@@ -529,29 +534,39 @@ pub fn parse_readdir(json: &str) -> Vec<(String, u64)> {
 
 // ── private helpers ─────────────────────────────────────────────────
 
-/// Consume a kernel-allocated `(out_buf, out_len)` pair as a UTF-8
-/// `String`, freeing the buffer via `nexus_free` even on parse
-/// failure.  Both `sys_stat` and `sys_readdir` return JSON payloads
-/// with this exact lifecycle.
-fn consume_string_out(out_buf: *mut u8, out_len: usize) -> Result<String, i32> {
+/// Consume a HOST-allocated `(out_buf, out_len)` pair as a UTF-8
+/// `String`, freeing the buffer via the host's `free_buf` even on
+/// parse failure.  Both `sys_stat` and `sys_readdir` return JSON
+/// payloads with this exact lifecycle.  `free_buf` MUST be the buffer's
+/// allocating side (the host), never the plugin's `nexus_free` — the
+/// two link different allocators (see the module docs).
+fn consume_string_out(
+    free_buf: NexusFreeFn,
+    out_buf: *mut u8,
+    out_len: usize,
+) -> Result<String, i32> {
     unsafe {
         let slice = std::slice::from_raw_parts(out_buf, out_len);
         let s = std::str::from_utf8(slice)
             .map(|s| s.to_string())
             .map_err(|_| ERRNO_IO_RAW);
-        nexus_free(out_buf, out_len);
+        free_buf(out_buf, out_len);
         s
     }
 }
 
-/// Consume a kernel-allocated `(out_buf, out_len)` pair as a byte
-/// vector, freeing the buffer via `nexus_free`.  Used by `sys_read`
+/// Consume a HOST-allocated `(out_buf, out_len)` pair as a byte vector,
+/// freeing the buffer via the host's `free_buf`.  Used by `sys_read`
 /// which doesn't constrain encoding.
-fn consume_bytes_out(out_buf: *mut u8, out_len: usize) -> Result<Vec<u8>, i32> {
+fn consume_bytes_out(
+    free_buf: NexusFreeFn,
+    out_buf: *mut u8,
+    out_len: usize,
+) -> Result<Vec<u8>, i32> {
     unsafe {
         let slice = std::slice::from_raw_parts(out_buf, out_len);
         let v = slice.to_vec();
-        nexus_free(out_buf, out_len);
+        free_buf(out_buf, out_len);
         Ok(v)
     }
 }

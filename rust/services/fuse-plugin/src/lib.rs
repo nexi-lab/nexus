@@ -428,6 +428,7 @@ unsafe fn kernel_handle_clone(src: &KernelHandle) -> KernelHandle {
         sys_rmdir: src.sys_rmdir,
         sys_rename: src.sys_rename,
         sys_stat_batch: src.sys_stat_batch,
+        free_buf: src.free_buf,
         kernel_ptr: src.kernel_ptr,
     }
 }

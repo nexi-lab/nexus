@@ -2,14 +2,17 @@
 //!
 //! Every syscall the search walker needs (`sys_readdir` + `sys_read`)
 //! is exposed here as a Rust-ergonomic `Result<T, KernelIoError>`
-//! function.  Keeps the `unsafe extern "C"` FFI + `nexus_free`
+//! function.  Keeps the `unsafe extern "C"` FFI + `free_buf`
 //! bookkeeping in one place so the walker / grep loop stays in
-//! straight-line Rust.
+//! straight-line Rust.  Buffers these callbacks return are HOST-
+//! allocated, so they are freed with `handle.free_buf`, never the
+//! plugin's own `nexus_free` (different allocators — see the ABI's
+//! `KernelHandle::free_buf` contract).
 
 use std::ffi::{CString, NulError};
 use std::slice;
 
-use nexus_plugin_abi::{nexus_free, KernelHandle};
+use nexus_plugin_abi::KernelHandle;
 use serde::Deserialize;
 
 /// Errors surfaced from the kernel-side callbacks.  Mirrors the
@@ -89,12 +92,15 @@ pub fn sys_readdir(handle: &KernelHandle, path: &str) -> Result<Vec<DirEntry>, K
         0 => {
             // SAFETY: on Ok, the callback populated `out_ptr` with a
             // heap-allocated buffer of `out_len` bytes; we borrow it
-            // for the parse then hand it back to `nexus_free`.
+            // for the parse then hand it back via `handle.free_buf`.
             let bytes = unsafe { slice::from_raw_parts(out_ptr, out_len) };
             let parsed =
                 serde_json::from_slice::<Vec<DirEntry>>(bytes).map_err(KernelIoError::JsonParse);
-            // Free regardless of parse outcome — kernel owns the alloc.
-            unsafe { nexus_free(out_ptr, out_len) };
+            // Free regardless of parse outcome. The HOST allocated this
+            // buffer, so it must be freed by the host via `free_buf` —
+            // NOT the plugin's `nexus_free` (the kernel links mimalloc,
+            // this plugin the system allocator; a cross-heap free segfaults).
+            unsafe { (handle.free_buf)(out_ptr, out_len) };
             parsed
         }
         -1 => Err(KernelIoError::NotFound),
@@ -125,7 +131,8 @@ pub fn sys_read(handle: &KernelHandle, path: &str) -> Result<Vec<u8>, KernelIoEr
         0 => {
             let bytes = unsafe { slice::from_raw_parts(out_ptr, out_len) };
             let owned = bytes.to_vec();
-            unsafe { nexus_free(out_ptr, out_len) };
+            // Host-allocated buffer → free via the host's `free_buf`.
+            unsafe { (handle.free_buf)(out_ptr, out_len) };
             Ok(owned)
         }
         -1 => Err(KernelIoError::NotFound),
@@ -168,7 +175,8 @@ pub fn sys_stat(handle: &KernelHandle, path: &str) -> Result<StatInfo, KernelIoE
         0 => {
             let bytes = unsafe { slice::from_raw_parts(out_ptr, out_len) };
             let parsed: Result<StatInfo, _> = serde_json::from_slice(bytes);
-            unsafe { nexus_free(out_ptr, out_len) };
+            // Host-allocated buffer → free via the host's `free_buf`.
+            unsafe { (handle.free_buf)(out_ptr, out_len) };
             parsed.map_err(KernelIoError::JsonParse)
         }
         -1 => Err(KernelIoError::NotFound),

@@ -272,6 +272,7 @@ mod tests {
             sys_rmdir: stub_sys_path,
             sys_rename: stub_sys_rename,
             sys_stat_batch: stub_sys_stat_batch,
+            free_buf: nexus_plugin_abi::nexus_free,
             kernel_ptr: std::ptr::null(),
         }
     }

@@ -1193,7 +1193,12 @@ mod e2e_integration {
         assert_eq!(hist.entry.unwrap().password.as_deref(), Some("initial-pw"),);
 
         // Kernel cross-verify: both version files under unified path.
-        let version_dir = kernel.sys_readdir("/vault/versions/passwords/github", "root", true);
+        let version_dir = kernel.sys_readdir(
+            "/vault/versions/passwords/github",
+            "root",
+            true,
+            kernel::kernel::syscall::ReaddirOpts::default(),
+        );
         assert_eq!(version_dir.len(), 2);
     }
 
@@ -1256,7 +1261,12 @@ mod e2e_integration {
         assert_eq!(got.entry.unwrap().password.as_deref(), Some("s3cret-key"),);
 
         // Kernel cross-check: entries under unified path.
-        let entries = kernel.sys_readdir("/vault/entries/passwords", "root", true);
+        let entries = kernel.sys_readdir(
+            "/vault/entries/passwords",
+            "root",
+            true,
+            kernel::kernel::syscall::ReaddirOpts::default(),
+        );
         assert_eq!(entries.len(), 1);
         assert!(entries[0].0.contains("aws-prod"));
     }
@@ -1384,7 +1394,12 @@ mod e2e_integration {
 
         // Kernel cross-check: 3 index files in passwords namespace
         // (soft-delete = tombstone, not removal).
-        let vfs_entries = kernel.sys_readdir("/vault/entries/passwords", "root", true);
+        let vfs_entries = kernel.sys_readdir(
+            "/vault/entries/passwords",
+            "root",
+            true,
+            kernel::kernel::syscall::ReaddirOpts::default(),
+        );
         assert_eq!(vfs_entries.len(), 3);
     }
 }

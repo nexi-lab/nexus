@@ -33,8 +33,10 @@ from tests.e2e.docker.runbook_helpers import (
     ADMIN_API_KEY,
     assert_log_contains,
     uid,
+    vfs_create_stream,
     vfs_delete,
     vfs_mkdir,
+    vfs_stream_write,
     vfs_write,
     wait_healthy,
 )
@@ -760,3 +762,110 @@ class TestSearchIndexQuery:
         assert "error" not in r, r
         assert len(r["result"]["results"]) == 1
         assert r["result"]["results"][0]["path"] == f"{base}/ok.md"
+
+
+class TestSearchStreams:
+    """Search over DT_STREAM content (nexus-vfs #229 P3 "open search to streams").
+
+    A DT_STREAM is a durable append-only log. The host's C-ABI ``sys_read``
+    returns its WHOLE collected log (not a single frame at offset 0), so grep and
+    index treat a stream as ONE searchable document, exactly like a file. Each
+    test is a real user journey — write a stream (plus a sibling file), then find
+    the content by grep and by index/query — and the needle is deliberately in a
+    LATE frame so a match proves the whole log was read, not just frame 0.
+    """
+
+    @staticmethod
+    def _seed(api_key: str) -> tuple[str, str, str]:
+        """Seed a fresh tree: a wal DT_STREAM whose EARLY frame holds
+        ``alphatoken`` and a LATE frame (6th of 7) holds ``omeganeedle``, plus a
+        sibling DT_REG file holding ``filetoken``. Returns ``(base, stream, file)``
+        absolute paths.
+
+        Frames are newline-terminated — the shape of every real searchable log
+        stream (audit records, JSON-lines, chat-with-me messages). `sys_read`
+        returns the frames' payloads CONCATENATED (a stream's whole log), so
+        without the trailing newline the last word of one frame would glue to the
+        first of the next into a single FTS token (grep's substring match would
+        still hit, but the keyword index would tokenize the glued pair). The
+        newline is the record boundary a log producer writes anyway.
+        """
+        base = f"/sstream-{uid()}"
+        vfs_mkdir(NODE_GRPC, base, parents=True, api_key=api_key)
+        stream = f"{base}/log"
+        r = vfs_create_stream(NODE_GRPC, stream, api_key=api_key)
+        assert "error" not in r, f"create stream {stream}: {r}"
+        frames = [
+            b"alphatoken opening frame of the log\n",
+            b"second frame filler text\n",
+            b"third frame filler text\n",
+            b"fourth frame filler text\n",
+            b"fifth frame filler text\n",
+            b"omeganeedle the token buried in a late frame\n",
+            b"trailing frame filler text\n",
+        ]
+        for i, f in enumerate(frames):
+            w = vfs_stream_write(NODE_GRPC, stream, f, api_key=api_key)
+            assert "error" not in w, f"stream write frame {i}: {w}"
+        file_path = f"{base}/note.txt"
+        wf = vfs_write(
+            NODE_GRPC, file_path, b"filetoken plain regular file content\n", api_key=api_key
+        )
+        assert "error" not in wf, f"file write {file_path}: {wf}"
+        return base, stream, file_path
+
+    def test_grep_finds_early_and_late_stream_frames_and_file(self, api_key: str) -> None:
+        """The core proof. Grep a token in a LATE stream frame -> the stream is a
+        hit, which is only possible if ``sys_read`` returned the WHOLE log (frame 0
+        alone would miss it). The early-frame token also hits; the sibling file
+        still greps (no DT_REG regression); a bogus token matches nothing."""
+        base, stream, file_path = self._seed(api_key)
+
+        late = search_grep(NODE_GRPC, base, "omeganeedle", api_key=api_key)
+        assert "error" not in late, f"grep late token: {late}"
+        late_paths = [m["path"] for m in late["result"]["matches"]]
+        assert stream in late_paths, (
+            "a token in a LATE stream frame must be grep-found -> proves the host "
+            f"read the whole log, not just frame 0; got {late_paths}"
+        )
+
+        early = search_grep(NODE_GRPC, base, "alphatoken", api_key=api_key)
+        assert "error" not in early, f"grep early token: {early}"
+        early_paths = [m["path"] for m in early["result"]["matches"]]
+        assert stream in early_paths, f"early stream frame must be grep-found; got {early_paths}"
+
+        f = search_grep(NODE_GRPC, base, "filetoken", api_key=api_key)
+        assert "error" not in f, f"grep file token: {f}"
+        f_paths = [m["path"] for m in f["result"]["matches"]]
+        assert file_path in f_paths, f"DT_REG file grep must still work; got {f_paths}"
+
+        none = search_grep(NODE_GRPC, base, "no_such_token_zzz", api_key=api_key)
+        assert "error" not in none, f"grep negative: {none}"
+        assert none["result"]["matches"] == [], (
+            f"a token in neither the stream nor the file must not match: {none['result']['matches']}"
+        )
+
+    def test_keyword_index_and_query_over_stream(self, api_key: str) -> None:
+        """Index the tree, then keyword-query for the stream's late-frame token ->
+        the stream is a result. The index treats a DT_STREAM's whole log as one
+        document alongside the file (both are indexed)."""
+        base, stream, _file = self._seed(api_key)
+
+        idx = search_index(NODE_GRPC, base, api_key=api_key)
+        assert "error" not in idx, f"index: {idx}"
+        assert idx["result"]["indexed_count"] >= 2, (
+            f"both the stream and the file should be indexed as documents; got {idx['result']}"
+        )
+
+        q = search_query(NODE_GRPC, "omeganeedle", path_filter=base, api_key=api_key)
+        assert "error" not in q, f"keyword query: {q}"
+        q_paths = [r["path"] for r in q["result"]["results"]]
+        assert stream in q_paths, (
+            f"keyword query must surface the stream's (late-frame) content; got {q_paths}"
+        )
+        # NOTE: semantic (ANN) over streams shares the SAME index_one read path as
+        # keyword, so the whole-log document also feeds the vector index — but this
+        # compose image ships no embedder (see
+        # test_query_semantic_gracefully_degrades_without_embedder), so a semantic
+        # assertion here could only re-test that degradation, not stream content.
+        # It is covered in an embedder-equipped environment, not this suite.

@@ -163,6 +163,67 @@ def vfs_write(
         channel.close()
 
 
+def vfs_create_stream(
+    target: str,
+    path: str,
+    *,
+    io_profile: str = "wal",
+    capacity: int = 0,
+    api_key: str = ADMIN_API_KEY,
+    timeout: float = 30,
+) -> dict:
+    """Create a DT_STREAM (durable append-only log) via Setattr.
+
+    ``io_profile="wal"`` + ``capacity=0`` is the keep-forever unbounded log
+    (audit / A2A-mailbox / transcript shape); a ``capacity>0`` trims the cold
+    tier to that retention budget. Returns ``{"result": {"created": bool}}`` on
+    success or ``{"error": {...}}`` on server-reported failure.
+    """
+    from nexus.grpc.vfs import vfs_pb2
+
+    channel, stub = _open_stub(target)
+    try:
+        req = vfs_pb2.SetattrRequest(
+            path=path,
+            auth_token=api_key,
+            entry_type=DT_STREAM,
+            io_profile=io_profile,
+            capacity=capacity,
+        )
+        resp = stub.Setattr(req, timeout=timeout)
+        if resp.is_error:
+            return {"error": _maybe_error_from_payload(resp.error_payload)}
+        return {"result": {"created": resp.created}}
+    finally:
+        channel.close()
+
+
+def vfs_stream_write(
+    target: str,
+    path: str,
+    data: bytes,
+    *,
+    api_key: str = ADMIN_API_KEY,
+    timeout: float = 30,
+) -> dict:
+    """Append one frame to a DT_STREAM (StreamWriteNowait).
+
+    Returns ``{"result": {"offset": int}}`` (the offset the frame landed at) on
+    success or ``{"error": {...}}`` on server-reported failure.
+    """
+    from nexus.grpc.vfs import vfs_pb2
+
+    channel, stub = _open_stub(target)
+    try:
+        req = vfs_pb2.StreamWriteRequest(path=path, data=data, auth_token=api_key)
+        resp = stub.StreamWriteNowait(req, timeout=timeout)
+        if resp.is_error:
+            return {"error": _maybe_error_from_payload(resp.error_payload)}
+        return {"result": {"offset": resp.offset}}
+    finally:
+        channel.close()
+
+
 def vfs_read(
     target: str,
     path: str,

@@ -1681,7 +1681,12 @@ mod dispatch_e2e {
 
         // Step 3: Verify /vault/entries/ shows the ENCODED namespace dir
         // (not the API literal). This is what readdir actually returns.
-        let entries_root = kernel.sys_readdir("/vault/entries", "root", true);
+        let entries_root = kernel.sys_readdir(
+            "/vault/entries",
+            "root",
+            true,
+            kernel::kernel::syscall::ReaddirOpts::default(),
+        );
         let ns_names: Vec<&str> = entries_root
             .iter()
             .filter_map(|(p, _)| p.rsplit('/').next())
@@ -1701,7 +1706,12 @@ mod dispatch_e2e {
         );
 
         // Step 4: Verify password entry path uses title from step 1
-        let pw_entries = kernel.sys_readdir("/vault/entries/passwords", "root", true);
+        let pw_entries = kernel.sys_readdir(
+            "/vault/entries/passwords",
+            "root",
+            true,
+            kernel::kernel::syscall::ReaddirOpts::default(),
+        );
         assert_eq!(pw_entries.len(), 1);
         assert!(
             pw_entries[0].0.ends_with(&format!("/{pw_title}")),
@@ -1711,8 +1721,12 @@ mod dispatch_e2e {
         // Step 5: Verify generic secret entry path. Direct readdir into
         // the storage layout MUST use the encoded namespace segment;
         // walking via the API literal would simply not exist on disk.
-        let secret_entries =
-            kernel.sys_readdir(&format!("/vault/entries/{secret_ns_disk}"), "root", true);
+        let secret_entries = kernel.sys_readdir(
+            &format!("/vault/entries/{secret_ns_disk}"),
+            "root",
+            true,
+            kernel::kernel::syscall::ReaddirOpts::default(),
+        );
         assert_eq!(secret_entries.len(), 1);
         assert!(
             secret_entries[0]
@@ -1726,6 +1740,7 @@ mod dispatch_e2e {
             &format!("/vault/versions/passwords/{pw_title}"),
             "root",
             true,
+            kernel::kernel::syscall::ReaddirOpts::default(),
         );
         assert_eq!(pw_vers.len(), 1, "1 version for password");
 
@@ -1733,6 +1748,7 @@ mod dispatch_e2e {
             &format!("/vault/versions/{secret_ns_disk}/{secret_key_disk}"),
             "root",
             true,
+            kernel::kernel::syscall::ReaddirOpts::default(),
         );
         assert_eq!(secret_vers.len(), 1, "1 version for generic secret");
     }

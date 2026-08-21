@@ -26,7 +26,7 @@ use crate::fts_index::FtsHit;
 use crate::fusion::{self, DEFAULT_ALPHA, DEFAULT_RRF_K};
 use crate::index_manager::IndexManager;
 use crate::internal_call::{is_internal_call, INSIDE_MIDDLEWARE};
-use crate::kernel_io::{self, DirEntry, KernelIoError, DT_DIR, DT_REG};
+use crate::kernel_io::{self, DirEntry, KernelIoError, DT_DIR, DT_REG, DT_STREAM};
 use crate::peer_fanout::{build_default_dispatcher, merge_ranked, SharedPeerFanoutDispatcher};
 use crate::query_expansion::{build_default_expander, ExpansionCache, QueryExpander};
 use crate::search_proto::search_service_server::SearchService;
@@ -855,7 +855,7 @@ fn do_grep(
             truncated = true;
             return WalkAction::Stop;
         }
-        if entry_type != DT_REG {
+        if !searchable_content_type(entry_type) {
             return WalkAction::Continue;
         }
         let relative = strip_root(root_path, vfs_path);
@@ -1067,6 +1067,16 @@ fn strip_root<'a>(root: &str, path: &'a str) -> &'a str {
     } else {
         path.trim_start_matches('/')
     }
+}
+
+/// Which VFS entry types carry searchable content — the SSOT for grep AND index
+/// walks (both keyword and semantic). A DT_REG file and a DT_STREAM log both read
+/// as one path-addressed document via `kernel_io::sys_read` (the host returns a
+/// stream's whole collected log), so both are searched; DT_DIR / DT_MOUNT are
+/// containers (`walk_recursive` descends them) and DT_PIPE is ephemeral, so
+/// neither is a document.
+fn searchable_content_type(entry_type: u8) -> bool {
+    entry_type == DT_REG || entry_type == DT_STREAM
 }
 
 fn walk_err_to_string(e: KernelIoError) -> String {
@@ -1759,7 +1769,7 @@ fn do_index(
             if (indexed as usize) >= max_docs {
                 return WalkAction::Stop;
             }
-            if entry_type != DT_REG {
+            if !searchable_content_type(entry_type) {
                 return WalkAction::Continue;
             }
             match index_one(handle, &sinks, vfs_path) {
@@ -1786,7 +1796,7 @@ fn do_index(
                     if (indexed as usize) >= max_docs {
                         break;
                     }
-                    if entry.entry_type != DT_REG {
+                    if !searchable_content_type(entry.entry_type) {
                         continue;
                     }
                     let child = kernel_io::join_vfs_path(root_path, &entry.name);
@@ -2281,7 +2291,7 @@ fn do_refresh(
             handle,
             root_path,
             &mut |vfs_path, entry_type| {
-                if entry_type != DT_REG {
+                if !searchable_content_type(entry_type) {
                     return WalkAction::Continue;
                 }
                 visit_file(vfs_path)
@@ -2293,7 +2303,7 @@ fn do_refresh(
         match kernel_io::sys_readdir(handle, root_path) {
             Ok(entries) => {
                 for entry in entries {
-                    if entry.entry_type != DT_REG {
+                    if !searchable_content_type(entry.entry_type) {
                         continue;
                     }
                     let child = kernel_io::join_vfs_path(root_path, &entry.name);

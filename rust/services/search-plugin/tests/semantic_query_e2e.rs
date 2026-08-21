@@ -28,7 +28,7 @@ use std::os::raw::c_char;
 use std::sync::Arc;
 
 use nexus_plugin_abi::KernelHandle;
-use nexus_search_plugin::embedder::MockEmbedder;
+use nexus_search_plugin::embedder::{Embedder, MockEmbedder, RemoteEmbedder, RemoteEmbedderConfig};
 use nexus_search_plugin::index_manager::IndexManager;
 use nexus_search_plugin::search_proto::search_service_server::SearchService;
 use nexus_search_plugin::search_proto::{IndexRequest, QueryRequest, QueryType};
@@ -271,11 +271,16 @@ impl Harness {
     /// functional without needing NEXUS_SEARCH_MODEL_DIR / ort dylib.
     /// Uses a small (16-dim) mock so assertion output stays readable.
     fn start() -> Self {
+        Self::start_with_embedder(Arc::new(MockEmbedder::with_dim(16)))
+    }
+
+    /// Start with a caller-supplied embedder — lets a live test inject a
+    /// real `RemoteEmbedder` while every deterministic test keeps the mock.
+    fn start_with_embedder(embedder: Arc<dyn Embedder>) -> Self {
         let dir = TempDir::new().expect("tempdir");
         let mock = Box::into_raw(Box::new(MockKernel::new()));
         let handle = handle_for(mock);
         let manager = Arc::new(IndexManager::with_root(dir.path().to_path_buf()));
-        let embedder = Arc::new(MockEmbedder::with_dim(16));
         let svc = SearchServiceImpl::builder(Arc::new(handle))
             .manager(manager)
             .embedder(embedder)
@@ -430,6 +435,91 @@ async fn semantic_indexes_and_finds_stream_document() {
     assert_eq!(q.results[0].chunk_text, "quokka rendezvous dispatch ledger");
     // Stream mtime survives the round-trip like any document.
     assert_eq!(q.results[0].mtime_ms, Some(7));
+}
+
+/// LIVE semantic-over-stream against a REAL embeddings API (not the mock).
+///
+/// This is the one path the deterministic tests can't cover: a real
+/// embedding model must rank a stream above an unrelated file for a query
+/// that shares NO words with it — pure semantic similarity, which only a
+/// real model produces. It proves the embed → ANN → fusion pipeline works
+/// end-to-end for a DT_STREAM document with production-shaped vectors.
+///
+/// Inert by default: returns early unless `NEXUS_SEARCH_EMBED_API_URL`
+/// (+ `_MODEL`/`_DIM`/`_API_KEY`) is set, so CI and key-less boxes skip it.
+/// Run locally with a real OpenAI-compatible endpoint + key. Verified
+/// against SudoRouter `text-embedding-3-small` (dim 1536).
+///
+/// Sync `#[test]`, not `#[tokio::test]`: `RemoteEmbedder` wraps a
+/// `reqwest::blocking` client (its own background runtime), which must be
+/// built, used, and dropped OUTSIDE an async context — so we drive the
+/// async service calls through an explicit runtime's `block_on`, exactly
+/// like the plugin's `dispatch_grpc` does, and let the embedder drop on
+/// this sync thread.
+#[test]
+fn semantic_over_stream_live_remote_embedder() {
+    let cfg = match RemoteEmbedderConfig::from_env() {
+        Ok(Some(c)) => c,
+        _ => {
+            eprintln!(
+                "SKIP semantic_over_stream_live_remote_embedder: set NEXUS_SEARCH_EMBED_API_URL \
+                 (+ _MODEL/_DIM/_API_KEY) to run the live remote-embedder check"
+            );
+            return;
+        }
+    };
+    let embedder = Arc::new(RemoteEmbedder::new(cfg).expect("build remote embedder"));
+    let h = Harness::start_with_embedder(embedder);
+    {
+        let mock = h.mock_mut();
+        mock.add_dir("/");
+        mock.add_dir("/mail");
+        // A DT_STREAM about finance, and a file about hiking. The query below
+        // shares no vocabulary with either — only the embedding space knows
+        // which is topically closer.
+        mock.add_stream(
+            "/mail/inbox.wal",
+            b"the quarterly budget forecast and revenue projections for the finance team",
+            7,
+        );
+        mock.add_file(
+            "/mail/readme.md",
+            b"how to hike the coastal mountain trail before sunrise",
+            2,
+        );
+    }
+
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .expect("tokio runtime");
+    let (idx, q) = rt.block_on(async {
+        let idx = index_root(&h.svc).await;
+        // Paraphrase of the stream's topic with zero shared words — a keyword
+        // index would miss it; a real embedder must rank the stream first.
+        let q = semantic_query(&h.svc, "financial planning and earnings estimates", "").await;
+        (idx, q)
+    });
+
+    assert!(
+        idx.error.is_none(),
+        "unexpected index error: {:?}",
+        idx.error
+    );
+    assert_eq!(idx.indexed_count, 2, "stream + file both indexed");
+    assert!(
+        q.error.is_none(),
+        "unexpected semantic error: {:?}",
+        q.error
+    );
+    assert!(!q.results.is_empty(), "expected a semantic hit");
+    assert_eq!(
+        q.results[0].path, "/mail/inbox.wal",
+        "a real embedder must rank the finance STREAM above the hiking file \
+         for a finance query; got {:?}",
+        q.results,
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

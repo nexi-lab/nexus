@@ -58,6 +58,11 @@ pub const DT_REG: u8 = 0;
 pub const DT_DIR: u8 = 1;
 #[allow(dead_code)]
 pub const DT_MOUNT: u8 = 2;
+/// DT_STREAM (`kernel::meta_store::DT_STREAM` = 4) — a durable append-only log.
+/// Search reads its content the same path-addressed way as a DT_REG file:
+/// `sys_read` returns the WHOLE collected log for a stream (the host C-ABI shim
+/// collects it), so grep/index treat a stream as one searchable document.
+pub const DT_STREAM: u8 = 4;
 
 /// Wrap `handle.sys_readdir(path)`.
 ///

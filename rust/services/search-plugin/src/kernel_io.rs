@@ -141,14 +141,20 @@ pub fn sys_read(handle: &KernelHandle, path: &str) -> Result<Vec<u8>, KernelIoEr
 }
 
 /// Subset of `StatResult`'s JSON shape that the plugin walker cares
-/// about.  Serde ignores unknown fields (`entry_type`, `size`,
-/// `zone_id`, `path`, …) so this stays additive-compatible with any
-/// future schema growth on the kernel side.  `modified_at_ms` is
-/// `null`-safe: older kernels that predate the field return it as
-/// `null` and the walker degrades to "unknown mtime, sort last".
+/// about.  Serde ignores unknown fields (`size`, `zone_id`, `path`,
+/// …) so this stays additive-compatible with any future schema
+/// growth on the kernel side.  `modified_at_ms` is `null`-safe:
+/// older kernels that predate the field return it as `null` and the
+/// walker degrades to "unknown mtime, sort last".  `entry_type` is
+/// `0` (DT_REG) on legacy kernels that omit it — a safe default
+/// because DT_REG is the pre-DT_STREAM regular-file behaviour and
+/// the P4 append-incremental path stays gated on the DT_STREAM
+/// value it never sees.
 #[derive(Debug, Deserialize)]
 pub struct StatInfo {
     pub modified_at_ms: Option<i64>,
+    #[serde(default)]
+    pub entry_type: u8,
 }
 
 /// Wrap `handle.sys_stat(path)`.

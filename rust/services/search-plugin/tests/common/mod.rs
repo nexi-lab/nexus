@@ -27,6 +27,12 @@ use nexus_plugin_abi::KernelHandle;
 struct FileEntry {
     bytes: Vec<u8>,
     mtime_ms: i64,
+    /// entry_type reported by `sys_stat` — `0` (DT_REG) for regular
+    /// files, `4` (DT_STREAM) for streams.  Kept per-entry so the
+    /// mock's stat matches the shape a real kernel returns; the
+    /// append-incremental plugin path keys off this to dispatch
+    /// DT_STREAM through the P4 incremental branch.
+    entry_type: u8,
 }
 
 /// In-memory kernel: `files` are regular-file/stream contents, `dirs`
@@ -50,6 +56,7 @@ impl MockKernel {
             FileEntry {
                 bytes: bytes.to_vec(),
                 mtime_ms,
+                entry_type: 0, // DT_REG
             },
         );
         let (parent, name) = split_parent(path);
@@ -70,6 +77,7 @@ impl MockKernel {
             FileEntry {
                 bytes: bytes.to_vec(),
                 mtime_ms,
+                entry_type: 4, // DT_STREAM
             },
         );
         let (parent, name) = split_parent(path);
@@ -77,6 +85,21 @@ impl MockKernel {
             .entry(parent)
             .or_default()
             .push((name, 4 /* DT_STREAM */));
+    }
+
+    /// Append bytes to an existing DT_STREAM path (idempotent test-
+    /// side model of a stream `push`).  Bumps the stored mtime so
+    /// the plugin's Refresh verdict flips to `Changed`.  Panics if
+    /// `path` was not registered via [`Self::add_stream`] — appending
+    /// to a regular file is not a legal test action.
+    pub fn append_to_stream(&mut self, path: &str, extra: &[u8], new_mtime_ms: i64) {
+        let entry = self
+            .files
+            .get_mut(path)
+            .expect("append_to_stream: path not registered");
+        assert_eq!(entry.entry_type, 4, "append_to_stream requires DT_STREAM");
+        entry.bytes.extend_from_slice(extra);
+        entry.mtime_ms = new_mtime_ms;
     }
 
     pub fn add_dir(&mut self, path: &str) {
@@ -176,7 +199,7 @@ unsafe extern "C" fn mock_sys_stat(
     if let Some(entry) = kernel.files.get(p) {
         let payload = serde_json::json!({
             "path": p,
-            "entry_type": 0,
+            "entry_type": entry.entry_type,
             "size": entry.bytes.len(),
             "zone_id": "root",
             "modified_at_ms": entry.mtime_ms,

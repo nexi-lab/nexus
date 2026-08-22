@@ -431,13 +431,13 @@ flowchart TB
       <td>B</td>
       <td>Recency signal for streams &mdash; populate <code>sys_stat.modified_at_ms</code> from last-append time</td>
       <td>kernel (nexus-vfs)</td>
-      <td><span class="status-open">Open.</span> Verified kernel-boundary: POSIX-aligned (<code>st_mtime</code> equivalent), same seam as tail-as-size added in nexus-vfs #80, generic beyond search (audit / mailbox catch-up all benefit). Ship as a nexus-vfs PR on <code>feat/dt-stream-tail-in-sys-stat</code>. <em>No new syscall, no ABI change.</em></td>
+      <td><span class="status-done">&check; Done.</span> nexus-vfs #238 (merged 2026-08-22).  <code>StreamBackend::last_append_ms() -&gt; Option&lt;i64&gt;</code> default-<code>None</code>; Memory/WAL/SHM backends stamp local wall-clock on push; <code>StreamManager::last_append_ms(path)</code> mirrors <code>tail(path)</code>; <code>sys_stat</code> DT_STREAM branch overrides <code>modified_at_ms</code> with fallback to <code>entry.modified_at_ms</code>.  Same seam as tail-as-size (nexus-vfs #227). Zero new syscall / zero ABI bump.  <em>WAL caveat: per-replica local wall-clock, not raft-replicated.</em></td>
     </tr>
     <tr>
       <td>C</td>
       <td>Append-incremental indexing &mdash; index only frames since last-indexed tail offset (O(delta), not O(n<sup>2</sup>))</td>
       <td>plugin</td>
-      <td><span class="status-open">P4 planned.</span> Add per-path <code>last_indexed_offset</code> to <code>index_state.rs</code>; NotifyFileChange on DT_STREAM triggers a delta walker. Estimated ~300-500 LoC; may need a stream-friendly <code>sys_read_at(path, offset)</code> primitive if not already present.</td>
+      <td><span class="status-done">&check; Done.</span> nexus #4692 (merged 2026-08-23).  <code>StreamState { indexed_byte_len, next_chunk_index, mtime_ms }</code> sibling map in <code>index_state.rs</code>; <code>index_one</code> dispatches DT_STREAM to <code>index_one_stream_append</code> which chunks only the tail bytes past the checkpoint with continuing chunk_index; retention-trim (<code>new_len &lt; checkpoint</code>) wipes prior chunks + re-indexes the survivors. <code>verdict()</code> now consults both file + stream maps so a quiescent stream short-circuits before <code>sys_read</code>. 4 E2E scenarios cover happy append / no-op / multi-append monotonic / retention-trim.  No plugin-abi bump.</td>
     </tr>
     <tr>
       <td>D</td>
@@ -551,6 +551,16 @@ flowchart TB
       <td>Plugin walker routes DT_STREAM through <code>searchable_content_type()</code> predicate (nexus #4682).</td>
       <td>One SSOT predicate on all 5 VFS-walk gates; no per-site logic.</td>
     </tr>
+    <tr>
+      <td>2026-08-22</td>
+      <td><code>sys_stat.modified_at_ms</code> reports DT_STREAM last-append time (nexus-vfs #238).</td>
+      <td>Same POSIX <code>st_mtime</code> semantic + same seam as tail-as-size; generic beyond search (audit / mailbox catch-up freshness all benefit); zero syscall / zero ABI bump.  Answers sudocode FR-B.</td>
+    </tr>
+    <tr>
+      <td>2026-08-23</td>
+      <td>Plugin gets append-incremental DT_STREAM indexing (nexus #4692).</td>
+      <td>Per-path <code>StreamState</code> checkpoint drops full-refresh cost from O(K&middot;N) to O(N) across K appends.  Refresh <code>verdict()</code> short-circuits quiescent streams before <code>sys_read</code>; append path continues chunk_index without wiping prior chunks; retention-trim triggers wipe + re-index recovery.  Answers sudocode FR-C.</td>
+    </tr>
   </tbody>
 </table>
 
@@ -562,12 +572,12 @@ flowchart TB
     <tr>
       <td>sudocode FR-B: <code>sys_stat.modified_at_ms</code> for DT_STREAM</td>
       <td>nexus-vfs kernel</td>
-      <td><span class="status-open">Open</span> &mdash; verified in-boundary; ship on <code>feat/dt-stream-tail-in-sys-stat</code></td>
+      <td><span class="status-done">&check; Done</span> &mdash; nexus-vfs #238 (merged 2026-08-22)</td>
     </tr>
     <tr>
       <td>sudocode FR-C: append-incremental DT_STREAM indexing (plugin P4)</td>
-      <td>plugin + maybe plugin-abi</td>
-      <td><span class="status-open">P4 planned</span> &mdash; not blocking short transcripts; do before keep-forever logs grow</td>
+      <td>plugin</td>
+      <td><span class="status-done">&check; Done</span> &mdash; nexus #4692 (merged 2026-08-23); no plugin-abi bump needed</td>
     </tr>
     <tr>
       <td>sudocode FR-D: JSONL record-aware chunker mode</td>

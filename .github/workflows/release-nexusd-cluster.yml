@@ -1,0 +1,311 @@
+name: Release nexusd-cluster (assembly)
+
+# Release pipeline for the nexus ASSEMBLY daemon binary (rust/nexusd -> bin
+# `nexusd-cluster`): the nexus-vfs cluster/federation boot composed with the
+# managed_agent control plane (KERNEL-ARCHITECTURE sec 7). This is the slim,
+# size-gated production binary sudowork spawns for the ACP tunnel -- a superset
+# of the pure nexus-vfs cluster (same VFS surface + managed_agent RPCs).
+#
+# Default features only -> managed_agent ON (service-managed-agent is a hard
+# dep of the `services` crate), cohost-sudocode OFF (opt-in, static-links a
+# sudocode rev -- never in the slim binary).
+#
+# Distinct COS prefix `nexusd-cluster/` (NOT `nexus-vfs/`): both binaries share
+# the filename `nexusd-cluster`, so the prefix must differ to avoid clobber.
+# COS path convention: nexusd-cluster/release/v<version>/<filename>
+# Triggered by tags `nexusd-cluster-v<semver>` (independent of the main nexus
+# `v*` tag + of nexus-vfs's own cluster release).
+
+on:
+  push:
+    tags:
+      - 'nexusd-cluster-v[0-9]*.[0-9]*.[0-9]*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g. nexusd-cluster-v0.1.0). Dispatch fallback when a tag push does not trigger.'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-nexusd-cluster-${{ inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build-${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-22.04
+            bin: nexusd-cluster
+            package_dir: nexusd-cluster-linux-x86_64
+            archive_name: nexusd-cluster-linux-x86_64.tar.gz
+          - name: linux-aarch64
+            os: ubuntu-22.04-arm
+            bin: nexusd-cluster
+            package_dir: nexusd-cluster-linux-aarch64
+            archive_name: nexusd-cluster-linux-aarch64.tar.gz
+          - name: macos-aarch64
+            os: macos-14
+            bin: nexusd-cluster
+            package_dir: nexusd-cluster-macos-aarch64
+            archive_name: nexusd-cluster-macos-aarch64.tar.gz
+          - name: macos-x86_64
+            os: macos-14
+            bin: nexusd-cluster
+            target: x86_64-apple-darwin
+            package_dir: nexusd-cluster-macos-x86_64
+            archive_name: nexusd-cluster-macos-x86_64.tar.gz
+          - name: windows-x86_64
+            os: windows-2022
+            bin: nexusd-cluster.exe
+            package_dir: nexusd-cluster-windows-x86_64
+            archive_name: nexusd-cluster-windows-x86_64.zip
+          - name: windows-aarch64
+            os: windows-11-arm
+            bin: nexusd-cluster.exe
+            package_dir: nexusd-cluster-windows-aarch64
+            archive_name: nexusd-cluster-windows-aarch64.zip
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || '' }}
+
+      # raft-proto / protobuf-build rejects protoc >= 4.x; pin 3.20.2 where the
+      # system protoc is absent or too new. Linux base images ship protoc 3.x.
+      - name: Install protoc (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          PROTOC_VERSION=3.20.2
+          case "$(uname -m)" in
+            arm64) ARCH=aarch_64 ;;
+            x86_64) ARCH=x86_64 ;;
+            *) echo "Unsupported arch: $(uname -m)" >&2; exit 1 ;;
+          esac
+          mkdir -p "$HOME/protoc"
+          curl -fsSL -o /tmp/protoc.zip \
+            "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-osx-${ARCH}.zip"
+          unzip -o /tmp/protoc.zip -d "$HOME/protoc"
+          echo "$HOME/protoc/bin" >> "$GITHUB_PATH"
+          "$HOME/protoc/bin/protoc" --version
+
+      - name: Install protoc (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $protocVersion = '3.20.2'
+          $protocDir = Join-Path $env:USERPROFILE 'protoc'
+          New-Item -ItemType Directory -Force -Path $protocDir | Out-Null
+          $zipPath = Join-Path $env:RUNNER_TEMP 'protoc.zip'
+          Invoke-WebRequest -UseBasicParsing -Uri `
+            "https://github.com/protocolbuffers/protobuf/releases/download/v${protocVersion}/protoc-${protocVersion}-win64.zip" `
+            -OutFile $zipPath
+          Expand-Archive -Force -Path $zipPath -DestinationPath $protocDir
+          $protocBinDir = Join-Path $protocDir 'bin'
+          $protocExe = Join-Path $protocBinDir 'protoc.exe'
+          Add-Content -Path $env:GITHUB_PATH -Value $protocBinDir
+          Add-Content -Path $env:GITHUB_ENV -Value "PROTOC=$protocExe"
+          & $protocExe --version
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target || '' }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-nexusd-${{ matrix.os }}-${{ matrix.target || 'native' }}
+
+      # Default features -> managed_agent ON, cohost-sudocode OFF (the slim
+      # production profile). Do NOT add --features cohost-sudocode here.
+      - name: Build release binary (assembly, managed_agent on / cohost off)
+        run: cargo build --locked --release -p nexusd --bin nexusd-cluster ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
+
+      - name: Stage release payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "dist/${{ matrix.package_dir }}"
+          BIN_DIR="target/${{ matrix.target && format('{0}/', matrix.target) || '' }}release"
+          cp "$BIN_DIR/${{ matrix.bin }}" "dist/${{ matrix.package_dir }}/${{ matrix.bin }}"
+          if [ -f README.md ]; then
+            cp README.md "dist/${{ matrix.package_dir }}/README.md"
+          fi
+          if [[ "${{ runner.os }}" != "Windows" ]]; then
+            chmod +x "dist/${{ matrix.package_dir }}/${{ matrix.bin }}"
+          fi
+
+      - name: Archive release payload (tar.gz)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -C dist -czf "dist/${{ matrix.archive_name }}" "${{ matrix.package_dir }}"
+
+      - name: Archive release payload (zip)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive `
+            -Path "dist/${{ matrix.package_dir }}" `
+            -DestinationPath "dist/${{ matrix.archive_name }}" `
+            -Force
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.package_dir }}
+          path: dist/${{ matrix.archive_name }}
+          if-no-files-found: error
+
+  publish-github-release:
+    name: publish-github-release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum nexusd-cluster-* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Resolve tag + pre-release flag
+        id: rel
+        shell: bash
+        run: |
+          TAG="${{ inputs.tag || github.ref_name }}"
+          if [[ "$TAG" =~ -(rc|beta|alpha|dev|nightly) ]]; then
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.rel.outputs.tag }}
+          files: |
+            dist/nexusd-cluster-*
+            dist/SHA256SUMS.txt
+          fail_on_unmatched_files: true
+          prerelease: ${{ steps.rel.outputs.is_prerelease == 'true' }}
+          generate_release_notes: true
+
+  publish-cos:
+    name: publish-cos
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      COS_SECRET_ID: ${{ secrets.COS_SECRET_ID }}
+      COS_SECRET_KEY: ${{ secrets.COS_SECRET_KEY }}
+      COS_BUCKET: ${{ secrets.COS_BUCKET }}
+      COS_REGION: ${{ secrets.COS_REGION }}
+    steps:
+      - name: Check secrets
+        id: check
+        shell: bash
+        run: |
+          if [ -z "$COS_SECRET_ID" ] || [ -z "$COS_SECRET_KEY" ] || [ -z "$COS_BUCKET" ] || [ -z "$COS_REGION" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::COS secrets not configured -- skipping COS upload (GitHub Release still published)."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout code
+        if: steps.check.outputs.skip == 'false'
+        uses: actions/checkout@v4
+
+      - name: Resolve version from tag
+        if: steps.check.outputs.skip == 'false'
+        id: ver
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag || github.ref_name }}"
+          # nexusd-cluster-v0.1.0 -> v0.1.0
+          VER="${TAG#nexusd-cluster-}"
+          if [ "$VER" = "$TAG" ]; then
+            echo "::error::tag $TAG does not start with nexusd-cluster-"
+            exit 1
+          fi
+          if [[ "$TAG" =~ -(rc|beta|alpha|dev|nightly) ]]; then
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "ver=$VER" >> "$GITHUB_OUTPUT"
+
+      - name: Download build artifacts
+        if: steps.check.outputs.skip == 'false'
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        if: steps.check.outputs.skip == 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum nexusd-cluster-* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Install COS SDK
+        if: steps.check.outputs.skip == 'false'
+        run: pip install --quiet cos-python-sdk-v5
+
+      - name: Upload to versioned path
+        if: steps.check.outputs.skip == 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          PATH_VER="nexusd-cluster/release/${{ steps.ver.outputs.ver }}"
+          echo "Uploading to $PATH_VER"
+          for file in dist/nexusd-cluster-* dist/SHA256SUMS.txt; do
+            [ -f "$file" ] || continue
+            filename=$(basename "$file")
+            echo "  -> $filename"
+            python scripts/upload_cos.py --local-path "$file" --remote-path "$PATH_VER/$filename"
+          done
+          echo "::notice::Versioned artifacts: https://${COS_BUCKET}.cos.${COS_REGION}.myqcloud.com/${PATH_VER}/"
+
+      - name: Upload to latest path (stable tags only)
+        if: steps.check.outputs.skip == 'false' && steps.ver.outputs.is_prerelease == 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          PATH_LATEST="nexusd-cluster/release/latest"
+          echo "Uploading to $PATH_LATEST"
+          for file in dist/nexusd-cluster-* dist/SHA256SUMS.txt; do
+            [ -f "$file" ] || continue
+            filename=$(basename "$file")
+            echo "  -> $filename"
+            python scripts/upload_cos.py --local-path "$file" --remote-path "$PATH_LATEST/$filename"
+          done

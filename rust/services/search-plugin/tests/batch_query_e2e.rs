@@ -11,18 +11,14 @@
 //!   serially, while preserving response order and per-query error
 //!   isolation exactly as the serial loop did.
 //!
-//! Scaffold duplicated from `semantic_query_e2e.rs` per that file's
-//! note (Cargo shared-test-module plumbing costs more than the
-//! duplication at this size).
+//! Uses the shared `common::MockKernel` kernel double; the embedder
+//! doubles (`CountingEmbedder`/`RendezvousEmbedder`) are local to this
+//! file since they assert batch-specific concurrency behaviour.
 
-use std::collections::HashMap;
-use std::ffi::{c_void, CStr};
-use std::os::raw::c_char;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use nexus_plugin_abi::KernelHandle;
 use nexus_search_plugin::embedder::{EmbedError, Embedder, MockEmbedder};
 use nexus_search_plugin::index_manager::IndexManager;
 use nexus_search_plugin::search_proto::search_service_server::SearchService;
@@ -31,202 +27,8 @@ use nexus_search_plugin::service::SearchServiceImpl;
 use tempfile::TempDir;
 use tonic::Request;
 
-// ── Mock kernel (same shape as semantic_query_e2e.rs) ───────────
-
-struct FileEntry {
-    bytes: Vec<u8>,
-    mtime_ms: i64,
-}
-
-pub struct MockKernel {
-    files: HashMap<String, FileEntry>,
-    dirs: HashMap<String, Vec<(String, u8)>>,
-}
-
-impl MockKernel {
-    fn new() -> Self {
-        Self {
-            files: HashMap::new(),
-            dirs: HashMap::new(),
-        }
-    }
-    fn add_file(&mut self, path: &str, bytes: &[u8], mtime_ms: i64) {
-        self.files.insert(
-            path.to_string(),
-            FileEntry {
-                bytes: bytes.to_vec(),
-                mtime_ms,
-            },
-        );
-        let (parent, name) = split_parent(path);
-        self.dirs
-            .entry(parent)
-            .or_default()
-            .push((name, 0 /* DT_REG */));
-    }
-    fn add_dir(&mut self, path: &str) {
-        if !self.dirs.contains_key(path) {
-            self.dirs.insert(path.to_string(), Vec::new());
-        }
-        if path == "/" {
-            return;
-        }
-        let (parent, name) = split_parent(path);
-        let entries = self.dirs.entry(parent).or_default();
-        if !entries.iter().any(|(n, _)| n == &name) {
-            entries.push((name, 1 /* DT_DIR */));
-        }
-    }
-}
-
-fn split_parent(path: &str) -> (String, String) {
-    match path.rsplit_once('/') {
-        Some(("", name)) => ("/".to_string(), name.to_string()),
-        Some((parent, name)) => (parent.to_string(), name.to_string()),
-        None => ("/".to_string(), path.to_string()),
-    }
-}
-
-fn into_out_buf(mut v: Vec<u8>, out_buf: *mut *mut u8, out_len: *mut usize) {
-    v.shrink_to_fit();
-    let len = v.len();
-    let ptr = v.as_mut_ptr();
-    std::mem::forget(v);
-    unsafe {
-        *out_buf = ptr;
-        *out_len = len;
-    }
-}
-
-unsafe extern "C" fn mock_sys_read(
-    k: *const c_void,
-    path: *const c_char,
-    out_buf: *mut *mut u8,
-    out_len: *mut usize,
-) -> i32 {
-    let kernel = &*(k as *const MockKernel);
-    let p = match CStr::from_ptr(path).to_str() {
-        Ok(s) => s,
-        Err(_) => return -2,
-    };
-    match kernel.files.get(p) {
-        Some(entry) => {
-            into_out_buf(entry.bytes.clone(), out_buf, out_len);
-            0
-        }
-        None => -404,
-    }
-}
-
-unsafe extern "C" fn mock_sys_readdir(
-    k: *const c_void,
-    parent_path: *const c_char,
-    out_json: *mut *mut u8,
-    out_len: *mut usize,
-) -> i32 {
-    let kernel = &*(k as *const MockKernel);
-    let p = match CStr::from_ptr(parent_path).to_str() {
-        Ok(s) => s,
-        Err(_) => return -2,
-    };
-    match kernel.dirs.get(p) {
-        Some(entries) => {
-            let payload: Vec<serde_json::Value> = entries
-                .iter()
-                .map(|(name, et)| serde_json::json!({ "name": name, "entry_type": et }))
-                .collect();
-            let json = serde_json::to_vec(&payload).expect("mock readdir json");
-            into_out_buf(json, out_json, out_len);
-            0
-        }
-        None => -404,
-    }
-}
-
-unsafe extern "C" fn mock_sys_stat(
-    k: *const c_void,
-    path: *const c_char,
-    out_json: *mut *mut u8,
-    out_len: *mut usize,
-) -> i32 {
-    let kernel = &*(k as *const MockKernel);
-    let p = match CStr::from_ptr(path).to_str() {
-        Ok(s) => s,
-        Err(_) => return -2,
-    };
-    if let Some(entry) = kernel.files.get(p) {
-        let payload = serde_json::json!({
-            "path": p,
-            "entry_type": 0,
-            "size": entry.bytes.len(),
-            "zone_id": "root",
-            "modified_at_ms": entry.mtime_ms,
-        });
-        into_out_buf(serde_json::to_vec(&payload).unwrap(), out_json, out_len);
-        0
-    } else if kernel.dirs.contains_key(p) {
-        let payload = serde_json::json!({
-            "path": p,
-            "entry_type": 1,
-            "size": 0,
-            "zone_id": "root",
-            "modified_at_ms": null,
-        });
-        into_out_buf(serde_json::to_vec(&payload).unwrap(), out_json, out_len);
-        0
-    } else {
-        -404
-    }
-}
-
-unsafe extern "C" fn unused_sys_write(
-    _: *const c_void,
-    _: *const c_char,
-    _: *const u8,
-    _: usize,
-) -> i32 {
-    -1
-}
-unsafe extern "C" fn unused_sys_unlink(_: *const c_void, _: *const c_char) -> i32 {
-    -1
-}
-unsafe extern "C" fn unused_sys_mkdir(_: *const c_void, _: *const c_char) -> i32 {
-    -1
-}
-unsafe extern "C" fn unused_sys_rmdir(_: *const c_void, _: *const c_char) -> i32 {
-    -1
-}
-unsafe extern "C" fn unused_sys_rename(
-    _: *const c_void,
-    _: *const c_char,
-    _: *const c_char,
-) -> i32 {
-    -1
-}
-unsafe extern "C" fn unused_sys_stat_batch(
-    _: *const c_void,
-    _: *const c_char,
-    _: *mut *mut u8,
-    _: *mut usize,
-) -> i32 {
-    -1
-}
-
-fn handle_for(kernel: *const MockKernel) -> KernelHandle {
-    KernelHandle {
-        sys_read: mock_sys_read,
-        sys_write: unused_sys_write,
-        sys_stat: mock_sys_stat,
-        sys_readdir: mock_sys_readdir,
-        sys_unlink: unused_sys_unlink,
-        sys_mkdir: unused_sys_mkdir,
-        sys_rmdir: unused_sys_rmdir,
-        sys_rename: unused_sys_rename,
-        sys_stat_batch: unused_sys_stat_batch,
-        free_buf: nexus_plugin_abi::nexus_free,
-        kernel_ptr: kernel as *const c_void,
-    }
-}
+mod common;
+use common::{handle_for, MockKernel};
 
 // ── Instrumented embedders ──────────────────────────────────────
 

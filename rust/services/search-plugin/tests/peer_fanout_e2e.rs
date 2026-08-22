@@ -16,12 +16,9 @@
 //! catch.
 
 use std::collections::HashSet;
-use std::ffi::c_void;
-use std::os::raw::c_char;
 use std::sync::Arc;
 use std::time::Duration;
 
-use nexus_plugin_abi::KernelHandle;
 use nexus_search_plugin::index_manager::IndexManager;
 use nexus_search_plugin::peer_fanout::PeerFanoutDispatcher;
 use nexus_search_plugin::peer_registry::{PeerAddress, PeerRegistry};
@@ -35,76 +32,8 @@ use tokio::net::TcpListener;
 use tonic::transport::Server;
 use tonic::Request;
 
-// ── Poison KernelHandle (Query never touches the kernel) ─────────
-
-unsafe extern "C" fn poison_read(
-    _: *const c_void,
-    _: *const c_char,
-    _: *mut *mut u8,
-    _: *mut usize,
-) -> i32 {
-    -1
-}
-unsafe extern "C" fn poison_write(
-    _: *const c_void,
-    _: *const c_char,
-    _: *const u8,
-    _: usize,
-) -> i32 {
-    -1
-}
-unsafe extern "C" fn poison_stat(
-    _: *const c_void,
-    _: *const c_char,
-    _: *mut *mut u8,
-    _: *mut usize,
-) -> i32 {
-    -1
-}
-unsafe extern "C" fn poison_readdir(
-    _: *const c_void,
-    _: *const c_char,
-    _: *mut *mut u8,
-    _: *mut usize,
-) -> i32 {
-    -1
-}
-unsafe extern "C" fn poison_unlink(_: *const c_void, _: *const c_char) -> i32 {
-    -1
-}
-unsafe extern "C" fn poison_mkdir(_: *const c_void, _: *const c_char) -> i32 {
-    -1
-}
-unsafe extern "C" fn poison_rmdir(_: *const c_void, _: *const c_char) -> i32 {
-    -1
-}
-unsafe extern "C" fn poison_rename(_: *const c_void, _: *const c_char, _: *const c_char) -> i32 {
-    -1
-}
-unsafe extern "C" fn poison_stat_batch(
-    _: *const c_void,
-    _: *const c_char,
-    _: *mut *mut u8,
-    _: *mut usize,
-) -> i32 {
-    -1
-}
-
-fn poison_handle() -> KernelHandle {
-    KernelHandle {
-        sys_read: poison_read,
-        sys_write: poison_write,
-        sys_stat: poison_stat,
-        sys_readdir: poison_readdir,
-        sys_unlink: poison_unlink,
-        sys_mkdir: poison_mkdir,
-        sys_rmdir: poison_rmdir,
-        sys_rename: poison_rename,
-        sys_stat_batch: poison_stat_batch,
-        free_buf: nexus_plugin_abi::nexus_free,
-        kernel_ptr: std::ptr::null(),
-    }
-}
+mod common;
+use common::poison_handle;
 
 // ── Build a peer plugin, bind a REAL tonic server ────────────────
 

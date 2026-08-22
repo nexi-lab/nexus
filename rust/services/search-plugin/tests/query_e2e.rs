@@ -19,11 +19,8 @@
 //! and it's a `poison` double that catches accidental use, not a
 //! silent stub.
 
-use std::ffi::c_void;
-use std::os::raw::c_char;
 use std::sync::Arc;
 
-use nexus_plugin_abi::KernelHandle;
 use nexus_search_plugin::index_manager::IndexManager;
 use nexus_search_plugin::search_proto::search_service_server::SearchService;
 use nexus_search_plugin::search_proto::{QueryRequest, QueryType};
@@ -31,82 +28,8 @@ use nexus_search_plugin::service::SearchServiceImpl;
 use tempfile::TempDir;
 use tonic::Request;
 
-// ── Poison KernelHandle ─────────────────────────────────────────
-//
-// Query does not touch the kernel; if a regression accidentally
-// wires it back in, these callbacks return -1 (a plugin-ABI Internal
-// error) which propagates into `IndexOne::Skipped` and shows up as a
-// zero-hit result — visible enough that the query test would fail
-// its result assertion.
-
-unsafe extern "C" fn poison_read(
-    _: *const c_void,
-    _: *const c_char,
-    _: *mut *mut u8,
-    _: *mut usize,
-) -> i32 {
-    -1
-}
-unsafe extern "C" fn poison_write(
-    _: *const c_void,
-    _: *const c_char,
-    _: *const u8,
-    _: usize,
-) -> i32 {
-    -1
-}
-unsafe extern "C" fn poison_stat(
-    _: *const c_void,
-    _: *const c_char,
-    _: *mut *mut u8,
-    _: *mut usize,
-) -> i32 {
-    -1
-}
-unsafe extern "C" fn poison_readdir(
-    _: *const c_void,
-    _: *const c_char,
-    _: *mut *mut u8,
-    _: *mut usize,
-) -> i32 {
-    -1
-}
-unsafe extern "C" fn poison_unlink(_: *const c_void, _: *const c_char) -> i32 {
-    -1
-}
-unsafe extern "C" fn poison_mkdir(_: *const c_void, _: *const c_char) -> i32 {
-    -1
-}
-unsafe extern "C" fn poison_rmdir(_: *const c_void, _: *const c_char) -> i32 {
-    -1
-}
-unsafe extern "C" fn poison_rename(_: *const c_void, _: *const c_char, _: *const c_char) -> i32 {
-    -1
-}
-unsafe extern "C" fn poison_stat_batch(
-    _: *const c_void,
-    _: *const c_char,
-    _: *mut *mut u8,
-    _: *mut usize,
-) -> i32 {
-    -1
-}
-
-fn poison_handle() -> KernelHandle {
-    KernelHandle {
-        sys_read: poison_read,
-        sys_write: poison_write,
-        sys_stat: poison_stat,
-        sys_readdir: poison_readdir,
-        sys_unlink: poison_unlink,
-        sys_mkdir: poison_mkdir,
-        sys_rmdir: poison_rmdir,
-        sys_rename: poison_rename,
-        sys_stat_batch: poison_stat_batch,
-        free_buf: nexus_plugin_abi::nexus_free,
-        kernel_ptr: std::ptr::null(),
-    }
-}
+mod common;
+use common::poison_handle;
 
 // ── Harness ─────────────────────────────────────────────────────
 

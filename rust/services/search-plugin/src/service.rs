@@ -1914,6 +1914,24 @@ fn record_content_skip(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: 
 }
 
 fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> IndexOne {
+    // DT_STREAM append-incremental path (P4).  A stream's
+    // sys_read collects the whole deframed log every time (host-
+    // shim posture per nexus-vfs #235); re-chunking that from
+    // scratch on every refresh is O(N) per refresh, and refreshes
+    // scale with appends, so total cost is O(N^2) for a
+    // keep-forever transcript.  Detect DT_STREAM via sys_stat and
+    // dispatch to the append helper which uses `index_state`'s
+    // stream-checkpoint to chunk only the tail bytes past the
+    // last-indexed offset.  DT_REG stays on the full-re-chunk
+    // path below (safe: files aren't append-only in the same
+    // sense — an edit anywhere in the middle invalidates every
+    // downstream chunk).
+    if let Ok(stat) = kernel_io::sys_stat(handle, vfs_path) {
+        if stat.entry_type == kernel_io::DT_STREAM {
+            return index_one_stream_append(handle, sinks, vfs_path, stat.modified_at_ms);
+        }
+    }
+
     let bytes = match kernel_io::sys_read(handle, vfs_path) {
         Ok(b) => b,
         Err(e) => {
@@ -2055,6 +2073,314 @@ fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> I
         IndexOne::Added
     } else {
         sinks.state.record(vfs_path, None);
+        IndexOne::AddedAnnRetry
+    }
+}
+
+/// Append-incremental indexer for DT_STREAM paths (P4).  Dispatched
+/// from [`index_one`] when `sys_stat` reports `DT_STREAM`.
+///
+/// # Contract
+///
+/// Reads the whole deframed stream via `sys_read` (host-shim
+/// collects, per nexus-vfs #235), then:
+///
+///   * If the current byte-length equals the last-indexed
+///     checkpoint AND we have a matching mtime, treat as unchanged
+///     (Skipped — the walker counted this as a "seen" path so no
+///     stale-sweep will drop it).
+///   * If the current length is LESS than the checkpoint, treat
+///     as retention-trim recovery: drop every prior chunk from
+///     FTS + ANN, forget the checkpoint, then fall through into a
+///     full re-index.
+///   * Otherwise (append): chunk only the tail bytes past
+///     `indexed_byte_len`, assign chunk indices continuing from
+///     `next_chunk_index`, `add_document` / `add_vector` (do NOT
+///     `delete_all_chunks` — that would nuke the append-only work
+///     we're trying to preserve).
+///
+/// # Why not `add_document`-with-delete
+///
+/// Prior chunks for the stream are addressed by `(path, chunk_index)`
+/// under the FTS / ANN idempotent-upsert contract.  Reusing chunk
+/// indices from a fresh chunking pass could collide with prior
+/// chunks that DID cover the same content — the whole point of the
+/// checkpoint is to preserve prior chunks untouched.  Continuation
+/// indices avoid the collision.
+///
+/// # Retention-trim contract
+///
+/// A kernel-side retention advance (WAL cold-tier trim) reduces the
+/// stream's readable content.  Detected here as `new_len < checkpoint`.
+/// The recovery path drops every prior chunk (which no longer maps to
+/// live bytes anyway — the plugin's chunk_text stored in the FTS
+/// document would be a snapshot the WAL no longer serves) and does a
+/// full re-index of whatever's still there.  Callers of the retention-
+/// trimmed prefix's chunks after this pass get zero hits on that
+/// content, which is correct — the primary source is gone.
+fn index_one_stream_append(
+    handle: &KernelHandle,
+    sinks: &IndexSinks<'_>,
+    vfs_path: &str,
+    mtime_ms: Option<i64>,
+) -> IndexOne {
+    let bytes = match kernel_io::sys_read(handle, vfs_path) {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::debug!(path = %vfs_path, err = ?e, "index-stream: sys_read failed — skipping");
+            return IndexOne::SkippedTransient;
+        }
+    };
+    if bytes.len() > INDEX_MAX_FILE_BYTES {
+        tracing::debug!(
+            path = %vfs_path,
+            len = bytes.len(),
+            cap = INDEX_MAX_FILE_BYTES,
+            "index-stream: content over size cap — skipping",
+        );
+        return record_content_skip(handle, sinks, vfs_path);
+    }
+
+    let prior = sinks.state.stream_state(vfs_path);
+    let indexed_byte_len = prior.as_ref().map(|s| s.indexed_byte_len).unwrap_or(0);
+    let next_chunk_index = prior.as_ref().map(|s| s.next_chunk_index).unwrap_or(0);
+
+    let new_len = bytes.len() as u64;
+    if new_len < indexed_byte_len {
+        // Retention-trim recovery: kernel-side dropped the prefix
+        // we already indexed.  Cannot delta-append against a
+        // shorter blob; wipe prior chunks + reset checkpoint, then
+        // fall into a fresh full pass.  Failure to drop chunks is
+        // still SkippedTransient — a partial cleanup would leave
+        // dangling chunks with stale text.
+        tracing::info!(
+            path = %vfs_path,
+            new_len,
+            prior_indexed = indexed_byte_len,
+            "index-stream: retention-trim detected — dropping prior chunks + re-indexing",
+        );
+        sinks.fts.delete_all_chunks(vfs_path);
+        if let Some(ann) = sinks.ann {
+            ann.delete_all_chunks(vfs_path);
+        }
+        sinks.state.forget_stream(vfs_path);
+        return index_one_stream_full(handle, sinks, vfs_path, mtime_ms, &bytes);
+    }
+
+    if new_len == indexed_byte_len {
+        // Nothing appended since last pass — a no-op for both
+        // sinks.  Keep the checkpoint's mtime fresh so a subsequent
+        // Refresh's `verdict()` sees Unchanged (matches how record()
+        // works for DT_REG).  Return Skipped so the walker counts
+        // it correctly.
+        if let Some(prior_state) = prior {
+            if prior_state.mtime_ms != mtime_ms {
+                sinks
+                    .state
+                    .stream_advance(vfs_path, indexed_byte_len, next_chunk_index, mtime_ms);
+            }
+        }
+        return IndexOne::Skipped;
+    }
+
+    // Append case: chunk only the tail past the checkpoint.
+    let tail_bytes = &bytes[indexed_byte_len as usize..];
+    let tail_text = match std::str::from_utf8(tail_bytes) {
+        Ok(s) => s,
+        Err(_) => {
+            tracing::debug!(
+                path = %vfs_path,
+                "index-stream: non-utf8 tail — skipping (whole stream stays at prior checkpoint)",
+            );
+            return IndexOne::Skipped;
+        }
+    };
+    let mut new_chunks = crate::chunker::chunk_document(tail_text);
+    if new_chunks.is_empty() {
+        // Tail is whitespace-only — record the new byte-length so we
+        // don't re-scan on next refresh, but nothing to index.
+        sinks
+            .state
+            .stream_advance(vfs_path, new_len, next_chunk_index, mtime_ms);
+        return IndexOne::Skipped;
+    }
+    if let Some(gen) = sinks.context_generator {
+        crate::contextual_chunker::apply_contexts(
+            gen,
+            tail_text,
+            &mut new_chunks,
+            gen.max_chunks_per_doc(),
+        );
+    }
+
+    // FTS side — append only, no delete_all_chunks (that would
+    // nuke prior chunks we're preserving).  chunk_index continues
+    // from next_chunk_index.
+    for (i, chunk) in new_chunks.iter().enumerate() {
+        let global_idx = next_chunk_index + i as u32;
+        if let Err(e) = sinks
+            .fts
+            .add_document(vfs_path, global_idx, &chunk.text, mtime_ms)
+        {
+            tracing::warn!(
+                path = %vfs_path,
+                chunk = global_idx,
+                err = %e,
+                "index-stream: fts add_document failed — skipping remaining tail chunks",
+            );
+            return IndexOne::SkippedTransient;
+        }
+    }
+
+    // ANN side — same append-only posture.  Embed the tail chunks
+    // as a batch; a broken embedder leaves ANN incomplete and the
+    // checkpoint at the OLD offset so a retry can catch up.
+    let mut ann_complete = !(sinks.embed_broken || sinks.embedder.is_none() && sinks.zone_has_ann);
+    if let (Some(ann), Some(embedder)) = (sinks.ann, sinks.embedder) {
+        let inputs: Vec<&str> = new_chunks.iter().map(|c| c.embed_input.as_str()).collect();
+        match embedder.embed_batch(&inputs) {
+            Ok(vecs) if vecs.len() == new_chunks.len() => {
+                for (i, vec) in vecs.iter().enumerate() {
+                    let global_idx = next_chunk_index + i as u32;
+                    if let Err(e) = ann.add_vector(vfs_path, global_idx, vec) {
+                        ann_complete = false;
+                        tracing::warn!(
+                            path = %vfs_path,
+                            chunk = global_idx,
+                            err = %e,
+                            "index-stream: ann add_vector failed — will retry on next refresh",
+                        );
+                    }
+                }
+            }
+            Ok(vecs) => {
+                ann_complete = false;
+                tracing::warn!(
+                    path = %vfs_path,
+                    got = vecs.len(),
+                    expected = new_chunks.len(),
+                    "index-stream: embedder returned wrong vec count — will retry",
+                );
+            }
+            Err(e) => {
+                ann_complete = false;
+                tracing::warn!(
+                    path = %vfs_path,
+                    err = %e,
+                    "index-stream: embed failed — will retry on next refresh",
+                );
+            }
+        }
+    }
+
+    // Advance the checkpoint ONLY when both sinks converged.  A
+    // partial ANN failure holds the byte-length at the prior value
+    // so the next refresh re-attempts the same tail — same retry
+    // posture as DT_REG's `AddedAnnRetry` (mtime cache stays at
+    // None so verdict is Changed).
+    let new_next_chunk_index = next_chunk_index + new_chunks.len() as u32;
+    if ann_complete {
+        sinks
+            .state
+            .stream_advance(vfs_path, new_len, new_next_chunk_index, mtime_ms);
+        IndexOne::Added
+    } else {
+        // FTS side did land — keep it visible on the next refresh
+        // by advancing the byte-length; but do NOT stamp mtime so
+        // Refresh's verdict stays Changed and the pass retries.
+        sinks
+            .state
+            .stream_advance(vfs_path, new_len, new_next_chunk_index, None);
+        IndexOne::AddedAnnRetry
+    }
+}
+
+/// Full re-index of a DT_STREAM's current content — used by the
+/// retention-trim recovery path in [`index_one_stream_append`].
+/// Not a general entry point; the append path always tries the
+/// incremental route first.  Behaviour mirrors the DT_REG
+/// [`index_one`] hot path but never returns `SkippedTransient` on
+/// read (the caller already read the bytes) and always resets the
+/// checkpoint to `(new_len, chunk_count)`.
+fn index_one_stream_full(
+    handle: &KernelHandle,
+    sinks: &IndexSinks<'_>,
+    vfs_path: &str,
+    mtime_ms: Option<i64>,
+    bytes: &[u8],
+) -> IndexOne {
+    if bytes.is_empty() {
+        return record_content_skip(handle, sinks, vfs_path);
+    }
+    let text = match std::str::from_utf8(bytes) {
+        Ok(s) => s,
+        Err(_) => {
+            tracing::debug!(path = %vfs_path, "index-stream(full): non-utf8 — skipping");
+            return record_content_skip(handle, sinks, vfs_path);
+        }
+    };
+    let mut chunks = crate::chunker::chunk_document(text);
+    if chunks.is_empty() {
+        return record_content_skip(handle, sinks, vfs_path);
+    }
+    if let Some(gen) = sinks.context_generator {
+        crate::contextual_chunker::apply_contexts(gen, text, &mut chunks, gen.max_chunks_per_doc());
+    }
+
+    // Full pass on a wiped stream — FTS side is add-only (the
+    // caller already dropped prior chunks in the retention-trim
+    // branch).  chunk_index restarts at 0.
+    for chunk in &chunks {
+        if let Err(e) = sinks
+            .fts
+            .add_document(vfs_path, chunk.chunk_index, &chunk.text, mtime_ms)
+        {
+            tracing::warn!(
+                path = %vfs_path,
+                chunk = chunk.chunk_index,
+                err = %e,
+                "index-stream(full): fts add_document failed",
+            );
+            return IndexOne::SkippedTransient;
+        }
+    }
+    let mut ann_complete = !(sinks.embed_broken || sinks.embedder.is_none() && sinks.zone_has_ann);
+    if let (Some(ann), Some(embedder)) = (sinks.ann, sinks.embedder) {
+        let inputs: Vec<&str> = chunks.iter().map(|c| c.embed_input.as_str()).collect();
+        match embedder.embed_batch(&inputs) {
+            Ok(vecs) if vecs.len() == chunks.len() => {
+                for (chunk, vec) in chunks.iter().zip(vecs.iter()) {
+                    if let Err(e) = ann.add_vector(vfs_path, chunk.chunk_index, vec) {
+                        ann_complete = false;
+                        tracing::warn!(
+                            path = %vfs_path,
+                            chunk = chunk.chunk_index,
+                            err = %e,
+                            "index-stream(full): ann add_vector failed",
+                        );
+                    }
+                }
+            }
+            _ => {
+                ann_complete = false;
+                tracing::warn!(
+                    path = %vfs_path,
+                    "index-stream(full): embed_batch failed — will retry",
+                );
+            }
+        }
+    }
+    let new_next_chunk_index = chunks.len() as u32;
+    let new_len = bytes.len() as u64;
+    if ann_complete {
+        sinks
+            .state
+            .stream_advance(vfs_path, new_len, new_next_chunk_index, mtime_ms);
+        IndexOne::Added
+    } else {
+        sinks
+            .state
+            .stream_advance(vfs_path, new_len, new_next_chunk_index, None);
         IndexOne::AddedAnnRetry
     }
 }

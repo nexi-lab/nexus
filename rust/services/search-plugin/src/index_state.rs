@@ -85,6 +85,47 @@ pub struct FileEntry {
     pub mtime_ms: Option<i64>,
 }
 
+/// Per-DT_STREAM cache entry (append-incremental indexing, P4).
+///
+/// A DT_STREAM is an append-only log — full re-chunking on every
+/// refresh is O(K·N) across K refreshes on a stream growing with
+/// each refresh, i.e. O(N²) total cost for the sudocode transcript
+/// use case.  This cache records HOW MUCH of the stream we already
+/// chunked so a refresh can chunk only the tail bytes past the last
+/// checkpoint and continue chunk_index from where the prior pass
+/// left off.  With this in place the total cost drops to O(N) across
+/// all refreshes.
+///
+/// Correctness invariants (see [`IndexState::stream_state`] +
+/// [`IndexState::stream_advance`]):
+///   * `indexed_byte_len` is a byte-count into the deframed content
+///     the host-shim `sys_read` returns for a DT_STREAM (nexus-vfs
+///     #235 posture).  A retention-trim on the stream (sudden
+///     shrink of the returned blob) invalidates the checkpoint —
+///     the caller detects `new_len < indexed_byte_len` and calls
+///     [`IndexState::forget_stream`] to force a full re-chunk.
+///   * `next_chunk_index` is monotonic — the plugin's chunker
+///     assigns 0-based chunk indices, so appending starts at
+///     `next_chunk_index` and produces the next-N indices for the
+///     newly-chunked tail.  The chunk keys under (path, index) in
+///     FTS + ANN never collide with prior chunks.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct StreamState {
+    /// Bytes into the deframed content already chunked + indexed.
+    /// A stream that has never been indexed has no entry here (the
+    /// caller reads `stream_state().unwrap_or_default()` and the
+    /// default is zero, which correctly triggers a full first pass).
+    pub indexed_byte_len: u64,
+    /// The chunk_index the NEXT append-chunk will use.  Equals the
+    /// total chunk count at the last successful indexing pass.
+    pub next_chunk_index: u32,
+    /// Kernel-reported `modified_at_ms` at last successful index —
+    /// same shape as [`FileEntry::mtime_ms`], enabling the same
+    /// Refresh mtime-verdict pathway.  A stream whose last-append
+    /// time has not moved since this stamp needs no work.
+    pub mtime_ms: Option<i64>,
+}
+
 /// On-disk shape of the state cache.
 #[derive(Debug, Serialize, Deserialize, Default)]
 struct Persisted {
@@ -92,6 +133,13 @@ struct Persisted {
     version: u32,
     #[serde(default)]
     files: HashMap<String, FileEntry>,
+    /// Append-incremental checkpoints for DT_STREAM paths (P4).
+    /// Empty on legacy state files; older readers ignore the field
+    /// via `#[serde(default)]` on write / read.  Sibling map to
+    /// `files` — paths never overlap because DT_STREAM vs DT_REG is
+    /// enforced upstream at the entry-type gate.
+    #[serde(default)]
+    streams: HashMap<String, StreamState>,
     /// Embedder generation the recorded mtimes were completed under
     /// (review R8).  ANN storage is keyed by embedder tag, so a model
     /// swap opens a FRESH ann directory — mtimes recorded under the
@@ -106,6 +154,11 @@ struct Persisted {
 pub struct IndexState {
     dir: PathBuf,
     inner: RwLock<HashMap<String, FileEntry>>,
+    /// Sibling map for append-incremental DT_STREAM checkpoints
+    /// (see [`StreamState`]).  Loaded from + saved to the same
+    /// on-disk file as `inner`; separate map so DT_REG vs
+    /// DT_STREAM paths never collide on lookup.
+    streams: RwLock<HashMap<String, StreamState>>,
     embedder_tag: RwLock<Option<String>>,
 }
 
@@ -118,7 +171,7 @@ impl IndexState {
             .map_err(|e| StateError::CreateDir(zone_root.display().to_string(), e.to_string()))?;
         let path = zone_root.join(STATE_FILE);
         let mut persisted_tag: Option<String> = None;
-        let inner = if path.exists() {
+        let (inner, streams) = if path.exists() {
             let bytes = std::fs::read(&path)
                 .map_err(|e| StateError::Read(path.display().to_string(), e.to_string()))?;
             let persisted: Persisted = serde_json::from_slice(&bytes)
@@ -143,23 +196,31 @@ impl IndexState {
                     path = %path.display(),
                     "index_state version mismatch — nulling mtimes; next refresh reindexes + sweeps",
                 );
-                persisted
+                let files: HashMap<String, FileEntry> = persisted
                     .files
                     .into_iter()
                     .map(|(p, mut entry)| {
                         entry.mtime_ms = None;
                         (p, entry)
                     })
-                    .collect()
+                    .collect();
+                // DT_STREAM checkpoints are a strict speed-up over a
+                // full re-chunk; a version bump doesn't change the
+                // chunk layout so we could keep them, but nulling
+                // them here mirrors the file behaviour — the next
+                // refresh does a full pass anyway, which will
+                // rebuild the checkpoints cleanly.
+                (files, HashMap::new())
             } else {
-                persisted.files
+                (persisted.files, persisted.streams)
             }
         } else {
-            HashMap::new()
+            (HashMap::new(), HashMap::new())
         };
         Ok(Self {
             dir: zone_root,
             inner: RwLock::new(inner),
+            streams: RwLock::new(streams),
             embedder_tag: RwLock::new(persisted_tag),
         })
     }
@@ -184,6 +245,12 @@ impl IndexState {
             for entry in files.values_mut() {
                 entry.mtime_ms = None;
             }
+            // Same reasoning for streams — chunks land in the
+            // per-tag ann-<tag> dir, so a model swap must force a
+            // full re-embed.  Drop the whole checkpoint (not just
+            // the mtime) so the next refresh does a fresh full
+            // pass and repopulates from the new embedder.
+            self.streams.write().clear();
             true
         } else {
             // First generation stamp (legacy state / fresh zone):
@@ -212,17 +279,28 @@ impl IndexState {
     ///   have a concrete mtime for the file.
     /// - `RefreshVerdict::Changed` if new / edited / has-no-mtime
     ///   (fail-open: re-index rather than risk staleness).
+    ///
+    /// Consults both the [`FileEntry`] map (DT_REG paths) and the
+    /// [`StreamState`] map (DT_STREAM paths) — a path is only in
+    /// one at a time (upstream entry-type gate enforces).  The
+    /// stream check short-circuits Refresh's per-path sys_read
+    /// entirely for a quiescent stream, which matters because a
+    /// DT_STREAM's sys_read is a whole-log memcopy — much more
+    /// expensive than a regular-file sys_stat.
     pub fn verdict(&self, path: &str, fresh_mtime: Option<i64>) -> RefreshVerdict {
-        let cached = self.inner.read().get(path).cloned();
-        match (cached, fresh_mtime) {
-            (
-                Some(FileEntry {
-                    mtime_ms: Some(cached_ms),
-                }),
-                Some(fresh_ms),
-            ) if cached_ms == fresh_ms => RefreshVerdict::Unchanged,
-            _ => RefreshVerdict::Changed,
+        let cached_file_mtime = self.inner.read().get(path).and_then(|e| e.mtime_ms);
+        if let (Some(cached_ms), Some(fresh_ms)) = (cached_file_mtime, fresh_mtime) {
+            if cached_ms == fresh_ms {
+                return RefreshVerdict::Unchanged;
+            }
         }
+        let cached_stream_mtime = self.streams.read().get(path).and_then(|s| s.mtime_ms);
+        if let (Some(cached_ms), Some(fresh_ms)) = (cached_stream_mtime, fresh_mtime) {
+            if cached_ms == fresh_ms {
+                return RefreshVerdict::Unchanged;
+            }
+        }
+        RefreshVerdict::Changed
     }
 
     /// Record a successful index of `path` at `mtime_ms`.  Called
@@ -239,6 +317,51 @@ impl IndexState {
     /// FTS + ANN deletes when a file was removed from the corpus.
     pub fn forget(&self, path: &str) {
         self.inner.write().remove(path);
+        // A path removed from the corpus can't stay in the stream
+        // checkpoint map either — otherwise a fresh sys_setattr
+        // creating a new DT_STREAM at the same path would inherit
+        // stale offsets and skip chunking the initial content.
+        self.streams.write().remove(path);
+    }
+
+    // ── DT_STREAM append-incremental checkpoints (P4) ─────────────
+
+    /// Current checkpoint for `path` — `None` when the stream has
+    /// never been indexed on this zone.  The caller uses the
+    /// returned `indexed_byte_len` to slice the tail bytes and
+    /// `next_chunk_index` to continue the chunk-index sequence.
+    pub fn stream_state(&self, path: &str) -> Option<StreamState> {
+        self.streams.read().get(path).cloned()
+    }
+
+    /// Record a successful append-index pass — new absolute
+    /// byte-length + chunk count.  Called AFTER FTS + ANN adds
+    /// land, same posture as [`Self::record`] for regular files.
+    /// Never regresses the checkpoint — a stale caller trying to
+    /// write a smaller value must call [`Self::forget_stream`]
+    /// first, which is the retention-trim recovery path.
+    pub fn stream_advance(
+        &self,
+        path: &str,
+        new_indexed_byte_len: u64,
+        new_next_chunk_index: u32,
+        mtime_ms: Option<i64>,
+    ) {
+        self.streams.write().insert(
+            path.to_string(),
+            StreamState {
+                indexed_byte_len: new_indexed_byte_len,
+                next_chunk_index: new_next_chunk_index,
+                mtime_ms,
+            },
+        );
+    }
+
+    /// Drop the checkpoint for `path` — retention-trim recovery
+    /// (kernel-side stream retention advanced past our
+    /// checkpoint's byte offset) and full re-index paths.
+    pub fn forget_stream(&self, path: &str) {
+        self.streams.write().remove(path);
     }
 
     /// Number of cached entries — used by tests + operator
@@ -260,6 +383,7 @@ impl IndexState {
         let persisted = Persisted {
             version: STATE_VERSION,
             files: self.inner.read().clone(),
+            streams: self.streams.read().clone(),
             embedder_tag: self.embedder_tag.read().clone(),
         };
         let bytes =

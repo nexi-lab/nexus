@@ -277,9 +277,15 @@ jobs:
           sha256sum nexusd-cluster-* > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
-      - name: Install COS SDK
+      - name: Install + configure coscmd (acceleration endpoint)
+        # coscmd does chunked/multipart upload via the global COS acceleration
+        # endpoint -- resilient to the slow GitHub-runner -> COS(ap-beijing)
+        # path that aborts put_object on the larger assembly binary
+        # (UserNetworkTooSlow). Mirrors nexus-vfs's own cluster release.
         if: steps.check.outputs.skip == 'false'
-        run: pip install --quiet cos-python-sdk-v5
+        run: |
+          pip install --quiet coscmd
+          coscmd config -a "$COS_SECRET_ID" -s "$COS_SECRET_KEY" -b "$COS_BUCKET" -e cos.accelerate.myqcloud.com
 
       - name: Upload to versioned path
         if: steps.check.outputs.skip == 'false'
@@ -292,7 +298,7 @@ jobs:
             [ -f "$file" ] || continue
             filename=$(basename "$file")
             echo "  -> $filename"
-            python scripts/upload_cos.py --local-path "$file" --remote-path "$PATH_VER/$filename"
+            coscmd upload "$file" "$PATH_VER/$filename"
           done
           echo "::notice::Versioned artifacts: https://${COS_BUCKET}.cos.${COS_REGION}.myqcloud.com/${PATH_VER}/"
 
@@ -307,5 +313,5 @@ jobs:
             [ -f "$file" ] || continue
             filename=$(basename "$file")
             echo "  -> $filename"
-            python scripts/upload_cos.py --local-path "$file" --remote-path "$PATH_LATEST/$filename"
+            coscmd upload "$file" "$PATH_LATEST/$filename"
           done

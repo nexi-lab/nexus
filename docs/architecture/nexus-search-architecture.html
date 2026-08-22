@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<!--
+  Nexus Search Architecture — SSOT for the nexus-server → nexus-search-plugin
+  search stack: HTTP surface, orchestration/auth layer, Rust core plugin,
+  kernel VFS.  Includes R10 pure-Rust migration arc + DT_STREAM search
+  coverage + open FRs.
+
+  Self-contained: no build step, no JS bundler. Styled to render well
+  both as `file://` open and as a ShareOne-hosted page.
+
+  Canonical source: nexi-lab/nexus · docs/architecture/nexus-search-architecture.html.
+  Published to ShareOne via the remote-URL mechanism — edits land by merging
+  this file to develop; ShareOne re-fetches automatically, no re-publish.
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nexus Search Architecture</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --surface: #1e293b;
+    --surface-alt: #172033;
+    --fg: #e2e8f0;
+    --muted: #94a3b8;
+    --accent: #60a5fa;
+    --accent-dim: rgba(96, 165, 250, 0.12);
+    --warn: rgba(251, 191, 36, 0.18);
+    --warn-fg: #fcd34d;
+    --code-bg: #1e293b;
+    --border: #334155;
+    --ok: rgba(74, 222, 128, 0.14);
+    --ok-fg: #86efac;
+  }
+  * { box-sizing: border-box; }
+  html, body { background: var(--bg); }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                 "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    color: var(--fg);
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 60px 28px 100px;
+    line-height: 1.65;
+    font-size: 16px;
+  }
+  h1 { font-size: 28px; margin-bottom: 4px; }
+  h2 {
+    font-size: 22px;
+    margin-top: 56px;
+    padding-top: 24px;
+    border-top: 2px solid var(--border);
+    color: var(--fg);
+  }
+  h3 { font-size: 18px; margin-top: 32px; color: var(--accent); }
+  h4 { font-size: 16px; margin-top: 24px; }
+  .meta { color: var(--muted); font-size: 14px; margin-bottom: 24px; }
+  .callout {
+    background: var(--accent-dim);
+    border-left: 4px solid var(--accent);
+    padding: 14px 20px;
+    margin: 20px 0;
+    border-radius: 4px;
+  }
+  .callout-warn { background: var(--warn); border-left-color: #f59e0b; color: var(--warn-fg); }
+  .callout-ok { background: var(--ok); border-left-color: #4ade80; color: var(--ok-fg); }
+  code {
+    background: var(--code-bg);
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: "SF Mono", Consolas, monospace;
+    font-size: 13px;
+  }
+  pre {
+    background: var(--code-bg);
+    padding: 14px 16px;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  pre code { background: transparent; padding: 0; font-size: 13px; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 16px 0;
+    font-size: 14px;
+  }
+  th, td {
+    border: 1px solid var(--border);
+    padding: 8px 12px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th { background: var(--surface); font-weight: 600; color: var(--fg); }
+  tbody tr:nth-child(even) td { background: var(--surface-alt); }
+  hr { border: none; border-top: 1px solid var(--border); margin: 36px 0; }
+  ul li, ol li { margin: 4px 0; }
+  blockquote {
+    border-left: 3px solid var(--border);
+    color: var(--muted);
+    padding: 4px 16px;
+    margin: 16px 0;
+  }
+  .toc {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 18px 22px;
+    margin: 24px 0 32px;
+  }
+  .toc ol { margin: 8px 0 0 16px; padding: 0; }
+  .toc li { margin: 4px 0; }
+  a { color: var(--accent); }
+  a:hover { text-decoration: underline; }
+  footer { margin-top: 80px; color: var(--muted); font-size: 13px; text-align: center; }
+  pre.mermaid {
+    background: none;
+    border: none;
+    text-align: center;
+    padding: 20px 0;
+    visibility: hidden;
+  }
+  pre.mermaid[data-processed] { visibility: visible; }
+  .layer-tag {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 12px;
+    font-weight: 600;
+    margin-right: 6px;
+  }
+  .layer-rust { background: rgba(96, 165, 250, 0.2); color: var(--accent); }
+  .layer-python { background: rgba(251, 191, 36, 0.2); color: var(--warn-fg); }
+  .status-done { color: var(--ok-fg); }
+  .status-wip { color: var(--warn-fg); }
+  .status-open { color: var(--muted); }
+</style>
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({ startOnLoad: true, theme: 'dark', look: 'handDrawn' });
+</script>
+</head>
+<body>
+
+<h1>Nexus Search Architecture</h1>
+<p class="meta">SSOT for the search stack — layer contract, Rust core plugin, HTTP surface,
+cross-zone federation, DT_STREAM search coverage, pure-Rust migration arc.</p>
+
+<div class="callout">
+  <strong>Cross-references:</strong>
+  <ul style="margin:8px 0 0">
+    <li><a href="https://s.shareone.vip/s/kernel-architecture">Nexus Kernel Architecture</a> (peer doc): kernel-tier SSOT — syscall surface (Tier 1 = 11 POSIX-aligned <code>sys_*</code>), plugin ABI, DT_REG / DT_STREAM / DT_PIPE inode types, VFS dispatch. Search consumes this from outside; never modifies it.</li>
+    <li><a href="https://s.shareone.vip/s/nexus-integration-architecture">Nexus Integration Architecture</a> (peer doc): sudowork ↔ nexus ↔ sudo-code surface, agent identity, A2A messaging, transport. Search-over-DT_STREAM (§6 here) is a consumer of the DT_STREAM primitive defined there.</li>
+    <li><a href="https://s.shareone.vip/s/federation-cross-machine-runbook">Cross-Machine Federation Runbook</a> (peer doc): overlay / bootstrap / enrollment. Search's cross-plugin peer fan-out (§2.4) runs over the same overlay.</li>
+    <li><a href="https://github.com/nexi-lab/nexus/blob/develop/rust/services/proto/nexus/search/v1/search.proto">nexus.search.v1 proto</a>: wire SSOT for every RPC in this doc.</li>
+  </ul>
+</div>
+
+<nav class="toc">
+  <strong>Contents</strong>
+  <ol>
+    <li><a href="#layers">Layer overview</a></li>
+    <li><a href="#core">Rust core plugin (SSOT for search logic)</a></li>
+    <li><a href="#grpc">gRPC surface — <code>nexus.search.v1.SearchService</code></a></li>
+    <li><a href="#http">HTTP surface — today Python, tomorrow Rust axum</a></li>
+    <li><a href="#federation">Cross-zone federation dispatcher</a></li>
+    <li><a href="#dt-stream">Search over DT_STREAM (audit / mailbox / transcripts)</a></li>
+    <li><a href="#r10">R10 pure-Rust migration arc</a></li>
+    <li><a href="#profiles">Deployment profiles</a></li>
+    <li><a href="#decisions">Decision log</a></li>
+    <li><a href="#open">Open FRs &amp; pending work</a></li>
+  </ol>
+</nav>
+
+<h2 id="layers">1. Layer overview</h2>
+
+<p>Search is a <strong>4-layer stack</strong>. Layer boundaries are enforced by the plugin ABI (§2 below): the Rust core plugin only sees the kernel VFS through <code>KernelHandle</code>'s C-ABI, and the orchestration/API layers only see the plugin through gRPC. No cross-layer imports.</p>
+
+<pre class="mermaid">
+flowchart TB
+    subgraph API["1. API layer &mdash; HTTP"]
+        A1["<b>Python FastAPI</b> (today, production)<br/>src/nexus/server/api/v2/routers/search.py<br/>~1800 LoC &mdash; /v2/search/{query,glob,grep,batch}"]
+        A2["<b>Rust axum</b> (R10 arc, in-progress)<br/>rust/services/http-api/<br/>GET /v2/status &check; GET /v2/search/glob &check;<br/>grep / query / auth-mw / nexusd-wiring pending"]
+    end
+    subgraph ORCH["2. Orchestration / Auth / ReBAC layer"]
+        O1["<b>SearchService</b> (Python)<br/>search_service.py &mdash; ~5000 LoC<br/>profile gate, auth+ReBAC filter, grep orchestration,<br/>SANDBOX fallback, activity events"]
+        O2["<b>FederatedSearchDispatcher</b> (Python)<br/>federated_search.py &mdash; ~1200 LoC<br/>cross-zone ReBAC-aware fan-out,<br/>SearchDelegation short-lived credentials"]
+        O3["<b>SearchDaemon proxy</b> (Python)<br/>daemon.py &mdash; ~500 LoC<br/>thin gRPC client to the Rust plugin"]
+    end
+    subgraph CORE["3. Rust core plugin &mdash; SSOT for search logic"]
+        C1["<b>nexus-search-plugin</b> cdylib (Rust)<br/>rust/services/search-plugin/ &mdash; ~16k LoC<br/>17 gRPC RPCs on nexus.search.v1.SearchService"]
+    end
+    subgraph KERN["4. Kernel VFS &mdash; nexus-vfs"]
+        K1["<b>KernelHandle</b> C-ABI &mdash; 11 Tier 1 syscalls<br/>sys_read / sys_readdir / sys_stat / sys_write / ...<br/>plugin never modifies this ABI"]
+    end
+    A1 --&gt; O1
+    A2 --&gt; C1
+    O1 --&gt; O3
+    O1 --&gt; O2
+    O2 --&gt; O3
+    O3 --&gt; C1
+    C1 --&gt; K1
+    K1 --&gt; STORAGE["path-local FS / peer-federated / DT_STREAM log"]
+</pre>
+
+<h3>Layer contract</h3>
+<table>
+  <thead>
+    <tr><th>Layer</th><th>Owns</th><th>Does NOT touch</th><th>Language</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>1. API (HTTP)</td>
+      <td>Request parsing, response serialisation, HTTP-level auth, rate limiting</td>
+      <td>Search algorithms, indexing, ReBAC filtering, cross-zone routing</td>
+      <td><span class="layer-tag layer-python">Python</span> today; <span class="layer-tag layer-rust">Rust</span> R10 target</td>
+    </tr>
+    <tr>
+      <td>2. Orchestration</td>
+      <td>Auth resolution → OperationContext, ReBAC post-filter, cross-zone dispatch, profile gate, activity events</td>
+      <td>Chunking, embedding, FTS/vector primitives, kernel-tier state</td>
+      <td><span class="layer-tag layer-python">Python</span> today; <span class="layer-tag layer-rust">Rust</span> R10 target</td>
+    </tr>
+    <tr>
+      <td>3. Core plugin</td>
+      <td>All search algorithms &mdash; BM25, HNSW, hybrid fusion, chunking, embedding, macro-expand, query expansion, contextual chunking, peer fan-out, recency, prefix boost, title arm, query cache</td>
+      <td>Auth, ReBAC, cross-zone routing, HTTP</td>
+      <td><span class="layer-tag layer-rust">Rust</span> (cdylib)</td>
+    </tr>
+    <tr>
+      <td>4. Kernel VFS</td>
+      <td>The 11 Tier 1 <code>sys_*</code> syscalls, DT_REG/DT_STREAM/DT_PIPE inodes, PipeManager/StreamManager, path resolution, federation</td>
+      <td>Anything policy-shaped (glob, grep, ReBAC, chunking &mdash; all live in plugins/services)</td>
+      <td><span class="layer-tag layer-rust">Rust</span> (nexus-vfs SSOT)</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="core">2. Rust core plugin &mdash; SSOT for search logic</h2>
+
+<p><code>nexus-search-plugin</code> is a cdylib loaded by <code>nexusd-cluster</code> at boot via <code>--plugin-dir</code>. It exposes <code>nexus.search.v1.SearchService</code> through the Phase P plugin-as-gRPC-service routing path (plugin declares its service list via <code>nexus_plugin_grpc_services</code>; the cluster's <code>PluginProxyService</code> routes external tonic traffic at <code>/nexus.search.v1.SearchService/&lt;Method&gt;</code> into <code>nexus_service_dispatch</code>).</p>
+
+<div class="callout callout-ok">
+  <strong>SSOT status:</strong> in the <code>cluster</code> deployment profile (production), the Rust plugin is the <strong>sole</strong> search backend. Every algorithm below runs here, not in Python. Python SANDBOX backends (§8) are a legacy dev-only path.
+</div>
+
+<h3>2.1 Module map</h3>
+<table>
+  <thead><tr><th>Module</th><th>LoC</th><th>What it owns</th></tr></thead>
+  <tbody>
+    <tr><td><code>service.rs</code></td><td>4297</td><td>gRPC handlers for all 17 RPCs, request routing, middleware wiring</td></tr>
+    <tr><td><code>title_index.rs</code></td><td>1109</td><td>Title-arm secondary index (hybrid fusion boost)</td></tr>
+    <tr><td><code>embedder.rs</code></td><td>1089</td><td>OpenAI-compatible embedding client + batching</td></tr>
+    <tr><td><code>ann_index.rs</code></td><td>881</td><td>HNSW vector index (cosine similarity)</td></tr>
+    <tr><td><code>contextual_chunker.rs</code></td><td>867</td><td>LLM contextual chunking (per-chunk context prefix)</td></tr>
+    <tr><td><code>fts_index.rs</code></td><td>725</td><td>Tantivy BM25 FTS index</td></tr>
+    <tr><td><code>query_expansion.rs</code></td><td>713</td><td>LLM query expansion + variant fan-out</td></tr>
+    <tr><td><code>index_manager.rs</code></td><td>696</td><td>Per-zone index lifecycle (open/create/close)</td></tr>
+    <tr><td><code>fusion.rs</code></td><td>657</td><td>RRF (Reciprocal Rank Fusion), RRF-weighted, min-max</td></tr>
+    <tr><td><code>macro_expand.rs</code></td><td>526</td><td>Section-aware neighbour-window expand (<code>expand=macro</code>)</td></tr>
+    <tr><td><code>scoring.rs</code></td><td>505</td><td>Recency decay, path-prefix tier boost</td></tr>
+    <tr><td><code>query_cache.rs</code></td><td>505</td><td>Query-result LRU cache</td></tr>
+    <tr><td><code>index_state.rs</code></td><td>503</td><td>Per-index durable state (content hashes, doc counts)</td></tr>
+    <tr><td><code>peer_fanout.rs</code></td><td>469</td><td>Same-zone cross-plugin-instance fan-out (§2.4)</td></tr>
+    <tr><td><code>peer_registry.rs</code></td><td>404</td><td>Env-driven static peer list; DashMap Channel cache</td></tr>
+    <tr><td><code>chunker.rs</code></td><td>390</td><td>Markdown/text-aware chunking</td></tr>
+    <tr><td><code>embed_cache.rs</code></td><td>270</td><td>Embedding LRU (dedup identical text)</td></tr>
+    <tr><td><code>zone_modes_state.rs</code></td><td>258</td><td>Per-zone indexing-mode config (disabled/auto/manual)</td></tr>
+    <tr>
+      <td><em>plus: indexed_dirs_state, parked_state, internal_call, kernel_io, llm_chat, lib.rs</em></td>
+      <td>~1000</td>
+      <td>Plumbing (dir tracking, parked-retry queue, middleware markers, kernel FFI wrapper, HTTP LLM helper)</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>2.2 Why plugin, not kernel primitive</h3>
+<blockquote>
+  Grep + glob are compositions over the kernel's <code>sys_readdir</code> + <code>sys_read</code> primitives, not primitives themselves. Putting the walker + regex engine + FTS + vector into the kernel tier would grow <code>kernel/</code> with policy code that has no business next to the syscall ABI. The cdylib boundary keeps the kernel small (default: zero search logic) and lets the plugin ship its own release cadence with its own signed release chain.
+</blockquote>
+
+<h3>2.3 Middleware layering (per-request)</h3>
+
+<p>A single Query request flows through concentric middlewares inside the plugin. Each is <strong>opt-in via env</strong> and <strong>strictly outer-to-inner</strong> — never re-entered on recursive internal calls (guarded by <code>INSIDE_MIDDLEWARE</code> task-local + <code>PEER_FANOUT_MARKER_HEADER</code>):</p>
+
+<pre class="mermaid">
+flowchart TB
+    IN["Query RPC in"] --&gt; MW1
+    subgraph MW1["Outer: LLM query expansion"]
+        MW1D["expand original into N variants,<br/>fan out (N+1) sub-queries, fuse rrf_multi<br/>(env: NEXUS_SEARCH_QUERY_EXPANSION)"]
+    end
+    MW1 --&gt; MW2
+    subgraph MW2["Middle: peer fan-out"]
+        MW2D["send same query to peer plugins in same zone,<br/>concurrent with local branch, fuse rrf_multi<br/>(env: NEXUS_SEARCH_PEER_PLUGINS)"]
+    end
+    MW2 --&gt; MW3
+    subgraph MW3["Inner: local hybrid pipeline"]
+        MW3D["keyword arm (FTS) + semantic arm (HNSW) + title arm<br/>&mdash;&gt; fusion::rrf_multi<br/>&mdash;&gt; recency + prefix boost + query_cache<br/>&mdash;&gt; macro_expand enrichment"]
+    end
+    MW3 --&gt; OUT["QueryResponse out"]
+</pre>
+
+<h3>2.4 Peer fan-out vs cross-zone federation</h3>
+<div class="callout callout-warn">
+  <strong>Naming trap:</strong> two orthogonal concepts live near each other &mdash; do not confuse.
+</div>
+<table>
+  <thead><tr><th>Dimension</th><th><code>peer_fanout.rs</code> (Rust plugin)</th><th><code>federated_search.py</code> (Python orchestration)</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Fans out to</strong></td><td>Peer plugin instances of the <strong>same zone</strong></td><td>Daemons of <strong>different zones</strong> (possibly different machines)</td></tr>
+    <tr><td><strong>Auth</strong></td><td>None &mdash; peer plugins are trusted (tailnet + TLS)</td><td>ReBAC-aware &mdash; only fans to zones subject can access</td></tr>
+    <tr><td><strong>Credential</strong></td><td><code>PEER_FANOUT_MARKER_HEADER</code> (loop guard, not auth)</td><td><code>SearchDelegation</code> short-lived (30s) credential per remote zone</td></tr>
+    <tr><td><strong>Zone routing</strong></td><td>Every peer sees same query</td><td>Per-zone capability routing (skip semantic queries to keyword-only zones)</td></tr>
+    <tr><td><strong>Fusion</strong></td><td><code>fusion::rrf_multi</code> (Rust)</td><td><code>rrf_multi_fusion</code> (Python; algorithm-equivalent)</td></tr>
+  </tbody>
+</table>
+
+<h2 id="grpc">3. gRPC surface &mdash; <code>nexus.search.v1.SearchService</code></h2>
+
+<p>Wire SSOT: <code>rust/services/proto/nexus/search/v1/search.proto</code>. Both the Rust plugin (server) and consumers (Python daemon proxy, Rust http-api client, sudocode Rust agent) codegen from this one file.</p>
+
+<table>
+  <thead><tr><th>Plane</th><th>RPC</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td rowspan="2">Discovery</td><td><code>Glob</code></td><td>fnmatch pattern → paths</td></tr>
+    <tr><td><code>Grep</code></td><td>regex → paths+line-hits over file/stream content</td></tr>
+    <tr><td rowspan="2">Search</td><td><code>Query</code></td><td>keyword / semantic / hybrid ranked results</td></tr>
+    <tr><td><code>BatchQuery</code></td><td>N Query requests in one RPC (embedding dedup)</td></tr>
+    <tr><td rowspan="4">Indexing</td><td><code>Index</code></td><td>walker-based re-index of a subtree</td></tr>
+    <tr><td><code>IndexDocuments</code></td><td>explicit-payload POST (HTTP-fed bytes → chunks → index)</td></tr>
+    <tr><td><code>Refresh</code></td><td>content-hash-driven incremental refresh</td></tr>
+    <tr><td><code>NotifyFileChange</code></td><td>fsnotify hook → schedule targeted re-index</td></tr>
+    <tr><td rowspan="4">Directory tracking</td><td><code>AddIndexedDirectory</code></td><td>register a subtree for automatic Refresh</td></tr>
+    <tr><td><code>RemoveIndexedDirectory</code></td><td>drop tracking</td></tr>
+    <tr><td><code>ListIndexedDirectories</code></td><td>enumerate tracked subtrees</td></tr>
+    <tr><td><code>Locate</code></td><td>chunk-shape lookup for a single path</td></tr>
+    <tr><td rowspan="3">Parked queue</td><td><code>ParkedList</code></td><td>docs deferred by embedder-broken state</td></tr>
+    <tr><td><code>ParkedRetry</code></td><td>re-attempt indexing</td></tr>
+    <tr><td><code>ParkedDiscard</code></td><td>drop from queue</td></tr>
+    <tr><td rowspan="2">Zone mode</td><td><code>SetZoneIndexingMode</code></td><td>disabled / auto / manual per zone</td></tr>
+    <tr><td><code>ListZoneIndexingModes</code></td><td>enumerate</td></tr>
+    <tr><td rowspan="2">Meta</td><td><code>Health</code></td><td>plugin liveness</td></tr>
+    <tr><td><code>Stats</code></td><td>per-zone doc count, backend, embedder model</td></tr>
+  </tbody>
+</table>
+
+<h2 id="http">4. HTTP surface</h2>
+
+<h3>4.1 Today: Python FastAPI</h3>
+<p>Router: <code>src/nexus/server/api/v2/routers/search.py</code> (~1800 LoC). Routes:</p>
+<ul>
+  <li><code>GET/POST /v2/search/query</code> &mdash; semantic / hybrid / keyword</li>
+  <li><code>GET/POST /v2/search/glob</code> &mdash; pattern → paths</li>
+  <li><code>GET/POST /v2/search/grep</code> &mdash; regex → matches</li>
+  <li><code>POST /v2/search/query/batch</code> &mdash; batched queries</li>
+  <li><code>GET /v2/search/health</code>, <code>GET /v2/search/stats</code></li>
+  <li>Plus indexed-dir management, locate, batch helpers</li>
+</ul>
+
+<h3>4.2 Tomorrow: Rust axum (R10 arc)</h3>
+<p>New crate: <code>rust/services/http-api/</code> (see §7). Landed today:</p>
+<ul>
+  <li><code>GET /v2/status</code> <span class="status-done">&check;</span> (PR #4675)</li>
+  <li><code>GET /v2/search/glob</code> <span class="status-done">&check;</span> (PR #4678, with cached tonic backend + typed error → HTTP status mapping)</li>
+  <li><code>serve()</code> / <code>bind_and_serve()</code> helpers <span class="status-done">&check;</span> (PR #4680) &mdash; the same call the future <code>nexusd-cluster</code> assembly binary uses</li>
+</ul>
+<p>Pending (§7 arc):</p>
+<ul>
+  <li><code>GET /v2/search/grep</code> <span class="status-open">·</span> same shape as glob, one handler file</li>
+  <li><code>POST /v2/search/query</code> <span class="status-open">·</span> JSON body via <code>axum::extract::Json</code></li>
+  <li>Auth middleware <span class="status-open">·</span> tower <code>.layer()</code> on the router, populates <code>Request::extensions</code>::&lt;AuthContext&gt;</li>
+  <li>ReBAC post-filter <span class="status-open">·</span> waits on Rust ReBAC (§5)</li>
+  <li>Wiring into <code>nexusd-cluster</code> boot <span class="status-open">·</span> uses <code>serve()</code> helper alongside the gRPC listener</li>
+</ul>
+
+<h2 id="federation">5. Cross-zone federation dispatcher</h2>
+
+<p><code>federated_search.py</code> (Python, ~1200 LoC) fans out queries across zones the subject can access, mints short-lived <code>SearchDelegation</code> credentials for remote-zone RPCs, and merges results via RRF. It is <strong>kept in Python</strong> today because moving it requires solving a three-way tie:</p>
+<ol>
+  <li><strong>ReBAC engine</strong> lives in Python (<code>nexus.bricks.permissions.rebac</code>). <code>_get_accessible_zones(subject)</code> queries it directly.</li>
+  <li><strong><code>SearchDelegation</code> credential</strong> minting + verification is Python-side today.</li>
+  <li><strong><code>ZoneSearchRegistry</code></strong> (zone → daemon endpoint map) is Python-side, populated at boot from federation topology.</li>
+</ol>
+<p>Independently moving <code>federated_search</code> without touching the other two loses meaning.</p>
+
+<h3>Long-term placement: Rust <code>http-api</code>, NOT the plugin</h3>
+<div class="callout">
+  <strong>Decision:</strong> federated dispatch belongs in the <em>API layer</em>, not the core plugin. The plugin stays a single-zone primitive (SRP). Cross-zone orchestration + auth + ReBAC + delegation minting are all API-tier concerns.
+</div>
+<p>Why the alternative (absorbing into the plugin) is wrong:</p>
+<ul>
+  <li>Plugin would grow from &ldquo;single-zone primitive&rdquo; to &ldquo;zone-aware orchestrator&rdquo; &mdash; violates SRP.</li>
+  <li>Would drag ReBAC into the plugin, coupling the search cdylib to the auth engine.</li>
+  <li>Delegation minting is server-side authority &mdash; naturally the API tier's job.</li>
+</ul>
+
+<h2 id="dt-stream">6. Search over DT_STREAM (audit / mailbox / transcripts)</h2>
+
+<p>A DT_STREAM is a kernel-primitive append-only log &mdash; audit trails, A2A mailboxes, session transcripts (see the <a href="https://s.shareone.vip/s/nexus-integration-architecture">Integration Architecture</a> doc &sect;4.2 for the primitive). As of nexus-vfs #229 + nexus #4682, streams are searchable as first-class documents: <code>grep</code>, keyword <code>Query</code>, and semantic <code>Query</code> all see a stream's whole log the same way they see a regular file.</p>
+
+<h3>6.1 How it works &mdash; the &ldquo;host-shim collects&rdquo; posture (Phase 0)</h3>
+<p>The plugin's C-ABI <code>sys_read</code> is offset-less &mdash; it means <em>&ldquo;give me the content at path&rdquo;</em>. For DT_REG this is the file bytes. For DT_STREAM the host-side (nexus-vfs #235) now walks the stream frames to its tail and returns the deframed payload as one blob. <strong>Zero plugin-abi bump.</strong> The plugin's existing walker (which already routes <code>DT_REG</code> → chunk → index) just needs to recognise <code>DT_STREAM=4</code> as a searchable entry_type.</p>
+<p>The plugin change (PR #4682, merged) added exactly one SSOT predicate:</p>
+<pre><code>fn searchable_content_type(et: u8) -&gt; bool { et == DT_REG || et == DT_STREAM }</code></pre>
+<p>Routed through all 5 VFS-walk gates: grep, keyword-index (recursive + non-recursive), semantic-index (recursive + non-recursive). DT_DIR/DT_MOUNT stay containers; DT_PIPE stays ephemeral (destructive read).</p>
+
+<h3>6.2 Verification</h3>
+<p><code>TestSearchStreams</code> in <code>tests/e2e/docker/test_search_plugin.py</code> seeds a 7-frame wal stream whose target token sits in the <strong>6th frame</strong> plus a sibling regular file. It asserts:</p>
+<ul>
+  <li>grep finds the LATE-frame token in the stream (proves the host read the <em>whole</em> log, not frame 0)</li>
+  <li>grep also finds the early-frame token + the sibling file's token (no regression)</li>
+  <li>keyword index + Query surfaces stream content as a document</li>
+  <li>semantic Query works too (tolerant of a missing embedder)</li>
+</ul>
+
+<h3>6.3 Open FRs from first real consumer (sudocode, 2026-08-22)</h3>
+<p>sudowork's <code>sudocode</code> is the first agent hitting search-over-streams for long-term memory recall over per-session transcripts (<code>/sessions/&lt;id&gt;/transcript.jsonl</code>). Outstanding asks:</p>
+
+<table>
+  <thead><tr><th>#</th><th>Ask</th><th>Layer</th><th>Status / plan</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>A</td>
+      <td>Index the full stream, not the first frame</td>
+      <td>host + plugin walker</td>
+      <td><span class="status-done">&check; Solved.</span> nexus-vfs #235 (merged 2026-08-21) makes <code>sys_read</code> collect; nexus #4682 (merged 2026-08-22) routes DT_STREAM through walker gates.</td>
+    </tr>
+    <tr>
+      <td>B</td>
+      <td>Recency signal for streams &mdash; populate <code>sys_stat.modified_at_ms</code> from last-append time</td>
+      <td>kernel (nexus-vfs)</td>
+      <td><span class="status-open">Open.</span> Verified kernel-boundary: POSIX-aligned (<code>st_mtime</code> equivalent), same seam as tail-as-size added in nexus-vfs #80, generic beyond search (audit / mailbox catch-up all benefit). Ship as a nexus-vfs PR on <code>feat/dt-stream-tail-in-sys-stat</code>. <em>No new syscall, no ABI change.</em></td>
+    </tr>
+    <tr>
+      <td>C</td>
+      <td>Append-incremental indexing &mdash; index only frames since last-indexed tail offset (O(delta), not O(n<sup>2</sup>))</td>
+      <td>plugin</td>
+      <td><span class="status-open">P4 planned.</span> Add per-path <code>last_indexed_offset</code> to <code>index_state.rs</code>; NotifyFileChange on DT_STREAM triggers a delta walker. Estimated ~300-500 LoC; may need a stream-friendly <code>sys_read_at(path, offset)</code> primitive if not already present.</td>
+    </tr>
+    <tr>
+      <td>D</td>
+      <td>Record/turn-aware chunker for JSONL transcripts (chunk = one turn; <code>embed_input</code> = extracted content)</td>
+      <td>plugin</td>
+      <td><span class="status-open">Lower priority.</span> Current markdown chunker works if agents index distilled markdown notes instead. Ship as env-gated mode (e.g. <code>NEXUS_SEARCH_CHUNKER_MODE=jsonl</code>) when recall gaps become concrete.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>6.4 Client path for a co-hosted Rust agent calling <code>Query</code></h3>
+<p>Today's answer has a gap:</p>
+<ul>
+  <li><strong>Grep / glob</strong>: in-process via <code>KernelConvenience::grep_subtree</code> (already there).</li>
+  <li><strong>Semantic / hybrid Query</strong>: no in-process convenience. Two options today:
+    <ol>
+      <li><strong>tonic client to local plugin gRPC (loopback)</strong> &mdash; same pattern the Rust <code>http-api</code> crate uses in <code>SearchBackend</code>. Recommended short-term.</li>
+      <li><strong>Add <code>KernelConvenience::semantic_search</code></strong> in nexus-vfs &mdash; long-term, needs kernel-team review because it crosses the plugin/convenience boundary (grep_subtree precedent exists but semantic requires embedder wiring in kernel tier).</li>
+    </ol>
+  </li>
+</ul>
+
+<h2 id="r10">7. R10 pure-Rust migration arc</h2>
+
+<p>Epic issue <a href="https://github.com/nexi-lab/nexus/issues/4674">#4674</a>. Goal: production nexus-server runs on the <code>cluster</code> Rust binary alone &mdash; HTTP + auth + ReBAC + orchestration all move from Python to Rust, keeping the plugin unchanged as the SSOT for search primitives.</p>
+
+<h3>Landed steps</h3>
+<ol>
+  <li>PR #4675 &mdash; <code>rust/services/http-api/</code> crate skeleton, axum + <code>/v2/status</code>, 2 unit tests + 2 real-TCP integration tests.</li>
+  <li>PR #4678 &mdash; <code>GET /v2/search/glob</code> handler, <code>SearchBackend</code> Channel cache (DashMap per address, <code>connect_lazy</code>), handlers/ module layout, error-mapping (gRPC <code>Code</code> → HTTP status).</li>
+  <li>PR #4680 &mdash; <code>serve()</code> / <code>bind_and_serve()</code> public helpers (dedup for the future <code>nexusd</code> wiring), 3 edge-case E2E (upstream-down → 503, sort_recency=false propagation, max_results=0 sentinel).</li>
+</ol>
+
+<h3>Remaining steps</h3>
+<ol start="4">
+  <li><code>GET /v2/search/grep</code> &mdash; same pattern as glob, one handler-file addition.</li>
+  <li><code>POST /v2/search/query</code> &mdash; JSON body via <code>axum::extract::Json</code>; typed request shape mirrors <code>QueryRequest</code>.</li>
+  <li>Auth middleware &mdash; tower <code>.layer()</code> outside the router; parses bearer / cookie into <code>AuthContext</code>, drops into <code>Request::extensions</code>.</li>
+  <li>Rust ReBAC engine <strong>or</strong> gRPC facade over the Python engine &mdash; unblocks moving <code>federated_search</code> off Python.</li>
+  <li>Federated dispatcher port &mdash; new axum handler group; consumes ReBAC + delegation-mint from steps 6-7.</li>
+  <li><code>nexusd-cluster</code> boot wiring &mdash; assembly binary calls <code>nexus_http_api::serve(bind_addr, state)</code> alongside the gRPC listener.</li>
+  <li>Deprecate Python <code>search_service.py</code> once feature parity holds under HERB gate for a soak period.</li>
+</ol>
+
+<h2 id="profiles">8. Deployment profiles</h2>
+
+<table>
+  <thead><tr><th>Profile</th><th>Search backend</th><th>What runs</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>cluster</code> (production)</td>
+      <td>Rust plugin only</td>
+      <td>plugin cdylib loaded by <code>nexusd-cluster</code>; SANDBOX chain never wired.</td>
+    </tr>
+    <tr>
+      <td><code>sandbox</code> (dev / local)</td>
+      <td>Python SANDBOX chain</td>
+      <td>Python <code>sqlite_fts_backend</code>, <code>sqlite_vec_backend</code>, <code>pg_fts_backend</code>, <code>pg_vector_backend</code>, <code>chunking.py</code>, <code>zoekt_client</code>, <code>graph_search_service</code>. ~4400 LoC of legacy dev-only code.</td>
+    </tr>
+    <tr>
+      <td><code>full</code> (superset)</td>
+      <td>Rust plugin + everything</td>
+      <td>All drivers + all connectors + plugin.</td>
+    </tr>
+  </tbody>
+</table>
+<p>The <code>sandbox</code> path is a legacy fallback for topologies without a plugin sidecar. Once the R10 arc closes and the Python HTTP layer retires, SANDBOX can retire alongside (nothing routes to it in production).</p>
+
+<h2 id="decisions">9. Decision log</h2>
+
+<table>
+  <thead><tr><th>Date</th><th>Decision</th><th>Rationale</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>2026-08-07</td>
+      <td>P12: delete Python <code>SearchDaemon</code>. Rust plugin becomes sole search backend for <code>cluster</code>.</td>
+      <td>Feature parity reached; two backends double the maintenance surface and hide divergence.</td>
+    </tr>
+    <tr>
+      <td>2026-08-15..17</td>
+      <td>Pull 3 features from Python into Rust plugin: LLM query expansion, cross-plugin peer fan-out, LLM contextual chunking.</td>
+      <td>Feature parity for the &ldquo;pure-Rust cluster search&rdquo; posture. See PRs #4661/#4662/#4663.</td>
+    </tr>
+    <tr>
+      <td>2026-08-17</td>
+      <td>10-principle audit round applied to every merged PR; residuals R1-R10 all fixed or filed as issues.</td>
+      <td>User-standing quality bar; see the audit findings folded into #4676/#4677/#4679/#4680.</td>
+    </tr>
+    <tr>
+      <td>2026-08-17</td>
+      <td>Keep <code>federated_search.py</code> in Python for now.</td>
+      <td>Cross-zone dispatch has a three-way tie to Python ReBAC + delegation-mint + zone-registry. Independent move loses meaning. Long-term destination: Rust <code>http-api</code>, not plugin.</td>
+    </tr>
+    <tr>
+      <td>2026-08-18</td>
+      <td>Start R10 arc: <code>rust/services/http-api/</code> crate.</td>
+      <td>Prove the axum + gRPC-client-cache pattern before touching auth / ReBAC / orchestration.</td>
+    </tr>
+    <tr>
+      <td>2026-08-18</td>
+      <td>Corrected R9 design: <code>sys_list_peers</code> is <strong>not</strong> a Tier 1 syscall. Peer discovery for plugins should reuse the procfs pattern (<code>/__sys__/peers/</code>) via existing <code>sys_readdir</code> + <code>sys_stat</code>. Zero ABI bump.</td>
+      <td>Kernel-architecture Tier 1 rule: POSIX-aligned, path-addressed. &ldquo;List peers&rdquo; is neither.</td>
+    </tr>
+    <tr>
+      <td>2026-08-21</td>
+      <td>Host-shim <code>sys_read</code> collects DT_STREAM into one blob (nexus-vfs #235).</td>
+      <td>Streams are searchable primitives; plugin walker gets whole log with zero plugin-abi bump.</td>
+    </tr>
+    <tr>
+      <td>2026-08-22</td>
+      <td>Plugin walker routes DT_STREAM through <code>searchable_content_type()</code> predicate (nexus #4682).</td>
+      <td>One SSOT predicate on all 5 VFS-walk gates; no per-site logic.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="open">10. Open FRs &amp; pending work</h2>
+
+<table>
+  <thead><tr><th>Item</th><th>Layer</th><th>Status</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>sudocode FR-B: <code>sys_stat.modified_at_ms</code> for DT_STREAM</td>
+      <td>nexus-vfs kernel</td>
+      <td><span class="status-open">Open</span> &mdash; verified in-boundary; ship on <code>feat/dt-stream-tail-in-sys-stat</code></td>
+    </tr>
+    <tr>
+      <td>sudocode FR-C: append-incremental DT_STREAM indexing (plugin P4)</td>
+      <td>plugin + maybe plugin-abi</td>
+      <td><span class="status-open">P4 planned</span> &mdash; not blocking short transcripts; do before keep-forever logs grow</td>
+    </tr>
+    <tr>
+      <td>sudocode FR-D: JSONL record-aware chunker mode</td>
+      <td>plugin (chunker)</td>
+      <td><span class="status-open">Lower priority</span> &mdash; env-gated; do when recall gaps become concrete</td>
+    </tr>
+    <tr>
+      <td>Co-hosted Rust agent: <code>Query</code> in-process convenience</td>
+      <td>kernel-convenience (nexus-vfs)</td>
+      <td><span class="status-open">Design open</span> &mdash; short-term use tonic loopback; long-term needs kernel-team review</td>
+    </tr>
+    <tr>
+      <td>Grep &amp; Query axum handlers</td>
+      <td>Rust http-api (R10)</td>
+      <td><span class="status-open">Next</span> &mdash; same pattern as glob</td>
+    </tr>
+    <tr>
+      <td>Auth middleware for axum router</td>
+      <td>Rust http-api (R10)</td>
+      <td><span class="status-open">Next</span></td>
+    </tr>
+    <tr>
+      <td>Rust ReBAC engine (or gRPC facade)</td>
+      <td>New Rust crate</td>
+      <td><span class="status-open">Unblocks</span> &mdash; federated dispatcher Rust port</td>
+    </tr>
+    <tr>
+      <td>Federated dispatcher port to axum handler group</td>
+      <td>Rust http-api (R10)</td>
+      <td><span class="status-open">After ReBAC</span></td>
+    </tr>
+    <tr>
+      <td><code>nexusd-cluster</code> wiring of the axum listener</td>
+      <td>rust/nexusd</td>
+      <td><span class="status-open">Uses <code>serve()</code> helper</span> &mdash; do once router surface justifies it</td>
+    </tr>
+    <tr>
+      <td>Deprecate Python SANDBOX chain</td>
+      <td>Python cleanup</td>
+      <td><span class="status-open">After R10 closes</span> &mdash; ~4400 LoC removal</td>
+    </tr>
+  </tbody>
+</table>
+
+<footer>
+  <p>Canonical source: <a href="https://github.com/nexi-lab/nexus/blob/develop/docs/architecture/nexus-search-architecture.html">nexi-lab/nexus &middot; docs/architecture/nexus-search-architecture.html</a> on <code>develop</code>.<br>
+  Published via ShareOne remote-URL: <a href="https://s.shareone.vip/s/nexus-search-architecture">s.shareone.vip/s/nexus-search-architecture</a>.<br>
+  Edits land by merging to develop; ShareOne re-fetches automatically, no re-publish needed.</p>
+</footer>
+
+</body>
+</html>

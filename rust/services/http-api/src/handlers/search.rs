@@ -307,22 +307,49 @@ pub struct QueryResponseBody {
     pub error: Option<String>,
 }
 
-fn parse_query_type(s: &str) -> QueryType {
-    match s {
-        "semantic" => QueryType::Semantic,
-        "hybrid" => QueryType::Hybrid,
-        // "" / "keyword" / anything else → keyword.  Fail-open matches
-        // the proto's `UNSPECIFIED = 0 ⇒ treated as keyword` posture.
-        _ => QueryType::Keyword,
+/// Parse the `query_type` wire string into the proto enum.
+///
+/// Case-insensitive match against the three defined variants;
+/// empty string (field absent) matches the proto's
+/// `UNSPECIFIED = 0 ⇒ treated as keyword` posture and falls to
+/// `Keyword`.  A non-empty NON-matching value returns `Err` — a
+/// silent fall-through to `Keyword` would hide caller typos
+/// (`"semantik"`) as "keyword returned no hits" for weeks.  The
+/// caller maps `Err` to `400 Bad Request` so the client sees the
+/// typo immediately.
+fn parse_query_type(s: &str) -> Result<QueryType, String> {
+    if s.is_empty() {
+        return Ok(QueryType::Keyword);
+    }
+    if s.eq_ignore_ascii_case("keyword") {
+        Ok(QueryType::Keyword)
+    } else if s.eq_ignore_ascii_case("semantic") {
+        Ok(QueryType::Semantic)
+    } else if s.eq_ignore_ascii_case("hybrid") {
+        Ok(QueryType::Hybrid)
+    } else {
+        Err(format!(
+            "unknown query_type {s:?} (expected \"keyword\", \"semantic\", or \"hybrid\")"
+        ))
     }
 }
 
-fn parse_fusion_method(s: &str) -> FusionMethod {
-    match s {
-        "weighted" => FusionMethod::Weighted,
-        "rrf_weighted" => FusionMethod::RrfWeighted,
-        // "" / "rrf" / anything else → RRF.
-        _ => FusionMethod::Rrf,
+/// Parse the `fusion_method` wire string into the proto enum.
+/// Same fail-loud contract as [`parse_query_type`].
+fn parse_fusion_method(s: &str) -> Result<FusionMethod, String> {
+    if s.is_empty() {
+        return Ok(FusionMethod::Rrf);
+    }
+    if s.eq_ignore_ascii_case("rrf") {
+        Ok(FusionMethod::Rrf)
+    } else if s.eq_ignore_ascii_case("weighted") {
+        Ok(FusionMethod::Weighted)
+    } else if s.eq_ignore_ascii_case("rrf_weighted") {
+        Ok(FusionMethod::RrfWeighted)
+    } else {
+        Err(format!(
+            "unknown fusion_method {s:?} (expected \"rrf\", \"weighted\", or \"rrf_weighted\")"
+        ))
     }
 }
 
@@ -353,16 +380,19 @@ pub async fn query(
     State(state): State<AppState>,
     Json(body): Json<QueryBody>,
 ) -> Result<Json<QueryResponseBody>, SearchError> {
+    let query_type = parse_query_type(&body.query_type).map_err(SearchError::BadRequest)?;
+    let fusion_method =
+        parse_fusion_method(&body.fusion_method).map_err(SearchError::BadRequest)?;
     let mut client = state.search.client().await?;
     let req = QueryRequest {
         q: body.q,
         zone_id: body.zone_id,
         limit: body.limit,
         path_filter: body.path_filter,
-        query_type: parse_query_type(&body.query_type) as i32,
+        query_type: query_type as i32,
         auth_token: body.auth_token,
         alpha: body.alpha,
-        fusion_method: parse_fusion_method(&body.fusion_method) as i32,
+        fusion_method: fusion_method as i32,
         rrf_k: body.rrf_k,
         chunks_per_page: body.chunks_per_page,
         expand: body.expand,
@@ -393,22 +423,27 @@ pub fn router() -> Router<AppState> {
 
 /// Shared handler-level error surfaced as an HTTP response.
 ///
-/// Two-state mapping:
+/// Three-state mapping:
 ///   * `BackendUnavailable` → 503 (backend down; retry-friendly).
+///   * `BadRequest(msg)` → 400 (caller-side error caught before RPC —
+///     e.g. an unknown `query_type` string).  Emitting `Ok` and
+///     letting the request through would silently downgrade to the
+///     proto's `UNSPECIFIED = 0 ⇒ keyword` posture, hiding caller
+///     typos (`"semantik"`) as "keyword returned no hits" for weeks.
 ///   * `Rpc(status)` → gRPC `Code` mapped via [`grpc_status_to_http`]
-///     (400 InvalidArgument, 401 Unauthenticated, 403 PermissionDenied,
-///     404 NotFound, 504 DeadlineExceeded, 503 Unavailable, 500
-///     fallback so an unmapped code never silently degrades to 200).
-///     The upstream `tonic::Status::message()` rides through in the
-///     JSON body so operators debugging a hang see the source signal.
+///     — see that fn's docstring for the full table.  The upstream
+///     `tonic::Status::message()` rides through in the JSON body so
+///     operators debugging a hang see the source signal.
 ///
 /// One enum per `search.rs` — every handler in this module maps
 /// its errors through here so the error contract stays uniform
-/// across `glob`, `grep`, and every future route.
+/// across `glob`, `grep`, `query`, and every future route.
 #[derive(Debug, thiserror::Error)]
 pub enum SearchError {
     #[error("backend unavailable: {0}")]
     BackendUnavailable(#[from] BackendError),
+    #[error("bad request: {0}")]
+    BadRequest(String),
     #[error("rpc failed: {0}")]
     Rpc(tonic::Status),
 }
@@ -417,24 +452,57 @@ impl IntoResponse for SearchError {
     fn into_response(self) -> Response {
         let (status, message) = match self {
             SearchError::BackendUnavailable(e) => (StatusCode::SERVICE_UNAVAILABLE, e.to_string()),
+            SearchError::BadRequest(m) => (StatusCode::BAD_REQUEST, m),
             SearchError::Rpc(s) => (grpc_status_to_http(s.code()), s.message().to_string()),
         };
         (status, Json(serde_json::json!({ "error": message }))).into_response()
     }
 }
 
-/// gRPC → HTTP status mapping.  Only the codes handlers in this
-/// module actually surface; fallback is 500 (server-side generic
-/// error) so an unmapped code never silently degrades to 200.
-/// Kept small on purpose — expanding it later is additive.
+/// gRPC → HTTP status mapping.  Covers every `tonic::Code` variant
+/// the proto SSOT (`nexus/search/v1/search.proto`) declares upstream
+/// can emit — plus the ambient retryable / auth codes any RPC can
+/// surface — so no legitimate upstream signal silently degrades to
+/// HTTP 500 (pager-worthy).
+///
+/// Table:
+/// - `InvalidArgument` → 400 Bad Request
+/// - `NotFound` → 404 Not Found
+/// - `AlreadyExists` → 409 Conflict
+/// - `PermissionDenied` → 403 Forbidden
+/// - `ResourceExhausted` → 429 Too Many Requests (retry-after fits)
+/// - `FailedPrecondition` → 412 Precondition Failed
+/// - `Aborted` → 409 Conflict (transactional abort)
+/// - `OutOfRange` → 400 Bad Request
+/// - `Unimplemented` → 501 Not Implemented (proto declares Query returns
+///   this for non-KEYWORD query_type in P1)
+/// - `Unavailable` → 503 Service Unavailable
+/// - `DeadlineExceeded` → 504 Gateway Timeout
+/// - `Unauthenticated` → 401 Unauthorized
+/// - `Ok` / `Cancelled` / `Unknown` / `Internal` / `DataLoss` → 500
+///   Internal Server Error
+///
+/// `Ok` in the fallback is deliberate — surfacing an "Ok" gRPC status
+/// as an HTTP error at all is a caller-side contract violation
+/// (`Ok` should never come through `Result::Err`), so 500 flags the
+/// bug rather than silently returning 200.
 fn grpc_status_to_http(code: tonic::Code) -> StatusCode {
     match code {
         tonic::Code::InvalidArgument => StatusCode::BAD_REQUEST,
         tonic::Code::NotFound => StatusCode::NOT_FOUND,
+        tonic::Code::AlreadyExists => StatusCode::CONFLICT,
         tonic::Code::PermissionDenied => StatusCode::FORBIDDEN,
-        tonic::Code::Unauthenticated => StatusCode::UNAUTHORIZED,
-        tonic::Code::DeadlineExceeded => StatusCode::GATEWAY_TIMEOUT,
+        tonic::Code::ResourceExhausted => StatusCode::TOO_MANY_REQUESTS,
+        tonic::Code::FailedPrecondition => StatusCode::PRECONDITION_FAILED,
+        tonic::Code::Aborted => StatusCode::CONFLICT,
+        tonic::Code::OutOfRange => StatusCode::BAD_REQUEST,
+        tonic::Code::Unimplemented => StatusCode::NOT_IMPLEMENTED,
         tonic::Code::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
+        tonic::Code::DeadlineExceeded => StatusCode::GATEWAY_TIMEOUT,
+        tonic::Code::Unauthenticated => StatusCode::UNAUTHORIZED,
+        // Ok / Cancelled / Unknown / Internal / DataLoss — no HTTP
+        // status distinguishes these usefully to a caller.  500
+        // ensures an unmapped upstream signal never surfaces as 200.
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }

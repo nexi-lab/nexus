@@ -3050,6 +3050,7 @@ name = "nexus-http-api"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "contracts",
  "dashmap",
  "http-body-util",
  "prost 0.14.4",
@@ -3065,6 +3066,7 @@ dependencies = [
  "tonic-prost-build",
  "tower",
  "tracing",
+ "transport",
 ]
 
 [[package]]

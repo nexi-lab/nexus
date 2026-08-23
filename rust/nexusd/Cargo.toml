@@ -56,8 +56,8 @@ anyhow = "1"
 # the api + runtime crates); `sudocode-runtime` names the `AgentLoopState`
 # / `SpawnHandle` types the adapter maps. Pinned to the sudocode main merge
 # commit of #392 (co-host readiness).
-sudocode-runtime = { package = "runtime", git = "https://github.com/sudoprivacy/sudocode", rev = "4bc7cba61a278d077bb40938bc9e498b9b261180", optional = true }
-sudocode-tools = { package = "tools", git = "https://github.com/sudoprivacy/sudocode", rev = "4bc7cba61a278d077bb40938bc9e498b9b261180", optional = true }
+sudocode-runtime = { package = "runtime", git = "https://github.com/sudoprivacy/sudocode", rev = "f5b15e97208930b57049fc4960a4148bc4ff9303", optional = true }
+sudocode-tools = { package = "tools", git = "https://github.com/sudoprivacy/sudocode", rev = "f5b15e97208930b57049fc4960a4148bc4ff9303", optional = true }
 # Named directly to spell `kernel::kernel::{ServiceDecl, Kernel}` — the
 # managed-agent boot decl's return type (both builds) and the co-host
 # adapter's `SpawnTask<Kernel>` (cohost build). Already present transitively

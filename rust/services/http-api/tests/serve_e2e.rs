@@ -26,6 +26,10 @@ use nexus_http_api::{bind_and_serve, AppState, SearchBackend, StatusResponse};
 async fn spawn_router() -> String {
     let state = AppState {
         search: SearchBackend::new("http://127.0.0.1:1"),
+        // Status is a PUBLIC route (bypasses auth) so this file's
+        // cover stays focused on the serve path; NoAuth here is
+        // only present because `AppState` mandates it.
+        auth: nexus_http_api::middleware::auth::default_no_auth_provider(),
     };
     let (addr, fut) = bind_and_serve("127.0.0.1:0".parse().unwrap(), state)
         .await

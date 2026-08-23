@@ -5,21 +5,10 @@ version = 4
 [[package]]
 name = "a2a"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=6cad75f7b43e49b60c9a345521695e915a6d7b47#6cad75f7b43e49b60c9a345521695e915a6d7b47"
-dependencies = [
- "contracts 0.1.0 (git+https://github.com/nexi-lab/nexus-vfs?rev=6cad75f7b43e49b60c9a345521695e915a6d7b47)",
- "kernel 0.10.1 (git+https://github.com/nexi-lab/nexus-vfs?rev=6cad75f7b43e49b60c9a345521695e915a6d7b47)",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "a2a"
-version = "0.1.0"
 source = "git+https://github.com/nexi-lab/nexus-vfs?rev=dcee3e5d1959099e8a57ffa06444ed7204719f42#dcee3e5d1959099e8a57ffa06444ed7204719f42"
 dependencies = [
- "contracts 0.1.0 (git+https://github.com/nexi-lab/nexus-vfs?rev=dcee3e5d1959099e8a57ffa06444ed7204719f42)",
- "kernel 0.10.1 (git+https://github.com/nexi-lab/nexus-vfs?rev=dcee3e5d1959099e8a57ffa06444ed7204719f42)",
+ "contracts",
+ "kernel",
  "serde",
  "serde_json",
 ]
@@ -244,8 +233,8 @@ checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
 
 [[package]]
 name = "api"
-version = "0.1.26"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=4bc7cba61a278d077bb40938bc9e498b9b261180#4bc7cba61a278d077bb40938bc9e498b9b261180"
+version = "0.1.27"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=155dd3a1639dcd01767cd6a6912b656b584497ff#155dd3a1639dcd01767cd6a6912b656b584497ff"
 dependencies = [
  "base64 0.22.1",
  "httpdate",
@@ -340,10 +329,10 @@ name = "auth"
 version = "0.1.0"
 source = "git+https://github.com/nexi-lab/nexus-vfs?rev=dcee3e5d1959099e8a57ffa06444ed7204719f42#dcee3e5d1959099e8a57ffa06444ed7204719f42"
 dependencies = [
- "contracts 0.1.0 (git+https://github.com/nexi-lab/nexus-vfs?rev=dcee3e5d1959099e8a57ffa06444ed7204719f42)",
+ "contracts",
  "dashmap",
  "hmac 0.13.0",
- "kernel 0.10.1 (git+https://github.com/nexi-lab/nexus-vfs?rev=dcee3e5d1959099e8a57ffa06444ed7204719f42)",
+ "kernel",
  "parking_lot",
  "rand 0.10.2",
  "serde",
@@ -447,7 +436,7 @@ dependencies = [
  "base64 0.22.1",
  "blake3",
  "chrono",
- "contracts 0.1.0 (git+https://github.com/nexi-lab/nexus-vfs?rev=dcee3e5d1959099e8a57ffa06444ed7204719f42)",
+ "contracts",
  "crc32fast",
  "dashmap",
  "encoding_rs",
@@ -455,8 +444,8 @@ dependencies = [
  "futures",
  "globset",
  "hmac 0.13.0",
- "kernel 0.10.1 (git+https://github.com/nexi-lab/nexus-vfs?rev=dcee3e5d1959099e8a57ffa06444ed7204719f42)",
- "lib 0.1.0 (git+https://github.com/nexi-lab/nexus-vfs?rev=dcee3e5d1959099e8a57ffa06444ed7204719f42)",
+ "kernel",
+ "lib",
  "libc",
  "lru 0.18.1",
  "memchr",
@@ -858,8 +847,8 @@ dependencies = [
 
 [[package]]
 name = "commands"
-version = "0.1.26"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=4bc7cba61a278d077bb40938bc9e498b9b261180#4bc7cba61a278d077bb40938bc9e498b9b261180"
+version = "0.1.27"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=155dd3a1639dcd01767cd6a6912b656b584497ff#155dd3a1639dcd01767cd6a6912b656b584497ff"
 dependencies = [
  "plugins",
  "runtime",
@@ -924,15 +913,6 @@ name = "constant_time_eq"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
-
-[[package]]
-name = "contracts"
-version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=6cad75f7b43e49b60c9a345521695e915a6d7b47#6cad75f7b43e49b60c9a345521695e915a6d7b47"
-dependencies = [
- "parking_lot",
- "serde",
-]
 
 [[package]]
 name = "contracts"
@@ -2560,52 +2540,6 @@ dependencies = [
 [[package]]
 name = "kernel"
 version = "0.10.1"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=6cad75f7b43e49b60c9a345521695e915a6d7b47#6cad75f7b43e49b60c9a345521695e915a6d7b47"
-dependencies = [
- "ahash",
- "arc-swap",
- "base64 0.22.1",
- "blake3",
- "bloomfilter",
- "bytes",
- "chrono",
- "contracts 0.1.0 (git+https://github.com/nexi-lab/nexus-vfs?rev=6cad75f7b43e49b60c9a345521695e915a6d7b47)",
- "crc32fast",
- "dashmap",
- "ed25519-dalek",
- "fastcdc",
- "futures",
- "globset",
- "lib 0.1.0 (git+https://github.com/nexi-lab/nexus-vfs?rev=6cad75f7b43e49b60c9a345521695e915a6d7b47)",
- "libc",
- "libloading 0.8.9",
- "lru 0.18.1",
- "memchr",
- "memmap2",
- "nexus-plugin-abi 0.1.0 (git+https://github.com/nexi-lab/nexus-vfs?rev=6cad75f7b43e49b60c9a345521695e915a6d7b47)",
- "parking_lot",
- "prost 0.14.4",
- "protoc-bin-vendored",
- "rayon",
- "redb",
- "regex",
- "roaring",
- "serde",
- "serde_json",
- "smallvec",
- "string-interner",
- "tempfile",
- "tokio",
- "tonic 0.14.6",
- "tonic-prost",
- "tonic-prost-build",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "kernel"
-version = "0.10.1"
 source = "git+https://github.com/nexi-lab/nexus-vfs?rev=dcee3e5d1959099e8a57ffa06444ed7204719f42#dcee3e5d1959099e8a57ffa06444ed7204719f42"
 dependencies = [
  "ahash",
@@ -2615,20 +2549,20 @@ dependencies = [
  "bloomfilter",
  "bytes",
  "chrono",
- "contracts 0.1.0 (git+https://github.com/nexi-lab/nexus-vfs?rev=dcee3e5d1959099e8a57ffa06444ed7204719f42)",
+ "contracts",
  "crc32fast",
  "dashmap",
  "ed25519-dalek",
  "fastcdc",
  "futures",
  "globset",
- "lib 0.1.0 (git+https://github.com/nexi-lab/nexus-vfs?rev=dcee3e5d1959099e8a57ffa06444ed7204719f42)",
+ "lib",
  "libc",
  "libloading 0.8.9",
  "lru 0.18.1",
  "memchr",
  "memmap2",
- "nexus-plugin-abi 0.1.0 (git+https://github.com/nexi-lab/nexus-vfs?rev=dcee3e5d1959099e8a57ffa06444ed7204719f42)",
+ "nexus-plugin-abi",
  "parking_lot",
  "prost 0.14.4",
  "protoc-bin-vendored",
@@ -2674,49 +2608,13 @@ checksum = "0c2cdeb66e45e9f36bfad5bbdb4d2384e70936afbee843c6f6543f0c551ebb25"
 [[package]]
 name = "lib"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=6cad75f7b43e49b60c9a345521695e915a6d7b47#6cad75f7b43e49b60c9a345521695e915a6d7b47"
-dependencies = [
- "ahash",
- "arc-swap",
- "base64 0.22.1",
- "blake3",
- "contracts 0.1.0 (git+https://github.com/nexi-lab/nexus-vfs?rev=6cad75f7b43e49b60c9a345521695e915a6d7b47)",
- "crc32fast",
- "dashmap",
- "getrandom 0.4.3",
- "globset",
- "memchr",
- "parking_lot",
- "pem",
- "regex",
- "regex-syntax",
- "ring",
- "roaring",
- "rustls",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "string-interner",
- "thiserror 2.0.18",
- "time",
- "tokio",
- "tokio-rustls",
- "tokio-stream",
- "tonic 0.14.6",
- "tracing",
- "x509-parser",
-]
-
-[[package]]
-name = "lib"
-version = "0.1.0"
 source = "git+https://github.com/nexi-lab/nexus-vfs?rev=dcee3e5d1959099e8a57ffa06444ed7204719f42#dcee3e5d1959099e8a57ffa06444ed7204719f42"
 dependencies = [
  "ahash",
  "arc-swap",
  "base64 0.22.1",
  "blake3",
- "contracts 0.1.0 (git+https://github.com/nexi-lab/nexus-vfs?rev=dcee3e5d1959099e8a57ffa06444ed7204719f42)",
+ "contracts",
  "crc32fast",
  "dashmap",
  "getrandom 0.4.3",
@@ -2917,9 +2815,9 @@ name = "managed-agent"
 version = "0.1.0"
 source = "git+https://github.com/nexi-lab/nexus-vfs?rev=dcee3e5d1959099e8a57ffa06444ed7204719f42#dcee3e5d1959099e8a57ffa06444ed7204719f42"
 dependencies = [
- "contracts 0.1.0 (git+https://github.com/nexi-lab/nexus-vfs?rev=dcee3e5d1959099e8a57ffa06444ed7204719f42)",
+ "contracts",
  "dashmap",
- "kernel 0.10.1 (git+https://github.com/nexi-lab/nexus-vfs?rev=dcee3e5d1959099e8a57ffa06444ed7204719f42)",
+ "kernel",
  "parking_lot",
  "serde",
  "serde_json",
@@ -3111,14 +3009,14 @@ name = "nexus-cluster"
 version = "0.1.1"
 source = "git+https://github.com/nexi-lab/nexus-vfs?rev=dcee3e5d1959099e8a57ffa06444ed7204719f42#dcee3e5d1959099e8a57ffa06444ed7204719f42"
 dependencies = [
- "a2a 0.1.0 (git+https://github.com/nexi-lab/nexus-vfs?rev=dcee3e5d1959099e8a57ffa06444ed7204719f42)",
+ "a2a",
  "anyhow",
  "auth",
  "backends",
  "clap",
- "contracts 0.1.0 (git+https://github.com/nexi-lab/nexus-vfs?rev=dcee3e5d1959099e8a57ffa06444ed7204719f42)",
+ "contracts",
  "gethostname",
- "kernel 0.10.1 (git+https://github.com/nexi-lab/nexus-vfs?rev=dcee3e5d1959099e8a57ffa06444ed7204719f42)",
+ "kernel",
  "managed-agent",
  "raft 0.1.0",
  "rand 0.10.2",
@@ -3137,7 +3035,7 @@ dependencies = [
  "async-trait",
  "fuser",
  "libc",
- "nexus-plugin-abi 0.1.0 (git+https://github.com/nexi-lab/nexus-vfs?rev=dcee3e5d1959099e8a57ffa06444ed7204719f42)",
+ "nexus-plugin-abi",
  "nfsserve",
  "tempfile",
  "tokio",
@@ -3174,17 +3072,12 @@ name = "nexus-local-connector"
 version = "0.1.1"
 dependencies = [
  "backends",
- "kernel 0.10.1 (git+https://github.com/nexi-lab/nexus-vfs?rev=dcee3e5d1959099e8a57ffa06444ed7204719f42)",
- "nexus-plugin-abi 0.1.0 (git+https://github.com/nexi-lab/nexus-vfs?rev=dcee3e5d1959099e8a57ffa06444ed7204719f42)",
+ "kernel",
+ "nexus-plugin-abi",
  "serde_json",
  "tempfile",
  "tracing",
 ]
-
-[[package]]
-name = "nexus-plugin-abi"
-version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=6cad75f7b43e49b60c9a345521695e915a6d7b47#6cad75f7b43e49b60c9a345521695e915a6d7b47"
 
 [[package]]
 name = "nexus-plugin-abi"
@@ -3204,7 +3097,7 @@ dependencies = [
  "hnsw_rs",
  "libloading 0.8.9",
  "mimalloc",
- "nexus-plugin-abi 0.1.0 (git+https://github.com/nexi-lab/nexus-vfs?rev=dcee3e5d1959099e8a57ffa06444ed7204719f42)",
+ "nexus-plugin-abi",
  "ort",
  "parking_lot",
  "prost 0.14.4",
@@ -3230,9 +3123,9 @@ version = "0.1.4"
 dependencies = [
  "backends",
  "clap",
- "kernel 0.10.1 (git+https://github.com/nexi-lab/nexus-vfs?rev=dcee3e5d1959099e8a57ffa06444ed7204719f42)",
+ "kernel",
  "libloading 0.8.9",
- "nexus-plugin-abi 0.1.0 (git+https://github.com/nexi-lab/nexus-vfs?rev=dcee3e5d1959099e8a57ffa06444ed7204719f42)",
+ "nexus-plugin-abi",
  "prost 0.14.4",
  "services",
  "tempfile",
@@ -3246,8 +3139,8 @@ dependencies = [
 
 [[package]]
 name = "nexus-vfs-client"
-version = "0.1.26"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=4bc7cba61a278d077bb40938bc9e498b9b261180#4bc7cba61a278d077bb40938bc9e498b9b261180"
+version = "0.1.27"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=155dd3a1639dcd01767cd6a6912b656b584497ff#155dd3a1639dcd01767cd6a6912b656b584497ff"
 dependencies = [
  "prost 0.13.5",
  "protoc-bin-vendored",
@@ -3261,10 +3154,10 @@ dependencies = [
 name = "nexusd"
 version = "0.1.0"
 dependencies = [
- "a2a 0.1.0 (git+https://github.com/nexi-lab/nexus-vfs?rev=dcee3e5d1959099e8a57ffa06444ed7204719f42)",
+ "a2a",
  "anyhow",
  "backends",
- "kernel 0.10.1 (git+https://github.com/nexi-lab/nexus-vfs?rev=dcee3e5d1959099e8a57ffa06444ed7204719f42)",
+ "kernel",
  "managed-agent",
  "nexus-cluster",
  "runtime",
@@ -3703,8 +3596,8 @@ checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 
 [[package]]
 name = "plugins"
-version = "0.1.26"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=4bc7cba61a278d077bb40938bc9e498b9b261180#4bc7cba61a278d077bb40938bc9e498b9b261180"
+version = "0.1.27"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=155dd3a1639dcd01767cd6a6912b656b584497ff#155dd3a1639dcd01767cd6a6912b656b584497ff"
 dependencies = [
  "serde",
  "serde_json",
@@ -4123,11 +4016,11 @@ dependencies = [
  "base64 0.22.1",
  "bincode",
  "bytes",
- "contracts 0.1.0 (git+https://github.com/nexi-lab/nexus-vfs?rev=dcee3e5d1959099e8a57ffa06444ed7204719f42)",
+ "contracts",
  "dashmap",
  "gethostname",
- "kernel 0.10.1 (git+https://github.com/nexi-lab/nexus-vfs?rev=dcee3e5d1959099e8a57ffa06444ed7204719f42)",
- "lib 0.1.0 (git+https://github.com/nexi-lab/nexus-vfs?rev=dcee3e5d1959099e8a57ffa06444ed7204719f42)",
+ "kernel",
+ "lib",
  "parking_lot",
  "pem",
  "prost 0.14.4",
@@ -4547,10 +4440,10 @@ dependencies = [
 
 [[package]]
 name = "runtime"
-version = "0.1.26"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=4bc7cba61a278d077bb40938bc9e498b9b261180#4bc7cba61a278d077bb40938bc9e498b9b261180"
+version = "0.1.27"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=155dd3a1639dcd01767cd6a6912b656b584497ff#155dd3a1639dcd01767cd6a6912b656b584497ff"
 dependencies = [
- "a2a 0.1.0 (git+https://github.com/nexi-lab/nexus-vfs?rev=6cad75f7b43e49b60c9a345521695e915a6d7b47)",
+ "a2a",
  "agent-client-protocol",
  "agent-client-protocol-schema",
  "agent-client-protocol-tokio",
@@ -4564,7 +4457,7 @@ dependencies = [
  "getrandom 0.2.17",
  "glob",
  "image",
- "kernel 0.10.1 (git+https://github.com/nexi-lab/nexus-vfs?rev=6cad75f7b43e49b60c9a345521695e915a6d7b47)",
+ "kernel",
  "keyring",
  "nexus-vfs-client",
  "nix 0.29.0",
@@ -4960,19 +4853,19 @@ dependencies = [
 name = "services"
 version = "0.1.0"
 dependencies = [
- "a2a 0.1.0 (git+https://github.com/nexi-lab/nexus-vfs?rev=dcee3e5d1959099e8a57ffa06444ed7204719f42)",
+ "a2a",
  "aes-gcm",
  "async-trait",
  "axum",
  "base32",
  "bincode",
  "chrono",
- "contracts 0.1.0 (git+https://github.com/nexi-lab/nexus-vfs?rev=dcee3e5d1959099e8a57ffa06444ed7204719f42)",
+ "contracts",
  "dashmap",
  "fjall",
  "futures",
  "hmac 0.12.1",
- "kernel 0.10.1 (git+https://github.com/nexi-lab/nexus-vfs?rev=dcee3e5d1959099e8a57ffa06444ed7204719f42)",
+ "kernel",
  "libc",
  "parking_lot",
  "prost 0.14.4",
@@ -5249,7 +5142,7 @@ name = "subprocess"
 version = "0.1.0"
 source = "git+https://github.com/nexi-lab/nexus-vfs?rev=dcee3e5d1959099e8a57ffa06444ed7204719f42#dcee3e5d1959099e8a57ffa06444ed7204719f42"
 dependencies = [
- "kernel 0.10.1 (git+https://github.com/nexi-lab/nexus-vfs?rev=dcee3e5d1959099e8a57ffa06444ed7204719f42)",
+ "kernel",
  "libc",
  "tokio",
 ]
@@ -5465,8 +5358,8 @@ dependencies = [
 
 [[package]]
 name = "telemetry"
-version = "0.1.26"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=4bc7cba61a278d077bb40938bc9e498b9b261180#4bc7cba61a278d077bb40938bc9e498b9b261180"
+version = "0.1.27"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=155dd3a1639dcd01767cd6a6912b656b584497ff#155dd3a1639dcd01767cd6a6912b656b584497ff"
 dependencies = [
  "chrono",
  "dirs",
@@ -5856,8 +5749,8 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "0.1.26"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=4bc7cba61a278d077bb40938bc9e498b9b261180#4bc7cba61a278d077bb40938bc9e498b9b261180"
+version = "0.1.27"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=155dd3a1639dcd01767cd6a6912b656b584497ff#155dd3a1639dcd01767cd6a6912b656b584497ff"
 dependencies = [
  "api",
  "async-trait",
@@ -6007,14 +5900,14 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "chrono",
- "contracts 0.1.0 (git+https://github.com/nexi-lab/nexus-vfs?rev=dcee3e5d1959099e8a57ffa06444ed7204719f42)",
+ "contracts",
  "dashmap",
  "futures",
  "http",
  "http-body",
  "http-body-util",
- "kernel 0.10.1 (git+https://github.com/nexi-lab/nexus-vfs?rev=dcee3e5d1959099e8a57ffa06444ed7204719f42)",
- "lib 0.1.0 (git+https://github.com/nexi-lab/nexus-vfs?rev=dcee3e5d1959099e8a57ffa06444ed7204719f42)",
+ "kernel",
+ "lib",
  "parking_lot",
  "pem",
  "prost 0.14.4",

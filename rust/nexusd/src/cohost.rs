@@ -28,7 +28,7 @@ use managed_agent::{
     AgentLoopState as ServiceLoopState, SpawnHandle as ServiceSpawnHandle, SpawnTask,
 };
 use sudocode_runtime::spawn_task::{
-    AgentLoopState as SudoLoopState, SpawnHandle as SudoSpawnHandle,
+    AgentLoopState as SudoLoopState, Mailbox, SpawnHandle as SudoSpawnHandle,
 };
 
 /// The concrete `SpawnTask<Kernel>` provider wired at the `nexusd-cluster`
@@ -47,10 +47,21 @@ impl SpawnTask<Kernel> for SudoCodeSpawnAdapter {
     ) -> Box<dyn ServiceSpawnHandle> {
         // The services-tier observer expects the services enum; sudocode's
         // factory emits the runtime enum. Map on every transition.
-        let handle: SudoSpawnHandle =
-            sudocode_tools::managed_agent::spawn_managed_agent(kernel, desc, move |sc_state| {
+        // The co-host agent's mailbox is its persistent, cross-machine A2A
+        // inbox `/agents/<name>/chat-with-me` (raft-replicated when federated),
+        // so a duet partner on another host addresses it by name.
+        let mailbox = Mailbox::A2aInbox {
+            base: "/agents".to_string(),
+            self_name: desc.name.clone(),
+        };
+        let handle: SudoSpawnHandle = sudocode_tools::managed_agent::spawn_managed_agent(
+            kernel,
+            desc,
+            mailbox,
+            move |sc_state| {
                 state_observer(map_loop_state(sc_state));
-            });
+            },
+        );
         Box::new(SudoCodeSpawnHandle { inner: handle })
     }
 }

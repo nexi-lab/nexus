@@ -19,14 +19,19 @@
 //! `tonic::Status` → HTTP status by gRPC `Code`.  A new handler
 //! reuses the enum + mapper instead of hand-rolling its own.
 
+use std::collections::HashMap;
+
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
-use crate::search_proto::{GlobRequest, GrepRequest};
+use crate::search_proto::{
+    FusionMethod, GlobRequest, GrepRequest, QueryRequest, QueryResult as ProtoQueryResult,
+    QueryType,
+};
 use crate::{AppState, BackendError};
 
 // ── /v2/search/glob ──────────────────────────────────────────────
@@ -207,12 +212,183 @@ pub async fn grep(
     }))
 }
 
+// ── /v2/search/query ─────────────────────────────────────────────
+
+/// JSON body for `POST /v2/search/query`.  Field names match the
+/// proto's [`QueryRequest`] snake_case names 1:1 (same policy as
+/// [`GlobQuery`] / [`GrepQuery`]).  Enum-shaped fields land as
+/// wire-friendly lowercase strings so a caller reading the proto
+/// enum values and a caller reading this doc reach the same shape.
+#[derive(Debug, Clone, Deserialize)]
+pub struct QueryBody {
+    /// Query text.
+    pub q: String,
+    /// Zone scoping.  Empty ⇒ ROOT_ZONE_ID.
+    #[serde(default)]
+    pub zone_id: String,
+    /// Max results returned.  0 ⇒ server-side default (10).
+    #[serde(default)]
+    pub limit: u32,
+    /// Optional path-prefix filter.
+    #[serde(default)]
+    pub path_filter: String,
+    /// `"keyword"` (default) / `"semantic"` / `"hybrid"`.
+    /// Wire-friendly string rather than the raw enum int so callers
+    /// don't have to memorise the proto numeric.  An unknown value
+    /// falls through to `"keyword"` — the same fail-open posture the
+    /// proto's `UNSPECIFIED = 0` treats as keyword.
+    #[serde(default)]
+    pub query_type: String,
+    #[serde(default)]
+    pub auth_token: String,
+    #[serde(default)]
+    pub alpha: f32,
+    /// `"rrf"` (default) / `"weighted"` / `"rrf_weighted"`.
+    #[serde(default)]
+    pub fusion_method: String,
+    #[serde(default)]
+    pub rrf_k: u32,
+    /// Per-document chunk cap for pooling (#4542). 0 = no pooling.
+    #[serde(default)]
+    pub chunks_per_page: u32,
+    /// `"macro"` (neighbour context expansion) / anything else ⇒
+    /// none.  Absent ⇒ none.
+    #[serde(default)]
+    pub expand: String,
+    /// `""` / `"off"` (default) / `"on"` / `"auto"`.
+    #[serde(default)]
+    pub recency_mode: String,
+    #[serde(default)]
+    pub recency_weight: f32,
+    #[serde(default)]
+    pub recency_half_life_days: f32,
+    /// Per-prefix score multiplier map.  Empty ⇒ no per-prefix boost.
+    #[serde(default)]
+    pub path_prefix_boosts: HashMap<String, f32>,
+}
+
+/// One result row in [`QueryResponseBody::results`].  Every field
+/// mirrors the proto's [`QueryResult`](ProtoQueryResult) so a
+/// caller migrating from the gRPC surface keeps its JSON parser.
+/// Optional fields serialise as absent (`skip_serializing_if =
+/// Option::is_none`) so the wire stays compact for the common case
+/// where an attribution field did not apply.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct QueryHit {
+    pub path: String,
+    pub chunk_index: u32,
+    pub chunk_text: String,
+    pub score: f32,
+    pub zone_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mtime_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub expanded_context: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title_score: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keyword_score: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vector_score: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tier_boost: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recency_boost: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expansion_variant_index: Option<u32>,
+}
+
+/// Response body of [`query`].  Same absent-when-none policy as
+/// [`GlobResponse`] / [`GrepResponse`] for the `error` field.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct QueryResponseBody {
+    pub results: Vec<QueryHit>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+fn parse_query_type(s: &str) -> QueryType {
+    match s {
+        "semantic" => QueryType::Semantic,
+        "hybrid" => QueryType::Hybrid,
+        // "" / "keyword" / anything else → keyword.  Fail-open matches
+        // the proto's `UNSPECIFIED = 0 ⇒ treated as keyword` posture.
+        _ => QueryType::Keyword,
+    }
+}
+
+fn parse_fusion_method(s: &str) -> FusionMethod {
+    match s {
+        "weighted" => FusionMethod::Weighted,
+        "rrf_weighted" => FusionMethod::RrfWeighted,
+        // "" / "rrf" / anything else → RRF.
+        _ => FusionMethod::Rrf,
+    }
+}
+
+fn hit_from_proto(r: ProtoQueryResult) -> QueryHit {
+    QueryHit {
+        path: r.path,
+        chunk_index: r.chunk_index,
+        chunk_text: r.chunk_text,
+        score: r.score,
+        zone_id: r.zone_id,
+        mtime_ms: r.mtime_ms,
+        expanded_context: r.expanded_context,
+        title_score: r.title_score,
+        keyword_score: r.keyword_score,
+        vector_score: r.vector_score,
+        tier_boost: r.tier_boost,
+        recency_boost: r.recency_boost,
+        expansion_variant_index: r.expansion_variant_index,
+    }
+}
+
+/// Handler for `POST /v2/search/query`.  JSON body variant of the
+/// proto's `Query` RPC — GET-with-query-string would work for
+/// simple cases but the request shape (hybrid knobs + recency
+/// tuple + `path_prefix_boosts` map) is JSON-shaped in practice,
+/// so a POST body keeps the wire honest.
+pub async fn query(
+    State(state): State<AppState>,
+    Json(body): Json<QueryBody>,
+) -> Result<Json<QueryResponseBody>, SearchError> {
+    let mut client = state.search.client().await?;
+    let req = QueryRequest {
+        q: body.q,
+        zone_id: body.zone_id,
+        limit: body.limit,
+        path_filter: body.path_filter,
+        query_type: parse_query_type(&body.query_type) as i32,
+        auth_token: body.auth_token,
+        alpha: body.alpha,
+        fusion_method: parse_fusion_method(&body.fusion_method) as i32,
+        rrf_k: body.rrf_k,
+        chunks_per_page: body.chunks_per_page,
+        expand: body.expand,
+        recency_mode: body.recency_mode,
+        recency_weight: body.recency_weight,
+        recency_half_life_days: body.recency_half_life_days,
+        path_prefix_boosts: body.path_prefix_boosts,
+    };
+    let resp = client
+        .query(tonic::Request::new(req))
+        .await
+        .map_err(SearchError::Rpc)?
+        .into_inner();
+    Ok(Json(QueryResponseBody {
+        results: resp.results.into_iter().map(hit_from_proto).collect(),
+        error: resp.error,
+    }))
+}
+
 // ── Router + shared error ────────────────────────────────────────
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/v2/search/glob", get(glob))
         .route("/v2/search/grep", get(grep))
+        .route("/v2/search/query", post(query))
 }
 
 /// Shared handler-level error surfaced as an HTTP response.

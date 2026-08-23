@@ -52,6 +52,14 @@ enum MockBehaviour {
         error: Option<String>,
     },
     InvalidArgument(String),
+    /// Upstream returns a specific `tonic::Code`.  Lets a test pin
+    /// the full `code → HTTP status` mapping table in
+    /// `handlers/search.rs::grpc_status_to_http` without a
+    /// per-variant enum blow-up here.
+    RpcCode {
+        code: tonic::Code,
+        message: String,
+    },
 }
 
 #[derive(Clone)]
@@ -71,6 +79,7 @@ impl SearchService for MockSearchService {
                 error: error.clone(),
             })),
             MockBehaviour::InvalidArgument(msg) => Err(Status::invalid_argument(msg.clone())),
+            MockBehaviour::RpcCode { code, message } => Err(Status::new(*code, message.clone())),
         }
     }
 
@@ -431,11 +440,13 @@ async fn query_defaults_reach_backend_intact() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn query_unknown_query_type_falls_back_to_keyword() {
-    // A typo like "semantik" must fall through to keyword, matching
-    // the proto's `UNSPECIFIED = 0 ⇒ treated as keyword` posture.
-    // Fail-open rather than fail the request — callers that mistype
-    // still get a useful (if narrower) result set.
+async fn query_unknown_query_type_returns_400_and_never_reaches_backend() {
+    // A typo like "semantik" must be REJECTED at the handler with
+    // 400 + a caller-readable message.  Fail-loud is required — the
+    // pre-fix silent fall-through to Keyword hid typos as "keyword
+    // returned no hits" for weeks.  Empty / absent query_type still
+    // defaults to Keyword (proto UNSPECIFIED posture) — that path
+    // is pinned by `query_defaults_reach_backend_intact`.
     let h = Harness::start(MockBehaviour::Success {
         results: vec![],
         error: None,
@@ -447,12 +458,188 @@ async fn query_unknown_query_type_falls_back_to_keyword() {
         .send()
         .await
         .expect("send");
+    assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
+    let body: serde_json::Value = resp.json().await.expect("parse json");
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("query_type"),
+        "error body must name the offending field so the caller sees the typo; got: {body}",
+    );
+    assert!(
+        h.log.queries.lock().unwrap().is_empty(),
+        "upstream RPC must NOT fire for a caller-side field error",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_query_type_parse_is_case_insensitive() {
+    // "SEMANTIC" (proto enum-name casing) must also work — callers
+    // eyeballing the proto and picking a value should not have to
+    // memorise the lowercase-only wire convention.
+    let h = Harness::start(MockBehaviour::Success {
+        results: vec![],
+        error: None,
+    })
+    .await;
+    let resp = reqwest::Client::new()
+        .post(format!("{}/v2/search/query", h.http_base))
+        .json(&serde_json::json!({"q": "x", "query_type": "SEMANTIC"}))
+        .send()
+        .await
+        .expect("send");
     assert_eq!(resp.status(), reqwest::StatusCode::OK);
     let recorded = h.log.queries.lock().unwrap().clone();
     assert_eq!(
         recorded[0].query_type,
-        nexus_http_api::search_proto::QueryType::Keyword as i32,
+        nexus_http_api::search_proto::QueryType::Semantic as i32,
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_unknown_fusion_method_returns_400_and_never_reaches_backend() {
+    // Same fail-loud contract as query_type — empty defaults to RRF
+    // (proto UNSPECIFIED), a typo returns 400 naming the field.
+    let h = Harness::start(MockBehaviour::Success {
+        results: vec![],
+        error: None,
+    })
+    .await;
+    let resp = reqwest::Client::new()
+        .post(format!("{}/v2/search/query", h.http_base))
+        .json(&serde_json::json!({"q": "x", "fusion_method": "rrrf"}))
+        .send()
+        .await
+        .expect("send");
+    assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
+    let body: serde_json::Value = resp.json().await.expect("parse json");
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("fusion_method"),
+        "error body must name the offending field; got: {body}",
+    );
+    assert!(h.log.queries.lock().unwrap().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_upstream_unimplemented_maps_to_501() {
+    // The proto SSOT declares Query returns Unimplemented for
+    // query_type=Semantic/Hybrid in P1 (the vector path is not
+    // wired yet).  Pre-fix that surfaced as HTTP 500 — pager-worthy
+    // for a documented P1 signal.  Must map to 501 Not Implemented
+    // so the caller distinguishes "not built yet" from "server
+    // exploded".
+    let h = Harness::start(MockBehaviour::RpcCode {
+        code: tonic::Code::Unimplemented,
+        message: "semantic search not wired in P1".to_string(),
+    })
+    .await;
+    let resp = reqwest::Client::new()
+        .post(format!("{}/v2/search/query", h.http_base))
+        .json(&serde_json::json!({"q": "x", "query_type": "semantic"}))
+        .send()
+        .await
+        .expect("send");
+    assert_eq!(resp.status(), reqwest::StatusCode::NOT_IMPLEMENTED);
+    let body: serde_json::Value = resp.json().await.expect("parse json");
+    assert!(body["error"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("semantic"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_upstream_resource_exhausted_maps_to_429() {
+    // Standard mapping: ResourceExhausted → 429 Too Many Requests
+    // so caller-side retry logic ("back off + retry") kicks in
+    // rather than treating the response as a server-broken 500.
+    let h = Harness::start(MockBehaviour::RpcCode {
+        code: tonic::Code::ResourceExhausted,
+        message: "rate limit hit".to_string(),
+    })
+    .await;
+    let resp = reqwest::Client::new()
+        .post(format!("{}/v2/search/query", h.http_base))
+        .json(&serde_json::json!({"q": "x"}))
+        .send()
+        .await
+        .expect("send");
+    assert_eq!(resp.status(), reqwest::StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_upstream_permission_denied_and_unauthenticated_map_correctly() {
+    // Auth-shape codes surface as their HTTP equivalents:
+    //   * Unauthenticated → 401 (caller needs a valid token)
+    //   * PermissionDenied → 403 (caller has a token but not the grant)
+    for (code, expected) in [
+        (
+            tonic::Code::Unauthenticated,
+            reqwest::StatusCode::UNAUTHORIZED,
+        ),
+        (
+            tonic::Code::PermissionDenied,
+            reqwest::StatusCode::FORBIDDEN,
+        ),
+    ] {
+        let h = Harness::start(MockBehaviour::RpcCode {
+            code,
+            message: format!("{code:?} test"),
+        })
+        .await;
+        let resp = reqwest::Client::new()
+            .post(format!("{}/v2/search/query", h.http_base))
+            .json(&serde_json::json!({"q": "x"}))
+            .send()
+            .await
+            .expect("send");
+        assert_eq!(
+            resp.status(),
+            expected,
+            "code {code:?} must map to {expected}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_upstream_not_found_and_deadline_and_failed_precondition_map_correctly() {
+    // The rest of the documented mapping table.  Batched into one
+    // test to keep the file under 700 lines while still pinning
+    // every explicit branch of `grpc_status_to_http`.
+    for (code, expected) in [
+        (tonic::Code::NotFound, reqwest::StatusCode::NOT_FOUND),
+        (tonic::Code::AlreadyExists, reqwest::StatusCode::CONFLICT),
+        (
+            tonic::Code::FailedPrecondition,
+            reqwest::StatusCode::PRECONDITION_FAILED,
+        ),
+        (tonic::Code::Aborted, reqwest::StatusCode::CONFLICT),
+        (tonic::Code::OutOfRange, reqwest::StatusCode::BAD_REQUEST),
+        (
+            tonic::Code::DeadlineExceeded,
+            reqwest::StatusCode::GATEWAY_TIMEOUT,
+        ),
+    ] {
+        let h = Harness::start(MockBehaviour::RpcCode {
+            code,
+            message: format!("{code:?} test"),
+        })
+        .await;
+        let resp = reqwest::Client::new()
+            .post(format!("{}/v2/search/query", h.http_base))
+            .json(&serde_json::json!({"q": "x"}))
+            .send()
+            .await
+            .expect("send");
+        assert_eq!(
+            resp.status(),
+            expected,
+            "code {code:?} must map to {expected}"
+        );
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

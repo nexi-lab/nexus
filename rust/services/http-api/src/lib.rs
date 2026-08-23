@@ -17,11 +17,26 @@
 //! adding a new field to [`AppState`] — a fresh domain does not
 //! rewire existing handlers.
 //!
+//! # Auth
+//!
+//! `/v2/status` is PUBLIC (health-probe target that runs before any
+//! bearer exists); every `/v2/search/*` route is protected by
+//! [`middleware::auth::require_bearer`], which resolves the incoming
+//! `Authorization: Bearer <token>` through the shared
+//! [`transport::auth::AuthProvider`] on [`AppState`] and stamps the
+//! resulting `contracts::OperationContext` into request extensions.
+//! Handlers that need per-request identity extract it via
+//! `axum::Extension<OperationContext>`; handlers that do not simply
+//! ignore it.  Default provider is `NoAuth` (single-node dev pass-
+//! through); real deployments swap it for `auth::ApiKeyAuthProvider`
+//! at the composition root.
+//!
 //! # Deliberately absent
 //!
-//! * NO auth middleware — session cookie handling is a separate epic
-//!   step (part of the same #4674 arc).
-//! * NO ReBAC post-filter — same story.
+//! * NO ReBAC post-filter — separate epic step (`bricks/permissions/
+//!   rebac.py` → Rust); the middleware here is authN only.
+//! * NO mTLS peer plane — waits on this crate's HTTP listener
+//!   growing a rustls stack (see the middleware module docs).
 //! * NO wiring into `nexusd-cluster` boot — the assembly binary in
 //!   `rust/nexusd` picks the crate up once the router surface
 //!   justifies the wiring step.  Standalone-testable today via
@@ -29,11 +44,15 @@
 
 use std::io;
 use std::net::SocketAddr;
+use std::sync::Arc;
 
+use axum::middleware::from_fn_with_state;
 use axum::Router;
 use tokio::net::TcpListener;
+use transport::auth::AuthProvider;
 
 pub mod handlers;
+pub mod middleware;
 pub mod search_backend;
 
 /// Client stubs for the workspace's `nexus.search.v1` proto SSOT
@@ -52,20 +71,54 @@ pub use search_backend::{BackendError, SearchBackend};
 /// Shared state handed to every axum handler through
 /// `axum::extract::State`.  Cheap to clone (`Arc` fields inside
 /// each backend); one instance per process.
+///
+/// # `auth`
+///
+/// The `AuthProvider` used by [`middleware::auth::require_bearer`]
+/// to resolve incoming bearer tokens.  Trait-object so a single
+/// binary can pick `NoAuth` for dev, `ApiKeyAuthProvider` for
+/// production, or a test double.  See
+/// [`middleware::auth::default_no_auth_provider`] for the
+/// single-node default.
 #[derive(Clone)]
 pub struct AppState {
     pub search: SearchBackend,
+    pub auth: Arc<dyn AuthProvider>,
 }
 
 /// Root [`Router`] carrying every configured route domain.  Callers
 /// supply the [`AppState`] (which owns the upstream client caches)
 /// so the same crate can be exercised in tests against a mock
 /// backend and in production against the real search-plugin.
+///
+/// # Layering
+///
+/// The router splits into two sub-routers by auth posture:
+///
+/// * `public_router` — routes callable BEFORE a bearer exists
+///   (liveness probes, unauth-metadata endpoints).  Currently just
+///   `/v2/status`.
+/// * `protected_router` — routes wrapped by
+///   [`middleware::auth::require_bearer`].  Every `/v2/search/*`
+///   handler lives here.
+///
+/// Both sub-routers share the same [`AppState`]; only the middleware
+/// stack differs.  A new domain lands as an additive merge on
+/// whichever sub-router matches its auth posture — handlers stay
+/// unaware of the split beyond optionally extracting
+/// `Extension<OperationContext>`.
 pub fn router(state: AppState) -> Router {
-    Router::new()
+    let public_router = Router::new()
         .merge(handlers::status::router())
+        .with_state(state.clone());
+    let protected_router = Router::new()
         .merge(handlers::search::router())
-        .with_state(state)
+        .layer(from_fn_with_state(
+            state.clone(),
+            middleware::auth::require_bearer,
+        ))
+        .with_state(state);
+    Router::new().merge(public_router).merge(protected_router)
 }
 
 /// Bind `addr` and serve [`router(state)`](router) until the returned

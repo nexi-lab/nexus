@@ -34,6 +34,20 @@ tonic-prost = { workspace = true }
 # sibling search-plugin peer-fanout uses (search-plugin/Cargo.toml).
 dashmap = "6.1"
 
+# Bearer-token → `OperationContext` SSOT.
+#
+# The `AuthProvider` trait + `AuthCredentials` + kernel-default
+# `NoAuth` live in the nexus-vfs `transport` crate (same rev as
+# `contracts`).  Reusing them means the http-api middleware, the
+# kernel gRPC interceptor (`transport::grpc::VfsServiceImpl::authenticate`),
+# and any future service on the auth plane all resolve credentials
+# through ONE trait — not each inventing its own.  The resolved
+# `OperationContext` is the SSOT struct every `kernel::sys_*`
+# already consumes, so injecting it into request extensions is
+# byte-compatible with future direct-syscall handler paths.
+contracts = { workspace = true }
+transport = { workspace = true }
+
 # Parked-error surfacing at the handler boundary (Ok/Err in the
 # lib, mapped to HTTP status in the axum extractor).  Same 1.0 pin
 # the sibling search-plugin uses.

@@ -228,6 +228,12 @@ impl Harness {
 async fn spawn_http_listener(grpc_target: String) -> String {
     let state = AppState {
         search: SearchBackend::new(grpc_target),
+        // These integration tests exercise the search route surface;
+        // NoAuth means the middleware lets every request through so
+        // the assertions here stay focused on the search chain, not
+        // on bearer parsing.  Dedicated bearer-parsing / rejection
+        // cover lives in `tests/auth_middleware_e2e.rs`.
+        auth: nexus_http_api::middleware::auth::default_no_auth_provider(),
     };
     let (http_addr, fut) = bind_and_serve("127.0.0.1:0".parse().unwrap(), state)
         .await

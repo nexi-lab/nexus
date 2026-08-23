@@ -39,14 +39,9 @@
 //!                          +--- backends     (peer; never crosses to services)
 //! ```
 
-// Generic hosted-subprocess primitive: launch an argv + surface its
-// stdio as VFS DT_PIPEs. Shared by `acp` (config-driven ACP one-shot)
-// and `managed_agent` (raw control-plane tunnel); knows nothing about
-// either. Unix-only (dup(2) + stdio-pipe kernel support). `service-acp`
-// pulls it; a managed-agent build that wants the raw spawn path enables
-// it alongside `service-managed-agent`.
-#[cfg(all(unix, feature = "subprocess-host"))]
-pub(crate) mod subprocess;
+// The generic hosted-subprocess primitive (`HostedSubprocess`) moved to the
+// nexus-vfs `subprocess` crate (kernel-tier) alongside the relocated
+// managed-agent control plane; `acp` reaches it via `subprocess::` directly.
 // AcpService — subprocess + ACP-over-stdio host for
 // `AgentKind::UNMANAGED` agents (claude / codex / gemini / …).
 #[cfg(feature = "service-acp")]
@@ -61,12 +56,9 @@ pub mod audit;
 // appends copies into its local zone. Reuses audit::prepare_stream_only.
 #[cfg(feature = "service-audit-node")]
 pub mod audit_node;
-// ManagedAgentService — first Rust-flavoured service. Owns the
-// chat-with-me mailbox stamping hook, the workspace-boundary
-// teaching hook, and the `start_session_v1` / `cancel_v1` /
-// `get_session_v1` lifecycle for `AgentKind::MANAGED` agents.
-#[cfg(feature = "service-managed-agent")]
-pub mod managed_agent;
+// ManagedAgentService (the MANAGED-agent control plane) moved to the nexus-vfs
+// `managed-agent` crate so the production nexusd-cluster carries it directly;
+// the assembly reaches it via `managed_agent::` from nexus-vfs.
 // Durable task queue engine (fjall-backed).
 #[cfg(feature = "service-tasks")]
 pub mod tasks;

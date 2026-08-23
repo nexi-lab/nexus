@@ -25,7 +25,7 @@ driver-s3 = ["dep:backends", "backends/driver-s3"]
 # `install_managed_agent_with_spawn`, so a minted agent runs a real LLM
 # loop doing in-process `KernelSyscall` calls (no gRPC on its fs path).
 # The kernel rev MUST match the workspace pin (both at nexus-vfs
-# `c9ecc9da`) so `SpawnTask<Kernel>` is one type across the seam.
+# `dcee3e5d1`) so `SpawnTask<Kernel>` is one type across the seam.
 cohost-sudocode = ["dep:sudocode-runtime", "dep:sudocode-tools"]
 
 [dependencies]
@@ -37,10 +37,11 @@ nexus-cluster = { workspace = true }
 # a2a from-stamp hook (its `service_decl`); default-features keeps it
 # raft-free (the stream-wakeup observer is armed in cluster boot, not here).
 a2a = { workspace = true }
-# The nexus control plane composed into the daemon at boot. ONLY
-# managed_agent — the `cluster` profile's agent control plane (§7); `acp`
-# (nexus-drives-ACP one-shot) is NOT a cluster service.
-services = { workspace = true, features = ["service-managed-agent"] }
+# The agent control plane composed into the daemon at boot — the `cluster`
+# profile's managed-agent service (§7). RELOCATED to nexus-vfs, so the assembly
+# now links it directly (not via the nexus `services` crate). `subprocess-host`
+# enables the raw ACP-subprocess spawner for the sudowork/hydra spawn_spec tunnel.
+managed-agent = { workspace = true, features = ["subprocess-host"] }
 # Present ONLY to thread the optional `driver-s3` feature into the shared
 # `backends` compilation for the full superset; nexusd calls no backends API,
 # so it is not pulled at all in the default (slim cluster) build.
@@ -49,15 +50,15 @@ anyhow = "1"
 
 # ── Co-host (opt-in `cohost-sudocode`) ──────────────────────────────────
 # The real sudocode agent runtime, linked ONLY when co-hosting. Both crates
-# reach `kernel` at the SAME nexus-vfs rev the workspace pins (`c9ecc9da`),
+# reach `kernel` at the SAME nexus-vfs rev the workspace pins (`dcee3e5d1`),
 # so the `Kernel` / `AgentDescriptor` / `KernelSyscall` types unify across
 # the seam and `SpawnTask<Kernel>` is a single monomorphised type.
 # `sudocode-tools` carries the `spawn_managed_agent` factory (it composes
 # the api + runtime crates); `sudocode-runtime` names the `AgentLoopState`
-# / `SpawnHandle` types the adapter maps. Pinned to the sudocode main merge
+# / `SpawnHandle` types the adapter maps. Pinned to the sudocode main merge (#484: nexus-vfs pin unified to dcee3e5d1); orig
 # commit of #392 (co-host readiness).
-sudocode-runtime = { package = "runtime", git = "https://github.com/sudoprivacy/sudocode", rev = "4bc7cba61a278d077bb40938bc9e498b9b261180", optional = true }
-sudocode-tools = { package = "tools", git = "https://github.com/sudoprivacy/sudocode", rev = "4bc7cba61a278d077bb40938bc9e498b9b261180", optional = true }
+sudocode-runtime = { package = "runtime", git = "https://github.com/sudoprivacy/sudocode", rev = "155dd3a1639dcd01767cd6a6912b656b584497ff", optional = true }
+sudocode-tools = { package = "tools", git = "https://github.com/sudoprivacy/sudocode", rev = "155dd3a1639dcd01767cd6a6912b656b584497ff", optional = true }
 # Named directly to spell `kernel::kernel::{ServiceDecl, Kernel}` — the
 # managed-agent boot decl's return type (both builds) and the co-host
 # adapter's `SpawnTask<Kernel>` (cohost build). Already present transitively

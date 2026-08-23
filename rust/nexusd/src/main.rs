@@ -30,7 +30,7 @@ mod cohost;
 /// way; only the install closure differs.
 #[cfg(not(feature = "cohost-sudocode"))]
 fn managed_agent_decl() -> kernel::kernel::ServiceDecl {
-    services::managed_agent::service_decl()
+    managed_agent::service_decl()
 }
 
 #[cfg(feature = "cohost-sudocode")]
@@ -39,7 +39,7 @@ fn managed_agent_decl() -> kernel::kernel::ServiceDecl {
     kernel::kernel::ServiceDecl {
         name: "managed_agent".to_string(),
         install: Box::new(|kernel| {
-            services::managed_agent::install_managed_agent_with_spawn(
+            managed_agent::install_managed_agent_with_spawn(
                 kernel,
                 Arc::new(cohost::SudoCodeSpawnAdapter),
             )

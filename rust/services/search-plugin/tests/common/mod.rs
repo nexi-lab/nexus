@@ -102,6 +102,19 @@ impl MockKernel {
         entry.mtime_ms = new_mtime_ms;
     }
 
+    /// Remove a registered path — used by tests that exercise the
+    /// Refresh stale-sweep against a deleted DT_REG or DT_STREAM.
+    /// Drops the file entry AND the parent-dir listing so a fresh
+    /// walk no longer sees the child.  Idempotent — a no-op on
+    /// unknown paths (mirrors POSIX-style "delete what's there").
+    pub fn remove_path(&mut self, path: &str) {
+        self.files.remove(path);
+        let (parent, name) = split_parent(path);
+        if let Some(entries) = self.dirs.get_mut(&parent) {
+            entries.retain(|(n, _)| n != &name);
+        }
+    }
+
     pub fn add_dir(&mut self, path: &str) {
         if !self.dirs.contains_key(path) {
             self.dirs.insert(path.to_string(), Vec::new());

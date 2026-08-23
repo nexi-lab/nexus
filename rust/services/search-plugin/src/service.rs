@@ -1893,7 +1893,37 @@ enum IndexOne {
 /// working ANN sink finishes the cleanup — unless the zone has no
 /// ANN directory at all, in which case there is nothing to purge and
 /// the real mtime finalizes the skip.
-fn record_content_skip(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> IndexOne {
+/// Which map in `index_state` a skip-recording call should touch.
+///
+/// The two flavours differ ONLY in the checkpoint they leave behind:
+///
+///   * [`EntryKind::File`] records the fresh mtime into the DT_REG
+///     files map (`FileEntry`) so Refresh's verdict reports Unchanged
+///     next pass.
+///   * [`EntryKind::Stream`] records `(indexed_byte_len=0,
+///     next_chunk_index=0, mtime)` into the DT_STREAM checkpoint map
+///     (`StreamState`) — a stream that ended up empty / oversize /
+///     non-utf8 has zero chunks to preserve, so a zero-offset
+///     checkpoint at the fresh mtime is the correct "successfully
+///     converged" state.  Writing a stream path into the FILES map
+///     instead (the pre-fix behaviour) violated the
+///     `IndexState::verdict` invariant that a path lives in exactly
+///     one map — the stale-sweep `known_paths()` (a UNION) then saw
+///     the path twice, and a subsequent `index_one_stream_*` skip
+///     kept extending the stale FILES entry instead of updating the
+///     stream checkpoint.
+#[derive(Copy, Clone)]
+enum EntryKind {
+    File,
+    Stream,
+}
+
+fn record_content_skip(
+    handle: &KernelHandle,
+    sinks: &IndexSinks<'_>,
+    vfs_path: &str,
+    kind: EntryKind,
+) -> IndexOne {
     sinks.fts.delete_all_chunks(vfs_path);
     match sinks.ann {
         Some(ann) => {
@@ -1901,7 +1931,10 @@ fn record_content_skip(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: 
         }
         None if sinks.zone_has_ann => {
             // Vectors may exist but are unreachable — retry tombstone.
-            sinks.state.record(vfs_path, None);
+            match kind {
+                EntryKind::File => sinks.state.record(vfs_path, None),
+                EntryKind::Stream => sinks.state.stream_advance(vfs_path, 0, 0, None),
+            }
             return IndexOne::SkippedTransient;
         }
         None => {}
@@ -1909,7 +1942,10 @@ fn record_content_skip(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: 
     let mtime_ms = kernel_io::sys_stat(handle, vfs_path)
         .ok()
         .and_then(|info| info.modified_at_ms);
-    sinks.state.record(vfs_path, mtime_ms);
+    match kind {
+        EntryKind::File => sinks.state.record(vfs_path, mtime_ms),
+        EntryKind::Stream => sinks.state.stream_advance(vfs_path, 0, 0, mtime_ms),
+    }
     IndexOne::Skipped
 }
 
@@ -1926,9 +1962,15 @@ fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> I
     // path below (safe: files aren't append-only in the same
     // sense — an edit anywhere in the middle invalidates every
     // downstream chunk).
-    if let Ok(stat) = kernel_io::sys_stat(handle, vfs_path) {
-        if stat.entry_type == kernel_io::DT_STREAM {
-            return index_one_stream_append(handle, sinks, vfs_path, stat.modified_at_ms);
+    // Single sys_stat call: reuses the entry_type-dispatch stat as the
+    // DT_REG mtime source below.  Prior code stat'd twice (once for
+    // entry_type here, once for mtime after `sys_read` succeeded) —
+    // Refresh's `visit_file` already stats each path, so a re-indexed
+    // DT_REG file was paying 3× sys_stat per pass.
+    let stat = kernel_io::sys_stat(handle, vfs_path).ok();
+    if let Some(ref s) = stat {
+        if s.entry_type == kernel_io::DT_STREAM {
+            return index_one_stream_append(handle, sinks, vfs_path, s.modified_at_ms);
         }
     }
 
@@ -1940,7 +1982,7 @@ fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> I
         }
     };
     if bytes.is_empty() {
-        return record_content_skip(handle, sinks, vfs_path);
+        return record_content_skip(handle, sinks, vfs_path, EntryKind::File);
     }
     if bytes.len() > INDEX_MAX_FILE_BYTES {
         tracing::debug!(
@@ -1949,7 +1991,7 @@ fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> I
             cap = INDEX_MAX_FILE_BYTES,
             "index: file over size cap — skipping",
         );
-        return record_content_skip(handle, sinks, vfs_path);
+        return record_content_skip(handle, sinks, vfs_path, EntryKind::File);
     }
     // Non-UTF8 files are treated as binary and skipped rather than
     // indexed as gibberish.  A future phase may want to add a
@@ -1959,12 +2001,10 @@ fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> I
         Ok(s) => s,
         Err(_) => {
             tracing::debug!(path = %vfs_path, "index: non-utf8 payload — skipping");
-            return record_content_skip(handle, sinks, vfs_path);
+            return record_content_skip(handle, sinks, vfs_path, EntryKind::File);
         }
     };
-    let mtime_ms = kernel_io::sys_stat(handle, vfs_path)
-        .ok()
-        .and_then(|info| info.modified_at_ms);
+    let mtime_ms = stat.and_then(|s| s.modified_at_ms);
 
     // P4: chunk the file into semantically-coherent pieces.  The
     // chunker respects markdown-ish heading + code-fence structure
@@ -1973,7 +2013,7 @@ fn index_one(handle: &KernelHandle, sinks: &IndexSinks<'_>, vfs_path: &str) -> I
     if chunks.is_empty() {
         // Whitespace-only file — nothing to index; purge any prior
         // chunks + record per ANN reachability (review R6).
-        return record_content_skip(handle, sinks, vfs_path);
+        return record_content_skip(handle, sinks, vfs_path, EntryKind::File);
     }
     // Feature 3 — contextual chunking.  Prepends an LLM-generated
     // context prefix to every chunk's `embed_input` (leaving `text`
@@ -2138,7 +2178,7 @@ fn index_one_stream_append(
             cap = INDEX_MAX_FILE_BYTES,
             "index-stream: content over size cap — skipping",
         );
-        return record_content_skip(handle, sinks, vfs_path);
+        return record_content_skip(handle, sinks, vfs_path, EntryKind::Stream);
     }
 
     let prior = sinks.state.stream_state(vfs_path);
@@ -2310,18 +2350,18 @@ fn index_one_stream_full(
     bytes: &[u8],
 ) -> IndexOne {
     if bytes.is_empty() {
-        return record_content_skip(handle, sinks, vfs_path);
+        return record_content_skip(handle, sinks, vfs_path, EntryKind::Stream);
     }
     let text = match std::str::from_utf8(bytes) {
         Ok(s) => s,
         Err(_) => {
             tracing::debug!(path = %vfs_path, "index-stream(full): non-utf8 — skipping");
-            return record_content_skip(handle, sinks, vfs_path);
+            return record_content_skip(handle, sinks, vfs_path, EntryKind::Stream);
         }
     };
     let mut chunks = crate::chunker::chunk_document(text);
     if chunks.is_empty() {
-        return record_content_skip(handle, sinks, vfs_path);
+        return record_content_skip(handle, sinks, vfs_path, EntryKind::Stream);
     }
     if let Some(gen) = sinks.context_generator {
         crate::contextual_chunker::apply_contexts(gen, text, &mut chunks, gen.max_chunks_per_doc());

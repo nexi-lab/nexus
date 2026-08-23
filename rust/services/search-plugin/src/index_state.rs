@@ -263,8 +263,20 @@ impl IndexState {
     /// Snapshot of every recorded path.  Callers use this to detect
     /// stale (deleted-from-VFS) entries during the Refresh diff.
     /// Read-lock short-held; the returned `Vec<String>` is a copy.
+    ///
+    /// Unions DT_REG cache keys with DT_STREAM checkpoint keys — a
+    /// deleted stream MUST reach the Refresh stale-sweep so its
+    /// chunks + checkpoint get purged; without this union, a fresh
+    /// DT_STREAM later created at the same path would inherit the
+    /// stale checkpoint and skip re-indexing everything below the
+    /// old offset (silent data loss).
     pub fn known_paths(&self) -> Vec<String> {
-        self.inner.read().keys().cloned().collect()
+        let files = self.inner.read();
+        let streams = self.streams.read();
+        let mut out = Vec::with_capacity(files.len() + streams.len());
+        out.extend(files.keys().cloned());
+        out.extend(streams.keys().cloned());
+        out
     }
 
     /// Look up a path's cached mtime — used in the mtime-changed

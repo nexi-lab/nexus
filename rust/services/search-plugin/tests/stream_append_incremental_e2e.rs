@@ -125,6 +125,23 @@ fn read_stream_state(zone_root: &std::path::Path, path: &str) -> (u64, u32) {
     )
 }
 
+/// True when the on-disk state's `streams` map has an entry for `path`.
+fn stream_state_present(zone_root: &std::path::Path, path: &str) -> bool {
+    let bytes = std::fs::read(zone_root.join("index_state.json")).expect("state file exists");
+    let v: serde_json::Value = serde_json::from_slice(&bytes).expect("parse state");
+    !v["streams"][path].is_null()
+}
+
+/// True when the on-disk state's `files` map has an entry for `path`.
+/// Used to pin the SSOT invariant: a DT_STREAM path must NEVER
+/// appear in `files` — that was the pre-fix bug where
+/// `record_content_skip` cross-wrote stream paths into the files map.
+fn file_state_present(zone_root: &std::path::Path, path: &str) -> bool {
+    let bytes = std::fs::read(zone_root.join("index_state.json")).expect("state file exists");
+    let v: serde_json::Value = serde_json::from_slice(&bytes).expect("parse state");
+    !v["files"][path].is_null()
+}
+
 // ── Tests ───────────────────────────────────────────────────────
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -344,5 +361,135 @@ async fn stream_retention_trim_resets_checkpoint_and_reindexes() {
     assert!(
         q_new.results.iter().any(|r| r.path == "/logs/wal"),
         "post-trim survivor NEWTOKEN must be re-indexed",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn deleted_stream_hits_stale_sweep_and_purges_checkpoint() {
+    // Regression pin for the pre-fix `known_paths()` gap: it returned
+    // only DT_REG keys, so a deleted DT_STREAM's chunks + checkpoint
+    // lingered in the index forever.  Refresh's stale-sweep only
+    // sees a cached path via `known_paths()` — if streams were
+    // missing from the union, the sweep never fired for them.
+    //
+    // The user-visible failure without this test: query for a token
+    // in a deleted stream still returns the deleted stream's path.
+    let h = Harness::start();
+    let mock = h.mock_mut();
+    mock.add_dir("/");
+    mock.add_dir("/logs");
+    mock.add_stream("/logs/audit", b"turn-1: DELETEDTOKEN\n", 1);
+
+    let _ = index_root(&h.svc).await;
+    assert!(stream_state_present(&h.zone_root, "/logs/audit"));
+
+    // Baseline: token findable before delete.
+    let q = query(&h.svc, "DELETEDTOKEN").await;
+    assert!(q.results.iter().any(|r| r.path == "/logs/audit"));
+
+    // Delete the stream (remove from VFS): the walk no longer sees
+    // it, so the Refresh stale-sweep must drop chunks + checkpoint.
+    h.mock_mut().remove_path("/logs/audit");
+    let r = refresh_root(&h.svc).await;
+    assert!(r.error.is_none(), "refresh error: {:?}", r.error);
+    assert!(
+        r.removed_count >= 1,
+        "stale-sweep must have removed the deleted stream (got removed_count={})",
+        r.removed_count,
+    );
+
+    // Post-sweep: token must NOT be findable, and the checkpoint
+    // must be gone from the on-disk state.
+    let q = query(&h.svc, "DELETEDTOKEN").await;
+    assert!(
+        q.results.iter().all(|r| r.path != "/logs/audit"),
+        "deleted-stream chunks must be purged; got hits: {:?}",
+        q.results,
+    );
+    assert!(
+        !stream_state_present(&h.zone_root, "/logs/audit"),
+        "stream checkpoint must be dropped after stale-sweep",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn new_stream_at_previously_deleted_path_indexes_from_offset_zero() {
+    // Composite pin: if the stale-sweep failed to purge the deleted
+    // stream's checkpoint (the pre-fix bug), a NEW stream later
+    // created at the same path would inherit the stale
+    // `indexed_byte_len` and treat everything below the old offset as
+    // "already indexed" — SILENT data loss.  With the union
+    // `known_paths()` + the `EntryKind::Stream` skip-record fix, the
+    // reborn stream must index from offset 0.
+    let h = Harness::start();
+    let mock = h.mock_mut();
+    mock.add_dir("/");
+    mock.add_dir("/logs");
+    mock.add_stream("/logs/audit", b"OLDSTREAM: content in old lifetime\n", 1);
+    let _ = index_root(&h.svc).await;
+    let (old_bytes, _) = read_stream_state(&h.zone_root, "/logs/audit");
+    assert!(old_bytes > 0);
+
+    // Delete + Refresh (stale-sweep purges the old lifetime).
+    h.mock_mut().remove_path("/logs/audit");
+    let _ = refresh_root(&h.svc).await;
+    assert!(!stream_state_present(&h.zone_root, "/logs/audit"));
+
+    // Reborn at the same path with SHORTER content than the old
+    // lifetime — proves the reborn stream indexed from offset 0 and
+    // did not inherit the stale checkpoint.  A stale `indexed_byte_len`
+    // (old_bytes) larger than the reborn stream's length would trip
+    // the retention-trim branch (which happens to also recover), so
+    // instead we assert the reborn checkpoint EQUALS the reborn blob's
+    // length — impossible if the stale offset had shadowed the write.
+    h.mock_mut()
+        .add_stream("/logs/audit", b"REBORN: new content only\n", 100);
+    let r = refresh_root(&h.svc).await;
+    assert!(r.error.is_none(), "refresh error: {:?}", r.error);
+    let (new_bytes, new_chunks) = read_stream_state(&h.zone_root, "/logs/audit");
+    assert_eq!(
+        new_bytes,
+        b"REBORN: new content only\n".len() as u64,
+        "reborn stream must checkpoint at its own byte-length, NOT the deleted lifetime's",
+    );
+    assert!(new_chunks >= 1, "reborn stream must produce ≥1 chunk");
+
+    // Old token gone, new token indexed.
+    let q_old = query(&h.svc, "OLDSTREAM").await;
+    assert!(
+        q_old.results.iter().all(|r| r.path != "/logs/audit"),
+        "old-lifetime token must not survive reborn",
+    );
+    let q_new = query(&h.svc, "REBORN").await;
+    assert!(
+        q_new.results.iter().any(|r| r.path == "/logs/audit"),
+        "reborn-lifetime token must be indexed",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn empty_stream_records_checkpoint_in_streams_map_not_files_map() {
+    // Regression pin for the SSOT invariant: an empty DT_STREAM's
+    // skip-record (via `record_content_skip`) must land in the
+    // STREAMS map, not the FILES map.  The pre-fix code called the
+    // DT_REG-flavoured `sinks.state.record()` unconditionally, so a
+    // stream that started empty (or ended up empty after chunking)
+    // silently appeared in `files` — violating the "a path lives in
+    // exactly one map" invariant that `IndexState::verdict` relies
+    // on.
+    let h = Harness::start();
+    let mock = h.mock_mut();
+    mock.add_dir("/");
+    mock.add_dir("/logs");
+    // Whitespace-only stream — chunker returns empty; hits the
+    // `record_content_skip` branch inside `index_one_stream_full`
+    // via the initial full-first-pass path.
+    mock.add_stream("/logs/quiet", b"   \n\n  \t\n", 1);
+
+    let _ = index_root(&h.svc).await;
+
+    assert!(
+        !file_state_present(&h.zone_root, "/logs/quiet"),
+        "SSOT violation: DT_STREAM path must NEVER land in the files map",
     );
 }

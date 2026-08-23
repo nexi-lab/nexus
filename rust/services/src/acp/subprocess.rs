@@ -1,7 +1,7 @@
 //! ACP subprocess bridge — translates an [`AgentConfig`] into the argv /
 //! env / fd-path layout the generic [`HostedSubprocess`] host expects.
 //!
-//! The generic subprocess host ([`crate::subprocess`]) knows nothing
+//! The generic subprocess host ([`subprocess`]) knows nothing
 //! about ACP; this thin module owns the ACP-specific translation
 //! (`AgentConfig` → argv, Electron/npm env sanitising, the acp
 //! `/{zone}/proc/{pid}/fd/{n}` path scheme) and delegates the actual
@@ -16,8 +16,8 @@ use std::path::Path;
 
 use super::agent_config::AgentConfig;
 use super::paths;
-use crate::subprocess::{HostedSubprocess, SubprocessError};
 use kernel::kernel::syscall::KernelSyscall;
+use subprocess::{HostedSubprocess, SubprocessError};
 
 /// Env vars stripped before spawning agents (mirrors AionUi
 /// `prepareCleanEnv` and the Python `_ENV_STRIP_KEYS`). Prevents

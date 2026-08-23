@@ -17,7 +17,7 @@
 //!     conventions so a Python and Rust caller addressing the same
 //!     agent see the same files.
 //!   * [`subprocess`] (unix) — `spawn_acp` bridge: `AgentConfig` → argv
-//!     over the generic [`crate::subprocess::HostedSubprocess`] host.
+//!     over the generic [`subprocess::HostedSubprocess`] host.
 //!   * [`jsonrpc`] — newline-delimited JSON-RPC 2.0 client.
 //!   * [`observer`] — accumulator for `session/update` notifications.
 //!   * [`connection`] — ACP-specific request / notification routing.

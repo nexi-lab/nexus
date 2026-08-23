@@ -24,7 +24,7 @@ use std::sync::Arc;
 
 use kernel::core::agents::registry::AgentDescriptor;
 use kernel::kernel::Kernel;
-use services::managed_agent::{
+use managed_agent::{
     AgentLoopState as ServiceLoopState, SpawnHandle as ServiceSpawnHandle, SpawnTask,
 };
 use sudocode_runtime::spawn_task::{

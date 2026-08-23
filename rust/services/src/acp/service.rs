@@ -9,7 +9,7 @@
 //!   * [`super::agent_config::AgentConfig`] -- VFS-persisted CLI config
 //!   * [`super::paths`]                     -- /{zone}/agents + /{zone}/proc layout
 //!   * [`super::subprocess::spawn_acp`]     -- AgentConfig → argv bridge over
-//!     the generic [`crate::subprocess::HostedSubprocess`] host (unix only)
+//!     the generic [`subprocess::HostedSubprocess`] host (unix only)
 //!   * [`super::connection::AcpConnection`] -- ACP JSON-RPC adapter
 //!   * [`super::observer::AgentObserver`]   -- session/update accumulator
 //!
@@ -47,11 +47,11 @@ use super::observer::AgentTurnResult;
 #[cfg(unix)]
 use super::subprocess::spawn_acp;
 #[cfg(unix)]
-use crate::subprocess::HostedSubprocess;
-#[cfg(unix)]
 use futures::future::BoxFuture;
 #[cfg(unix)]
 use std::time::Duration;
+#[cfg(unix)]
+use subprocess::HostedSubprocess;
 
 // ── AgentRegistry trait ─────────────────────────────────────────────────
 

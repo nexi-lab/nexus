@@ -1,0 +1,76 @@
+# nexusd-cluster **co-host** image — the assembly binary WITH the in-process
+# sudocode agent runtime linked (`--features cohost-sudocode`).
+#
+# Distinct from `Dockerfile.nexusd-cluster` (the slim pure-VFS binary built
+# from the nexus-vfs `rust/profiles/cluster` context). This one builds
+# `nexus/rust/nexusd` — the assembly that injects
+# `sudocode_tools::managed_agent::SudoCodeSpawnAdapter` via
+# `install_managed_agent_with_spawn`, so a minted agent runs a real LLM loop
+# in-process (KernelFsBackend file tools, send_message mailbox reply). Used by
+# the co-host A2A duet compose (`docker-compose.cohost-duet.yml`).
+#
+# Both cross-repo deps (nexi-lab/nexus-vfs @ the Cargo.toml pin, and
+# sudoprivacy/sudocode @ the nexusd/Cargo.toml pin) are PRIVATE, so the build
+# authenticates git via a BuildKit secret rather than a git token baked into a
+# layer. Build:
+#
+#   DOCKER_BUILDKIT=1 docker build \
+#     -f dockerfiles/Dockerfile.nexusd-cohost \
+#     --secret id=ghtoken,env=GH_TOKEN \
+#     -t nexusd-cluster-cohost:latest .
+#
+# with `GH_TOKEN=$(gh auth token)` (needs read on both private repos).
+# `.dockerignore` already excludes target/ + .git/, so `COPY .` is the source
+# tree only.
+
+FROM rust:1-slim-bookworm AS builder
+
+# protobuf-compiler: the git-fetched raft crate's build.rs shells out to protoc.
+# python3{,-dev}: pyo3-build-config probes for an interpreter at compile time.
+# git + ca-certificates: authenticated fetch of the two private git deps.
+# Point apt at a China mirror (Aliyun) first — deb.debian.org is unreliable
+# through the local China proxy (persistent 502s); CI (clean network) is
+# unaffected either way. Rewrite both the deb822 and legacy sources files.
+RUN { sed -i 's|deb.debian.org|mirrors.aliyun.com|g; s|security.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || true; } \
+    && { sed -i 's|deb.debian.org|mirrors.aliyun.com|g; s|security.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list 2>/dev/null || true; } \
+    && apt-get -o Acquire::Retries=6 update && apt-get -o Acquire::Retries=6 install -y --no-install-recommends \
+        protobuf-compiler \
+        python3 \
+        python3-dev \
+        git \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# The nexus assembly source (rust/nexusd + workspace). target/ and .git/ are
+# .dockerignore'd, so this is the source tree only.
+COPY . /build/nexus
+
+# `--locked` honors the workspace Cargo.lock (single SSOT for the nexus-vfs +
+# sudocode revs); the secret token authenticates the private git fetches and
+# never lands in a layer. `--path rust/nexusd` builds ONLY the assembly + its
+# deps (not the whole workspace — search-plugin etc. stay out).
+RUN --mount=type=secret,id=ghtoken \
+    git config --global url."https://$(cat /run/secrets/ghtoken)@github.com/".insteadOf "https://github.com/" \
+    && cargo install \
+        --locked \
+        --path /build/nexus/rust/nexusd \
+        --features cohost-sudocode \
+        --bin nexusd-cluster \
+    && git config --global --remove-section url."https://$(cat /run/secrets/ghtoken)@github.com/"
+
+# ---------- Production image ----------
+FROM debian:bookworm-slim
+
+# bash: the compose healthcheck uses `bash -c '</dev/tcp/localhost/2126'`.
+# ca-certificates: the co-host agent's LLM turn makes an outbound HTTPS call
+# to the provider (sudorouter) — rustls needs the system trust roots.
+RUN { sed -i 's|deb.debian.org|mirrors.aliyun.com|g; s|security.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || true; } \
+    && { sed -i 's|deb.debian.org|mirrors.aliyun.com|g; s|security.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list 2>/dev/null || true; } \
+    && apt-get -o Acquire::Retries=6 update && apt-get -o Acquire::Retries=6 install -y --no-install-recommends \
+        bash \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /usr/local/cargo/bin/nexusd-cluster /usr/local/bin/nexusd-cluster
+
+ENTRYPOINT ["nexusd-cluster"]

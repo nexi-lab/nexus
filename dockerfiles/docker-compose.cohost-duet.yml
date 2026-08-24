@@ -1,0 +1,73 @@
+# Co-host A2A duet — REAL sudocode LLM agents conversing over the nexus A2A
+# mailbox, hosted in the `nexusd-cluster-cohost` daemon (the assembly binary
+# built `--features cohost-sudocode`). Proves the daemon path end to end:
+#   Call managed_agent.start_session_v1 → SudoCodeSpawnAdapter.spawn →
+#   spawn_managed_agent → agent binds A2aInbox /agents/<name>/chat-with-me →
+#   reads a seeded MailboxEnvelope → REAL LLM turn → send_message reply to the
+#   peer's A2A inbox.
+#
+# The Docker counterpart of the in-process unit proof
+# (sudocode `tools/tests/cohost_live_llm.rs`) — same factory, but over a real
+# gRPC daemon in a container, so it also exercises the wire path and runs in CI.
+#
+# Increment 1 (this file): ONE cohost node, both agents local. `/agents` is the
+# node's own tree (no federation needed for same-node A2A). Increment 2 layers
+# the 2-node federated shape (docker-compose.mtls-federation-test.yml) so
+# `/agents/*` replicates and the two agents live on DIFFERENT nodes.
+#
+# Prereqs:
+#   1. Build the image:
+#        GH_TOKEN=$(gh auth token) DOCKER_BUILDKIT=1 docker build \
+#          -f dockerfiles/Dockerfile.nexusd-cohost \
+#          --secret id=ghtoken,env=GH_TOKEN -t nexusd-cluster-cohost:latest .
+#   2. Export the FUNDED sudorouter key (vault "SudoRouter" entry → the
+#      UNLIMITED main-pool key, console name "cohost-test"):
+#        export SUDOROUTER_API_KEY=sk-…
+#   3. docker compose -f dockerfiles/docker-compose.cohost-duet.yml up
+#
+# The pytest harness (tests/e2e/docker/test_cohost_duet_e2e.py) then drives
+# start_session + the seed message + the PONG assertion.
+
+services:
+  cohost:
+    image: nexusd-cluster-cohost:latest
+    container_name: nexus-cohost-duet
+    hostname: cohost
+    environment:
+      # The FUNDED sudorouter key — required, fail loud if unset. sudocode's
+      # provider resolver reads it from the generated sudocode.json (proxy
+      # passthrough), NOT from ANTHROPIC_* env.
+      SUDOROUTER_API_KEY: ${SUDOROUTER_API_KEY:?set SUDOROUTER_API_KEY to the funded sudorouter sk- key}
+      # New API gateway endpoint (mainland-reachable). `hk` is a legacy alias.
+      SUDOROUTER_BASE_URL: ${SUDOROUTER_BASE_URL:-https://api.sudorouter.ai/v1}
+      SUDO_CODE_CONFIG_HOME: /config
+      RUST_LOG: ${RUST_LOG:-warn}
+      # Plain logs so the test's log greps aren't split by ANSI colour codes.
+      NO_COLOR: "1"
+    # Generate the co-host agents' provider config from the env key at boot
+    # (key stays in env, never in the image/repo), then exec the daemon
+    # auth-off + plaintext — the simplest posture for the same-node duet proof.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        mkdir -p /config
+        cat > /config/sudocode.json <<EOF
+        {"auth_modes":{"proxy":{"sudorouter":{"baseUrl":"$${SUDOROUTER_BASE_URL}","apiKey":"$${SUDOROUTER_API_KEY}"}}}}
+        EOF
+        exec nexusd-cluster --bind-addr 0.0.0.0:2126 --data-dir /app/data --no-tls --insecure-no-auth
+    ports:
+      - "2126:2126"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/2126' 2>/dev/null || exit 1"]
+      interval: 2s
+      timeout: 2s
+      retries: 40
+      start_period: 3s
+    networks:
+      - cohost-net
+
+networks:
+  cohost-net:
+    driver: bridge

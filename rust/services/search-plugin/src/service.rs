@@ -2439,6 +2439,7 @@ fn index_one_stream_full(
 /// (idempotent); the tombstone survives until a refresh with a
 /// working ANN sink completes the removal.
 fn remove_one(sinks: &IndexSinks<'_>, vfs_path: &str, zone_has_ann: bool) -> bool {
+    let was_stream = sinks.state.stream_state(vfs_path).is_some();
     sinks.fts.delete_all_chunks(vfs_path);
     match sinks.ann {
         Some(ann) => {
@@ -2454,7 +2455,18 @@ fn remove_one(sinks: &IndexSinks<'_>, vfs_path: &str, zone_has_ann: bool) -> boo
         None => {
             // Keep the tombstone: mtime None so the entry always
             // verdicts Changed and never masquerades as current.
-            sinks.state.record(vfs_path, None);
+            // Preserve the checkpoint SHAPE — a DT_STREAM tombstone
+            // must land in the STREAMS map (as a `(0, 0, None)`
+            // checkpoint), not the FILES map, so a subsequent
+            // `verdict()` reads it from the right side and so
+            // `known_paths()` doesn't double-count.  Same SSOT
+            // invariant the sibling `record_content_skip` fix
+            // enforces (see `EntryKind` docs).
+            if was_stream {
+                sinks.state.stream_advance(vfs_path, 0, 0, None);
+            } else {
+                sinks.state.record(vfs_path, None);
+            }
             tracing::warn!(
                 path = %vfs_path,
                 "refresh sweep: ANN sink unavailable — kept deletion tombstone",
@@ -2849,6 +2861,7 @@ fn do_index_documents(
         // ANN → retry tombstone kept) — the zone did not converge
         // this pass (review R8).
         let content_skip = |path: &str| -> bool {
+            let was_stream = state.stream_state(path).is_some();
             fts.delete_all_chunks(path);
             match ann.as_ref() {
                 Some(a) => {
@@ -2859,7 +2872,17 @@ fn do_index_documents(
                 None if zone_has_ann => {
                     // Vectors may exist but are unreachable — retry
                     // tombstone so a later pass finishes the purge.
-                    state.record(path, None);
+                    // Same SSOT-preserving branch as `remove_one`'s
+                    // tombstone: a DT_STREAM path lands in the
+                    // STREAMS map, not the FILES map.  `Document`
+                    // paths are DT_REG-shaped in practice, but
+                    // nothing at the type level enforces that, so
+                    // the branch stays defensive.
+                    if was_stream {
+                        state.stream_advance(path, 0, 0, None);
+                    } else {
+                        state.record(path, None);
+                    }
                     true
                 }
                 None => {

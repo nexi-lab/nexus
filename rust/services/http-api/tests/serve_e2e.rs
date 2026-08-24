@@ -11,7 +11,7 @@
 //! sibling test rather than a separate binary, so the listener setup
 //! is amortised.
 
-use nexus_http_api::{bind_and_serve, AppState, SearchBackend, StatusResponse};
+use nexus_http_api::{bind_and_serve, AppState, StatusResponse};
 
 /// Spawn the router on an ephemeral loopback port; return the base
 /// URL callers hit with `reqwest`.  Uses the crate's own
@@ -24,13 +24,9 @@ use nexus_http_api::{bind_and_serve, AppState, SearchBackend, StatusResponse};
 /// tests.  Backend-touching handlers get their own test binaries
 /// with a real mock server (`glob_e2e.rs`).
 async fn spawn_router() -> String {
-    let state = AppState {
-        search: SearchBackend::new("http://127.0.0.1:1"),
-        // Status is a PUBLIC route (bypasses auth) so this file's
-        // cover stays focused on the serve path; NoAuth here is
-        // only present because `AppState` mandates it.
-        auth: nexus_http_api::middleware::auth::default_no_auth_provider(),
-    };
+    // Status is a PUBLIC route; `for_tests` gives us a fully-wired
+    // AppState (dummy backend + NoAuth) with zero test-glue.
+    let state = AppState::for_tests("http://127.0.0.1:1");
     let (addr, fut) = bind_and_serve("127.0.0.1:0".parse().unwrap(), state)
         .await
         .expect("bind loopback ephemeral port");

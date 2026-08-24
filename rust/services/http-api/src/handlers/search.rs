@@ -459,7 +459,15 @@ impl IntoResponse for SearchError {
     }
 }
 
-/// gRPC → HTTP status mapping.  Covers every `tonic::Code` variant
+/// gRPC → HTTP status mapping.  `pub(crate)` so `middleware::auth`
+/// delegates instead of maintaining its own subset table; a real
+/// `ApiKeyAuthProvider` can emit `ResourceExhausted` (rate limit)
+/// / `InvalidArgument` (malformed sk-key) which would otherwise
+/// silently degrade to 500 under a subset mapper.  Both routes
+/// (search-RPC and auth-RPC) share the same wire semantics — no
+/// reason to fork the table.
+///
+/// Covers every `tonic::Code` variant
 /// the proto SSOT (`nexus/search/v1/search.proto`) declares upstream
 /// can emit — plus the ambient retryable / auth codes any RPC can
 /// surface — so no legitimate upstream signal silently degrades to
@@ -486,7 +494,7 @@ impl IntoResponse for SearchError {
 /// as an HTTP error at all is a caller-side contract violation
 /// (`Ok` should never come through `Result::Err`), so 500 flags the
 /// bug rather than silently returning 200.
-fn grpc_status_to_http(code: tonic::Code) -> StatusCode {
+pub(crate) fn grpc_status_to_http(code: tonic::Code) -> StatusCode {
     match code {
         tonic::Code::InvalidArgument => StatusCode::BAD_REQUEST,
         tonic::Code::NotFound => StatusCode::NOT_FOUND,

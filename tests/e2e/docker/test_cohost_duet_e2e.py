@@ -75,11 +75,8 @@ def _wait_daemon_ready(timeout_s: int = 60) -> None:
     pytest.fail(f"cohost daemon on {GRPC} never became reachable in {timeout_s}s (last={last})")
 
 
-def _decode(read_result) -> str:
-    if hasattr(rh, "decode_content"):
-        out = rh.decode_content(read_result)
-    else:
-        out = read_result
+def _decode(read_result: object) -> str:
+    out = rh.decode_content(read_result) if hasattr(rh, "decode_content") else read_result
     if isinstance(out, (bytes, bytearray)):
         return out.decode("utf-8", "replace")
     return out if isinstance(out, str) else str(out)

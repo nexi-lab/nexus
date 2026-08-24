@@ -32,7 +32,7 @@ use nexus_http_api::search_proto::{
     RefreshRequest, RefreshResponse, RemoveIndexedDirectoryRequest, RemoveIndexedDirectoryResponse,
     SetZoneIndexingModeRequest, SetZoneIndexingModeResponse, StatsRequest, StatsResponse,
 };
-use nexus_http_api::{bind_and_serve, AppState, SearchBackend};
+use nexus_http_api::{bind_and_serve, AppState};
 use tokio::net::TcpListener;
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::{Request, Response, Status};
@@ -226,15 +226,11 @@ impl Harness {
 /// Spawn an HTTP listener bound to an OS-picked ephemeral port,
 /// pointed at `grpc_target`; return its base URL.
 async fn spawn_http_listener(grpc_target: String) -> String {
-    let state = AppState {
-        search: SearchBackend::new(grpc_target),
-        // These integration tests exercise the search route surface;
-        // NoAuth means the middleware lets every request through so
-        // the assertions here stay focused on the search chain, not
-        // on bearer parsing.  Dedicated bearer-parsing / rejection
-        // cover lives in `tests/auth_middleware_e2e.rs`.
-        auth: nexus_http_api::middleware::auth::default_no_auth_provider(),
-    };
+    // `for_tests` wires NoAuth so the middleware lets every request
+    // through — this file focuses on the glob route surface.
+    // Dedicated bearer-parsing cover lives in
+    // `tests/auth_middleware_e2e.rs`.
+    let state = AppState::for_tests(grpc_target);
     let (http_addr, fut) = bind_and_serve("127.0.0.1:0".parse().unwrap(), state)
         .await
         .expect("bind http listener");

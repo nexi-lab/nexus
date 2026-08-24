@@ -99,6 +99,18 @@ pub fn parse_bearer(headers: &axum::http::HeaderMap) -> Result<Option<&str>, Aut
     if token.is_empty() {
         return Err(AuthRejection::MalformedHeader);
     }
+    // RFC 6750 §2.1: `b64token = 1*( ALPHA / DIGIT / "-" / "." / "_" /
+    // "~" / "+" / "/" ) *"="` — the token grammar admits NO whitespace.
+    // A header like `Bearer sk-good garbage` would otherwise trim to
+    // `"sk-good garbage"` and admit a weirdly-shaped value into log
+    // fields + the provider's `resolve` call.  Under `NoAuth` the whole
+    // string becomes the admin-context "token" — subtle correctness /
+    // observability bug.  Reject any embedded whitespace, treating it
+    // as the same MalformedHeader class as "Basic <b64>" / empty
+    // bearer.
+    if token.contains(char::is_whitespace) {
+        return Err(AuthRejection::MalformedHeader);
+    }
     Ok(Some(token))
 }
 
@@ -108,15 +120,17 @@ pub fn parse_bearer(headers: &axum::http::HeaderMap) -> Result<Option<&str>, Aut
 /// and denies a token-guessing attacker any per-attempt latency
 /// signal from the upstream).
 ///
-/// Status mapping matches the shared search-error contract:
-///   * malformed `Authorization` header → 401 Unauthorized
-///   * `tonic::Code::Unauthenticated` → 401 Unauthorized
-///   * `tonic::Code::PermissionDenied` → 403 Forbidden
-///   * `tonic::Code::Unavailable` → 503 Service Unavailable
-///   * `tonic::Code::DeadlineExceeded` → 504 Gateway Timeout
-///   * anything else (`Internal`, `Unknown`, etc.) → 500
+/// Malformed `Authorization` header → 401 Unauthorized.  All other
+/// mapping (including `Unauthenticated`, `PermissionDenied`,
+/// `ResourceExhausted`, `InvalidArgument`, `Unavailable`,
+/// `DeadlineExceeded`, `Unimplemented`, and the rest) delegates to
+/// the shared [`handlers::search::grpc_status_to_http`] table so
+/// both HTTP surfaces (search RPCs + auth-provider RPCs) speak the
+/// same wire semantics.
 ///
 /// Absent-header behaviour is provider-driven (see [`parse_bearer`]).
+///
+/// [`handlers::search::grpc_status_to_http`]: crate::handlers::search::grpc_status_to_http
 pub async fn require_bearer(
     State(state): State<AppState>,
     mut req: Request,
@@ -153,25 +167,18 @@ impl IntoResponse for AuthRejection {
                 StatusCode::UNAUTHORIZED,
                 "malformed Authorization header; expected `Bearer <token>`".to_string(),
             ),
-            AuthRejection::Rpc(s) => (status_for_auth_code(s.code()), s.message().to_string()),
+            AuthRejection::Rpc(s) => (
+                // Delegate to the shared search-module mapper — same
+                // wire semantics, no reason to fork the table.  A real
+                // `ApiKeyAuthProvider` emits `ResourceExhausted` (rate
+                // limit) → 429 and `InvalidArgument` (malformed sk-key)
+                // → 400 through the shared map; a local subset table
+                // silently swallowed both into 500 (audit finding).
+                crate::handlers::search::grpc_status_to_http(s.code()),
+                s.message().to_string(),
+            ),
         };
         (status, Json(serde_json::json!({ "error": message }))).into_response()
-    }
-}
-
-/// gRPC → HTTP mapping for auth resolution.  A tighter table than
-/// the general search mapper: an `AuthProvider` cannot legitimately
-/// emit `NotFound` / `AlreadyExists` / `ResourceExhausted` — its
-/// entire contract is "resolve credentials or reject" — so we surface
-/// only the codes it can meaningfully return + the transport-level
-/// (`Unavailable` / `DeadlineExceeded`) codes any RPC can produce.
-fn status_for_auth_code(code: tonic::Code) -> StatusCode {
-    match code {
-        tonic::Code::Unauthenticated => StatusCode::UNAUTHORIZED,
-        tonic::Code::PermissionDenied => StatusCode::FORBIDDEN,
-        tonic::Code::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
-        tonic::Code::DeadlineExceeded => StatusCode::GATEWAY_TIMEOUT,
-        _ => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
 
@@ -249,29 +256,59 @@ mod tests {
     }
 
     #[test]
-    fn status_for_auth_code_maps_the_documented_table() {
-        assert_eq!(
-            status_for_auth_code(tonic::Code::Unauthenticated),
-            StatusCode::UNAUTHORIZED,
-        );
-        assert_eq!(
-            status_for_auth_code(tonic::Code::PermissionDenied),
-            StatusCode::FORBIDDEN,
-        );
-        assert_eq!(
-            status_for_auth_code(tonic::Code::Unavailable),
-            StatusCode::SERVICE_UNAVAILABLE,
-        );
-        assert_eq!(
-            status_for_auth_code(tonic::Code::DeadlineExceeded),
-            StatusCode::GATEWAY_TIMEOUT,
-        );
-        // Unmapped codes fall to 500 rather than degrade to 200 —
-        // matches the search-side mapper's fallback contract.
-        assert_eq!(
-            status_for_auth_code(tonic::Code::Internal),
-            StatusCode::INTERNAL_SERVER_ERROR,
-        );
+    fn parse_bearer_rejects_internal_whitespace_in_token() {
+        // RFC 6750 §2.1: `b64token` grammar admits NO whitespace.
+        // `Bearer sk-good garbage` would otherwise trim to
+        // `"sk-good garbage"` and slip past a NoAuth provider as
+        // "any token".  Reject as MalformedHeader.
+        //
+        // The HTTP header-value parser upstream already rejects
+        // CR/LF/NUL, so the only realistic in-token whitespace an
+        // attacker can inject is SP or HTAB.  Both must be caught
+        // here; the test-space vector below covers both plus a
+        // multi-token variant.
+        for header in [
+            "Bearer sk-good garbage",
+            "Bearer sk-x sk-y",
+            "Bearer sk-x\tsuffix",
+        ] {
+            let h = headers_with(header);
+            assert!(
+                matches!(parse_bearer(&h), Err(AuthRejection::MalformedHeader)),
+                "header {header:?} must reject internal whitespace",
+            );
+        }
+    }
+
+    #[test]
+    fn auth_rejection_rpc_covers_the_full_shared_status_table() {
+        // `AuthRejection::Rpc` now delegates to the shared search
+        // module mapper (`handlers::search::grpc_status_to_http`) —
+        // so a real `ApiKeyAuthProvider` returning
+        // `ResourceExhausted` (rate limit) surfaces as 429 not 500,
+        // and `InvalidArgument` (malformed sk-key) as 400 not 500.
+        // Pins the delegation instead of forking the mapping table.
+        use axum::response::IntoResponse;
+        for (code, expected) in [
+            (tonic::Code::Unauthenticated, StatusCode::UNAUTHORIZED),
+            (tonic::Code::PermissionDenied, StatusCode::FORBIDDEN),
+            (tonic::Code::Unavailable, StatusCode::SERVICE_UNAVAILABLE),
+            (tonic::Code::DeadlineExceeded, StatusCode::GATEWAY_TIMEOUT),
+            (
+                tonic::Code::ResourceExhausted,
+                StatusCode::TOO_MANY_REQUESTS,
+            ),
+            (tonic::Code::InvalidArgument, StatusCode::BAD_REQUEST),
+            (tonic::Code::Unimplemented, StatusCode::NOT_IMPLEMENTED),
+            (tonic::Code::Internal, StatusCode::INTERNAL_SERVER_ERROR),
+        ] {
+            let resp = AuthRejection::Rpc(tonic::Status::new(code, "test")).into_response();
+            assert_eq!(
+                resp.status(),
+                expected,
+                "code {code:?} must map to {expected}"
+            );
+        }
     }
 
     #[test]

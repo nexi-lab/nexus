@@ -86,6 +86,26 @@ pub struct AppState {
     pub auth: Arc<dyn AuthProvider>,
 }
 
+impl AppState {
+    /// Convenience constructor for tests / probes that need a fully-
+    /// wired [`AppState`] but do not care about the exact backend
+    /// target or auth policy.  Wires the search backend at
+    /// `grpc_target` (dial-on-first-use — never dialed if the test
+    /// does not hit a search route) and the default `NoAuth`
+    /// provider so bearer parsing / rejection can be tested
+    /// separately.  Cheap: both fields are just `Arc` allocations.
+    ///
+    /// Not for production — the composition root in `nexusd` builds
+    /// the same struct field-by-field with the real `SearchBackend`
+    /// target + `ApiKeyAuthProvider`.
+    pub fn for_tests(grpc_target: impl Into<Arc<str>>) -> Self {
+        Self {
+            search: SearchBackend::new(grpc_target),
+            auth: middleware::auth::default_no_auth_provider(),
+        }
+    }
+}
+
 /// Root [`Router`] carrying every configured route domain.  Callers
 /// supply the [`AppState`] (which owns the upstream client caches)
 /// so the same crate can be exercised in tests against a mock

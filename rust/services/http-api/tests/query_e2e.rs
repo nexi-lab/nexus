@@ -33,7 +33,7 @@ use nexus_http_api::search_proto::{
     RemoveIndexedDirectoryResponse, SetZoneIndexingModeRequest, SetZoneIndexingModeResponse,
     StatsRequest, StatsResponse,
 };
-use nexus_http_api::{bind_and_serve, AppState, SearchBackend};
+use nexus_http_api::{bind_and_serve, AppState};
 use tokio::net::TcpListener;
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::{Request, Response, Status};
@@ -205,13 +205,9 @@ impl Harness {
 }
 
 async fn spawn_http_listener(grpc_target: String) -> String {
-    let state = AppState {
-        search: SearchBackend::new(grpc_target),
-        // NoAuth so this file's tests stay focused on the query
-        // route surface; bearer parsing / rejection has its own
-        // cover in `tests/auth_middleware_e2e.rs`.
-        auth: nexus_http_api::middleware::auth::default_no_auth_provider(),
-    };
+    // `for_tests`: NoAuth so this file focuses on the query route
+    // surface (bearer cover lives in `tests/auth_middleware_e2e.rs`).
+    let state = AppState::for_tests(grpc_target);
     let (http_addr, fut) = bind_and_serve("127.0.0.1:0".parse().unwrap(), state)
         .await
         .expect("bind http listener");

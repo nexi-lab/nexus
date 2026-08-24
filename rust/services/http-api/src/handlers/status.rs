@@ -38,15 +38,11 @@ mod tests {
     use axum::http::{Request, StatusCode};
     use tower::ServiceExt;
 
-    use crate::search_backend::SearchBackend;
-
     fn test_state() -> AppState {
-        // Status handler does not touch the backend or auth; a dummy
-        // target that never gets dialed + NoAuth are fine.
-        AppState {
-            search: SearchBackend::new("http://127.0.0.1:1"),
-            auth: crate::middleware::auth::default_no_auth_provider(),
-        }
+        // Status handler does not touch the backend or auth; the
+        // `for_tests` helper's dummy target + NoAuth default fit
+        // exactly.
+        AppState::for_tests("http://127.0.0.1:1")
     }
 
     #[tokio::test]

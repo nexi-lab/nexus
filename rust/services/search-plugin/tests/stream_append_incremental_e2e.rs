@@ -495,11 +495,7 @@ async fn retention_trim_to_empty_records_stream_skip_in_streams_map_not_files_ma
     let mock = h.mock_mut();
     mock.add_dir("/");
     mock.add_dir("/logs");
-    mock.add_stream(
-        "/logs/wal",
-        b"turn-1: ORIGINALCONTENT\nturn-2: MORE\n",
-        1,
-    );
+    mock.add_stream("/logs/wal", b"turn-1: ORIGINALCONTENT\nturn-2: MORE\n", 1);
 
     let _ = index_root(&h.svc).await;
     let (before_bytes, _) = read_stream_state(&h.zone_root, "/logs/wal");

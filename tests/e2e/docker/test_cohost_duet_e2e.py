@@ -107,8 +107,7 @@ def test_cohost_agent_replies_over_a2a_mailbox() -> None:
             "from": SEEDER,
             "to": RESPONDER,
             "body": (
-                "You are being tested over a nexus A2A mailbox. "
-                "Reply with exactly one word: PONG"
+                "You are being tested over a nexus A2A mailbox. Reply with exactly one word: PONG"
             ),
         }
     ).encode()
@@ -128,9 +127,7 @@ def test_cohost_agent_replies_over_a2a_mailbox() -> None:
                 break
         time.sleep(2)
 
-    assert reply_text, (
-        f"{RESPONDER} never replied into {_inbox(SEEDER)} within {REPLY_TIMEOUT_S}s"
-    )
+    assert reply_text, f"{RESPONDER} never replied into {_inbox(SEEDER)} within {REPLY_TIMEOUT_S}s"
     # The reply is a MailboxEnvelope stamped from the responder, carrying its
     # LLM output. Assert both the routing (from == responder) and the content.
     parsed = json.loads(reply_text)

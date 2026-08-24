@@ -1,0 +1,119 @@
+# Co-host A2A duet E2E — builds the `nexusd-cluster-cohost` image (the assembly
+# binary with the in-process sudocode runtime linked) and runs a REAL LLM agent
+# duet over the nexus A2A mailbox in a container. Guards the merged
+# spawn-AgentState / SudoCodeSpawnAdapter path against regression, over the wire.
+#
+# See dockerfiles/Dockerfile.nexusd-cohost + docker-compose.cohost-duet.yml +
+# tests/e2e/docker/test_cohost_duet_e2e.py.
+#
+# REQUIRED repo secrets (the job is a no-op without them):
+#   * COHOST_BUILD_TOKEN  — a PAT with READ on BOTH private deps
+#     (nexi-lab/nexus-vfs AND sudoprivacy/sudocode); the cohost image git-fetches
+#     them at build time via a BuildKit secret. The default GITHUB_TOKEN cannot
+#     reach the cross-org sudocode repo.
+#   * SUDOROUTER_API_KEY  — the FUNDED sudorouter key (vault "SudoRouter" entry,
+#     unlimited main pool). The LLM turn 403s on a balance-capped key, so the
+#     test's reply assertion needs a funded one.
+
+name: cohost-duet-e2e
+
+on:
+  workflow_dispatch: {}
+  push:
+    paths:
+      - 'dockerfiles/Dockerfile.nexusd-cohost'
+      - 'dockerfiles/docker-compose.cohost-duet.yml'
+      - 'tests/e2e/docker/test_cohost_duet_e2e.py'
+      - 'tests/e2e/docker/runbook_helpers.py'
+      - '.github/workflows/cohost-duet-e2e.yml'
+
+jobs:
+  cohost-duet:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout nexus
+        uses: actions/checkout@v4
+
+      - name: Preflight — required secrets present
+        id: preflight
+        env:
+          BUILD_TOKEN: ${{ secrets.COHOST_BUILD_TOKEN }}
+          SR_KEY: ${{ secrets.SUDOROUTER_API_KEY }}
+        run: |
+          if [ -z "$BUILD_TOKEN" ] || [ -z "$SR_KEY" ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::COHOST_BUILD_TOKEN and/or SUDOROUTER_API_KEY not set — skipping the cohost duet E2E (needs both)."
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Docker Buildx
+        if: steps.preflight.outputs.run == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build nexusd-cluster-cohost image
+        if: steps.preflight.outputs.run == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.COHOST_BUILD_TOKEN }}
+        run: |
+          DOCKER_BUILDKIT=1 docker build \
+            -f dockerfiles/Dockerfile.nexusd-cohost \
+            --secret id=ghtoken,env=GH_TOKEN \
+            -t nexusd-cluster-cohost:latest .
+
+      - name: Set up Python
+        if: steps.preflight.outputs.run == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install test deps (nexus gRPC client + pytest)
+        if: steps.preflight.outputs.run == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test]"
+
+      - name: Start the cohost daemon
+        if: steps.preflight.outputs.run == 'true'
+        env:
+          SUDOROUTER_API_KEY: ${{ secrets.SUDOROUTER_API_KEY }}
+        run: |
+          docker compose -f dockerfiles/docker-compose.cohost-duet.yml up -d
+          docker compose -f dockerfiles/docker-compose.cohost-duet.yml ps
+
+      - name: Wait for the daemon healthy
+        if: steps.preflight.outputs.run == 'true'
+        run: |
+          deadline=$((SECONDS + 120))
+          while [ $SECONDS -lt $deadline ]; do
+            if docker exec nexus-cohost-duet bash -c 'timeout 1 bash -c "</dev/tcp/localhost/2126" 2>/dev/null'; then
+              echo "cohost daemon healthy (gRPC 2126) after ${SECONDS}s"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::cohost daemon never became healthy (120s)"
+          docker compose -f dockerfiles/docker-compose.cohost-duet.yml logs --tail=200
+          exit 1
+
+      - name: Run the co-host duet E2E
+        if: steps.preflight.outputs.run == 'true'
+        env:
+          COHOST_DUET_E2E: '1'
+          SUDOROUTER_API_KEY: ${{ secrets.SUDOROUTER_API_KEY }}
+          COHOST_DUET_GRPC: localhost:2126
+        run: |
+          pytest tests/e2e/docker/test_cohost_duet_e2e.py -v
+
+      - name: Dump daemon logs on failure
+        if: failure() && steps.preflight.outputs.run == 'true'
+        run: |
+          echo "::group::nexus-cohost-duet"
+          docker logs nexus-cohost-duet --tail=400 2>&1 || echo "(no logs)"
+          echo "::endgroup::"
+
+      - name: Tear down
+        if: always() && steps.preflight.outputs.run == 'true'
+        run: |
+          docker compose -f dockerfiles/docker-compose.cohost-duet.yml down -v --remove-orphans || true

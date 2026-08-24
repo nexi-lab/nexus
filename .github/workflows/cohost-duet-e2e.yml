@@ -18,14 +18,15 @@
 name: cohost-duet-e2e
 
 on:
+  # On-demand — the primary path (run it when the cohost surface changes, or to
+  # re-verify the duet). Manual dispatch avoids paying for a full cross-repo
+  # image build + a live LLM turn on every push.
   workflow_dispatch: {}
-  push:
-    paths:
-      - 'dockerfiles/Dockerfile.nexusd-cohost'
-      - 'dockerfiles/docker-compose.cohost-duet.yml'
-      - 'tests/e2e/docker/test_cohost_duet_e2e.py'
-      - 'tests/e2e/docker/runbook_helpers.py'
-      - '.github/workflows/cohost-duet-e2e.yml'
+  # Weekly regression guard (Mondays 03:00 UTC). One run ≈ 10-15 min of
+  # ubuntu-latest (~$0.12 Actions) + one short LLM turn (~$0.02-0.05, negligible
+  # against the unlimited main pool). Switch to '0 3 * * *' for daily.
+  schedule:
+    - cron: '0 3 * * 1'
 
 jobs:
   cohost-duet:

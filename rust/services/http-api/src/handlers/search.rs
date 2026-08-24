@@ -307,50 +307,73 @@ pub struct QueryResponseBody {
     pub error: Option<String>,
 }
 
-/// Parse the `query_type` wire string into the proto enum.
+/// Shared "wire-string to proto enum" parser used by
+/// [`parse_query_type`] + [`parse_fusion_method`].
 ///
-/// Case-insensitive match against the three defined variants;
-/// empty string (field absent) matches the proto's
-/// `UNSPECIFIED = 0 ⇒ treated as keyword` posture and falls to
-/// `Keyword`.  A non-empty NON-matching value returns `Err` — a
-/// silent fall-through to `Keyword` would hide caller typos
-/// (`"semantik"`) as "keyword returned no hits" for weeks.  The
-/// caller maps `Err` to `400 Bad Request` so the client sees the
-/// typo immediately.
-fn parse_query_type(s: &str) -> Result<QueryType, String> {
+/// # Contract
+///
+/// * Empty `s` — returns `Ok(default)`.  Matches the proto's
+///   `UNSPECIFIED = 0` posture: an absent field means "server
+///   default", not an error.
+/// * Case-insensitive match against `variants` — returns `Ok(variant)`.
+/// * Non-empty NON-matching `s` — returns `Err` naming the field and
+///   listing the accepted values.  The caller maps this to `400 Bad
+///   Request` so a caller typo (`"semantik"`) surfaces as an
+///   actionable error instead of silently degrading to the default.
+///
+/// Extracted at the extract-on-second-occurrence trigger — both
+/// query_type and fusion_method share the identical
+/// "empty→default, N case-insensitive branches, else Err naming the
+/// field" template.
+fn parse_wire_enum<T: Copy>(
+    s: &str,
+    field: &str,
+    default: T,
+    variants: &[(&str, T)],
+) -> Result<T, String> {
     if s.is_empty() {
-        return Ok(QueryType::Keyword);
+        return Ok(default);
     }
-    if s.eq_ignore_ascii_case("keyword") {
-        Ok(QueryType::Keyword)
-    } else if s.eq_ignore_ascii_case("semantic") {
-        Ok(QueryType::Semantic)
-    } else if s.eq_ignore_ascii_case("hybrid") {
-        Ok(QueryType::Hybrid)
-    } else {
-        Err(format!(
-            "unknown query_type {s:?} (expected \"keyword\", \"semantic\", or \"hybrid\")"
-        ))
+    for (name, variant) in variants {
+        if s.eq_ignore_ascii_case(name) {
+            return Ok(*variant);
+        }
     }
+    let names: Vec<String> = variants.iter().map(|(n, _)| format!("\"{n}\"")).collect();
+    Err(format!(
+        "unknown {field} {s:?} (expected {})",
+        names.join(", ")
+    ))
+}
+
+/// Parse the `query_type` wire string into the proto enum.
+/// See [`parse_wire_enum`] for the shared empty-vs-typo contract.
+fn parse_query_type(s: &str) -> Result<QueryType, String> {
+    parse_wire_enum(
+        s,
+        "query_type",
+        QueryType::Keyword,
+        &[
+            ("keyword", QueryType::Keyword),
+            ("semantic", QueryType::Semantic),
+            ("hybrid", QueryType::Hybrid),
+        ],
+    )
 }
 
 /// Parse the `fusion_method` wire string into the proto enum.
-/// Same fail-loud contract as [`parse_query_type`].
+/// See [`parse_wire_enum`] for the shared empty-vs-typo contract.
 fn parse_fusion_method(s: &str) -> Result<FusionMethod, String> {
-    if s.is_empty() {
-        return Ok(FusionMethod::Rrf);
-    }
-    if s.eq_ignore_ascii_case("rrf") {
-        Ok(FusionMethod::Rrf)
-    } else if s.eq_ignore_ascii_case("weighted") {
-        Ok(FusionMethod::Weighted)
-    } else if s.eq_ignore_ascii_case("rrf_weighted") {
-        Ok(FusionMethod::RrfWeighted)
-    } else {
-        Err(format!(
-            "unknown fusion_method {s:?} (expected \"rrf\", \"weighted\", or \"rrf_weighted\")"
-        ))
-    }
+    parse_wire_enum(
+        s,
+        "fusion_method",
+        FusionMethod::Rrf,
+        &[
+            ("rrf", FusionMethod::Rrf),
+            ("weighted", FusionMethod::Weighted),
+            ("rrf_weighted", FusionMethod::RrfWeighted),
+        ],
+    )
 }
 
 fn hit_from_proto(r: ProtoQueryResult) -> QueryHit {
@@ -503,6 +526,17 @@ fn grpc_status_to_http(code: tonic::Code) -> StatusCode {
         // Ok / Cancelled / Unknown / Internal / DataLoss — no HTTP
         // status distinguishes these usefully to a caller.  500
         // ensures an unmapped upstream signal never surfaces as 200.
-        _ => StatusCode::INTERNAL_SERVER_ERROR,
+        //
+        // Exhaustive rather than `_` so a tonic upgrade that adds a
+        // new `Code` variant breaks the build here loudly instead of
+        // silently degrading production callers to 500.  When that
+        // happens: add the new variant with a considered HTTP mapping
+        // (or leave it in this fallback group with a docstring
+        // update) — do NOT add `_ => 500` back.
+        tonic::Code::Ok
+        | tonic::Code::Cancelled
+        | tonic::Code::Unknown
+        | tonic::Code::Internal
+        | tonic::Code::DataLoss => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }

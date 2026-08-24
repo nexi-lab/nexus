@@ -51,15 +51,13 @@ enum MockBehaviour {
         results: Vec<QueryResult>,
         error: Option<String>,
     },
-    InvalidArgument(String),
     /// Upstream returns a specific `tonic::Code`.  Lets a test pin
     /// the full `code → HTTP status` mapping table in
     /// `handlers/search.rs::grpc_status_to_http` without a
-    /// per-variant enum blow-up here.
-    RpcCode {
-        code: tonic::Code,
-        message: String,
-    },
+    /// per-variant enum blow-up here.  Subsumes the earlier
+    /// `InvalidArgument(String)` variant (which was a strict subset
+    /// of `RpcCode { code: tonic::Code::InvalidArgument, .. }`).
+    RpcCode { code: tonic::Code, message: String },
 }
 
 #[derive(Clone)]
@@ -78,7 +76,6 @@ impl SearchService for MockSearchService {
                 results: results.clone(),
                 error: error.clone(),
             })),
-            MockBehaviour::InvalidArgument(msg) => Err(Status::invalid_argument(msg.clone())),
             MockBehaviour::RpcCode { code, message } => Err(Status::new(*code, message.clone())),
         }
     }
@@ -675,9 +672,10 @@ async fn query_missing_body_returns_400() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn query_upstream_invalid_argument_maps_to_400() {
-    let h = Harness::start(MockBehaviour::InvalidArgument(
-        "bad recency_weight: out of range".to_string(),
-    ))
+    let h = Harness::start(MockBehaviour::RpcCode {
+        code: tonic::Code::InvalidArgument,
+        message: "bad recency_weight: out of range".to_string(),
+    })
     .await;
     let resp = reqwest::Client::new()
         .post(format!("{}/v2/search/query", h.http_base))

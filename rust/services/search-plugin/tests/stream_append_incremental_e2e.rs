@@ -468,28 +468,94 @@ async fn new_stream_at_previously_deleted_path_indexes_from_offset_zero() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn empty_stream_records_checkpoint_in_streams_map_not_files_map() {
-    // Regression pin for the SSOT invariant: an empty DT_STREAM's
-    // skip-record (via `record_content_skip`) must land in the
-    // STREAMS map, not the FILES map.  The pre-fix code called the
-    // DT_REG-flavoured `sinks.state.record()` unconditionally, so a
-    // stream that started empty (or ended up empty after chunking)
-    // silently appeared in `files` — violating the "a path lives in
-    // exactly one map" invariant that `IndexState::verdict` relies
-    // on.
+async fn retention_trim_to_empty_records_stream_skip_in_streams_map_not_files_map() {
+    // Regression pin for the SSOT invariant that MUST fire through
+    // `record_content_skip(EntryKind::Stream)`.
+    //
+    // The earlier version of this test used a whitespace-only
+    // stream, which is chunked by `index_one_stream_append`'s
+    // append-path whitespace-tail branch (`stream_advance(new_len,
+    // next_chunk_index, mtime)`) — it never reached
+    // `record_content_skip`.  A test that does not exercise the
+    // fixed code cannot pin the fix.
+    //
+    // This version drives the flow through the fixed code:
+    //   1. Index a stream with real content — checkpoint > 0.
+    //   2. Wipe the stream to zero bytes (`new_len < indexed_byte_len`).
+    //   3. Refresh — retention-trim recovery fires → `index_one_stream_full`
+    //      is called with `bytes: &[]` → the `bytes.is_empty()` branch
+    //      → `record_content_skip(EntryKind::Stream)`.
+    //
+    // Pre-fix, `record_content_skip` unconditionally called
+    // `state.record(path, mtime)` (DT_REG-shaped), so the stream
+    // path appeared in the FILES map — violating "a path lives in
+    // exactly one map".  Post-fix, the STREAMS map gets a
+    // `(0, 0, mtime)` checkpoint and the FILES map stays clean.
     let h = Harness::start();
     let mock = h.mock_mut();
     mock.add_dir("/");
     mock.add_dir("/logs");
-    // Whitespace-only stream — chunker returns empty; hits the
-    // `record_content_skip` branch inside `index_one_stream_full`
-    // via the initial full-first-pass path.
-    mock.add_stream("/logs/quiet", b"   \n\n  \t\n", 1);
+    mock.add_stream(
+        "/logs/wal",
+        b"turn-1: ORIGINALCONTENT\nturn-2: MORE\n",
+        1,
+    );
 
     let _ = index_root(&h.svc).await;
+    let (before_bytes, _) = read_stream_state(&h.zone_root, "/logs/wal");
+    assert!(before_bytes > 0, "first Index must checkpoint > 0");
+
+    // Wipe: `new_len=0 < before_bytes` triggers the retention-trim
+    // recovery in `index_one_stream_append` →
+    // `index_one_stream_full(bytes=[])` → the `bytes.is_empty()`
+    // branch → `record_content_skip(EntryKind::Stream)`.
+    mock.add_stream("/logs/wal", b"", 2);
+    let r = refresh_root(&h.svc).await;
+    assert!(r.error.is_none(), "refresh error: {:?}", r.error);
 
     assert!(
-        !file_state_present(&h.zone_root, "/logs/quiet"),
-        "SSOT violation: DT_STREAM path must NEVER land in the files map",
+        !file_state_present(&h.zone_root, "/logs/wal"),
+        "SSOT violation: `record_content_skip(EntryKind::Stream)` cross-wrote DT_STREAM path into FILES map",
+    );
+    assert!(
+        stream_state_present(&h.zone_root, "/logs/wal"),
+        "stream skip-checkpoint must remain in STREAMS map after content-skip",
+    );
+    let (after_bytes, after_chunks) = read_stream_state(&h.zone_root, "/logs/wal");
+    assert_eq!(
+        (after_bytes, after_chunks),
+        (0, 0),
+        "wiped-stream checkpoint must be (0, 0) — the correct 'zero chunks' shape",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn deleted_stream_tombstone_never_lands_in_files_map() {
+    // Companion pin for the `remove_one` tombstone-branch fix.
+    // When ANN is unavailable during a sweep, `remove_one` keeps a
+    // tombstone (`mtime = None`) so the path stays in `known_paths()`
+    // and a later pass finishes the purge.  Pre-fix the tombstone
+    // always went to the FILES map — even for a DT_STREAM path —
+    // same cross-map class as `record_content_skip`.  This harness
+    // always has an ANN sink, so `remove_one` hits the
+    // successful-purge branch here; the assertion is broader — no
+    // branch of `remove_one` may leave a DT_STREAM path in the
+    // FILES map.
+    let h = Harness::start();
+    let mock = h.mock_mut();
+    mock.add_dir("/");
+    mock.add_dir("/logs");
+    mock.add_stream("/logs/audit", b"turn-1: DELETEDCONTENT\n", 1);
+    let _ = index_root(&h.svc).await;
+    assert!(stream_state_present(&h.zone_root, "/logs/audit"));
+    assert!(!file_state_present(&h.zone_root, "/logs/audit"));
+
+    // Delete + Refresh → `remove_one` fires for the stream path.
+    h.mock_mut().remove_path("/logs/audit");
+    let _ = refresh_root(&h.svc).await;
+
+    assert!(
+        !file_state_present(&h.zone_root, "/logs/audit"),
+        "SSOT violation: `remove_one` cross-wrote DT_STREAM path into FILES map",
     );
 }

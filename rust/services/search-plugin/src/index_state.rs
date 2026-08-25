@@ -319,10 +319,23 @@ impl IndexState {
     /// per-file after both FTS and ANN adds land, before the
     /// commit — so a mid-Refresh crash leaves the cache reflecting
     /// only files that made it through the writer transaction.
+    ///
+    /// # SSOT invariant — auto-purges any DT_STREAM checkpoint
+    ///
+    /// A path lives in EXACTLY ONE of `inner` (DT_REG) / `streams`
+    /// (DT_STREAM) at any time.  `record()` writes the DT_REG side
+    /// AND removes any lingering DT_STREAM checkpoint so the
+    /// invariant is enforced at the owner — callers do not need to
+    /// dispatch by entry-kind first.  Symmetric with
+    /// [`Self::stream_advance`].  If the invariant were caller-
+    /// enforced, three sites in `service.rs` had to guard it
+    /// individually (audit history: #4696 / #4702 / follow-ups);
+    /// moving the guard to the SSOT closes the whole class.
     pub fn record(&self, path: &str, mtime_ms: Option<i64>) {
         self.inner
             .write()
             .insert(path.to_string(), FileEntry { mtime_ms });
+        self.streams.write().remove(path);
     }
 
     /// Drop a path from the cache — called after the corresponding
@@ -352,6 +365,14 @@ impl IndexState {
     /// Never regresses the checkpoint — a stale caller trying to
     /// write a smaller value must call [`Self::forget_stream`]
     /// first, which is the retention-trim recovery path.
+    ///
+    /// # SSOT invariant — auto-purges any DT_REG entry
+    ///
+    /// Mirror of [`Self::record`]: the "path lives in at most one
+    /// map" invariant is owner-enforced.  A path that flips
+    /// DT_REG → DT_STREAM (e.g. a fresh `sys_setattr` on a
+    /// previously-regular path) automatically loses its FILES
+    /// entry when the stream side records its first checkpoint.
     pub fn stream_advance(
         &self,
         path: &str,
@@ -367,6 +388,33 @@ impl IndexState {
                 mtime_ms,
             },
         );
+        self.inner.write().remove(path);
+    }
+
+    /// Record a "known but has no verified content" tombstone —
+    /// keeps `path` visible to Refresh's stale-sweep while
+    /// forcing the next visit to verdict `Changed`.
+    ///
+    /// Auto-dispatches by current map presence so the tombstone
+    /// lands in the map that already tracks `path`:
+    ///   * Path already in the STREAMS map ⇒ `stream_advance(path,
+    ///     0, 0, None)` — preserves the "this is a stream"
+    ///     classification so a subsequent Refresh takes the
+    ///     DT_STREAM verdict path.
+    ///   * Otherwise ⇒ `record(path, None)` — the DT_REG default.
+    ///
+    /// After the call, `path` lives in exactly one map (the
+    /// auto-purge on [`Self::record`] / [`Self::stream_advance`]
+    /// enforces it).  Callers previously did this dispatch
+    /// inline via `if state.stream_state(path).is_some() { … }
+    /// else { … }` at 3 sites in `service.rs`; consolidating here
+    /// closes the "path in both maps" invariant at the owner.
+    pub fn tombstone(&self, path: &str) {
+        if self.streams.read().contains_key(path) {
+            self.stream_advance(path, 0, 0, None);
+        } else {
+            self.record(path, None);
+        }
     }
 
     /// Drop the checkpoint for `path` — retention-trim recovery
@@ -621,6 +669,88 @@ mod tests {
         let s = IndexState::open_or_create(dir).expect("reopen-2");
         assert!(!s.ensure_embedder_generation("tag-b"));
         assert!(s.ensure_embedder_generation("tag-a"));
+    }
+
+    #[test]
+    fn record_auto_purges_any_prior_stream_checkpoint_for_same_path() {
+        // SSOT invariant: a path lives in AT MOST one map.
+        // `record()` writing the DT_REG side must remove any stale
+        // DT_STREAM checkpoint for the same path — otherwise
+        // callers who forget to call `forget_stream` first (audit
+        // history: 3 sites in service.rs did this) leak the invariant.
+        let s = IndexState::open_or_create(tempdir()).expect("open");
+        s.stream_advance("/p", 100, 5, Some(1));
+        assert!(s.stream_state("/p").is_some());
+        s.record("/p", Some(2));
+        assert_eq!(
+            s.stream_state("/p"),
+            None,
+            "record() must auto-purge the stale DT_STREAM checkpoint",
+        );
+        assert_eq!(s.cached_mtime("/p"), Some(Some(2)));
+    }
+
+    #[test]
+    fn stream_advance_auto_purges_any_prior_file_entry_for_same_path() {
+        // Symmetric to record's auto-purge — path flipping
+        // DT_REG → DT_STREAM (e.g. fresh sys_setattr) must lose
+        // its FILES entry so `verdict()` reads a single-source
+        // truth.
+        let s = IndexState::open_or_create(tempdir()).expect("open");
+        s.record("/p", Some(1));
+        assert_eq!(s.cached_mtime("/p"), Some(Some(1)));
+        s.stream_advance("/p", 50, 3, Some(2));
+        assert_eq!(
+            s.cached_mtime("/p"),
+            None,
+            "stream_advance() must auto-purge the stale DT_REG entry",
+        );
+        assert!(s.stream_state("/p").is_some());
+    }
+
+    #[test]
+    fn tombstone_lands_in_streams_map_when_path_is_a_stream() {
+        // `tombstone(path)` — the tombstone helper collapses the
+        // pre-existing 3-site `if state.stream_state(path).is_some()
+        // { stream_advance(0,0,None) } else { record(None) }`
+        // dispatch into a single call.  For a DT_STREAM path the
+        // tombstone must land in the STREAMS map as a `(0, 0, None)`
+        // checkpoint, so the next Refresh takes the DT_STREAM
+        // verdict path (matches the visit's stat dispatch).
+        let s = IndexState::open_or_create(tempdir()).expect("open");
+        s.stream_advance("/stream", 42, 3, Some(1));
+        s.tombstone("/stream");
+        let stream = s.stream_state("/stream").expect("still in streams map");
+        assert_eq!(stream.indexed_byte_len, 0, "tombstone resets byte-len");
+        assert_eq!(stream.next_chunk_index, 0, "tombstone resets chunk-index");
+        assert_eq!(stream.mtime_ms, None, "tombstone drops mtime");
+        // And nothing leaked into the files map.
+        assert_eq!(s.cached_mtime("/stream"), None);
+    }
+
+    #[test]
+    fn tombstone_lands_in_files_map_when_path_is_a_regular_file() {
+        // Symmetric: a DT_REG path (or a not-yet-seen path)
+        // tombstones as `record(None)`, landing in the FILES map.
+        let s = IndexState::open_or_create(tempdir()).expect("open");
+        s.record("/reg", Some(1));
+        s.tombstone("/reg");
+        assert_eq!(s.cached_mtime("/reg"), Some(None), "tombstone drops mtime");
+        assert_eq!(
+            s.stream_state("/reg"),
+            None,
+            "regular-file tombstone must not leak into STREAMS map",
+        );
+    }
+
+    #[test]
+    fn tombstone_of_unknown_path_defaults_to_files_map() {
+        // A never-seen path has no prior classification; default to
+        // `record(None)` (matches the DT_REG-heavy Refresh sweep).
+        let s = IndexState::open_or_create(tempdir()).expect("open");
+        s.tombstone("/unknown");
+        assert_eq!(s.cached_mtime("/unknown"), Some(None));
+        assert_eq!(s.stream_state("/unknown"), None);
     }
 
     #[test]

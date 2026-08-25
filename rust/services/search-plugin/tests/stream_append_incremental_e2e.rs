@@ -527,16 +527,23 @@ async fn retention_trim_to_empty_records_stream_skip_in_streams_map_not_files_ma
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn deleted_stream_tombstone_never_lands_in_files_map() {
-    // Companion pin for the `remove_one` tombstone-branch fix.
-    // When ANN is unavailable during a sweep, `remove_one` keeps a
-    // tombstone (`mtime = None`) so the path stays in `known_paths()`
-    // and a later pass finishes the purge.  Pre-fix the tombstone
-    // always went to the FILES map — even for a DT_STREAM path —
-    // same cross-map class as `record_content_skip`.  This harness
-    // always has an ANN sink, so `remove_one` hits the
-    // successful-purge branch here; the assertion is broader — no
-    // branch of `remove_one` may leave a DT_STREAM path in the
-    // FILES map.
+    // Pin for the `remove_one` tombstone branch — the ACTUAL fixed
+    // branch, not just the surrounding surface.  The tombstone
+    // branch fires when `sinks.ann == None` (no embedder wired) BUT
+    // `zone_has_ann == true` (an `ann-*/` dir exists on disk from a
+    // prior indexing pass).  Force that combination by creating an
+    // empty `ann-KEYWORD/` dir before Refresh — otherwise
+    // `zone_has_ann_dir()` returns false and the sweep takes the
+    // early `state.forget()` branch, leaving the fixed code
+    // unexercised (a pre-audit test with the same shape passed even
+    // on pre-fix code because it never reached the fixed branch).
+    //
+    // Pre-fix, the tombstone always called `state.record(path, None)`
+    // regardless of the deleted path's entry-type, cross-writing a
+    // DT_STREAM path into the FILES map (SSOT violation → duplicate
+    // `known_paths()` entries → double-processing at the next sweep).
+    // Post-fix + the SSOT enforcement in `IndexState`, the tombstone
+    // lands in the STREAMS map for a DT_STREAM path.
     let h = Harness::start();
     let mock = h.mock_mut();
     mock.add_dir("/");
@@ -546,12 +553,71 @@ async fn deleted_stream_tombstone_never_lands_in_files_map() {
     assert!(stream_state_present(&h.zone_root, "/logs/audit"));
     assert!(!file_state_present(&h.zone_root, "/logs/audit"));
 
-    // Delete + Refresh → `remove_one` fires for the stream path.
+    // Force the fixed tombstone branch: create an empty ann-*/ dir
+    // so `zone_has_ann_dir()` returns true while `sinks.ann` stays
+    // None (no embedder wired in this harness).  `remove_one`'s
+    // pattern-match now falls through to `None if zone_has_ann` —
+    // the branch this test is meant to pin.
+    std::fs::create_dir_all(h.zone_root.join("ann-KEYWORD"))
+        .expect("create empty ann-*/ dir to force zone_has_ann=true");
+
+    // Delete + Refresh → `remove_one` fires the tombstone branch.
     h.mock_mut().remove_path("/logs/audit");
     let _ = refresh_root(&h.svc).await;
 
     assert!(
         !file_state_present(&h.zone_root, "/logs/audit"),
-        "SSOT violation: `remove_one` cross-wrote DT_STREAM path into FILES map",
+        "SSOT violation: `remove_one` tombstone cross-wrote DT_STREAM path into FILES map",
+    );
+    // Also positive: the tombstone landed in the STREAMS map (as a
+    // `(0, 0, None)` checkpoint) so `known_paths()` still returns
+    // the path for the next sweep to purge.
+    assert!(
+        stream_state_present(&h.zone_root, "/logs/audit"),
+        "tombstone must remain in STREAMS map so next refresh purges cleanly",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn notify_file_change_delete_of_stream_never_cross_writes() {
+    // Wire-reachable regression pin for the 3rd cross-map site.  A
+    // client can hit `NotifyFileChange{change_type="delete", path=
+    // <DT_STREAM path>}` and — pre-fix — `do_notify_file_change`'s
+    // delete branch unconditionally called `state.record(path, None)`,
+    // cross-writing a stream path into the FILES map.  Same SSOT
+    // class as #4696 / #4702.  Fix: dispatches via `state.tombstone(
+    // path)`, which lands in the STREAMS map for a stream path
+    // (and the FILES map for a DT_REG path).
+    let h = Harness::start();
+    let mock = h.mock_mut();
+    mock.add_dir("/");
+    mock.add_dir("/logs");
+    mock.add_stream("/logs/audit", b"turn-1: X\n", 1);
+    let _ = index_root(&h.svc).await;
+    assert!(stream_state_present(&h.zone_root, "/logs/audit"));
+
+    // Simulate the wire call — invoke the RPC surface directly.
+    use nexus_search_plugin::search_proto::NotifyFileChangeRequest;
+    let ack = h
+        .svc
+        .notify_file_change(Request::new(NotifyFileChangeRequest {
+            zone_id: "root".into(),
+            path: "/logs/audit".into(),
+            change_type: "delete".into(),
+            auth_token: String::new(),
+        }))
+        .await
+        .expect("notify_file_change")
+        .into_inner();
+    assert_eq!(ack.status, "accepted");
+
+    // SSOT invariant.
+    assert!(
+        !file_state_present(&h.zone_root, "/logs/audit"),
+        "SSOT violation: NotifyFileChange(delete) cross-wrote DT_STREAM path into FILES map",
+    );
+    assert!(
+        stream_state_present(&h.zone_root, "/logs/audit"),
+        "tombstone for DT_STREAM must remain in STREAMS map so the next refresh purges cleanly",
     );
 }

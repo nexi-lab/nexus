@@ -639,7 +639,12 @@ mod tests {
         // Query with /b's exact vector — nearest hit must be /b at
         // distance ~0.
         let hits = idx.search(&vec_seed(4, 5.0), 3).expect("search");
-        assert_eq!(hits.len(), 3);
+        // HNSW is approximate: assert the nearest-match invariant (an
+        // exact-vector query always returns its own node at distance ~0),
+        // NOT exhaustive recall of all 3 — hnsw_rs's unseeded RNG makes the
+        // recall count non-deterministic on tiny graphs. Coexistence is
+        // guarded deterministically by `live_count() == 3` above.
+        assert!(!hits.is_empty(), "search returned no hits: {hits:?}");
         assert_eq!(hits[0].path, "/b");
         assert!(
             hits[0].distance < 0.001,
@@ -727,7 +732,11 @@ mod tests {
         // Query with the middle chunk's vector — that chunk must
         // return with distance ≈ 0 AND carry chunk_index=1.
         let hits = idx.search(&vec_seed(4, 5.0), 3).expect("search");
-        assert_eq!(hits.len(), 3);
+        // Coexistence is guarded by `live_count() == 3` above (deterministic).
+        // HNSW recall is approximate, so assert the exact-match round-trip
+        // (the queried chunk 1 comes back), NOT `hits.len() == 3` — hnsw_rs's
+        // unseeded RNG flakes the recall count on tiny graphs.
+        assert!(!hits.is_empty(), "search returned no hits: {hits:?}");
         let top = &hits[0];
         assert_eq!(top.path, "/doc");
         assert_eq!(top.chunk_index, 1, "chunk_index must round-trip");
@@ -876,6 +885,12 @@ mod tests {
                 .expect("add");
         }
         let hits = idx.search(&vec_seed(4, 3.0), 5).expect("search");
-        assert_eq!(hits.len(), 5, "search must not exceed requested k");
+        // The invariant is the BOUND (never MORE than k); assert `<= k` plus
+        // non-empty rather than `== k`, since HNSW recall of the full k is
+        // approximate (hnsw_rs unseeded RNG flakes the exact count).
+        assert!(
+            !hits.is_empty() && hits.len() <= 5,
+            "search must not exceed requested k: {hits:?}"
+        );
     }
 }

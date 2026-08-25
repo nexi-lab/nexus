@@ -74,10 +74,15 @@ use crate::AppState;
 ///   provider decides — `NoAuth` accepts, `ApiKeyAuthProvider`
 ///   rejects with `Unauthenticated`.
 /// * `Err(AuthRejection::MalformedHeader)` — the header is PRESENT
-///   but not a well-formed `Bearer <non-empty-token>` (wrong
-///   scheme, non-ASCII bytes, empty after `Bearer`).  A caller
-///   that ships an `Authorization` header CLEARLY intended to
-///   authenticate; a silent fall-through to empty-token would
+///   but not a well-formed `Bearer <non-empty-token>`:
+///     * wrong scheme (e.g. `Basic <b64>` / `Digest realm=…`),
+///     * non-ASCII bytes,
+///     * empty after `Bearer`, OR
+///     * contains embedded whitespace (SP / HTAB) after trim —
+///       RFC 6750 §2.1 `b64token` admits no whitespace.
+///
+///   A caller that ships an `Authorization` header CLEARLY intended
+///   to authenticate; a silent fall-through to empty-token would
 ///   read a `Basic dXNlcjpwYXNz` header as "no credentials" and
 ///   admit the request under `NoAuth`.  Reject immediately.
 ///

@@ -2439,7 +2439,6 @@ fn index_one_stream_full(
 /// (idempotent); the tombstone survives until a refresh with a
 /// working ANN sink completes the removal.
 fn remove_one(sinks: &IndexSinks<'_>, vfs_path: &str, zone_has_ann: bool) -> bool {
-    let was_stream = sinks.state.stream_state(vfs_path).is_some();
     sinks.fts.delete_all_chunks(vfs_path);
     match sinks.ann {
         Some(ann) => {
@@ -2455,18 +2454,11 @@ fn remove_one(sinks: &IndexSinks<'_>, vfs_path: &str, zone_has_ann: bool) -> boo
         None => {
             // Keep the tombstone: mtime None so the entry always
             // verdicts Changed and never masquerades as current.
-            // Preserve the checkpoint SHAPE — a DT_STREAM tombstone
-            // must land in the STREAMS map (as a `(0, 0, None)`
-            // checkpoint), not the FILES map, so a subsequent
-            // `verdict()` reads it from the right side and so
-            // `known_paths()` doesn't double-count.  Same SSOT
-            // invariant the sibling `record_content_skip` fix
-            // enforces (see `EntryKind` docs).
-            if was_stream {
-                sinks.state.stream_advance(vfs_path, 0, 0, None);
-            } else {
-                sinks.state.record(vfs_path, None);
-            }
+            // `tombstone()` picks the correct map (STREAMS if the
+            // path already checkpoints there, FILES otherwise) and
+            // auto-purges the other so the SSOT invariant holds —
+            // callers do not need to dispatch by entry-kind first.
+            sinks.state.tombstone(vfs_path);
             tracing::warn!(
                 path = %vfs_path,
                 "refresh sweep: ANN sink unavailable — kept deletion tombstone",
@@ -2861,7 +2853,6 @@ fn do_index_documents(
         // ANN → retry tombstone kept) — the zone did not converge
         // this pass (review R8).
         let content_skip = |path: &str| -> bool {
-            let was_stream = state.stream_state(path).is_some();
             fts.delete_all_chunks(path);
             match ann.as_ref() {
                 Some(a) => {
@@ -2872,17 +2863,9 @@ fn do_index_documents(
                 None if zone_has_ann => {
                     // Vectors may exist but are unreachable — retry
                     // tombstone so a later pass finishes the purge.
-                    // Same SSOT-preserving branch as `remove_one`'s
-                    // tombstone: a DT_STREAM path lands in the
-                    // STREAMS map, not the FILES map.  `Document`
-                    // paths are DT_REG-shaped in practice, but
-                    // nothing at the type level enforces that, so
-                    // the branch stays defensive.
-                    if was_stream {
-                        state.stream_advance(path, 0, 0, None);
-                    } else {
-                        state.record(path, None);
-                    }
+                    // `tombstone()` dispatches to the correct map
+                    // (matches the `remove_one` posture).
+                    state.tombstone(path);
                     true
                 }
                 None => {
@@ -3083,7 +3066,15 @@ fn do_notify_file_change(
             // would keep returning the deleted path (review R3).
             // Refresh sees the tombstone, misses the path in the
             // walk, and removes FTS remnants + ANN + state together.
-            state.record(path, None);
+            //
+            // `tombstone()` picks the correct map (STREAMS if the
+            // deleted path is a DT_STREAM, FILES otherwise); wire-
+            // reachable — a client can `NotifyFileChange{change_type=
+            // "delete", path=<DT_STREAM path>}` and pre-fix
+            // `state.record(path, None)` cross-wrote a stream path
+            // into the FILES map (same SSOT class as the earlier
+            // #4696 / #4702 fixes).
+            state.tombstone(path);
             if let Err(e) = fts.commit() {
                 return Err(format!("fts commit: {e}"));
             }

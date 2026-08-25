@@ -44,7 +44,10 @@ enum MockBehaviour {
         truncated: bool,
         error: Option<String>,
     },
-    InvalidArgument(String),
+    /// Upstream returns a specific `tonic::Code`.  Same shape as the
+    /// query-side + glob-side mocks; subsumes the earlier
+    /// `InvalidArgument(String)` variant which was a strict subset.
+    RpcCode { code: tonic::Code, message: String },
 }
 
 #[derive(Clone)]
@@ -68,7 +71,7 @@ impl SearchService for MockSearchService {
                 truncated: *truncated,
                 error: error.clone(),
             })),
-            MockBehaviour::InvalidArgument(msg) => Err(Status::invalid_argument(msg.clone())),
+            MockBehaviour::RpcCode { code, message } => Err(Status::new(*code, message.clone())),
         }
     }
 
@@ -323,9 +326,10 @@ async fn grep_missing_pattern_returns_400() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn grep_upstream_invalid_argument_maps_to_400() {
-    let h = Harness::start(MockBehaviour::InvalidArgument(
-        "bad regex: unclosed character class".to_string(),
-    ))
+    let h = Harness::start(MockBehaviour::RpcCode {
+        code: tonic::Code::InvalidArgument,
+        message: "bad regex: unclosed character class".to_string(),
+    })
     .await;
 
     let resp = reqwest::Client::new()

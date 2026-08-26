@@ -65,3 +65,16 @@ sudocode-tools = { package = "tools", git = "https://github.com/sudoprivacy/sudo
 # via services / nexus-cluster at the same workspace pin, so this direct dep
 # adds no new compilation and keeps one `Kernel` type.
 kernel = { workspace = true, default-features = false }
+
+# HTTP-API axum shim over the search-plugin gRPC surface (part of
+# the R10 nexus-server → pure-Rust migration; epic #4674).  Wired
+# in conditionally — only builds a live listener when
+# `NEXUS_HTTP_ADDR` is set on the environment.  Zero cost when the
+# env is unset (the service decl is not even appended to the
+# bring-up list).
+nexus-http-api = { path = "../services/http-api" }
+# One-line log of "HTTP-API skipped due to malformed NEXUS_HTTP_ADDR"
+# in `http_api_decl`.  The rest of nexusd inherits tracing via
+# `nexus-cluster`'s `install_tracing` — this direct dep spares main.rs
+# from wrapping the log call in a feature gate.
+tracing = "0.1"

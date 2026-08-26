@@ -18,6 +18,15 @@ default = []
 # so the shipped binary keeps the sudowork/edge size budget; only an
 # S3-serving tier builds `--features driver-s3`.
 driver-s3 = ["dep:backends", "backends/driver-s3"]
+# Opt-in HTTP-API axum listener over the search-plugin gRPC surface
+# (part of the R10 nexus-server → pure-Rust migration; epic #4674).
+# Linking axum + tonic-client + reqwest transitively adds ~0.7 MiB
+# of binary weight — kept OFF in the default slim `cluster` build to
+# stay under the §7 size budget.  A cluster tier that serves HTTP
+# builds `--features http-api`.  Runtime bring-up ALSO requires
+# `NEXUS_HTTP_ADDR` (see `http_api_decl` in main.rs) — the feature
+# gates the CODE, the env gates the LISTENER.
+http-api = ["dep:nexus-http-api", "dep:tracing"]
 # Co-host the real sudocode managed-agent runtime IN-PROCESS. Off by
 # default so the slim `cluster` binary stays sudocode-free (profile purity
 # — §7); a cohost-enabled build statically links `sudocode-tools` (which
@@ -68,13 +77,13 @@ kernel = { workspace = true, default-features = false }
 
 # HTTP-API axum shim over the search-plugin gRPC surface (part of
 # the R10 nexus-server → pure-Rust migration; epic #4674).  Wired
-# in conditionally — only builds a live listener when
-# `NEXUS_HTTP_ADDR` is set on the environment.  Zero cost when the
-# env is unset (the service decl is not even appended to the
-# bring-up list).
-nexus-http-api = { path = "../services/http-api" }
+# in conditionally — only builds a live listener when the
+# `http-api` feature is enabled AND `NEXUS_HTTP_ADDR` is set on the
+# environment.  Zero cost in the default slim `cluster` build
+# (feature off ⇒ crate not linked, ~0.7 MiB weight not shipped).
+nexus-http-api = { path = "../services/http-api", optional = true }
 # One-line log of "HTTP-API skipped due to malformed NEXUS_HTTP_ADDR"
-# in `http_api_decl`.  The rest of nexusd inherits tracing via
-# `nexus-cluster`'s `install_tracing` — this direct dep spares main.rs
-# from wrapping the log call in a feature gate.
-tracing = "0.1"
+# in `http_api_decl`.  Only linked when the `http-api` feature is on;
+# the rest of nexusd inherits tracing via `nexus-cluster`'s
+# `install_tracing` (which itself pulls tracing in unconditionally).
+tracing = { version = "0.1", optional = true }

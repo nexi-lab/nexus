@@ -48,6 +48,14 @@ dashmap = "6.1"
 contracts = { workspace = true }
 transport = { workspace = true }
 
+# `kernel::kernel::ServiceDecl` — the boot-declaration shape the
+# daemon's `Kernel::bring_up_services` consumes.  This crate exports
+# `service_decl(addr, upstream_grpc, auth, runtime)` returning that
+# shape so `nexusd-cluster::main` can slot it into the same
+# `Vec<ServiceDecl>` a2a + managed_agent live in.  `default-features
+# = false` mirrors the nexusd binary's own kernel pin.
+kernel = { workspace = true }
+
 # Parked-error surfacing at the handler boundary (Ok/Err in the
 # lib, mapped to HTTP status in the axum extractor).  Same 1.0 pin
 # the sibling search-plugin uses.

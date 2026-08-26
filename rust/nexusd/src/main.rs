@@ -49,10 +49,58 @@ fn managed_agent_decl() -> kernel::kernel::ServiceDecl {
 fn main() -> anyhow::Result<()> {
     // The daemon's service set — the SSOT for "which services this daemon
     // runs", ordered. a2a is installed first (its from-stamp hook must be
-    // armed before agents write mailboxes); managed_agent follows.
+    // armed before agents write mailboxes); managed_agent follows; the
+    // optional HTTP-API listener (feature-gated `http-api`) slots in last.
     // `ctx.auth_armed` is boot-derived (true iff sk- auth is armed) and
-    // sets a2a's fail-closed posture.
+    // sets a2a's fail-closed posture; `ctx.auth` + `ctx.runtime` are
+    // live handles that http-api needs to inject into its bearer
+    // middleware + spawn its axum listener on the daemon runtime.
     nexus_cluster::run_with_services(|ctx| {
-        vec![a2a::service_decl(ctx.auth_armed), managed_agent_decl()]
+        #[allow(unused_mut)]
+        let mut decls = vec![a2a::service_decl(ctx.auth_armed), managed_agent_decl()];
+        #[cfg(feature = "http-api")]
+        if let Some(decl) = http_api_decl(ctx) {
+            decls.push(decl);
+        }
+        decls
     })
+}
+
+/// Optional HTTP-API listener decl — feature-gated `http-api` at
+/// COMPILE time (linking axum + tonic-client adds ~0.7 MiB, kept
+/// off in the slim `cluster` build per §7 profile purity) AND
+/// env-gated `NEXUS_HTTP_ADDR` at BOOT time (operator opts in per
+/// deployment; matches the "gRPC on 2126, enroll on 2127,
+/// everything else opt-in" posture).
+///
+/// A malformed `NEXUS_HTTP_ADDR` value is logged + skipped
+/// (fail-open on a config typo rather than refusing the whole
+/// daemon boot).  Upstream gRPC target defaults to
+/// `http://127.0.0.1:2126` because the shim is co-hosted in this
+/// same binary (loopback saves the TCP-out-and-back-in round-trip).
+/// `NEXUS_HTTP_UPSTREAM_GRPC` overrides for the split-binary case
+/// (HTTP shim from a separate pod pointing at a remote cluster).
+#[cfg(feature = "http-api")]
+fn http_api_decl(ctx: &nexus_cluster::ServiceBootCtx) -> Option<kernel::kernel::ServiceDecl> {
+    use std::sync::Arc;
+    let addr_str = std::env::var("NEXUS_HTTP_ADDR").ok()?;
+    let addr: std::net::SocketAddr = match addr_str.parse() {
+        Ok(a) => a,
+        Err(e) => {
+            tracing::warn!(
+                value = %addr_str,
+                error = %e,
+                "NEXUS_HTTP_ADDR set but not a valid SocketAddr — skipping HTTP-API bring-up",
+            );
+            return None;
+        }
+    };
+    let upstream_grpc = std::env::var("NEXUS_HTTP_UPSTREAM_GRPC")
+        .unwrap_or_else(|_| "http://127.0.0.1:2126".to_string());
+    Some(nexus_http_api::service_decl(
+        addr,
+        upstream_grpc,
+        Arc::clone(&ctx.auth),
+        ctx.runtime.clone(),
+    ))
 }

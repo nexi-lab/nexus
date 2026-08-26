@@ -175,3 +175,62 @@ pub async fn bind_and_serve(
     let fut = async move { axum::serve(listener, router(state)).await };
     Ok((bound, fut))
 }
+
+/// Build a [`kernel::kernel::ServiceDecl`] that spawns the HTTP-API
+/// listener on `addr` at daemon bring-up.  The install closure
+/// captures the resolved auth provider + runtime handle at
+/// decl-BUILD time so the daemon does not have to plumb them
+/// through the kernel's install signature (which only exposes
+/// `&Arc<Kernel>`).
+///
+/// # Wiring
+///
+/// Callers construct this from `nexus_cluster::ServiceBootCtx`:
+///
+/// ```ignore
+/// nexus_http_api::service_decl(
+///     addr,                              // parsed from NEXUS_HTTP_ADDR
+///     "http://127.0.0.1:2126".into(),    // co-hosted gRPC target
+///     std::sync::Arc::clone(&ctx.auth),
+///     ctx.runtime.clone(),
+/// )
+/// ```
+///
+/// Args are taken RAW (not `&ServiceBootCtx`) so this crate does
+/// not need `nexus-cluster` as a dep — tier separation stays clean.
+///
+/// # Failure mode
+///
+/// The install closure returns `Ok(())` after spawning the axum
+/// listener as a background task on the daemon's tokio runtime.  A
+/// bind failure or serve error is logged but does not fail the whole
+/// daemon boot — matches how `a2a` + `managed_agent` treat their
+/// install-time errors, and preserves the daemon's "gRPC surface up
+/// even if optional shim fails to bind" posture.
+pub fn service_decl(
+    addr: SocketAddr,
+    upstream_grpc: String,
+    auth: Arc<dyn AuthProvider>,
+    runtime: tokio::runtime::Handle,
+) -> kernel::kernel::ServiceDecl {
+    kernel::kernel::ServiceDecl {
+        name: "http_api".to_string(),
+        install: Box::new(move |_kernel| {
+            let state = AppState {
+                search: SearchBackend::new(upstream_grpc),
+                auth,
+            };
+            runtime.spawn(async move {
+                if let Err(e) = serve(addr, state).await {
+                    tracing::error!(
+                        addr = %addr,
+                        error = %e,
+                        "nexus-http-api: axum listener terminated",
+                    );
+                }
+            });
+            tracing::info!(addr = %addr, "nexus-http-api: axum listener spawned");
+            Ok(())
+        }),
+    }
+}

@@ -108,7 +108,38 @@ def _open_stub(target: str):
     """
     from nexus.grpc.vfs import vfs_pb2_grpc
 
-    channel = grpc.insecure_channel(target, options=GRPC_CHANNEL_OPTIONS)
+    # Auth-on: when `NEXUS_CA_PEM` points at the cluster CA, dial over TLS and
+    # pin it. The cluster server cert's SAN is the fixed name `nexus-node` (not
+    # the dialed host/IP), so override the target name to match; caller identity
+    # still rides the per-request `auth_token` (`sk-`), not a client cert. Absent
+    # the env, stay on the plaintext channel the docker/CI suites use.
+    ca_pem = os.environ.get("NEXUS_CA_PEM")
+    if ca_pem:
+        with open(ca_pem, "rb") as fh:
+            root_certificates = fh.read()
+        # The cluster serves MUTUAL TLS, so a client cert is mandatory even for an
+        # sk- caller: the cert authenticates the transport (a trusted cluster node),
+        # the per-request `auth_token` (`sk-`) authenticates the caller. A local
+        # admin tool presents the node cert — the same pair `auth mint` dials with.
+        client_cert = os.environ.get("NEXUS_CLIENT_CERT")
+        client_key = os.environ.get("NEXUS_CLIENT_KEY")
+        if client_cert and client_key:
+            with open(client_cert, "rb") as fh:
+                certificate_chain = fh.read()
+            with open(client_key, "rb") as fh:
+                private_key = fh.read()
+            creds = grpc.ssl_channel_credentials(
+                root_certificates=root_certificates,
+                private_key=private_key,
+                certificate_chain=certificate_chain,
+            )
+        else:
+            creds = grpc.ssl_channel_credentials(root_certificates=root_certificates)
+        server_name = os.environ.get("NEXUS_TLS_SERVER_NAME", "nexus-node")
+        options = GRPC_CHANNEL_OPTIONS + [("grpc.ssl_target_name_override", server_name)]
+        channel = grpc.secure_channel(target, creds, options=options)
+    else:
+        channel = grpc.insecure_channel(target, options=GRPC_CHANNEL_OPTIONS)
     return channel, vfs_pb2_grpc.NexusVFSServiceStub(channel)
 
 

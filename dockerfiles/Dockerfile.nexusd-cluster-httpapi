@@ -1,0 +1,88 @@
+# nexusd-cluster **http-api** image — the assembly binary with the
+# axum HTTP shim linked (`--features http-api`).
+#
+# Distinct from `Dockerfile.nexusd-cluster` (upstream slim binary) and
+# `Dockerfile.nexusd-cohost` (in-process sudocode runtime): this one
+# builds `nexus/rust/nexusd` with the `http-api` feature so the
+# resulting `nexusd-cluster` binary links `nexus-http-api` + its
+# axum / tonic-client transitive deps.  ~0.7 MiB heavier than the
+# slim variant — that's the size the §7 profile purity gate keeps
+# out of the default cluster shipped everywhere else.
+#
+# Used by the HTTP-API E2E compose
+# (`docker-compose.http-api-e2e.yml`) which boots this daemon with
+# `NEXUS_HTTP_ADDR=0.0.0.0:2128` + `NEXUS_API_KEY_SECRET=<secret>`
+# so the axum listener is armed AND the ApiKey auth posture is on
+# (rather than NoAuth) — the real acceptance test for the R10 arc.
+#
+# Both cross-repo deps (nexi-lab/nexus-vfs @ the Cargo.toml pin, and
+# sudoprivacy/sudocode @ the nexusd/Cargo.toml pin — the http-api
+# feature does NOT enable cohost-sudocode; sudocode-tools stays a
+# lockstep-pinned build dep only) are PRIVATE, so the build
+# authenticates git via a BuildKit secret rather than a git token
+# baked into a layer.  Build:
+#
+#   DOCKER_BUILDKIT=1 docker build \
+#     -f dockerfiles/Dockerfile.nexusd-cluster-httpapi \
+#     --secret id=ghtoken,env=GH_TOKEN \
+#     -t nexusd-cluster-httpapi:latest .
+#
+# with `GH_TOKEN=$(gh auth token)` (needs read on both private repos).
+# `.dockerignore` already excludes target/ + .git/, so `COPY .` is
+# the source tree only.
+
+FROM rust:1-slim-bookworm AS builder
+
+# protobuf-compiler: the git-fetched raft crate's build.rs shells out to protoc.
+# python3{,-dev}: pyo3-build-config probes for an interpreter at compile time.
+# git + ca-certificates: authenticated fetch of the two private git deps.
+# Point apt at a China mirror (Aliyun) first — deb.debian.org is unreliable
+# through the local China proxy (persistent 502s); CI (clean network) is
+# unaffected either way.
+RUN { sed -i 's|deb.debian.org|mirrors.aliyun.com|g; s|security.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || true; } \
+    && { sed -i 's|deb.debian.org|mirrors.aliyun.com|g; s|security.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list 2>/dev/null || true; } \
+    && apt-get -o Acquire::Retries=6 update && apt-get -o Acquire::Retries=6 install -y --no-install-recommends \
+        protobuf-compiler \
+        python3 \
+        python3-dev \
+        git \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# The nexus assembly source (rust/nexusd + workspace).  target/ and .git/
+# are .dockerignore'd, so this is the source tree only.
+COPY . /build/nexus
+
+# `--locked` honors the workspace Cargo.lock; the secret token
+# authenticates the private git fetches and never lands in a layer.
+# `--features http-api` links the axum HTTP shim + tonic-client (the
+# feature the R10 wiring PR added to `rust/nexusd/Cargo.toml`).
+RUN --mount=type=secret,id=ghtoken \
+    git config --global url."https://$(cat /run/secrets/ghtoken)@github.com/".insteadOf "https://github.com/" \
+    && cargo install \
+        --locked \
+        --path /build/nexus/rust/nexusd \
+        --features http-api \
+        --bin nexusd-cluster \
+    && git config --global --remove-section url."https://$(cat /run/secrets/ghtoken)@github.com/"
+
+# ---------- Production image ----------
+FROM debian:bookworm-slim
+
+# bash: the compose entrypoint uses bash + tcp/udp health probes.
+# ca-certificates: rustls trust roots (federation + a2a peer TLS).
+# curl: the compose healthcheck hits `/v2/status` over loopback HTTP —
+# more targeted than the raw TCP probe every other suite uses, since
+# `/v2/status` returning 200 proves the axum listener is ALIVE not
+# just bound (a bind without a spawn would pass a raw TCP probe).
+RUN { sed -i 's|deb.debian.org|mirrors.aliyun.com|g; s|security.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || true; } \
+    && { sed -i 's|deb.debian.org|mirrors.aliyun.com|g; s|security.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list 2>/dev/null || true; } \
+    && apt-get -o Acquire::Retries=6 update && apt-get -o Acquire::Retries=6 install -y --no-install-recommends \
+        bash \
+        ca-certificates \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /usr/local/cargo/bin/nexusd-cluster /usr/local/bin/nexusd-cluster
+
+ENTRYPOINT ["nexusd-cluster"]

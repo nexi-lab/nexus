@@ -1,0 +1,182 @@
+name: http-api E2E
+
+# Runs `tests/e2e/docker/test_http_api.py` against the single-node
+# HTTP-API-featured cluster in
+# `dockerfiles/docker-compose.http-api-e2e.yml`.  Locks the R10
+# wiring: `nexusd-cluster --features http-api` binds axum on
+# `NEXUS_HTTP_ADDR` behind the real `ApiKeyAuthProvider`
+# (`NEXUS_API_KEY_SECRET` set, no `--insecure-no-auth`), and a
+# REAL `sk-*` minted by `nexusd-cluster auth mint` is admitted
+# end-to-end while an absent / wrong bearer surfaces 401.
+#
+# Independent of `search-plugin-e2e.yml` — that one covers the
+# plugin surface with auth off; THIS one covers the auth surface
+# with the plugin off.  The two axes are deliberately tested
+# separately to keep failure signals sharp.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'dockerfiles/Dockerfile.nexusd-cluster-httpapi'
+      - 'dockerfiles/docker-compose.http-api-e2e.yml'
+      - 'dockerfiles/Dockerfile.federation-test'
+      - 'rust/services/http-api/**'
+      - 'rust/nexusd/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'tests/e2e/docker/test_http_api.py'
+      - 'tests/e2e/docker/runbook_helpers.py'
+      - '.github/workflows/http-api-e2e.yml'
+  pull_request:
+    branches: [main, develop]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  http-api-e2e:
+    name: http-api E2E (Docker)
+    runs-on: ubuntu-latest
+    # Cold cache: cluster image build + compose up + 5 tests is
+    # ~8-10 min.  Warm gha cache shaves the rust compile.  20 min
+    # upper bound leaves margin for slow-building rust deps —
+    # matches the sibling search-plugin-e2e budget.
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect http-api-relevant changes
+        id: changes
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git fetch --no-tags --prune origin "${{ github.base_ref }}"
+          git diff --name-only "origin/${{ github.base_ref }}"...HEAD > /tmp/changed_files.txt
+          cat /tmp/changed_files.txt
+          # Workflow file itself is intentionally NOT in the regex —
+          # matches the sibling federation-e2e + search-plugin-e2e
+          # rationale (workflow-only edits should not trigger the
+          # whole compose stack).
+          if grep -Eq '^(dockerfiles/(Dockerfile\.(nexusd-cluster-httpapi|federation-test)|docker-compose\.http-api-e2e\.yml)|rust/services/http-api/|rust/nexusd/|Cargo\.toml$|Cargo\.lock$|tests/e2e/docker/(test_http_api|runbook_helpers)\.py$)' /tmp/changed_files.txt; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Skip http-api E2E
+        if: steps.changes.outputs.run != 'true'
+        run: |
+          echo "No http-api-relevant files changed; reporting required check without running suite."
+
+      - name: Set up Docker Buildx
+        if: steps.changes.outputs.run == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      # Pin SSOT: the nexus-vfs SHA the cluster binary compiles
+      # against lives in `Cargo.toml`'s workspace dep rev.  Parse
+      # once and reuse for the checkout step below — same pattern
+      # as `search-plugin-e2e.yml`.
+      - name: Read NEXUS_VFS_REV from Cargo.toml
+        if: steps.changes.outputs.run == 'true'
+        id: vfs_rev
+        run: |
+          sha=$(grep -oP '(?<=rev = ")[a-f0-9]{40}' Cargo.toml | sort -u | head -1)
+          if [ -z "$sha" ]; then
+            echo "::error::Could not parse nexus-vfs SHA from Cargo.toml"
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "Resolved nexus-vfs SHA: $sha"
+
+      - name: Checkout nexus-vfs source at pinned SHA
+        if: steps.changes.outputs.run == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: nexi-lab/nexus-vfs
+          ref: ${{ steps.vfs_rev.outputs.sha }}
+          path: nexus-vfs-src
+          fetch-depth: 1
+
+      - name: Build nexusd-cluster-httpapi image
+        if: steps.changes.outputs.run == 'true'
+        env:
+          # Authenticates the two private git deps (nexus-vfs +
+          # sudocode-tools).  The Dockerfile consumes it as a
+          # BuildKit secret rather than an ARG so the token does
+          # not land in a layer.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: dockerfiles/Dockerfile.nexusd-cluster-httpapi
+          build-contexts: |
+            nexus-vfs-src=nexus-vfs-src
+          load: true
+          tags: nexusd-cluster-httpapi:latest
+          secrets: |
+            "ghtoken=${{ secrets.GITHUB_TOKEN }}"
+          # Scoped separately from the search-plugin cache since the
+          # `--features http-api` build produces a different binary.
+          cache-from: type=gha,scope=http-api-cluster
+          cache-to: type=gha,scope=http-api-cluster,mode=max
+
+      - name: Build federation-test image
+        if: steps.changes.outputs.run == 'true'
+        env:
+          BUILDX_BUILDER: default
+        run: |
+          docker compose -f dockerfiles/docker-compose.http-api-e2e.yml build test
+
+      - name: Start http-api cluster
+        if: steps.changes.outputs.run == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          docker compose -f dockerfiles/docker-compose.http-api-e2e.yml up -d node
+          docker compose -f dockerfiles/docker-compose.http-api-e2e.yml ps
+
+      - name: Wait for node healthy
+        if: steps.changes.outputs.run == 'true'
+        run: |
+          deadline=$((SECONDS + 180))
+          while [ $SECONDS -lt $deadline ]; do
+            # Use the compose healthcheck's own probe — `curl /v2/status`
+            # is stricter than raw TCP (bind without a spawn passes
+            # TCP but fails HTTP).
+            if docker exec nexus-http-api-node curl -fsS http://localhost:2128/v2/status 2>/dev/null; then
+              echo "Node healthy (/v2/status returned 200) after ${SECONDS}s"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::Timed out waiting for cluster ready (180s)"
+          docker compose -f dockerfiles/docker-compose.http-api-e2e.yml logs --tail=300
+          exit 1
+
+      - name: Run http-api E2E tests
+        if: steps.changes.outputs.run == 'true'
+        run: |
+          docker compose -f dockerfiles/docker-compose.http-api-e2e.yml \
+            run --rm test
+
+      - name: Dump container logs on failure
+        if: failure() && steps.changes.outputs.run == 'true'
+        run: |
+          echo "::group::nexus-http-api-node"
+          docker logs nexus-http-api-node --tail=400 2>&1 || echo "(no logs)"
+          echo "::endgroup::"
+
+      - name: Tear down
+        if: always() && steps.changes.outputs.run == 'true'
+        run: |
+          docker compose -f dockerfiles/docker-compose.http-api-e2e.yml down -v --remove-orphans || true

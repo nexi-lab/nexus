@@ -122,7 +122,17 @@ jobs:
           build-contexts: |
             nexus-vfs-src=nexus-vfs-src
           load: true
-          tags: nexusd-cluster-httpapi:latest
+          # Two tags: the specific `-httpapi` name for clarity in
+          # local `docker images` listings, PLUS the generic
+          # `nexusd-cluster:latest` because `Dockerfile.federation-test`
+          # (the sibling test-runner image) starts with `FROM
+          # nexusd-cluster:latest`.  Without this second tag the
+          # federation-test build tries to pull from Docker Hub and
+          # 401s (`insufficient_scope`).  Same shape the
+          # search-plugin-e2e workflow uses.
+          tags: |
+            nexusd-cluster-httpapi:latest
+            nexusd-cluster:latest
           secrets: |
             "ghtoken=${{ secrets.GITHUB_TOKEN }}"
           # Scoped separately from the search-plugin cache since the

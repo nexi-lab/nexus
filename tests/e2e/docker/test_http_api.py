@@ -192,9 +192,7 @@ class TestBearerRejection:
         # an admin OperationContext — this test would then fail here,
         # exposing that the composition root did not swap NoAuth for
         # the real provider.
-        status, body = _http_post_json(
-            f"{HTTP_URL}/v2/search/query", {"q": "anything"}
-        )
+        status, body = _http_post_json(f"{HTTP_URL}/v2/search/query", {"q": "anything"})
         assert status == 401, (
             f"protected route without bearer must 401 under real "
             f"ApiKeyAuthProvider; got {status} {body}"
@@ -268,6 +266,5 @@ class TestBearerAdmission:
             headers={"Authorization": f"Bearer {sk_key}"},
         )
         assert status == 200, (
-            f"public route with a valid bearer must still 200; "
-            f"got {status} {body}"
+            f"public route with a valid bearer must still 200; got {status} {body}"
         )

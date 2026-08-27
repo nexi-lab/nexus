@@ -1,0 +1,180 @@
+# HTTP-API E2E — single-node cluster with the axum HTTP listener armed
+# =========================================================================
+# Compose for `tests/e2e/docker/test_http_api.py` — the acceptance test
+# for the R10 nexus-server → pure-Rust migration wiring:
+#   * `nexusd-cluster --features http-api` (PR #4713) links the axum
+#     listener behind `NEXUS_HTTP_ADDR`
+#   * Auth posture: `NEXUS_API_KEY_SECRET` set (no `--insecure-no-auth`),
+#     so `ApiKeyAuthProvider` arms and http-api's bearer middleware
+#     routes through the SAME `Arc<dyn AuthProvider>` the kernel gRPC
+#     interceptor uses (SSOT — verified by widened ServiceBootCtx in
+#     nexus-vfs #250)
+#
+# The pytest test asserts:
+#   1. `GET /v2/status` → 200 without auth (public route)
+#   2. `POST /v2/search/query` without `Authorization` → 401
+#      (`ApiKeyAuthProvider` rejects the empty token — proves the
+#      `require_bearer` middleware is wired at the composition root,
+#      not just in the crate's unit tests)
+#   3. `POST /v2/search/query` with a wrong `Bearer sk-*` → 401
+#      (proves the provider actually resolves against the minted key
+#      store — a stub would 200 any well-formed token)
+#   4. `POST /v2/search/query` with the RIGHT minted `Bearer sk-*` →
+#      NOT-401 (proves the wired provider accepts the real key; the
+#      upstream `SearchService` returns Unimplemented / Unavailable
+#      because no plugin is loaded — that path is covered by the
+#      sibling search-plugin E2E)
+#
+# Deliberately does NOT bake the search-plugin cdylib into this image:
+# testing the middleware + auth plane, not the full search chain.
+# Search backends are covered by `docker-compose.search-plugin-e2e.yml`
+# (which runs with `--insecure-no-auth` because that suite is about
+# the plugin surface, not auth).
+#
+# Usage:
+#   docker compose -f dockerfiles/docker-compose.http-api-e2e.yml up -d node
+#   docker compose -f dockerfiles/docker-compose.http-api-e2e.yml run --rm test
+#   docker compose -f dockerfiles/docker-compose.http-api-e2e.yml down -v
+
+services:
+  node:
+    build:
+      context: ..
+      dockerfile: dockerfiles/Dockerfile.nexusd-cluster-httpapi
+      secrets:
+        - ghtoken
+    image: nexusd-cluster-httpapi:latest
+    container_name: nexus-http-api-node
+    hostname: node
+    environment:
+      NEXUS_HOSTNAME: node
+      NEXUS_BIND_ADDR: 0.0.0.0:2126
+      NEXUS_ADVERTISE_ADDR: node:2126
+      NEXUS_DATA_DIR: /app/data
+      NEXUS_NO_TLS: "true"
+      # `NEXUS_API_KEY_SECRET` arms `ApiKeyAuthProvider` — the mint
+      # subcommand + the daemon both need this so the HMAC of minted
+      # keys hashes identically on both sides.  Any non-empty value
+      # works for the E2E; production reads it from
+      # `<data_dir>/tls/api-key-secret`.
+      NEXUS_API_KEY_SECRET: "http-api-e2e-secret-not-a-production-value"
+      # `NEXUS_HTTP_ADDR` arms the axum listener via the http-api
+      # `service_decl` in `rust/nexusd/src/main.rs`.  Unset ⇒ the
+      # listener is not installed even in the `http-api`-featured
+      # binary (two-gate design).  Bind on all interfaces so the
+      # sibling `test` service can reach it.
+      NEXUS_HTTP_ADDR: 0.0.0.0:2128
+      # Upstream gRPC target — the same `nexusd-cluster` process's
+      # gRPC on 2126 (co-hosted).  The default in http-api's
+      # service_decl is `http://127.0.0.1:2126`, made explicit here
+      # for the docs value.
+      NEXUS_HTTP_UPSTREAM_GRPC: "http://127.0.0.1:2126"
+      RUST_LOG: info,nexus_raft=info,nexus_http_api=debug
+    # Entrypoint does two things in order:
+    #   1. `nexusd-cluster auth mint …` — offline (before the daemon
+    #      opens the redb).  Prints the raw `sk-*` on stdout; we tee
+    #      it into `/shared/sk-key` so the `test` service can read
+    #      it via the shared volume.
+    #   2. `exec nexusd-cluster …` — same shape as every other
+    #      compose file, minus `--insecure-no-auth` (the whole point
+    #      of THIS suite is that ApiKey posture is on).
+    #
+    # NOTE: does NOT pass `--insecure-no-auth`.  The auth-posture
+    # invariant on 0.0.0.0-bind + no-tls is relaxed when
+    # `NEXUS_API_KEY_SECRET` is set (auth is armed, so the loopback
+    # invariant's purpose — prevent unauthenticated remote calls —
+    # is already satisfied).
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        set -e
+        DATA_DIR="$${NEXUS_DATA_DIR:-/app/data}"
+        KEY_FILE="/shared/sk-key"
+
+        mkdir -p "$$(dirname "$$KEY_FILE")"
+        if [ ! -s "$$KEY_FILE" ]; then
+          echo "http-api-e2e: minting admin sk-* key offline …" >&2
+          nexusd-cluster auth mint \
+            --subject-type user \
+            --subject-id admin \
+            --admin \
+            --name http-api-e2e \
+            --data-dir "$$DATA_DIR" \
+            > "$$KEY_FILE"
+          echo "http-api-e2e: minted; key length=$$(wc -c < "$$KEY_FILE") bytes" >&2
+        fi
+
+        exec nexusd-cluster \
+          --bind-addr "$${NEXUS_BIND_ADDR:-0.0.0.0:2126}" \
+          --data-dir "$$DATA_DIR" \
+          --no-tls
+    command: []
+    volumes:
+      - http_api_node_data:/app/data
+      - http_api_shared_key:/shared
+    networks:
+      - nexus-http-api-net
+    healthcheck:
+      # `curl -fsS /v2/status` is a stricter probe than `< /dev/tcp` —
+      # a bare TCP-open pass on 2128 could mean "listener bound but
+      # tokio task hasn't started yet"; a 200 on `/v2/status` proves
+      # the axum router is live AND the public sub-router is wired.
+      test: ["CMD-SHELL", "curl -fsS http://localhost:2128/v2/status || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 30s
+
+  test:
+    build:
+      context: ..
+      dockerfile: dockerfiles/Dockerfile.federation-test
+    image: nexus-federation-test:latest
+    container_name: nexus-http-api-test
+    profiles:
+      - run
+    depends_on:
+      node:
+        condition: service_healthy
+    user: "0:0"
+    volumes:
+      - ..:/workspace:ro
+      # docker-log shell-out (same pattern as sibling suites) for
+      # boot-line assertions if needed.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Shared volume with the daemon: the minted sk-* key file
+      # written by the daemon's entrypoint lands here read-only.
+      - http_api_shared_key:/shared:ro
+    environment:
+      NEXUS_HTTP_API_E2E: "1"
+      NEXUS_HTTP_URL: "http://node:2128"
+      NEXUS_HTTP_NODE_CONTAINER: "nexus-http-api-node"
+      # The test reads /shared/sk-key at fixture setup time and
+      # exports it into request headers.  Env-vars stay out of it
+      # so the key never lands in `docker inspect`.
+      NEXUS_HTTP_KEY_FILE: "/shared/sk-key"
+    networks:
+      - nexus-http-api-net
+    command:
+      - pytest
+      - tests/e2e/docker/test_http_api.py
+      - -v
+      - --no-header
+      - -o
+      - addopts=
+
+networks:
+  nexus-http-api-net:
+    name: nexus-http-api-net
+    driver: bridge
+
+secrets:
+  ghtoken:
+    environment: GH_TOKEN
+
+volumes:
+  http_api_node_data:
+    name: nexus-http-api-node-data
+  http_api_shared_key:
+    name: nexus-http-api-shared-key

@@ -235,14 +235,23 @@ pub fn service_decl(
             // Bind synchronously so `install` surfaces the failure —
             // port-in-use / EACCES / bad interface all become an
             // `install` `Err` instead of a stray `tracing::error!`
-            // on a background task.  `runtime.block_on` on a
-            // multi-thread runtime is safe from a synchronous
-            // caller thread; if we were already ON a runtime thread
-            // this would deadlock, but `bring_up_services` runs
-            // from the daemon's synchronous boot path.
-            let listener = runtime
-                .block_on(TcpListener::bind(addr))
+            // on a background task.
+            //
+            // `bring_up_services` is called from INSIDE the tokio
+            // runtime the daemon spun up (via `run_daemon` under
+            // `Runtime::block_on`), so `runtime.block_on(bind)`
+            // panics with "Cannot start a runtime from within a
+            // runtime".  Instead: use SYNC `std::net::TcpListener::
+            // bind` (no runtime needed), set non-blocking, then
+            // hand off to tokio via `from_std`.  Same "fail-loud
+            // at install" outcome, no runtime-inside-runtime.
+            let std_listener = std::net::TcpListener::bind(addr)
                 .map_err(|e| format!("nexus-http-api: bind {addr}: {e}"))?;
+            std_listener
+                .set_nonblocking(true)
+                .map_err(|e| format!("nexus-http-api: set_nonblocking after bind: {e}"))?;
+            let listener = TcpListener::from_std(std_listener)
+                .map_err(|e| format!("nexus-http-api: from_std after bind: {e}"))?;
             let bound = listener
                 .local_addr()
                 .map_err(|e| format!("nexus-http-api: local_addr after bind: {e}"))?;

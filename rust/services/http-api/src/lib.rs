@@ -201,16 +201,28 @@ pub async fn bind_and_serve(
 ///
 /// # Failure mode — fail-loud on bind, then detach serve
 ///
-/// The install closure BINDS the TCP listener synchronously
-/// (via `runtime.block_on(TcpListener::bind(addr))`) so a bind
-/// failure — port in use, permission denied, malformed addr —
-/// returns `Err` from `install` and `Kernel::bring_up_services`
-/// fails the whole daemon boot with a nameable error.  The prior
-/// posture ("bind inside a detached `runtime.spawn`, only log on
-/// error") silently degraded a broken HTTP bind to "daemon looks
-/// alive but no HTTP surface" — a bad operator experience the
-/// standing `feedback_fail_loud_interdependent_config` rule
-/// forbids.
+/// The install closure BINDS the TCP listener synchronously via
+/// `std::net::TcpListener::bind` (a raw `socket` + `bind` +
+/// `listen` syscall trio — no tokio runtime needed, no I/O),
+/// then hands the fd to tokio via `set_nonblocking(true)` +
+/// `TcpListener::from_std`.  A bind failure — port in use,
+/// permission denied, bad interface — returns `Err` from
+/// `install` and `Kernel::bring_up_services` fails the whole
+/// daemon boot with a nameable error.  The prior posture ("bind
+/// inside a detached `runtime.spawn`, only log on error")
+/// silently degraded a broken HTTP bind to "daemon looks alive
+/// but no HTTP surface" — a bad operator experience the standing
+/// `feedback_fail_loud_interdependent_config` rule forbids.
+///
+/// # Why NOT `runtime.block_on(tokio::TcpListener::bind)`
+///
+/// `bring_up_services` runs INSIDE the tokio runtime the daemon
+/// spun up (via `run_daemon` under `Runtime::block_on`), so a
+/// `Handle::block_on` here panics with `Cannot start a runtime
+/// from within a runtime` — the docker-E2E-caught first
+/// iteration of this fix.  The sync `std::net::bind` path avoids
+/// runtime re-entry entirely (bind is a fast syscall, no I/O)
+/// while preserving the "Err from install" semantic.
 ///
 /// Only the SERVE loop is detached: once bind succeeds, the
 /// listener is handed to a spawned task that runs `axum::serve`
@@ -227,47 +239,65 @@ pub fn service_decl(
 ) -> kernel::kernel::ServiceDecl {
     kernel::kernel::ServiceDecl {
         name: "http_api".to_string(),
-        install: Box::new(move |_kernel| {
-            let state = AppState {
-                search: SearchBackend::new(upstream_grpc),
-                auth,
-            };
-            // Bind synchronously so `install` surfaces the failure —
-            // port-in-use / EACCES / bad interface all become an
-            // `install` `Err` instead of a stray `tracing::error!`
-            // on a background task.
-            //
-            // `bring_up_services` is called from INSIDE the tokio
-            // runtime the daemon spun up (via `run_daemon` under
-            // `Runtime::block_on`), so `runtime.block_on(bind)`
-            // panics with "Cannot start a runtime from within a
-            // runtime".  Instead: use SYNC `std::net::TcpListener::
-            // bind` (no runtime needed), set non-blocking, then
-            // hand off to tokio via `from_std`.  Same "fail-loud
-            // at install" outcome, no runtime-inside-runtime.
-            let std_listener = std::net::TcpListener::bind(addr)
-                .map_err(|e| format!("nexus-http-api: bind {addr}: {e}"))?;
-            std_listener
-                .set_nonblocking(true)
-                .map_err(|e| format!("nexus-http-api: set_nonblocking after bind: {e}"))?;
-            let listener = TcpListener::from_std(std_listener)
-                .map_err(|e| format!("nexus-http-api: from_std after bind: {e}"))?;
-            let bound = listener
-                .local_addr()
-                .map_err(|e| format!("nexus-http-api: local_addr after bind: {e}"))?;
-            tracing::info!(addr = %bound, "nexus-http-api: axum listener bound");
-            // Detach the serve loop — the listener has a life of
-            // its own from here, running until the daemon shuts down.
-            runtime.spawn(async move {
-                if let Err(e) = axum::serve(listener, router(state)).await {
-                    tracing::error!(
-                        addr = %bound,
-                        error = %e,
-                        "nexus-http-api: axum serve loop terminated",
-                    );
-                }
-            });
-            Ok(())
-        }),
+        install: Box::new(move |_kernel| install_impl(addr, upstream_grpc, auth, runtime)),
     }
+}
+
+/// The install-closure body extracted as a plain fn so it is
+/// callable from a test WITHOUT constructing a real `Arc<Kernel>`
+/// (a full `Kernel` needs a metastore + backends + observers —
+/// heavy for a bind-only regression pin).
+///
+/// Marked `pub` (not `pub(crate)`) purely so the integration test
+/// `tests/serve_e2e.rs` — a separate compilation unit — can drive
+/// it under a real tokio runtime.  Production callers should use
+/// [`service_decl`], not this fn directly; a `#[doc(hidden)]`
+/// annotation keeps it out of the rustdoc surface.
+#[doc(hidden)]
+pub fn install_impl(
+    addr: SocketAddr,
+    upstream_grpc: String,
+    auth: Arc<dyn AuthProvider>,
+    runtime: tokio::runtime::Handle,
+) -> Result<(), String> {
+    let state = AppState {
+        search: SearchBackend::new(upstream_grpc),
+        auth,
+    };
+    // Bind synchronously so `install` surfaces the failure —
+    // port-in-use / EACCES / bad interface all become an
+    // `install` `Err` instead of a stray `tracing::error!`
+    // on a background task.
+    //
+    // Use SYNC `std::net::TcpListener::bind` (no runtime needed —
+    // `bind` is a raw `socket`+`bind`+`listen` syscall trio),
+    // then hand off to tokio via `from_std`.  A prior iteration
+    // used `runtime.block_on(tokio::TcpListener::bind)` — WRONG:
+    // `bring_up_services` runs INSIDE the tokio runtime the
+    // daemon spun up, so `block_on` panics with "Cannot start a
+    // runtime from within a runtime".  The sync path avoids
+    // runtime re-entry entirely.
+    let std_listener = std::net::TcpListener::bind(addr)
+        .map_err(|e| format!("nexus-http-api: bind {addr}: {e}"))?;
+    std_listener
+        .set_nonblocking(true)
+        .map_err(|e| format!("nexus-http-api: set_nonblocking after bind: {e}"))?;
+    let listener = TcpListener::from_std(std_listener)
+        .map_err(|e| format!("nexus-http-api: from_std after bind: {e}"))?;
+    let bound = listener
+        .local_addr()
+        .map_err(|e| format!("nexus-http-api: local_addr after bind: {e}"))?;
+    tracing::info!(addr = %bound, "nexus-http-api: axum listener bound");
+    // Detach the serve loop — the listener has a life of
+    // its own from here, running until the daemon shuts down.
+    runtime.spawn(async move {
+        if let Err(e) = axum::serve(listener, router(state)).await {
+            tracing::error!(
+                addr = %bound,
+                error = %e,
+                "nexus-http-api: axum serve loop terminated",
+            );
+        }
+    });
+    Ok(())
 }

@@ -199,14 +199,26 @@ pub async fn bind_and_serve(
 /// Args are taken RAW (not `&ServiceBootCtx`) so this crate does
 /// not need `nexus-cluster` as a dep — tier separation stays clean.
 ///
-/// # Failure mode
+/// # Failure mode — fail-loud on bind, then detach serve
 ///
-/// The install closure returns `Ok(())` after spawning the axum
-/// listener as a background task on the daemon's tokio runtime.  A
-/// bind failure or serve error is logged but does not fail the whole
-/// daemon boot — matches how `a2a` + `managed_agent` treat their
-/// install-time errors, and preserves the daemon's "gRPC surface up
-/// even if optional shim fails to bind" posture.
+/// The install closure BINDS the TCP listener synchronously
+/// (via `runtime.block_on(TcpListener::bind(addr))`) so a bind
+/// failure — port in use, permission denied, malformed addr —
+/// returns `Err` from `install` and `Kernel::bring_up_services`
+/// fails the whole daemon boot with a nameable error.  The prior
+/// posture ("bind inside a detached `runtime.spawn`, only log on
+/// error") silently degraded a broken HTTP bind to "daemon looks
+/// alive but no HTTP surface" — a bad operator experience the
+/// standing `feedback_fail_loud_interdependent_config` rule
+/// forbids.
+///
+/// Only the SERVE loop is detached: once bind succeeds, the
+/// listener is handed to a spawned task that runs `axum::serve`
+/// until the daemon shuts down.  A serve error mid-flight is
+/// still a `tracing::error!` (nothing sensible we can do about a
+/// half-served request), but the "listener is up" invariant is
+/// established synchronously — matches `a2a::install_a2a_stamp_hook`
+/// which also fails install synchronously if setup errors.
 pub fn service_decl(
     addr: SocketAddr,
     upstream_grpc: String,
@@ -220,16 +232,32 @@ pub fn service_decl(
                 search: SearchBackend::new(upstream_grpc),
                 auth,
             };
+            // Bind synchronously so `install` surfaces the failure —
+            // port-in-use / EACCES / bad interface all become an
+            // `install` `Err` instead of a stray `tracing::error!`
+            // on a background task.  `runtime.block_on` on a
+            // multi-thread runtime is safe from a synchronous
+            // caller thread; if we were already ON a runtime thread
+            // this would deadlock, but `bring_up_services` runs
+            // from the daemon's synchronous boot path.
+            let listener = runtime
+                .block_on(TcpListener::bind(addr))
+                .map_err(|e| format!("nexus-http-api: bind {addr}: {e}"))?;
+            let bound = listener
+                .local_addr()
+                .map_err(|e| format!("nexus-http-api: local_addr after bind: {e}"))?;
+            tracing::info!(addr = %bound, "nexus-http-api: axum listener bound");
+            // Detach the serve loop — the listener has a life of
+            // its own from here, running until the daemon shuts down.
             runtime.spawn(async move {
-                if let Err(e) = serve(addr, state).await {
+                if let Err(e) = axum::serve(listener, router(state)).await {
                     tracing::error!(
-                        addr = %addr,
+                        addr = %bound,
                         error = %e,
-                        "nexus-http-api: axum listener terminated",
+                        "nexus-http-api: axum serve loop terminated",
                     );
                 }
             });
-            tracing::info!(addr = %addr, "nexus-http-api: axum listener spawned");
             Ok(())
         }),
     }

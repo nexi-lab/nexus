@@ -47,6 +47,14 @@ fn managed_agent_decl() -> kernel::kernel::ServiceDecl {
 }
 
 fn main() -> anyhow::Result<()> {
+    // Parse HTTP-API config UPFRONT — outside `run_with_services` —
+    // so a malformed `NEXUS_HTTP_ADDR` fails `main()` before the
+    // daemon does any boot work.  `run_with_services`'s closure
+    // returns `Vec<ServiceDecl>` (infallible), so any Err on the
+    // env path has to raise before the closure runs.  Feature-off
+    // build stubs to `Ok(None)` — no CLI parse cost.
+    let http_api_config = parse_http_api_config()?;
+
     // The daemon's service set — the SSOT for "which services this daemon
     // runs", ordered. a2a is installed first (its from-stamp hook must be
     // armed before agents write mailboxes); managed_agent follows; the
@@ -55,52 +63,104 @@ fn main() -> anyhow::Result<()> {
     // sets a2a's fail-closed posture; `ctx.auth` + `ctx.runtime` are
     // live handles that http-api needs to inject into its bearer
     // middleware + spawn its axum listener on the daemon runtime.
-    nexus_cluster::run_with_services(|ctx| {
-        #[allow(unused_mut)]
+    nexus_cluster::run_with_services(move |ctx| {
         let mut decls = vec![a2a::service_decl(ctx.auth_armed), managed_agent_decl()];
-        #[cfg(feature = "http-api")]
-        if let Some(decl) = http_api_decl(ctx) {
+        if let Some(decl) = http_api_decl_from(&http_api_config, ctx) {
             decls.push(decl);
         }
         decls
     })
 }
 
-/// Optional HTTP-API listener decl — feature-gated `http-api` at
-/// COMPILE time (linking axum + tonic-client adds ~0.7 MiB, kept
-/// off in the slim `cluster` build per §7 profile purity) AND
-/// env-gated `NEXUS_HTTP_ADDR` at BOOT time (operator opts in per
-/// deployment; matches the "gRPC on 2126, enroll on 2127,
-/// everything else opt-in" posture).
+/// HTTP-API config parsed at boot from env — cheap, refused loud
+/// on typos.  `Some(_)` when the operator opted in AND the address
+/// parses; `None` when the operator did not opt in (feature off,
+/// or `NEXUS_HTTP_ADDR` unset).
 ///
-/// A malformed `NEXUS_HTTP_ADDR` value is logged + skipped
-/// (fail-open on a config typo rather than refusing the whole
-/// daemon boot).  Upstream gRPC target defaults to
-/// `http://127.0.0.1:2126` because the shim is co-hosted in this
-/// same binary (loopback saves the TCP-out-and-back-in round-trip).
-/// `NEXUS_HTTP_UPSTREAM_GRPC` overrides for the split-binary case
-/// (HTTP shim from a separate pod pointing at a remote cluster).
+/// Kept as a plain struct (not `Option<SocketAddr>` naked) so
+/// adding a future field (`NEXUS_HTTP_TLS_CERT`, etc.) does not
+/// ripple through `main` — additive.
 #[cfg(feature = "http-api")]
-fn http_api_decl(ctx: &nexus_cluster::ServiceBootCtx) -> Option<kernel::kernel::ServiceDecl> {
-    use std::sync::Arc;
-    let addr_str = std::env::var("NEXUS_HTTP_ADDR").ok()?;
-    let addr: std::net::SocketAddr = match addr_str.parse() {
-        Ok(a) => a,
-        Err(e) => {
-            tracing::warn!(
-                value = %addr_str,
-                error = %e,
-                "NEXUS_HTTP_ADDR set but not a valid SocketAddr — skipping HTTP-API bring-up",
-            );
-            return None;
-        }
+struct HttpApiConfig {
+    addr: std::net::SocketAddr,
+    upstream_grpc: String,
+}
+
+/// Feature-off stub — kept `Option`-shaped so the call site stays
+/// symmetric (`if let Some(...)`).  Using `()` as the payload so
+/// no dead `struct HttpApiConfig` shows up in the slim build.
+#[cfg(not(feature = "http-api"))]
+type HttpApiConfig = ();
+
+/// Parse `NEXUS_HTTP_ADDR` + optional `NEXUS_HTTP_UPSTREAM_GRPC`.
+///
+/// # Return
+///
+/// * `Ok(None)` — the `http-api` feature is off, OR the operator
+///   did not set `NEXUS_HTTP_ADDR` (opt-out by omission).  Silent
+///   is CORRECT here: no intent expressed, nothing to install.
+/// * `Ok(Some(cfg))` — feature on, env set, address parsed — the
+///   real bring-up path will install the decl.
+/// * `Err(_)` — feature on, `NEXUS_HTTP_ADDR` set but MALFORMED.
+///   Fails the whole daemon boot rather than silent-warn-and-skip
+///   (`feedback_fail_loud_interdependent_config` — the operator
+///   opted in; a typo must fail visibly, not degrade to a running
+///   daemon with no HTTP surface + a lone log line the operator
+///   might miss).
+///
+/// Upstream gRPC target defaults to `http://127.0.0.1:2126` (the
+/// co-hosted gRPC surface — loopback saves the round-trip);
+/// `NEXUS_HTTP_UPSTREAM_GRPC` overrides for the split-binary case.
+#[cfg(feature = "http-api")]
+fn parse_http_api_config() -> anyhow::Result<Option<HttpApiConfig>> {
+    let Some(addr_str) = std::env::var("NEXUS_HTTP_ADDR").ok() else {
+        return Ok(None);
     };
+    let addr: std::net::SocketAddr = addr_str.parse().map_err(|e| {
+        anyhow::anyhow!(
+            "NEXUS_HTTP_ADDR={addr_str:?} is not a valid SocketAddr: {e} — \
+             refusing to boot the daemon (operator opted in; a typo must \
+             surface loudly, not degrade to a running daemon with no HTTP \
+             surface).  Expected shape: `HOST:PORT` (e.g. `0.0.0.0:2128`).",
+        )
+    })?;
     let upstream_grpc = std::env::var("NEXUS_HTTP_UPSTREAM_GRPC")
         .unwrap_or_else(|_| "http://127.0.0.1:2126".to_string());
-    Some(nexus_http_api::service_decl(
+    Ok(Some(HttpApiConfig {
         addr,
         upstream_grpc,
+    }))
+}
+
+#[cfg(not(feature = "http-api"))]
+fn parse_http_api_config() -> anyhow::Result<Option<HttpApiConfig>> {
+    Ok(None)
+}
+
+/// Build the HTTP-API `ServiceDecl` from a parsed config + boot ctx.
+/// Split from `parse_http_api_config` because the ctx (with the live
+/// auth provider + runtime handle) is only available inside
+/// `run_with_services`'s closure, but the config parse must run
+/// upfront to fail-loud on env typos.
+#[cfg(feature = "http-api")]
+fn http_api_decl_from(
+    config: &Option<HttpApiConfig>,
+    ctx: &nexus_cluster::ServiceBootCtx,
+) -> Option<kernel::kernel::ServiceDecl> {
+    use std::sync::Arc;
+    let cfg = config.as_ref()?;
+    Some(nexus_http_api::service_decl(
+        cfg.addr,
+        cfg.upstream_grpc.clone(),
         Arc::clone(&ctx.auth),
         ctx.runtime.clone(),
     ))
+}
+
+#[cfg(not(feature = "http-api"))]
+fn http_api_decl_from(
+    _config: &Option<HttpApiConfig>,
+    _ctx: &nexus_cluster::ServiceBootCtx,
+) -> Option<kernel::kernel::ServiceDecl> {
+    None
 }

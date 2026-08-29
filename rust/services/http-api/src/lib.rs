@@ -119,8 +119,8 @@ impl AppState {
 ///   (liveness probes, unauth-metadata endpoints).  Currently just
 ///   `/v2/status`.
 /// * `protected_router` — routes wrapped by
-///   [`middleware::auth::require_bearer`].  Every `/v2/search/*`
-///   handler lives here.
+///   [`middleware::auth::require_bearer`].  Every `/v2/search/*` +
+///   `/v2/documents/*` handler lives here.
 ///
 /// Both sub-routers share the same [`AppState`]; only the middleware
 /// stack differs.  A new domain lands as an additive merge on
@@ -133,6 +133,7 @@ pub fn router(state: AppState) -> Router {
         .with_state(state.clone());
     let protected_router = Router::new()
         .merge(handlers::search::router())
+        .merge(handlers::documents::router())
         .layer(from_fn_with_state(
             state.clone(),
             middleware::auth::require_bearer,

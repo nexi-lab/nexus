@@ -7,5 +7,6 @@
 //! keeps `AppState` growth O(1) per new domain — a fresh domain
 //! adds a field, no handler rewire.
 
+pub mod documents;
 pub mod search;
 pub mod status;

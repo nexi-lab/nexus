@@ -1,0 +1,29 @@
+[package]
+name = "nexus-rebac"
+version = "0.1.0"
+edition = "2021"
+description = "Relationship-based access control (Zanzibar-shaped) for nexus — the Rust replacement for `src/nexus/bricks/rebac/`.  Owns the tuple store trait + in-memory impl + (in later PRs) the raft-backed impl, the per-zone graph cache, and the enforcer facade the /v2/search/* + /v2/documents/* handlers call as a post-filter.  Kernel `PermissionProvider` impl for syscall-tier gating lands here too."
+authors = ["Nexus Team"]
+publish = false
+
+[lib]
+name = "nexus_rebac"
+crate-type = ["rlib"]
+
+[dependencies]
+# `parking_lot::RwLock` for the in-memory tuple store — matches every
+# other sync-lock in the workspace (kernel + search-plugin) and is
+# ~2x faster than std::sync under low contention (the read-heavy
+# ReBAC hot path).
+parking_lot = "0.12"
+
+# `thiserror` for the store-error enum — matches the shape every
+# other nexus service uses so downstream `?` propagation stays
+# uniform.
+thiserror = "1"
+
+[dev-dependencies]
+# The in-memory impl needs to be exercised from multiple threads to
+# prove its `Send + Sync` bounds hold under real racing — no
+# additional deps required, but keeping this section explicit for
+# a future test that wants tokio-based concurrency stress.

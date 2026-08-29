@@ -32,6 +32,13 @@ members = [
     # `GET /v2/status` so the axum + JSON + test-harness pattern
     # is proven before the search/documents/auth routes land.
     "rust/services/http-api",
+    # nexus-rebac — Rust replacement for `src/nexus/bricks/rebac/`
+    # (Zanzibar-shaped relationship-based access control).  Part
+    # of R10 epic #4674.  PR-1 ships the ReBACTupleStore HAL trait
+    # + noop + in-memory impls; the raft-backed impl, graph cache,
+    # enforcer, HTTP router, and kernel `PermissionProvider` impl
+    # land in follow-up PRs.
+    "rust/services/rebac",
     # nexusd — the nexus cluster-profile daemon assembly binary
     # (`nexusd-cluster`). Composes the nexus-vfs cluster boot
     # (`nexus_cluster::run_with_services`) with the managed_agent control

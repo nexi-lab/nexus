@@ -3089,6 +3089,14 @@ version = "0.1.0"
 source = "git+https://github.com/nexi-lab/nexus-vfs?rev=601c2af20b85a324496a7c95b8aba5cb20848e3b#601c2af20b85a324496a7c95b8aba5cb20848e3b"
 
 [[package]]
+name = "nexus-rebac"
+version = "0.1.0"
+dependencies = [
+ "parking_lot",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "nexus-search-plugin"
 version = "0.1.0"
 dependencies = [

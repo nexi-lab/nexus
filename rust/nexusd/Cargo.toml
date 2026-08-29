@@ -1,6 +1,6 @@
 [package]
 name = "nexusd"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Nexus cluster-profile daemon assembly — nexus-vfs cluster/federation boot composed with the nexus managed_agent control plane via the ServiceRegistry bring-up seam. This IS the `cluster` deployment profile (KERNEL-ARCHITECTURE §7) plus the agent control plane: the slim, size-gated production binary. driver-s3 / the full superset is an opt-in feature, never the default."
 authors = ["Nexus Team"]

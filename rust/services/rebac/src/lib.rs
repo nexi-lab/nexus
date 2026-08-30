@@ -4,17 +4,21 @@
 //! Part of the R10 pure-Rust `nexus-server` migration (epic
 //! #4674).  Ships in phases:
 //!
-//!   * **PR-1 (this crate skeleton)** — [`store::ReBACTupleStore`]
-//!     HAL trait + [`store::NoopReBACTupleStore`] fail-closed
-//!     default + [`inmem::InMemoryReBACTupleStore`] real impl.
-//!     No enforcer, no graph cache, no HTTP wire, no kernel hook.
-//!     Sets the seam other crates code against.
-//!   * PR-2 — `RaftReBACTupleStore` (a `raft::ControlStateStore`
-//!     wrapper with namespace `"rebac"`) + graph cache built on
-//!     `lib::rebac::ReBACGraph`.
-//!   * PR-3 — `RebacPermissionProvider` impl of
-//!     `kernel::PermissionProvider` + composition-root wire in
-//!     `nexusd`.
+//!   * PR-1 — [`store::ReBACTupleStore`] HAL trait +
+//!     [`store::NoopReBACTupleStore`] fail-closed default +
+//!     [`inmem::InMemoryReBACTupleStore`] real impl.  Sets the seam
+//!     other crates code against.
+//!   * **PR-2 (this addition)** — [`raft_store::RaftReBACTupleStore`],
+//!     a thin `raft::ControlStateStore` wrapper with namespace
+//!     [`raft_store::CONTROL_NS_REBAC`].  Mirrors upstream
+//!     `RaftAuthKeyStore` shape exactly, one namespace over.  No
+//!     nexusd wire yet — landing the raft backend behind the trait
+//!     lets PR-3 focus purely on the enforcer + graph cache.
+//!   * PR-3 — Per-zone graph cache built on `lib::rebac::ReBACGraph`
+//!     + `RebacPermissionProvider` impl of `kernel::PermissionProvider`
+//!     + composition-root wire in `nexusd` (feature-gated behind
+//!       `--features rebac`, folded into the existing `http-api`
+//!       feature so the slim `cluster` build stays lean).
 //!   * PR-4 — HTTP `/v2/rebac/tuples` router (grant / list /
 //!     revoke) + post-filter wire in `handlers::search` +
 //!     `handlers::documents`.
@@ -41,6 +45,7 @@
 //! namespace configs / zone-revision blobs / etc.
 
 pub mod inmem;
+pub mod raft_store;
 pub mod store;
 
 // Re-export the trait + error at the crate root so callers reach
@@ -48,4 +53,5 @@ pub mod store;
 // remembering the module layout — same convention as
 // `nexus_http_api::AppState`.
 pub use inmem::InMemoryReBACTupleStore;
+pub use raft_store::{RaftReBACTupleStore, CONTROL_NS_REBAC};
 pub use store::{NoopReBACTupleStore, ReBACTupleStore, ReBACTupleStoreError};

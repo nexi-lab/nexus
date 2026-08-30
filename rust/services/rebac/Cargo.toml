@@ -2,7 +2,7 @@
 name = "nexus-rebac"
 version = "0.1.0"
 edition = "2021"
-description = "Relationship-based access control (Zanzibar-shaped) for nexus — the Rust replacement for `src/nexus/bricks/rebac/`.  Owns the tuple store trait + in-memory impl + (in later PRs) the raft-backed impl, the per-zone graph cache, and the enforcer facade the /v2/search/* + /v2/documents/* handlers call as a post-filter.  Kernel `PermissionProvider` impl for syscall-tier gating lands here too."
+description = "Relationship-based access control (Zanzibar-shaped) for nexus — the Rust replacement for `src/nexus/bricks/rebac/`.  Owns the tuple store trait + in-memory impl + the raft-backed impl, and (in later PRs) the per-zone graph cache, the enforcer facade, the kernel `PermissionProvider` impl, and the HTTP router the /v2/rebac/tuples handlers call."
 authors = ["Nexus Team"]
 publish = false
 
@@ -22,8 +22,34 @@ parking_lot = "0.12"
 # uniform.
 thiserror = "1"
 
+# Raft-backed tuple store — thin wrapper over `raft::ControlStateStore`
+# with a `CONTROL_NS_REBAC = "rebac"` namespace. Mirrors upstream
+# `RaftAuthKeyStore` exactly, one namespace over. Both `raft` and
+# `contracts` pull from the pinned nexus-vfs rev via workspace deps.
+raft = { workspace = true }
+contracts = { workspace = true }
+
+# `tokio::runtime::Handle` — the raft store's `propose` bridge needs
+# a runtime handle to run its async futures under (matches upstream
+# `RaftAuthKeyStore::new(node, runtime)` signature). Not a workspace
+# dep here (each service crate picks its own feature set); minimal
+# features needed for `Handle` alone.
+tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
+
 [dev-dependencies]
-# The in-memory impl needs to be exercised from multiple threads to
-# prove its `Send + Sync` bounds hold under real racing — no
-# additional deps required, but keeping this section explicit for
-# a future test that wants tokio-based concurrency stress.
+# The raft-backed store test brings up a live 1-voter zone; the
+# upstream test uses `tempfile::TempDir` for the data dir. Same
+# pattern here — mirrors `raft::auth_key_store::tests` shape so a
+# reviewer familiar with either sees the same skeleton.
+tempfile = "3"
+
+# `#[tokio::test(flavor = "multi_thread")]` — the live-zone tests
+# need `macros` for the attribute and the runtime enabled.
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+
+# Kernel `AuthKeyStore` trait — the namespace-isolation test opens
+# a `RaftAuthKeyStore` alongside `RaftReBACTupleStore` and asserts
+# the two views over the same consensus reach disjoint keyspaces.
+# Needs the trait in scope for the `.get()` / `.put()` calls to
+# resolve on the `RaftAuthKeyStore` value.
+kernel = { workspace = true }

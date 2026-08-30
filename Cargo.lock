@@ -3092,8 +3092,13 @@ source = "git+https://github.com/nexi-lab/nexus-vfs?rev=601c2af20b85a324496a7c95
 name = "nexus-rebac"
 version = "0.1.0"
 dependencies = [
+ "contracts",
+ "kernel",
  "parking_lot",
+ "raft 0.1.0",
+ "tempfile",
  "thiserror 1.0.69",
+ "tokio",
 ]
 
 [[package]]

@@ -51,6 +51,14 @@ x-runbook-entrypoint: &runbook-entrypoint
     - |
       set -e
       DATA_DIR="${NEXUS_DATA_DIR:-/app/data}"
+      # Advertise this container's routable IP, not the bare compose service
+      # name: the federation fail-loud check refuses bare hostnames (they do not
+      # resolve across an overlay). Models a real overlay deployment, which
+      # advertises its routable IP; peers still resolve each other via NEXUS_PEERS
+      # (compose DNS) for the initial dial, then learn the advertised IP.
+      if [ -n "$${NEXUS_ADVERTISE_ADDR}" ]; then
+        export NEXUS_ADVERTISE_ADDR="$$(hostname -i | awk '{print $$1}'):$${NEXUS_ADVERTISE_ADDR##*:}"
+      fi
       # Reachable 0.0.0.0 bind + --no-tls trips the loopback auth invariant;
       # this is a trusted CI/compose cluster, so take the sanctioned escape.
       exec nexusd-cluster \

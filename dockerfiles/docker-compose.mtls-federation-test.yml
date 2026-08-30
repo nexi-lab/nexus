@@ -35,6 +35,12 @@ x-mtls-node: &mtls-node
     - |
       set -e
       cp -r /certs/. /app/data/
+      # Advertise this container's routable IP, not the bare compose service name:
+      # the federation fail-loud check refuses bare hostnames (they do not resolve
+      # across an overlay). Peers still resolve via NEXUS_PEERS (compose DNS).
+      if [ -n "$${NEXUS_ADVERTISE_ADDR}" ]; then
+        export NEXUS_ADVERTISE_ADDR="$$(hostname -i | awk '{print $$1}'):$${NEXUS_ADVERTISE_ADDR##*:}"
+      fi
       exec nexusd-cluster --bind-addr 0.0.0.0:2126 --data-dir /app/data
   command: []
   networks:

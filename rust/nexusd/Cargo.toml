@@ -33,7 +33,7 @@ http-api = ["dep:nexus-http-api", "dep:tracing"]
 # carries `SudoCodeSpawnAdapter` next to the loop it wraps) and injects it
 # via `install_managed_agent_with_spawn`, so a minted agent runs a real LLM
 # loop doing in-process `KernelSyscall` calls (no gRPC on its fs path).
-# The kernel rev MUST match the workspace pin (both at nexus-vfs `08460a7`)
+# The kernel rev MUST match the workspace pin (both at nexus-vfs `601c2af`)
 # so `SpawnTask<Kernel>` is one type across the seam.
 cohost-sudocode = ["dep:sudocode-tools"]
 
@@ -60,14 +60,14 @@ anyhow = "1"
 # ── Co-host (opt-in `cohost-sudocode`) ──────────────────────────────────
 # The real sudocode agent runtime, linked ONLY when co-hosting. `sudocode-
 # tools` reaches `kernel` at the SAME nexus-vfs rev the workspace pins
-# (`08460a7`), so `Kernel` / `AgentDescriptor` / `KernelSyscall` / `AgentState`
+# (`601c2af`), so `Kernel` / `AgentDescriptor` / `KernelSyscall` / `AgentState`
 # unify across the seam and `SpawnTask<Kernel>` is a single monomorphised
 # type. `sudocode-tools` carries BOTH the `spawn_managed_agent` factory and
 # the `SudoCodeSpawnAdapter` this binary injects at boot — there is no
 # nexus-side co-host glue and no runtime enum to map (the adapter reports
 # `kernel::AgentState` directly). Pinned to sudocode main (spawn AgentState
 # collapse).
-sudocode-tools = { package = "tools", git = "https://github.com/sudoprivacy/sudocode", rev = "c638b5c3b646a925ade780461a662a5d92e5099b", optional = true }
+sudocode-tools = { package = "tools", git = "https://github.com/sudoprivacy/sudocode", rev = "aad70dc8ecf9c00744b75818170a51179baa8206", optional = true }
 # Named directly to spell `kernel::kernel::{ServiceDecl, Kernel}` — the
 # managed-agent boot decl's return type (both builds) and the co-host
 # adapter's `SpawnTask<Kernel>` (cohost build). Already present transitively

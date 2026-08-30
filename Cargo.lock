@@ -3094,6 +3094,7 @@ version = "0.1.0"
 dependencies = [
  "contracts",
  "kernel",
+ "lib",
  "parking_lot",
  "raft 0.1.0",
  "tempfile",

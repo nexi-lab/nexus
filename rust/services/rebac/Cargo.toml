@@ -29,6 +29,14 @@ thiserror = "1"
 raft = { workspace = true }
 contracts = { workspace = true }
 
+# `lib::rebac::ReBACGraph` + `lib::types::ReBACTuple` — the upstream
+# Zanzibar graph engine (O(1) direct-relation index + userset
+# expansion + tupleToUserset resolution) the enforcer walks.  This
+# crate builds one `ReBACGraph` per zone from a `Vec<ReBACTuple>`
+# materialised out of the store; the enforcer PR then calls
+# `lib::rebac::compute_permission` on that graph.
+lib = { workspace = true }
+
 # `tokio::runtime::Handle` — the raft store's `propose` bridge needs
 # a runtime handle to run its async futures under (matches upstream
 # `RaftAuthKeyStore::new(node, runtime)` signature). Not a workspace

@@ -46,6 +46,7 @@
 
 pub mod graph_cache;
 pub mod inmem;
+pub mod permission_provider;
 pub mod raft_store;
 pub mod store;
 pub mod tuple_key;
@@ -56,5 +57,6 @@ pub mod tuple_key;
 // `nexus_http_api::AppState`.
 pub use graph_cache::ReBACGraphCache;
 pub use inmem::InMemoryReBACTupleStore;
+pub use permission_provider::RebacPermissionProvider;
 pub use raft_store::{RaftReBACTupleStore, CONTROL_NS_REBAC};
 pub use store::{NoopReBACTupleStore, ReBACTupleStore, ReBACTupleStoreError};

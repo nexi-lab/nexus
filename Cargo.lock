@@ -3092,6 +3092,7 @@ source = "git+https://github.com/nexi-lab/nexus-vfs?rev=2cc85ca7525a6a21236c189c
 name = "nexus-rebac"
 version = "0.1.0"
 dependencies = [
+ "ahash",
  "contracts",
  "kernel",
  "lib",

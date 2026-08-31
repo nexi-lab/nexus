@@ -67,7 +67,7 @@ anyhow = "1"
 # nexus-side co-host glue and no runtime enum to map (the adapter reports
 # `kernel::AgentState` directly). Pinned to sudocode main (spawn AgentState
 # collapse).
-sudocode-tools = { package = "tools", git = "https://github.com/sudoprivacy/sudocode", rev = "1463842f71d1518e44dbe364de2faa4b8a77adbe", optional = true }
+sudocode-tools = { package = "tools", git = "https://github.com/sudoprivacy/sudocode", rev = "579b795e58ba708d6c26f9d0cfa89dcda18c7f13", optional = true }
 # Named directly to spell `kernel::kernel::{ServiceDecl, Kernel}` — the
 # managed-agent boot decl's return type (both builds) and the co-host
 # adapter's `SpawnTask<Kernel>` (cohost build). Already present transitively

@@ -35,12 +35,6 @@ x-mtls-node: &mtls-node
     - |
       set -e
       cp -r /certs/. /app/data/
-      # Advertise this container's routable IP, not the bare compose service name:
-      # the federation fail-loud check refuses bare hostnames (they do not resolve
-      # across an overlay). Peers still resolve via NEXUS_PEERS (compose DNS).
-      if [ -n "$${NEXUS_ADVERTISE_ADDR}" ]; then
-        export NEXUS_ADVERTISE_ADDR="$$(hostname -i | awk '{print $$1}'):$${NEXUS_ADVERTISE_ADDR##*:}"
-      fi
       exec nexusd-cluster --bind-addr 0.0.0.0:2126 --data-dir /app/data
   command: []
   networks:
@@ -54,6 +48,7 @@ services:
     environment:
       NEXUS_HOSTNAME: founder
       NEXUS_ADVERTISE_ADDR: founder:2126
+      NEXUS_ALLOW_HOSTNAME_ADVERTISE: "1"
       # Static topology: create `sharedzone` and mount it at /shared. The
       # joiner discovers this over mTLS and auto-joins.
       NEXUS_CLUSTER_INIT: sharedzone
@@ -85,6 +80,7 @@ services:
     environment:
       NEXUS_HOSTNAME: joiner
       NEXUS_ADVERTISE_ADDR: joiner:2126
+      NEXUS_ALLOW_HOSTNAME_ADVERTISE: "1"
       # No zones of its own — discover + auto-join the founder's over mTLS.
       NEXUS_PEERS: founder:2126
       RUST_LOG: info,nexus_raft=info

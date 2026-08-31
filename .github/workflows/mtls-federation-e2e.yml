@@ -131,8 +131,11 @@ jobs:
               echo "OK: federation converged over mTLS — voters=[1, 2], joiner caught up"
               # The founder actually served mTLS, the joiner actually reached it
               # over https, and the founder dialed the joiner back over https
-              # (not a plaintext fallback in either direction).
-              echo "$flog" | grep -q 'TLS mode: mTLS' \
+              # (not a plaintext fallback in either direction). The founder's
+              # ZoneManager boot line reports `tls=true` when TLS is armed (the
+              # former `TLS mode: mTLS` log was retired); the https dial-back
+              # assertion below is what proves it is *mutual* TLS, not one-way.
+              echo "$flog" | grep -q 'started (bind=[^)]*tls=true)' \
                 || { echo '::error::founder did not enable mTLS'; exit 1; }
               echo "$jlog" | grep -q 'DiscoverZones: peer reported federation zones' \
                 || { echo '::error::joiner did not discover over mTLS'; exit 1; }

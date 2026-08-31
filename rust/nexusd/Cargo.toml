@@ -36,6 +36,33 @@ http-api = ["dep:nexus-http-api", "dep:tracing"]
 # The kernel rev MUST match the workspace pin (both at nexus-vfs `601c2af`)
 # so `SpawnTask<Kernel>` is one type across the seam.
 cohost-sudocode = ["dep:sudocode-tools"]
+# Opt-in ReBAC enforcer — Rust replacement for the Python
+# `bricks/rebac/` (part of the R10 pure-Rust `nexus-server`
+# migration; epic #4674).  Links `nexus-rebac` (the Zanzibar-shaped
+# graph engine + raft-backed tuple store + `PermissionProvider`
+# impl) and wires it into the kernel's ONE permission-provider slot
+# at boot.  OFF in the default slim `cluster` build AND in
+# `--features http-api` — pulls in the `lib::rebac` graph engine +
+# `AHashMap` / `string_interner` transitively, so kept behind an
+# explicit gate.  Compose via `--features full` for the everything
+# build; a la carte `--features rebac,http-api` also works.
+rebac = ["dep:nexus-rebac"]
+# Meta-feature: the "full superset" build — enables every opt-in
+# service that does not require cross-repo pin coordination
+# (§7: cluster ⊂ … ⊂ full).  Downstream tooling that wants every
+# in-house capability without spelling each feature builds
+# `--features full`.  The slim `cluster` production binary stays
+# the default (this meta ONLY pulls features UP, never restricts
+# the slim path).
+#
+# **`cohost-sudocode` NOT included** — it links `sudocode-tools`
+# from a pinned rev in a separate repo (sudoprivacy/sudocode) that
+# must match the workspace's `nexus-vfs` pin for `SpawnTask<Kernel>`
+# to unify.  Bumping either half out of sync fails the build.
+# Operators who want the true everything-build spell it explicitly
+# as `--features full,cohost-sudocode` (which fails LOUD until the
+# sudocode pin is refreshed).
+full = ["driver-s3", "http-api", "rebac"]
 
 [dependencies]
 # Cluster library entry — `nexus_cluster::run_with_services` owns clap
@@ -67,7 +94,7 @@ anyhow = "1"
 # nexus-side co-host glue and no runtime enum to map (the adapter reports
 # `kernel::AgentState` directly). Pinned to sudocode main (spawn AgentState
 # collapse).
-sudocode-tools = { package = "tools", git = "https://github.com/sudoprivacy/sudocode", rev = "579b795e58ba708d6c26f9d0cfa89dcda18c7f13", optional = true }
+sudocode-tools = { package = "tools", git = "https://github.com/sudoprivacy/sudocode", rev = "874d76fa2fb2211cefa4114bd99d57831188fdbe", optional = true }
 # Named directly to spell `kernel::kernel::{ServiceDecl, Kernel}` — the
 # managed-agent boot decl's return type (both builds) and the co-host
 # adapter's `SpawnTask<Kernel>` (cohost build). Already present transitively
@@ -87,3 +114,12 @@ nexus-http-api = { path = "../services/http-api", optional = true }
 # the rest of nexusd inherits tracing via `nexus-cluster`'s
 # `install_tracing` (which itself pulls tracing in unconditionally).
 tracing = { version = "0.1", optional = true }
+
+# ReBAC enforcer (opt-in `rebac` feature; folded into `full`). Links
+# only when the feature is on — zero cost in the default slim
+# `cluster` build and in the `--features http-api` build.  Ships
+# `RaftReBACTupleStore` (over the same credential-zone consensus as
+# `RaftAuthKeyStore`, one namespace over), `ReBACGraphCache`, and
+# `RebacPermissionProvider` — the kernel's ONE `PermissionProvider`
+# slot receives an `Arc<Box<Self>>` at boot.
+nexus-rebac = { path = "../services/rebac", optional = true }

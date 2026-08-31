@@ -116,6 +116,7 @@ services:
       NEXUS_HOSTNAME: founder
       NEXUS_BIND_ADDR: 0.0.0.0:2126
       NEXUS_ADVERTISE_ADDR: founder:2126
+      NEXUS_ALLOW_HOSTNAME_ADVERTISE: "1"
       NEXUS_DATA_DIR: /app/data
       NEXUS_NO_TLS: "true"
       # First boot only — auto-detect entrypoint strips on restart.
@@ -161,6 +162,7 @@ services:
       NEXUS_HOSTNAME: joiner
       NEXUS_BIND_ADDR: 0.0.0.0:2126
       NEXUS_ADVERTISE_ADDR: joiner:2126
+      NEXUS_ALLOW_HOSTNAME_ADVERTISE: "1"
       NEXUS_DATA_DIR: /app/data
       # `identity.json` (nexus-vfs PR #106) — node-bound peer address
       # book that survives `<NEXUS_DATA_DIR>` cleanup.  Volume-mounted

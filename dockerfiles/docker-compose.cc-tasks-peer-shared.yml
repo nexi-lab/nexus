@@ -69,6 +69,7 @@ services:
       NEXUS_HOSTNAME: founder
       NEXUS_BIND_ADDR: 0.0.0.0:2126
       NEXUS_ADVERTISE_ADDR: founder:2126
+      NEXUS_ALLOW_HOSTNAME_ADVERTISE: "1"
       NEXUS_DATA_DIR: /app/data
       NEXUS_NO_TLS: "true"
       NEXUS_CLUSTER_INIT: sharedzone
@@ -106,6 +107,7 @@ services:
       NEXUS_HOSTNAME: joiner
       NEXUS_BIND_ADDR: 0.0.0.0:2126
       NEXUS_ADVERTISE_ADDR: joiner:2126
+      NEXUS_ALLOW_HOSTNAME_ADVERTISE: "1"
       NEXUS_DATA_DIR: /app/data
       NEXUS_IDENTITY_DIR: /app/identity
       NEXUS_NO_TLS: "true"

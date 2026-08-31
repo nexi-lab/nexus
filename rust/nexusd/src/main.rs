@@ -18,6 +18,25 @@
 //! the default. managed_agent is the one control-plane service cluster
 //! adds; supersets inherit it. `acp` (nexus-drives-ACP one-shot) is NOT a
 //! cluster service.
+//!
+//! Opt-in features (each linked ONLY when named on the cargo cmdline):
+//!
+//!   * `driver-s3` — adds the S3 / R2 object-store driver.
+//!   * `http-api` — adds the axum HTTP shim over the search-plugin gRPC
+//!     surface (part of R10 epic #4674). Runtime bring-up ALSO needs
+//!     `NEXUS_HTTP_ADDR` set.
+//!   * `cohost-sudocode` — links the sudocode agent runtime IN-PROCESS
+//!     (cross-repo pin coordination required).
+//!   * `rebac` — links `nexus-rebac` (the ReBAC enforcer) and installs
+//!     its `PermissionProvider` in the kernel's ONE slot. Backed by
+//!     `RaftReBACTupleStore` over the SAME credential-zone consensus
+//!     that already backs `RaftAuthKeyStore` (one namespace over —
+//!     `CONTROL_NS_REBAC = "rebac"`).  Rust replacement for the Python
+//!     `bricks/rebac/` (R10 epic #4674).
+//!   * `full` — meta-feature = `driver-s3 + http-api + rebac`. Does NOT
+//!     include `cohost-sudocode` (that one needs cross-repo pin
+//!     coordination; operators wanting the true everything-build spell
+//!     `--features full,cohost-sudocode`).
 
 /// The `managed_agent` boot declaration. In the default slim cluster build
 /// this is the procfs-only variant (`service_decl`) — no runtime body. In a
@@ -58,14 +77,21 @@ fn main() -> anyhow::Result<()> {
     // The daemon's service set — the SSOT for "which services this daemon
     // runs", ordered. a2a is installed first (its from-stamp hook must be
     // armed before agents write mailboxes); managed_agent follows; the
-    // optional HTTP-API listener (feature-gated `http-api`) slots in last.
+    // optional HTTP-API listener (feature-gated `http-api`) slots in last;
+    // the optional ReBAC enforcer (feature-gated `rebac`) installs its
+    // `PermissionProvider` at the same tier as the HTTP-API decl.
     // `ctx.auth_armed` is boot-derived (true iff sk- auth is armed) and
-    // sets a2a's fail-closed posture; `ctx.auth` + `ctx.runtime` are
-    // live handles that http-api needs to inject into its bearer
-    // middleware + spawn its axum listener on the daemon runtime.
+    // sets a2a's fail-closed posture; `ctx.auth` + `ctx.runtime` are live
+    // handles that http-api needs; `ctx.credential_consensus` +
+    // `ctx.credential_zone_runtime` are what the rebac decl binds its
+    // `RaftReBACTupleStore` over (same consensus as `RaftAuthKeyStore`,
+    // one namespace over).
     nexus_cluster::run_with_services(move |ctx| {
         let mut decls = vec![a2a::service_decl(ctx.auth_armed), managed_agent_decl()];
         if let Some(decl) = http_api_decl_from(&http_api_config, ctx) {
+            decls.push(decl);
+        }
+        if let Some(decl) = rebac_decl_from(ctx) {
             decls.push(decl);
         }
         decls
@@ -162,5 +188,62 @@ fn http_api_decl_from(
     _config: &Option<HttpApiConfig>,
     _ctx: &nexus_cluster::ServiceBootCtx,
 ) -> Option<kernel::kernel::ServiceDecl> {
+    None
+}
+
+/// Build the ReBAC enforcer `ServiceDecl` from the boot ctx.
+///
+/// # What it does
+///
+/// * Constructs a `RaftReBACTupleStore` over `ctx.credential_
+///   consensus` — the SAME consensus that already backs
+///   `RaftAuthKeyStore`, one namespace over (`CONTROL_NS_REBAC =
+///   "rebac"`).  Grants + revokes therefore replicate through the
+///   same raft log a key mint does — one cluster-wide plane, no
+///   split-brain between auth and access.
+/// * Wraps in `ReBACGraphCache` for the per-zone `Arc<ReBACGraph>`
+///   cache the enforcer's check hot path reads.
+/// * Wraps in `RebacPermissionProvider` and hands it to
+///   `kernel.set_permission_provider(...)` in the install closure.
+///
+/// # Why a `ServiceDecl` (not a direct call at ctx-build time)
+///
+/// The kernel's `Arc<Kernel>` handle is only available inside a
+/// `ServiceDecl::install` closure — the ServiceRegistry is the single
+/// authority for services (`feedback_sr_uniform_service_registration`).
+/// Even for a wiring-only "service" that installs no RPC surface, going
+/// through the decl keeps the composition-root uniform + boot-ordered.
+///
+/// # Feature-off build stubs to `None`
+///
+/// The `rebac`-off build never links `nexus-rebac`, so the entire
+/// enforcer + graph engine + `lib::rebac` transitive weight stays
+/// out of the slim `cluster` binary (§7 size budget).
+#[cfg(feature = "rebac")]
+fn rebac_decl_from(ctx: &nexus_cluster::ServiceBootCtx) -> Option<kernel::kernel::ServiceDecl> {
+    use std::sync::Arc;
+    // Build the store + cache + provider OUTSIDE the install
+    // closure so ctx borrows do not need to move into a `'static`
+    // closure (the ServiceInstall signature is `FnOnce(&Arc<
+    // Kernel>) + Send + 'static`).  `store` clones the consensus +
+    // runtime handle; both are Arc-inside — cheap.
+    let store: Arc<dyn nexus_rebac::ReBACTupleStore> = nexus_rebac::RaftReBACTupleStore::new_arc(
+        ctx.credential_consensus.clone(),
+        ctx.credential_zone_runtime.clone(),
+    );
+    let cache = Arc::new(nexus_rebac::ReBACGraphCache::new(store));
+    let provider: Arc<Box<dyn kernel::core::dispatch::PermissionProvider>> =
+        Arc::new(Box::new(nexus_rebac::RebacPermissionProvider::new(cache)));
+    Some(kernel::kernel::ServiceDecl {
+        name: "rebac".to_string(),
+        install: Box::new(move |kernel| {
+            kernel.set_permission_provider(provider);
+            Ok(())
+        }),
+    })
+}
+
+#[cfg(not(feature = "rebac"))]
+fn rebac_decl_from(_ctx: &nexus_cluster::ServiceBootCtx) -> Option<kernel::kernel::ServiceDecl> {
     None
 }

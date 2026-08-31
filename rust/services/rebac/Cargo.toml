@@ -33,9 +33,21 @@ contracts = { workspace = true }
 # Zanzibar graph engine (O(1) direct-relation index + userset
 # expansion + tupleToUserset resolution) the enforcer walks.  This
 # crate builds one `ReBACGraph` per zone from a `Vec<ReBACTuple>`
-# materialised out of the store; the enforcer PR then calls
+# materialised out of the store; the enforcer calls
 # `lib::rebac::compute_permission` on that graph.
 lib = { workspace = true }
+
+# Kernel `PermissionProvider` trait + `OperationContext` +
+# `KernelError` — the enforcer impl target.  `default-features =
+# false` matches the workspace pin (kernel's default features pull
+# extra transitive weight this crate does not need).
+kernel = { workspace = true, default-features = false }
+
+# `AHashMap` / `AHashSet` — the memo cache + visited set the
+# enforcer allocates per `compute_permission` call.  Matches the
+# upstream `lib::rebac` API surface (which returns `AHashMap` /
+# `AHashSet` types); no need to convert at the boundary.
+ahash = { workspace = true }
 
 # `tokio::runtime::Handle` — the raft store's `propose` bridge needs
 # a runtime handle to run its async futures under (matches upstream
@@ -55,9 +67,6 @@ tempfile = "3"
 # need `macros` for the attribute and the runtime enabled.
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
-# Kernel `AuthKeyStore` trait — the namespace-isolation test opens
-# a `RaftAuthKeyStore` alongside `RaftReBACTupleStore` and asserts
-# the two views over the same consensus reach disjoint keyspaces.
-# Needs the trait in scope for the `.get()` / `.put()` calls to
-# resolve on the `RaftAuthKeyStore` value.
-kernel = { workspace = true }
+# Kernel `AuthKeyStore` trait already available via the normal-dep
+# `kernel` above (bumped from dev-dep now that the enforcer needs
+# `PermissionProvider` at compile time).

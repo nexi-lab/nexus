@@ -214,9 +214,13 @@ class EvictionManager:
                     current = self._agent_registry.get(agent.pid)
                     if current is None or current.generation != agent.generation:
                         raise InvalidTransitionError(f"stale generation for {agent.pid}")
-                    self._agent_registry.signal(agent.pid, AgentSignal.SIGSTOP)
+                    # Eviction reclaims the slot by TERMINATING the agent —
+                    # SUSPENDED (pause) was a dead-end with no resume path, so a
+                    # frozen agent never freed anything. SIGTERM actually
+                    # releases the slot.
+                    self._agent_registry.signal(agent.pid, AgentSignal.SIGTERM)
                     logger.debug(
-                        "[EVICTION] Sent SIGSTOP to process %s (gen=%d)",
+                        "[EVICTION] Terminated process %s (gen=%d)",
                         agent.pid,
                         agent.generation,
                     )
@@ -289,7 +293,7 @@ class EvictionManager:
             current = self._agent_registry.get(agent_id)
             if current is None or current.generation != record.generation:
                 raise InvalidTransitionError(f"stale generation for {agent_id}")
-            self._agent_registry.signal(agent_id, AgentSignal.SIGSTOP)
+            self._agent_registry.signal(agent_id, AgentSignal.SIGTERM)
         except (InvalidTransitionError, AgentError) as exc:
             logger.info("[EVICTION] Manual eviction skipped for %s: %s", agent_id, exc)
             return EvictionResult(evicted=0, reason=EvictionReason.MANUAL, skipped=1)

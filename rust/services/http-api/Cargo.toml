@@ -61,6 +61,28 @@ kernel = { workspace = true }
 # the sibling search-plugin uses.
 thiserror = "1"
 
+# ── Opt-in `rebac` feature ──────────────────────────────────────
+#
+# When enabled, links `nexus-rebac` and mounts the
+# `/v2/rebac/tuples` router (grant / list / revoke).  Off by
+# default so the slim `http-api` build stays out of `lib::rebac`'s
+# Zanzibar substrate + `ahash` transitive weight — real bytes the
+# search / documents callers do not need.  Downstream `nexusd`
+# chains `rebac = ["dep:nexus-rebac", "nexus-http-api?/rebac"]`
+# so its own `rebac` feature turns this one on.
+nexus-rebac = { path = "../rebac", optional = true }
+# `lib::types::ReBACTuple` — the typed shape the wire body splits
+# into for the store's key encoder.  Only used by the rebac
+# handler; optional-and-feature-gated so an `http-api`-only build
+# does not pull `lib` for this reason.  (The workspace pins `lib`
+# anyway, so linking it under `rebac` is a re-share, not a new
+# resolution.)
+lib = { workspace = true, optional = true }
+
+[features]
+default = []
+rebac = ["dep:nexus-rebac", "dep:lib"]
+
 [build-dependencies]
 # Client-only proto codegen from the workspace's search proto SSOT
 # (`rust/services/proto/nexus/search/v1/search.proto`).  Same tool

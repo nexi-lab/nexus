@@ -3055,6 +3055,8 @@ dependencies = [
  "dashmap",
  "http-body-util",
  "kernel",
+ "lib",
+ "nexus-rebac",
  "prost 0.14.4",
  "protoc-bin-vendored",
  "reqwest 0.12.28",

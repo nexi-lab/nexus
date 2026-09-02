@@ -479,7 +479,7 @@ operations:
   transports:
     grpc_expose:
       name: agent_heartbeat
-      source: src/nexus/services/agents/agent_rpc_service.py:877
+      source: src/nexus/services/agents/agent_rpc_service.py:862
   profiles:
     lite: supported
     sandbox: supported
@@ -496,7 +496,7 @@ operations:
   transports:
     grpc_expose:
       name: agent_list_by_zone
-      source: src/nexus/services/agents/agent_rpc_service.py:885
+      source: src/nexus/services/agents/agent_rpc_service.py:870
   profiles:
     lite: supported
     sandbox: supported

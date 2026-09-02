@@ -138,7 +138,7 @@ class AgentPhase(StrEnum):
     ACTIVE = "active"
     THINKING = "thinking"
     IDLE = "idle"
-    SUSPENDED = "suspended"
+    AWAITING_INPUT = "awaiting_input"
     EVICTED = "evicted"
 
 
@@ -148,7 +148,7 @@ AGENT_STATE_TO_PHASE: dict[AgentState, AgentPhase] = {
     AgentState.WARMING_UP: AgentPhase.WARMING,
     AgentState.READY: AgentPhase.READY,
     AgentState.BUSY: AgentPhase.ACTIVE,
-    AgentState.SUSPENDED: AgentPhase.SUSPENDED,
+    AgentState.AWAITING_INPUT: AgentPhase.AWAITING_INPUT,
     AgentState.TERMINATED: AgentPhase.EVICTED,
 }
 

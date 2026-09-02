@@ -436,7 +436,7 @@ class TaskQueue:
         """Dequeue using HRRN scoring within priority classes (Astraea).
 
         Orders by: priority_class DESC, HRRN score DESC, enqueued_at ASC.
-        Filters out tasks whose executor is SUSPENDED.
+        Filters out tasks whose executor is no longer live (TERMINATED).
 
         Args:
             conn: Database connection.

@@ -156,12 +156,12 @@ class SandboxAuthService:
                 f"Ownership validation failed: user '{owner_id}' does not own agent '{agent_id}'"
             )
 
-        # Step 3: Signal agent SIGCONT (transition to CONNECTED)
-        from nexus.contracts.process_types import AgentSignal
+        # Step 3: Transition the agent to READY for the new session (was a
+        # SIGCONT "become ready" shortcut — now a direct state transition).
+        from nexus.contracts.process_types import AgentState
 
-        connected_record = await asyncio.to_thread(
-            self._agent_registry.signal, agent_id, AgentSignal.SIGCONT
-        )
+        await asyncio.to_thread(self._agent_registry.update_state, agent_id, AgentState.READY.value)
+        connected_record = await asyncio.to_thread(self._agent_registry.get, agent_id)
 
         # Step 4: Construct namespace from ReBAC grants
         # (best-effort — failure doesn't block sandbox)
@@ -244,14 +244,18 @@ class SandboxAuthService:
         # Stop the sandbox
         result = await self._sandbox_manager.stop_sandbox(sandbox_id)
 
-        # Signal agent SIGSTOP (transition to IDLE — best-effort)
+        # Return the agent to READY after its sandbox stops — best-effort.
+        # (Was a SIGSTOP "→ IDLE" suspend; SUSPENDED is gone, so the agent simply
+        # goes idle-ready. Stopping the sandbox does not terminate the agent.)
         try:
-            from nexus.contracts.process_types import AgentSignal
+            from nexus.contracts.process_types import AgentState
 
-            await asyncio.to_thread(self._agent_registry.signal, agent_id, AgentSignal.SIGSTOP)
+            await asyncio.to_thread(
+                self._agent_registry.update_state, agent_id, AgentState.READY.value
+            )
         except Exception:
             logger.warning(
-                "[SANDBOX-AUTH] Failed to transition agent %s to IDLE after stop",
+                "[SANDBOX-AUTH] Failed to return agent %s to READY after stop",
                 agent_id,
                 exc_info=True,
             )

@@ -7,7 +7,7 @@ on other layers — only stdlib + contracts.
 
 Defines:
     AgentState       — finite state machine (REGISTERED → WARMING_UP → READY ↔ BUSY → TERMINATED)
-    AgentSignal      — POSIX-like signals (SIGTERM, SIGSTOP, SIGCONT, SIGKILL, SIGUSR1)
+    AgentSignal      — POSIX-like signals (SIGTERM, SIGKILL, SIGUSR1)
     AgentKind        — MANAGED (nexusd-spawned) vs UNMANAGED (self-managed via gRPC)
     AgentDescriptor  — frozen PCB (Process Control Block)
     ExternalProcessInfo — connection metadata for external agents
@@ -31,44 +31,53 @@ from typing import Any
 
 
 class AgentState(StrEnum):
-    """Unified agent lifecycle states (Issue #1798, #1800).
+    """Unified agent lifecycle states — MIRRORS the Rust kernel SSOT
+    (nexus-vfs ``kernel/src/core/agents/registry.rs::AgentState``).
 
-    Single source of truth — replaces the dual ProcessState/AgentState
-    state machines that were out of sync.
+    Single-axis lifecycle::
 
-    Lifecycle::
+        REGISTERED → WARMING_UP → READY ⇄ BUSY ⇄ AWAITING_INPUT → TERMINATED
 
-        REGISTERED → WARMING_UP → READY → BUSY → READY (loop)
-                                    ↓       ↓
-                                SUSPENDED ← ─┘
-                                    ↓
-                               TERMINATED
+    ``AWAITING_INPUT`` = alive, in an in-flight turn, blocked awaiting a reply
+    the agent requested (permission / question / plan approval); reachable only
+    from BUSY, resumes to BUSY when answered or READY if abandoned.
+
+    (The former ``SUSPENDED`` was removed: it modelled a half-built eviction
+    pause with no resume path — eviction now terminates. See the Rust docstring
+    for the full rationale.)
     """
 
     REGISTERED = "registered"  # Agent registered, not yet started
     WARMING_UP = "warming_up"  # Initializing (load credentials, mount namespace)
     READY = "ready"  # Idle, waiting for next prompt
     BUSY = "busy"  # Actively processing a prompt / tool call
-    SUSPENDED = "suspended"  # Paused (admin / resource pressure eviction)
+    AWAITING_INPUT = "awaiting_input"  # In a turn, blocked awaiting a requested reply
     TERMINATED = "terminated"  # Finished, pending cleanup
 
 
 VALID_AGENT_TRANSITIONS: dict[AgentState, frozenset[AgentState]] = {
     AgentState.REGISTERED: frozenset({AgentState.WARMING_UP, AgentState.TERMINATED}),
     AgentState.WARMING_UP: frozenset({AgentState.READY, AgentState.TERMINATED}),
-    AgentState.READY: frozenset({AgentState.BUSY, AgentState.SUSPENDED, AgentState.TERMINATED}),
-    AgentState.BUSY: frozenset({AgentState.READY, AgentState.SUSPENDED, AgentState.TERMINATED}),
-    AgentState.SUSPENDED: frozenset({AgentState.READY, AgentState.TERMINATED}),
+    AgentState.READY: frozenset({AgentState.BUSY, AgentState.TERMINATED}),
+    AgentState.BUSY: frozenset(
+        {AgentState.READY, AgentState.AWAITING_INPUT, AgentState.TERMINATED}
+    ),
+    # Reachable only from BUSY: resume to BUSY when answered, drop to READY if abandoned.
+    AgentState.AWAITING_INPUT: frozenset(
+        {AgentState.BUSY, AgentState.READY, AgentState.TERMINATED}
+    ),
     AgentState.TERMINATED: frozenset(),  # terminal
 }
 
 
 class AgentSignal(StrEnum):
-    """POSIX-like agent signals."""
+    """POSIX-like agent signals.
+
+    ``SIGSTOP``/``SIGCONT`` were removed with the ``SUSPENDED`` state — no
+    feature paused agents; eviction terminates and warmup transitions directly.
+    """
 
     SIGTERM = "SIGTERM"  # Graceful shutdown → TERMINATED
-    SIGSTOP = "SIGSTOP"  # Suspend → SUSPENDED
-    SIGCONT = "SIGCONT"  # Resume/connect → READY
     SIGKILL = "SIGKILL"  # Immediate kill + reap
     SIGUSR1 = "SIGUSR1"  # User-defined (agent steering)
 

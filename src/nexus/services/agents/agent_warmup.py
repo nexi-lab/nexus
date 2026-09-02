@@ -34,7 +34,6 @@ from nexus.contracts.agent_warmup_types import (
 )
 from nexus.contracts.process_types import (
     AgentError,
-    AgentSignal,
     AgentState,
     InvalidTransitionError,
 )
@@ -280,9 +279,13 @@ class AgentWarmupService:
                 raise InvalidTransitionError(
                     f"stale generation for {agent_id}: expected {expected_generation}, got {current.generation}"
                 )
-            self._agent_registry.signal(agent_id, AgentSignal.SIGCONT)
+            # Warmup completes by transitioning the agent to READY directly.
+            # (SIGCONT — the old "resume from SUSPENDED" signal — was only ever
+            # abused here as a "become ready" shortcut; it never resumed a
+            # suspended agent, and SUSPENDED is gone.)
+            self._agent_registry.update_state(agent_id, AgentState.READY.value)
         except (ValueError, InvalidTransitionError, AgentError) as exc:
-            logger.warning("[WARMUP] Failed to transition agent %s to CONNECTED: %s", agent_id, exc)
+            logger.warning("[WARMUP] Failed to transition agent %s to READY: %s", agent_id, exc)
             return WarmupResult(
                 success=False,
                 agent_id=agent_id,

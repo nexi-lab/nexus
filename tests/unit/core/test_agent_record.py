@@ -38,7 +38,7 @@ class TestAgentState:
         assert AgentState.WARMING_UP.value == "warming_up"
         assert AgentState.READY.value == "ready"
         assert AgentState.BUSY.value == "busy"
-        assert AgentState.SUSPENDED.value == "suspended"
+        assert AgentState.AWAITING_INPUT.value == "awaiting_input"
         assert AgentState.TERMINATED.value == "terminated"
 
     def test_states_are_distinct(self):
@@ -51,7 +51,7 @@ class TestAgentState:
         assert AgentState("registered") is AgentState.REGISTERED
         assert AgentState("ready") is AgentState.READY
         assert AgentState("busy") is AgentState.BUSY
-        assert AgentState("suspended") is AgentState.SUSPENDED
+        assert AgentState("awaiting_input") is AgentState.AWAITING_INPUT
 
     def test_invalid_string_raises(self):
         """Invalid string raises ValueError."""

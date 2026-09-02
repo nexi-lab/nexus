@@ -160,9 +160,7 @@ class SandboxAuthService:
         # SIGCONT "become ready" shortcut — now a direct state transition).
         from nexus.contracts.process_types import AgentState
 
-        await asyncio.to_thread(
-            self._agent_registry.update_state, agent_id, AgentState.READY.value
-        )
+        await asyncio.to_thread(self._agent_registry.update_state, agent_id, AgentState.READY.value)
         connected_record = await asyncio.to_thread(self._agent_registry.get, agent_id)
 
         # Step 4: Construct namespace from ReBAC grants

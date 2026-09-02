@@ -7,7 +7,7 @@ on other layers — only stdlib + contracts.
 
 Defines:
     AgentState       — finite state machine (REGISTERED → WARMING_UP → READY ↔ BUSY → TERMINATED)
-    AgentSignal      — POSIX-like signals (SIGTERM, SIGSTOP, SIGCONT, SIGKILL, SIGUSR1)
+    AgentSignal      — POSIX-like signals (SIGTERM, SIGKILL, SIGUSR1)
     AgentKind        — MANAGED (nexusd-spawned) vs UNMANAGED (self-managed via gRPC)
     AgentDescriptor  — frozen PCB (Process Control Block)
     ExternalProcessInfo — connection metadata for external agents

@@ -176,9 +176,7 @@ def test_kernel_client_agent_registry_proxy_wraps_external_lifecycle_calls() -> 
     )
     transitioned = client.agent_registry.signal("admin,agent", AgentSignal.SIGTERM)
     warming = client.agent_registry.update_state("admin,agent", AgentState.WARMING_UP.value)
-    listed = client.agent_registry.list_processes(
-        zone_id="root", state=AgentState.AWAITING_INPUT
-    )
+    listed = client.agent_registry.list_processes(zone_id="root", state=AgentState.AWAITING_INPUT)
 
     assert desc.pid == "admin,agent"
     assert desc.state == AgentState.REGISTERED

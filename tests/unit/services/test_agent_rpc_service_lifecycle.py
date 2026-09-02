@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from nexus.contracts.exceptions import NexusFileNotFoundError
-from nexus.contracts.process_types import AgentSignal, AgentState, InvalidTransitionError
+from nexus.contracts.process_types import AgentState, InvalidTransitionError
 from nexus.services.agents.agent_rpc_service import AgentRPCService
 
 
@@ -26,7 +26,7 @@ class _Registry:
     def __init__(self, desc: _Descriptor | None = None) -> None:
         self.desc = desc or _Descriptor()
         self.heartbeats: list[str] = []
-        self.signals: list[tuple[str, AgentSignal]] = []
+        self.state_updates: list[tuple[str, str]] = []
 
     def heartbeat(self, agent_id: str) -> None:
         self.heartbeats.append(agent_id)
@@ -36,14 +36,10 @@ class _Registry:
             return self.desc
         return None
 
-    def signal(self, agent_id: str, signal: AgentSignal) -> _Descriptor:
-        self.signals.append((agent_id, signal))
+    def update_state(self, agent_id: str, state: str) -> None:
+        self.state_updates.append((agent_id, state))
         self.desc.generation += 1
-        if signal == AgentSignal.SIGCONT:
-            self.desc.state = AgentState.BUSY
-        elif signal == AgentSignal.SIGSTOP:
-            self.desc.state = AgentState.SUSPENDED
-        return self.desc
+        self.desc.state = AgentState(state)
 
 
 @pytest.fixture()
@@ -114,14 +110,15 @@ async def test_agent_transition_rejects_stale_generation(
 
 
 @pytest.mark.asyncio()
-async def test_agent_transition_signals_target_state(
+async def test_agent_transition_updates_target_state(
     rpc: tuple[AgentRPCService, _Registry],
 ) -> None:
     service, registry = rpc
 
+    # Legacy "IDLE" target now maps to a direct update_state(READY) — no signal.
     result = await service.agent_transition("alice", "IDLE", expected_generation=7)
 
-    assert registry.signals == [("alice", AgentSignal.SIGSTOP)]
+    assert registry.state_updates == [("alice", AgentState.READY.value)]
     assert result["agent_id"] == "alice"
     assert result["generation"] == 8
 

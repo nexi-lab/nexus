@@ -347,7 +347,7 @@ def delete_cmd(
 @click.argument("agent_id", type=str)
 @click.argument(
     "target_state",
-    type=click.Choice(["CONNECTED", "IDLE", "SUSPENDED"], case_sensitive=False),
+    type=click.Choice(["CONNECTED", "IDLE"], case_sensitive=False),
 )
 @click.option(
     "--expected-generation",

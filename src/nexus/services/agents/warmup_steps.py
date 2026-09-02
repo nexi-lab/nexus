@@ -25,7 +25,7 @@ async def load_credentials(ctx: "WarmupContext") -> bool:
     """Verify agent has valid credentials in the registry.
 
     Checks that the agent record has a non-empty owner_id and is in a
-    state eligible for connection (UNKNOWN, IDLE, or SUSPENDED).
+    state eligible for warmup (REGISTERED, WARMING_UP, or READY).
     """
     record = ctx.agent_record
     if not record.owner_id:
@@ -38,7 +38,6 @@ async def load_credentials(ctx: "WarmupContext") -> bool:
         AgentState.REGISTERED,
         AgentState.WARMING_UP,
         AgentState.READY,
-        AgentState.SUSPENDED,
     }
     if record.state not in eligible:
         logger.warning(

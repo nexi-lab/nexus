@@ -819,55 +819,40 @@ class AgentRPCService:
         """Transition an agent's lifecycle state with optimistic locking."""
         if not self._agent_registry:
             raise ValueError("AgentRegistry not available")
-        from nexus.contracts.process_types import (
-            AgentSignal,
-            AgentState,
-            InvalidTransitionError,
-        )
+        from nexus.contracts.process_types import AgentState, InvalidTransitionError
 
-        # Map legacy state names to signals
-        _STATE_TO_SIGNAL = {
-            "CONNECTED": AgentSignal.SIGCONT,
-            "IDLE": AgentSignal.SIGSTOP,
-            "SUSPENDED": AgentSignal.SIGSTOP,
+        # Legacy phase-named targets map onto real AgentState values. (SUSPENDED
+        # and the SIGSTOP/SIGCONT signal path were removed with the state; a
+        # transition is now a direct AgentRegistry.update_state.)
+        _TARGET_TO_STATE = {
+            "CONNECTED": AgentState.READY,
+            "IDLE": AgentState.READY,
         }
-        sig = _STATE_TO_SIGNAL.get(target_state.upper())
-        if sig is None:
-            raise ValueError(
-                f"Invalid target state '{target_state}'. Valid: CONNECTED, IDLE, SUSPENDED"
+        new_state = _TARGET_TO_STATE.get(target_state.upper())
+        if new_state is None:
+            raise ValueError(f"Invalid target state '{target_state}'. Valid: CONNECTED, IDLE")
+
+        current = self._agent_registry.get(agent_id)
+        if current is None:
+            raise ValueError(f"Agent '{agent_id}' not found")
+        if expected_generation is not None and current.generation != expected_generation:
+            raise InvalidTransitionError(
+                f"stale generation for {agent_id}: expected {expected_generation}, got {current.generation}"
             )
 
-        current = None
-        if expected_generation is not None:
-            current = self._agent_registry.get(agent_id)
-            if current is None:
-                raise ValueError(f"Agent '{agent_id}' not found")
-            if current.generation != expected_generation:
-                raise InvalidTransitionError(
-                    f"stale generation for {agent_id}: expected {expected_generation}, got {current.generation}"
-                )
-        elif target_state.upper() == "CONNECTED":
-            current = self._agent_registry.get(agent_id)
-            if current is None:
-                raise ValueError(f"Agent '{agent_id}' not found")
-
-        if (
-            target_state.upper() == "CONNECTED"
-            and current is not None
-            and current.state == AgentState.REGISTERED
-        ):
+        # A freshly-REGISTERED agent must warm up first (REGISTERED cannot jump
+        # straight to READY); an already-live agent transitions directly.
+        if target_state.upper() == "CONNECTED" and current.state == AgentState.REGISTERED:
             if self._agent_warmup_service is None:
                 raise ValueError("AgentWarmupService not available")
-
             result = await self._agent_warmup_service.warmup(agent_id)
             if not result.success:
                 raise InvalidTransitionError(result.error or f"warmup failed for {agent_id}")
-
-            desc = self._agent_registry.get(agent_id)
-            if desc is None:
-                raise ValueError(f"Agent '{agent_id}' not found")
         else:
-            desc = self._agent_registry.signal(agent_id, sig)
+            self._agent_registry.update_state(agent_id, new_state.value)
+        desc = self._agent_registry.get(agent_id)
+        if desc is None:
+            raise ValueError(f"Agent '{agent_id}' not found")
         return {
             "agent_id": desc.pid,
             "state": str(desc.state),
@@ -901,7 +886,6 @@ class AgentRPCService:
             _STATE_MAP = {
                 "CONNECTED": AgentState.BUSY,
                 "IDLE": AgentState.READY,
-                "SUSPENDED": AgentState.SUSPENDED,
             }
             state_enum = _STATE_MAP.get(state.upper())
             if state_enum is None:

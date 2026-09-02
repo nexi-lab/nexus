@@ -139,7 +139,7 @@ def test_kernel_client_agent_registry_proxy_wraps_external_lifecycle_calls() -> 
                     "kind": "UNMANAGED",
                     "owner_id": "admin",
                     "zone_id": "root",
-                    "state": "SUSPENDED",
+                    "state": "TERMINATED",
                     "generation": 1,
                     "created_at_ms": 1_700_000_000_000,
                     "updated_at_ms": 1_700_000_000_001,
@@ -174,14 +174,16 @@ def test_kernel_client_agent_registry_proxy_wraps_external_lifecycle_calls() -> 
         zone_id="root",
         connection_id="admin,agent",
     )
-    transitioned = client.agent_registry.signal("admin,agent", AgentSignal.SIGSTOP)
+    transitioned = client.agent_registry.signal("admin,agent", AgentSignal.SIGTERM)
     warming = client.agent_registry.update_state("admin,agent", AgentState.WARMING_UP.value)
-    listed = client.agent_registry.list_processes(zone_id="root", state=AgentState.SUSPENDED)
+    listed = client.agent_registry.list_processes(
+        zone_id="root", state=AgentState.AWAITING_INPUT
+    )
 
     assert desc.pid == "admin,agent"
     assert desc.state == AgentState.REGISTERED
     assert desc.capabilities == ["search", "cache"]
-    assert transitioned.state == AgentState.SUSPENDED
+    assert transitioned.state == AgentState.TERMINATED
     assert warming.state == AgentState.WARMING_UP
     assert listed == []
     assert transport.calls == [
@@ -199,11 +201,11 @@ def test_kernel_client_agent_registry_proxy_wraps_external_lifecycle_calls() -> 
                 "labels": {},
             },
         ),
-        ("agent_signal", {"pid": "admin,agent", "sig": "SIGSTOP", "payload": {}}),
+        ("agent_signal", {"pid": "admin,agent", "sig": "SIGTERM", "payload": {}}),
         ("agent_update_state", {"pid": "admin,agent", "state": "warming_up"}),
         (
             "agent_list",
-            {"zone_id": "root", "owner_id": None, "kind": None, "state": "suspended"},
+            {"zone_id": "root", "owner_id": None, "kind": None, "state": "awaiting_input"},
         ),
     ]
 

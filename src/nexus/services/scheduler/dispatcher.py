@@ -494,7 +494,9 @@ class TaskDispatcher:
         if event.new_state in ("CONNECTED", "IDLE"):
             if self._running:
                 self._spawn_cursor(executor_id)
-        elif event.new_state == "SUSPENDED":
+        elif event.new_state == "TERMINATED":
+            # Eviction now terminates (SUSPENDED/pause was removed) — cancel the
+            # cursor when the executor goes away.
             self._cancel_cursor(executor_id)
 
     # =========================================================================

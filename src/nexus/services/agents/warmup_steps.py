@@ -55,18 +55,18 @@ async def load_credentials(ctx: "WarmupContext") -> bool:
 async def verify_bricks(ctx: "WarmupContext") -> bool:
     """Check that the deployment has enabled bricks.
 
-    Validates that the enabled_bricks set is non-empty. If the agent
+    Validates that the enabled_services set is non-empty. If the agent
     has declared required capabilities in metadata, checks that matching
     bricks are available.
     """
-    if not ctx.enabled_bricks:
-        logger.debug("[WARMUP:bricks] No enabled_bricks configured, skipping verification")
+    if not ctx.enabled_services:
+        logger.debug("[WARMUP:bricks] No enabled_services configured, skipping verification")
         return True  # Not a failure — might be embedded deployment
 
     # Check agent capabilities against enabled bricks
     capabilities = getattr(ctx.agent_record, "capabilities", ()) or ()
     if capabilities:
-        missing = [cap for cap in capabilities if cap not in ctx.enabled_bricks]
+        missing = [cap for cap in capabilities if cap not in ctx.enabled_services]
         if missing:
             logger.warning(
                 "[WARMUP:bricks] Agent %s requires bricks %s but they are not enabled",
@@ -78,7 +78,7 @@ async def verify_bricks(ctx: "WarmupContext") -> bool:
 
     logger.debug(
         "[WARMUP:bricks] %d bricks available for agent %s",
-        len(ctx.enabled_bricks),
+        len(ctx.enabled_services),
         ctx.agent_id,
     )
     return True

@@ -1,7 +1,7 @@
 """Protocol interface for Fernet token encryption/decryption.
 
 Satisfied by OAuthCrypto and any compatible implementation.
-Used by bricks that need encryption without cross-brick imports.
+Used by bricks that need encryption without cross-service imports.
 """
 
 from typing import Protocol, runtime_checkable

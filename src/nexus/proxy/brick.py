@@ -1,4 +1,4 @@
-"""Proxy brick — transparent edge-to-cloud forwarding.
+"""Proxy service — transparent edge-to-cloud forwarding.
 
 ``ProxyBrick`` forwards protocol operations to a remote kernel over HTTP.
 When the remote is unreachable, operations are queued to a WAL-backed

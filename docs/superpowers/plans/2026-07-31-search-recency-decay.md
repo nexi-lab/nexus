@@ -1242,7 +1242,7 @@ git commit -m "feat(search): thread recency knobs through federated dispatcher, 
 
 **Interfaces:**
 - Consumes: everything above.
-- Produces: `SearchBrickProtocol.search` declaring the recency params.
+- Produces: `SearchServiceProtocol.search` declaring the recency params.
 
 - [ ] **Step 1: Update the protocol**
 
@@ -1283,7 +1283,7 @@ failure against `git stash`-free `develop` behavior before touching it)
 
 ```bash
 git add src/nexus/contracts/protocols/search.py tests/integration/bricks/search/test_brick_protocol.py
-git commit -m "feat(search): declare recency knobs on SearchBrickProtocol (#4543)"
+git commit -m "feat(search): declare recency knobs on SearchServiceProtocol (#4543)"
 ```
 
 ---

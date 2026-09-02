@@ -28,7 +28,7 @@
     --t-sdk: #db2777;
     --layer-transport: #fef3c7;
     --layer-cross: #ddd6fe;
-    --layer-brick: #d1fae5;
+    --layer-service: #d1fae5;
     --layer-deployment: #fed7aa;
     --layer-nexus_fs: #dbeafe;
     --layer-rust_kernel: #fce7f3;
@@ -112,7 +112,7 @@
   .legend span { padding: 0.2rem 0.6rem; border-radius: 4px; }
   .legend .l-transport { background: var(--layer-transport); }
   .legend .l-cross { background: var(--layer-cross); }
-  .legend .l-brick { background: var(--layer-brick); }
+  .legend .l-service { background: var(--layer-service); }
   .legend .l-deployment { background: var(--layer-deployment); }
   .legend .l-nexus_fs { background: var(--layer-nexus_fs); }
   .legend .l-rust_kernel { background: var(--layer-rust_kernel); }
@@ -131,8 +131,8 @@
     <p class="brand">Nexus Surface Map</p>
     <p class="brand-sub">High-level API/RPC architecture</p>
 
-    <h2>Bricks ({{ brick_categories.values() | sum(start=[]) | length }})</h2>
-    {% for category, mods in brick_categories.items() %}
+    <h2>Bricks ({{ service_categories.values() | sum(start=[]) | length }})</h2>
+    {% for category, mods in service_categories.items() %}
     <h2 style="font-size:0.65rem; opacity:0.7; margin-top:0.6rem;">{{ category }}</h2>
     {% for m in mods %}
     <a href="#m-{{ m.id }}">{{ m.id }}<span class="count">{{ ops_by_module.get(m.id, []) | length }}</span></a>
@@ -149,39 +149,39 @@
 
   <main>
     <h1>Nexus API/RPC Architecture Map</h1>
-    <p class="subtitle">A high-level view of every external surface exposed by Nexus, organized around its real layered architecture: Rust kernel &rarr; NexusFS wrapper &rarr; 28 plugin-style <strong>bricks</strong> &rarr; deployment topology (hub / federation / zone / daemon / raft) &rarr; cross-cutting auth/profiles &rarr; transports (CLI / HTTP / gRPC / MCP / SDK).</p>
+    <p class="subtitle">A high-level view of every external surface exposed by Nexus, organized around its real layered architecture: Rust kernel &rarr; NexusFS wrapper &rarr; 28 plugin-style <strong>services</strong> &rarr; deployment topology (hub / federation / zone / daemon / raft) &rarr; cross-cutting auth/profiles &rarr; transports (CLI / HTTP / gRPC / MCP / SDK).</p>
 
     <div class="stats">
       <div class="stat"><div class="stat-value">6</div><div class="stat-label">layers</div></div>
-      <div class="stat"><div class="stat-value">{{ total_bricks }}</div><div class="stat-label">bricks</div></div>
+      <div class="stat"><div class="stat-value">{{ total_services }}</div><div class="stat-label">services</div></div>
       <div class="stat"><div class="stat-value">{{ total_transports }}</div><div class="stat-label">transports</div></div>
       <div class="stat"><div class="stat-value">{{ total_ops }}</div><div class="stat-label">operations</div></div>
       <div class="stat"><div class="stat-value">{{ total_missing }}</div><div class="stat-label">missing</div></div>
     </div>
 
-    <input id="search" placeholder="Search by op-id, brick, transport name, or summary..." />
+    <input id="search" placeholder="Search by op-id, service, transport name, or summary..." />
 
     <section>
       <h2 class="section">&sect;1 Mental model</h2>
       <div class="mental-model">
         <h3>Layered architecture</h3>
-        <p>Nexus is organized as five stacked layers. Most user-visible behavior lives in <strong>bricks</strong> &mdash; small, isolated feature modules that share nothing with each other and are wired together at boot by the brick factory based on the active deployment profile.</p>
-        <p class="flow">transports  &rarr;  cross-cutting (auth, profile gates)  &rarr;  bricks  &rarr;  NexusFS  &rarr;  Rust kernel</p>
+        <p>Nexus is organized as five stacked layers. Most user-visible behavior lives in <strong>services</strong> &mdash; small, isolated feature modules that share nothing with each other and are wired together at boot by the service factory based on the active deployment profile.</p>
+        <p class="flow">transports  &rarr;  cross-cutting (auth, profile gates)  &rarr;  services  &rarr;  NexusFS  &rarr;  Rust kernel</p>
 
         <h3>Request flow: <code>nexus fs read /path</code></h3>
         <p>CLI parses <code>fs read /path</code> and calls into either a local NexusFS instance (embedded profile) or a remote SDK client (sandbox/full profile). The remote path goes through the gRPC <code>NexusVFSService.Call</code> with <code>method="sys_read"</code>; the server checks the syscall is in <code>KERNEL_SYSCALL_NAMES</code>, dispatches to <code>NexusFS.read()</code>, which descends through the mixin stack and into the Rust kernel to fetch bytes from the mounted backend. Brick hooks (e.g. <code>filesystem</code> for path scoping, <code>access_manifest</code> for fast-path ACL checks) can intercept the request before it hits the kernel.</p>
 
         <h3>Request flow: <code>nexus rebac grant alice read /path</code></h3>
-        <p>Same transport, but <code>rebac_write</code> is <em>not</em> a kernel syscall. The gRPC dispatcher routes it to the brick layer&rsquo;s <code>ReBACManager.rebac_write()</code> through the legacy method-dispatch path. Auth middleware extracted the caller&rsquo;s identity from the JWT and populated <code>OperationContext</code>; the brick uses that context to enforce policy on the write itself.</p>
+        <p>Same transport, but <code>rebac_write</code> is <em>not</em> a kernel syscall. The gRPC dispatcher routes it to the service layer&rsquo;s <code>ReBACManager.rebac_write()</code> through the legacy method-dispatch path. Auth middleware extracted the caller&rsquo;s identity from the JWT and populated <code>OperationContext</code>; the service uses that context to enforce policy on the write itself.</p>
 
         <h3>Where ops live</h3>
-        <p><strong>Kernel-native</strong> ops (sys_read, sys_write, sys_stat, &hellip;) execute in the Rust kernel via a thin Python wrapper. <strong>Brick-native</strong> ops (rebac_write, pay_debit, search_query, sandbox_execute, &hellip;) live entirely in Python under the respective brick. Both are exposed through the same transport surface so callers don&rsquo;t need to know which is which.</p>
+        <p><strong>Kernel-native</strong> ops (sys_read, sys_write, sys_stat, &hellip;) execute in the Rust kernel via a thin Python wrapper. <strong>Brick-native</strong> ops (rebac_write, pay_debit, search_query, sandbox_execute, &hellip;) live entirely in Python under the respective service. Both are exposed through the same transport surface so callers don&rsquo;t need to know which is which.</p>
 
         <h3>Profile gating</h3>
-        <p>Each brick carries a <code>brick_gate</code> (e.g. <code>BRICK_REBAC</code>, <code>BRICK_PAY</code>) checked at boot. The <code>embedded &sub; lite &sub; sandbox &sub; full &sube; cloud</code> profile hierarchy controls which bricks are enabled. Surfaces exposed by a disabled brick fail with a stable error code so callers can detect the unsupported case.</p>
+        <p>Each service carries a <code>service_gate</code> (e.g. <code>BRICK_REBAC</code>, <code>BRICK_PAY</code>) checked at boot. The <code>embedded &sub; lite &sub; sandbox &sub; full &sube; cloud</code> profile hierarchy controls which services are enabled. Surfaces exposed by a disabled service fail with a stable error code so callers can detect the unsupported case.</p>
 
         <h3>Deployment topology</h3>
-        <p>Beyond features, Nexus has a deployment dimension: <strong>zones</strong> are multi-tenancy units, a <strong>hub</strong> is an instance other nodes connect to, <strong>federation</strong> moves data and permissions between zones, the <strong>daemon</strong> hosts the runtime as a long-running process, and <strong>raft</strong> provides consensus for HA clusters. These cross-cut the bricks above and are visible as a separate layer in the architecture diagram.</p>
+        <p>Beyond features, Nexus has a deployment dimension: <strong>zones</strong> are multi-tenancy units, a <strong>hub</strong> is an instance other nodes connect to, <strong>federation</strong> moves data and permissions between zones, the <strong>daemon</strong> hosts the runtime as a long-running process, and <strong>raft</strong> provides consensus for HA clusters. These cross-cut the services above and are visible as a separate layer in the architecture diagram.</p>
       </div>
     </section>
 
@@ -194,7 +194,7 @@
         <div class="legend">
           <span class="l-transport">Transports</span>
           <span class="l-cross">Cross-cutting</span>
-          <span class="l-brick">Bricks (28)</span>
+          <span class="l-service">Bricks (28)</span>
           <span class="l-deployment">Deployment topology</span>
           <span class="l-nexus_fs">NexusFS</span>
           <span class="l-rust_kernel">Rust kernel</span>
@@ -204,7 +204,7 @@
 
     <section>
       <h2 class="section">&sect;3 Bricks by category</h2>
-      {% for category, mods in brick_categories.items() %}
+      {% for category, mods in service_categories.items() %}
       <h3 class="category">{{ category }}</h3>
       {% for m in mods %}
       <details id="m-{{ m.id }}" class="module" {% if loop.first and loop.index0 == 0 %}open{% endif %}>
@@ -212,7 +212,7 @@
           <span class="mod-name">{{ m.id }}</span>
           <span class="mod-desc">&mdash; {{ m.description }}</span>
           <span class="mod-meta">
-            {% if m.brick_gate %}<span class="gate-badge">{{ m.brick_gate }}</span>{% endif %}
+            {% if m.service_gate %}<span class="gate-badge">{{ m.service_gate }}</span>{% endif %}
             {% if m.tier %}<span class="tier-badge tier-{{ m.tier }}">{{ m.tier }}</span>{% endif %}
             <span>{{ ops_by_module.get(m.id, []) | length }} ops</span>
           </span>
@@ -224,7 +224,7 @@
           {% include "_op_row.html.j2" %}
           {% endfor %}
           {% else %}
-          <div class="empty-list">No external operations classified to this brick yet.</div>
+          <div class="empty-list">No external operations classified to this service yet.</div>
           {% endif %}
         </div>
       </details>

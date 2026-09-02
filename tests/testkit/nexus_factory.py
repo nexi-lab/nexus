@@ -71,6 +71,6 @@ def make_test_nexus(
         memory=memory,
         distributed=distributed,
         is_admin=is_admin,
-        enabled_bricks=frozenset(),
+        enabled_services=frozenset(),
         init_cred=_init_cred,
     )

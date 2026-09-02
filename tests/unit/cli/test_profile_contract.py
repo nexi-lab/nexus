@@ -19,7 +19,15 @@ from tests.unit.cli.conftest import make_config
 FULL_FEATURES_PAYLOAD = {
     "profile": "full",
     "mode": "standalone",
-    "enabled_bricks": ["llm", "search", "pay", "scheduler", "eventlog", "namespace", "permissions"],
+    "enabled_services": [
+        "llm",
+        "search",
+        "pay",
+        "scheduler",
+        "eventlog",
+        "namespace",
+        "permissions",
+    ],
     "disabled_bricks": ["federation"],
     "version": "1.2.3",
     "performance_tuning": None,
@@ -99,7 +107,7 @@ class TestContractFullProfile:
         ):
             result = cli_runner.invoke(profile_group, ["contract"])
         data = json.loads(result.output)
-        assert data["bricks"] == sorted(FULL_FEATURES_PAYLOAD["enabled_bricks"])
+        assert data["bricks"] == sorted(FULL_FEATURES_PAYLOAD["enabled_services"])
 
     def test_disabled_bricks_sorted(self, cli_runner: CliRunner) -> None:
         config = make_config()
@@ -260,7 +268,7 @@ class TestContractUnknownProfile:
         weird_payload = {
             "profile": "weird",
             "mode": "standalone",
-            "enabled_bricks": ["llm"],
+            "enabled_services": ["llm"],
             "disabled_bricks": [],
             "version": None,
             "performance_tuning": None,
@@ -292,7 +300,7 @@ class TestContractUnknownProfile:
         weird_payload = {
             "profile": "weird",
             "mode": "standalone",
-            "enabled_bricks": ["some_brick"],
+            "enabled_services": ["some_brick"],
             "disabled_bricks": ["other_brick"],
             "version": None,
             "performance_tuning": None,

@@ -4,8 +4,8 @@ Issue #1389: Feature flags for deployment modes (full/lite/embedded).
 Issue #2194: Minimal boot mode for minimal deployments.
 Issue #844:  REMOTE profile for client-side deployment (RemoteBackend proxy).
 
-Each DeploymentProfile defines a default set of enabled bricks.
-Individual brick overrides are supported via FeaturesConfig or env vars.
+Each DeploymentProfile defines a default set of enabled services.
+Individual service overrides are supported via FeaturesConfig or env vars.
 The profile sets the *defaults*; explicit overrides always win.
 
 Lego Architecture reference: Part 10 — Edge Deployment.
@@ -15,7 +15,7 @@ Profile hierarchy (superset relationship):
 
 CLUSTER and REMOTE are orthogonal tiers — not part of the superset chain:
     cluster  (minimal multi-node — Raft + federation only; disjoint from embedded)
-    remote   (no local bricks — NFS-client model; Issue #844)
+    remote   (no local services — NFS-client model; Issue #844)
 """
 
 import logging
@@ -28,45 +28,45 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Brick name constants — canonical names used across the system
+# Service name constants — canonical names used across the system
 # ---------------------------------------------------------------------------
 
 # Services (gated by profile)
-BRICK_EVENTLOG = "eventlog"
-BRICK_NAMESPACE = "namespace"
-BRICK_PERMISSIONS = "permissions"
-BRICK_SCHEDULER = "scheduler"
+SERVICE_EVENTLOG = "eventlog"
+SERVICE_NAMESPACE = "namespace"
+SERVICE_PERMISSIONS = "permissions"
+SERVICE_SCHEDULER = "scheduler"
 
-# Infrastructure bricks
-BRICK_CACHE = "cache"
-BRICK_IPC = "ipc"
-BRICK_OBSERVABILITY = "observability"
-BRICK_UPLOADS = "uploads"
-BRICK_RESILIENCY = "resiliency"
+# Infrastructure services
+SERVICE_CACHE = "cache"
+SERVICE_IPC = "ipc"
+SERVICE_OBSERVABILITY = "observability"
+SERVICE_UPLOADS = "uploads"
+SERVICE_RESILIENCY = "resiliency"
 
-# Feature bricks
-BRICK_SEARCH = "search"
-BRICK_PAY = "pay"
-BRICK_LLM = "llm"
-BRICK_SANDBOX = "sandbox"
-BRICK_WORKFLOWS = "workflows"
-BRICK_DISCOVERY = "discovery"
-BRICK_MCP = "mcp"
-BRICK_MEMORY = "memory"
-BRICK_SKILLS = "skills"
-BRICK_ACCESS_MANIFEST = "access_manifest"
-BRICK_CATALOG = "catalog"
-BRICK_DELEGATION = "delegation"
-BRICK_IDENTITY = "identity"
-BRICK_SHARE_LINK = "share_link"
-BRICK_VERSIONING = "versioning"
-BRICK_WORKSPACE = "workspace"
-BRICK_PORTABILITY = "portability"
-BRICK_PARSERS = "parsers"
-BRICK_SNAPSHOT = "snapshot"
-BRICK_TASK_MANAGER = "task_manager"
+# Feature services
+SERVICE_SEARCH = "search"
+SERVICE_PAY = "pay"
+SERVICE_LLM = "llm"
+SERVICE_SANDBOX = "sandbox"
+SERVICE_WORKFLOWS = "workflows"
+SERVICE_DISCOVERY = "discovery"
+SERVICE_MCP = "mcp"
+SERVICE_MEMORY = "memory"
+SERVICE_SKILLS = "skills"
+SERVICE_ACCESS_MANIFEST = "access_manifest"
+SERVICE_CATALOG = "catalog"
+SERVICE_DELEGATION = "delegation"
+SERVICE_IDENTITY = "identity"
+SERVICE_SHARE_LINK = "share_link"
+SERVICE_VERSIONING = "versioning"
+SERVICE_WORKSPACE = "workspace"
+SERVICE_PORTABILITY = "portability"
+SERVICE_PARSERS = "parsers"
+SERVICE_SNAPSHOT = "snapshot"
+SERVICE_TASK_MANAGER = "task_manager"
 
-BRICK_FEDERATION = "federation"
+SERVICE_FEDERATION = "federation"
 
 # ---------------------------------------------------------------------------
 # Driver constants — `BackendFactory.build` matches `backend_type` strings
@@ -137,39 +137,39 @@ ALL_DRIVER_NAMES: frozenset[str] = frozenset(
     }
 )
 
-# All brick names for validation
-ALL_BRICK_NAMES: frozenset[str] = frozenset(
+# All service names for validation
+ALL_SERVICE_NAMES: frozenset[str] = frozenset(
     {
-        BRICK_EVENTLOG,
-        BRICK_NAMESPACE,
-        BRICK_PERMISSIONS,
-        BRICK_SCHEDULER,
-        BRICK_CACHE,
-        BRICK_IPC,
-        BRICK_OBSERVABILITY,
-        BRICK_UPLOADS,
-        BRICK_RESILIENCY,
-        BRICK_SEARCH,
-        BRICK_PAY,
-        BRICK_LLM,
-        BRICK_SANDBOX,
-        BRICK_WORKFLOWS,
-        BRICK_DISCOVERY,
-        BRICK_MCP,
-        BRICK_MEMORY,
-        BRICK_SKILLS,
-        BRICK_ACCESS_MANIFEST,
-        BRICK_CATALOG,
-        BRICK_DELEGATION,
-        BRICK_IDENTITY,
-        BRICK_SHARE_LINK,
-        BRICK_VERSIONING,
-        BRICK_WORKSPACE,
-        BRICK_PORTABILITY,
-        BRICK_PARSERS,
-        BRICK_SNAPSHOT,
-        BRICK_TASK_MANAGER,
-        BRICK_FEDERATION,
+        SERVICE_EVENTLOG,
+        SERVICE_NAMESPACE,
+        SERVICE_PERMISSIONS,
+        SERVICE_SCHEDULER,
+        SERVICE_CACHE,
+        SERVICE_IPC,
+        SERVICE_OBSERVABILITY,
+        SERVICE_UPLOADS,
+        SERVICE_RESILIENCY,
+        SERVICE_SEARCH,
+        SERVICE_PAY,
+        SERVICE_LLM,
+        SERVICE_SANDBOX,
+        SERVICE_WORKFLOWS,
+        SERVICE_DISCOVERY,
+        SERVICE_MCP,
+        SERVICE_MEMORY,
+        SERVICE_SKILLS,
+        SERVICE_ACCESS_MANIFEST,
+        SERVICE_CATALOG,
+        SERVICE_DELEGATION,
+        SERVICE_IDENTITY,
+        SERVICE_SHARE_LINK,
+        SERVICE_VERSIONING,
+        SERVICE_WORKSPACE,
+        SERVICE_PORTABILITY,
+        SERVICE_PARSERS,
+        SERVICE_SNAPSHOT,
+        SERVICE_TASK_MANAGER,
+        SERVICE_FEDERATION,
     }
 )
 
@@ -179,16 +179,16 @@ ALL_BRICK_NAMES: frozenset[str] = frozenset(
 
 
 class DeploymentProfile(StrEnum):
-    """Deployment profile controlling which bricks are enabled by default.
+    """Deployment profile controlling which services are enabled by default.
 
     Profiles define capability tiers for different deployment targets:
     - cluster: Minimal multi-node — Raft + federation, no auth/PostgreSQL
     - embedded: MCU / WASM (<1 MB) — eventlog only
     - lite: Pi, Jetson, mobile (512 MB–4 GB) — core services, no LLM/Pay
     - sandbox: Agent sandbox (zero external services; SQLite + in-mem cache + BM25S; #3778)
-    - full: Desktop, laptop (4–32 GB) — all bricks, local inference
+    - full: Desktop, laptop (4–32 GB) — all services, local inference
     - cloud: k8s, serverless (unlimited) — all + federation + multi-tenant
-    - remote: Client-side proxy — zero local bricks, NFS-client model (Issue #844)
+    - remote: Client-side proxy — zero local services, NFS-client model (Issue #844)
     """
 
     CLUSTER = "cluster"
@@ -199,13 +199,13 @@ class DeploymentProfile(StrEnum):
     CLOUD = "cloud"
     REMOTE = "remote"
 
-    def default_bricks(self) -> frozenset[str]:
-        """Return the default set of enabled bricks for this profile."""
-        return _PROFILE_BRICKS[self]
+    def default_services(self) -> frozenset[str]:
+        """Return the default set of enabled services for this profile."""
+        return _PROFILE_SERVICES[self]
 
-    def is_brick_enabled(self, brick: str) -> bool:
-        """Check if a brick is enabled by default in this profile."""
-        return brick in self.default_bricks()
+    def is_service_enabled(self, service: str) -> bool:
+        """Check if a service is enabled by default in this profile."""
+        return service in self.default_services()
 
     def default_drivers(self) -> frozenset[str]:
         """Return the default set of enabled drivers for this profile.
@@ -233,80 +233,80 @@ class DeploymentProfile(StrEnum):
 
 
 # ---------------------------------------------------------------------------
-# Profile-to-brick mappings (frozen — immutable at runtime)
+# Profile-to-service mappings (frozen — immutable at runtime)
 # ---------------------------------------------------------------------------
 
-_CLUSTER_BRICKS: frozenset[str] = frozenset(
+_CLUSTER_SERVICES: frozenset[str] = frozenset(
     {
-        BRICK_IPC,
-        BRICK_FEDERATION,
+        SERVICE_IPC,
+        SERVICE_FEDERATION,
     }
 )
 
-_EMBEDDED_BRICKS: frozenset[str] = frozenset(
+_EMBEDDED_SERVICES: frozenset[str] = frozenset(
     {
-        BRICK_EVENTLOG,
+        SERVICE_EVENTLOG,
     }
 )
 
-_LITE_BRICKS: frozenset[str] = _EMBEDDED_BRICKS | frozenset(
+_LITE_SERVICES: frozenset[str] = _EMBEDDED_SERVICES | frozenset(
     {
-        BRICK_NAMESPACE,
-        BRICK_PERMISSIONS,
-        BRICK_CACHE,
-        BRICK_IPC,
-        BRICK_SCHEDULER,
+        SERVICE_NAMESPACE,
+        SERVICE_PERMISSIONS,
+        SERVICE_CACHE,
+        SERVICE_IPC,
+        SERVICE_SCHEDULER,
     }
 )
 
-_SANDBOX_BRICKS: frozenset[str] = _LITE_BRICKS | frozenset(
+_SANDBOX_SERVICES: frozenset[str] = _LITE_SERVICES | frozenset(
     {
-        BRICK_SEARCH,
-        BRICK_MCP,
-        BRICK_PARSERS,
+        SERVICE_SEARCH,
+        SERVICE_MCP,
+        SERVICE_PARSERS,
     }
 )
 
-_FULL_BRICKS: frozenset[str] = _LITE_BRICKS | frozenset(
+_FULL_SERVICES: frozenset[str] = _LITE_SERVICES | frozenset(
     {
-        BRICK_SEARCH,
-        BRICK_PAY,
-        BRICK_LLM,
-        BRICK_SKILLS,
-        BRICK_SANDBOX,
-        BRICK_WORKFLOWS,
-        BRICK_DISCOVERY,
-        BRICK_MCP,
-        BRICK_MEMORY,
-        BRICK_TASK_MANAGER,
-        BRICK_OBSERVABILITY,
-        BRICK_UPLOADS,
-        BRICK_RESILIENCY,
-        BRICK_ACCESS_MANIFEST,
-        BRICK_CATALOG,
-        BRICK_DELEGATION,
-        BRICK_IDENTITY,
-        BRICK_SHARE_LINK,
-        BRICK_VERSIONING,
-        BRICK_WORKSPACE,
-        BRICK_PORTABILITY,
-        BRICK_PARSERS,
-        BRICK_SNAPSHOT,
+        SERVICE_SEARCH,
+        SERVICE_PAY,
+        SERVICE_LLM,
+        SERVICE_SKILLS,
+        SERVICE_SANDBOX,
+        SERVICE_WORKFLOWS,
+        SERVICE_DISCOVERY,
+        SERVICE_MCP,
+        SERVICE_MEMORY,
+        SERVICE_TASK_MANAGER,
+        SERVICE_OBSERVABILITY,
+        SERVICE_UPLOADS,
+        SERVICE_RESILIENCY,
+        SERVICE_ACCESS_MANIFEST,
+        SERVICE_CATALOG,
+        SERVICE_DELEGATION,
+        SERVICE_IDENTITY,
+        SERVICE_SHARE_LINK,
+        SERVICE_VERSIONING,
+        SERVICE_WORKSPACE,
+        SERVICE_PORTABILITY,
+        SERVICE_PARSERS,
+        SERVICE_SNAPSHOT,
     }
 )
 
-_CLOUD_BRICKS: frozenset[str] = _FULL_BRICKS | frozenset({BRICK_FEDERATION})
+_CLOUD_SERVICES: frozenset[str] = _FULL_SERVICES | frozenset({SERVICE_FEDERATION})
 
-_REMOTE_BRICKS: frozenset[str] = frozenset()  # no local bricks — NFS-client model
+_REMOTE_SERVICES: frozenset[str] = frozenset()  # no local services — NFS-client model
 
-_PROFILE_BRICKS: dict[DeploymentProfile, frozenset[str]] = {
-    DeploymentProfile.CLUSTER: _CLUSTER_BRICKS,
-    DeploymentProfile.EMBEDDED: _EMBEDDED_BRICKS,
-    DeploymentProfile.LITE: _LITE_BRICKS,
-    DeploymentProfile.SANDBOX: _SANDBOX_BRICKS,
-    DeploymentProfile.FULL: _FULL_BRICKS,
-    DeploymentProfile.CLOUD: _CLOUD_BRICKS,
-    DeploymentProfile.REMOTE: _REMOTE_BRICKS,
+_PROFILE_SERVICES: dict[DeploymentProfile, frozenset[str]] = {
+    DeploymentProfile.CLUSTER: _CLUSTER_SERVICES,
+    DeploymentProfile.EMBEDDED: _EMBEDDED_SERVICES,
+    DeploymentProfile.LITE: _LITE_SERVICES,
+    DeploymentProfile.SANDBOX: _SANDBOX_SERVICES,
+    DeploymentProfile.FULL: _FULL_SERVICES,
+    DeploymentProfile.CLOUD: _CLOUD_SERVICES,
+    DeploymentProfile.REMOTE: _REMOTE_SERVICES,
 }
 
 
@@ -314,7 +314,7 @@ _PROFILE_BRICKS: dict[DeploymentProfile, frozenset[str]] = {
 # Profile-to-driver mappings (frozen — immutable at runtime)
 # ---------------------------------------------------------------------------
 #
-# Driver gating mirrors brick gating: each profile lists every
+# Driver gating mirrors service gating: each profile lists every
 # `backend_type` string its active deployment can mount.  Local CAS /
 # path / connector backends are listed explicitly — there is no implicit
 # kernel-default bypass.  See `default_drivers()` for the surface; see
@@ -377,46 +377,46 @@ _PROFILE_DRIVERS: dict[DeploymentProfile, frozenset[str]] = {
 }
 
 
-def resolve_enabled_bricks(
+def resolve_enabled_services(
     profile: DeploymentProfile,
     *,
     overrides: dict[str, bool] | None = None,
 ) -> frozenset[str]:
-    """Resolve the effective set of enabled bricks.
+    """Resolve the effective set of enabled services.
 
-    Starts with the profile's default brick set, then applies explicit
+    Starts with the profile's default service set, then applies explicit
     overrides. Explicit overrides always win over profile defaults.
 
     Args:
         profile: The deployment profile providing defaults.
-        overrides: Dict of brick_name -> enabled (True to force-enable,
-                   False to force-disable). Unknown brick names raise ValueError.
+        overrides: Dict of service_name -> enabled (True to force-enable,
+                   False to force-disable). Unknown service names raise ValueError.
 
     Returns:
-        Frozen set of enabled brick names.
+        Frozen set of enabled service names.
     """
-    enabled = set(profile.default_bricks())
+    enabled = set(profile.default_services())
 
     if overrides:
-        unknown = set(overrides.keys()) - ALL_BRICK_NAMES
+        unknown = set(overrides.keys()) - ALL_SERVICE_NAMES
         if unknown:
-            raise ValueError(f"Unknown brick names in overrides: {unknown}")
+            raise ValueError(f"Unknown service names in overrides: {unknown}")
 
-        for brick_name, is_enabled in overrides.items():
-            default_enabled = brick_name in profile.default_bricks()
+        for service_name, is_enabled in overrides.items():
+            default_enabled = service_name in profile.default_services()
             if is_enabled != default_enabled:
                 action = "enabling" if is_enabled else "disabling"
                 logger.warning(
-                    "Brick override: %s '%s' (profile '%s' default: %s)",
+                    "Service override: %s '%s' (profile '%s' default: %s)",
                     action,
-                    brick_name,
+                    service_name,
                     profile.value,
                     "enabled" if default_enabled else "disabled",
                 )
             if is_enabled:
-                enabled.add(brick_name)
+                enabled.add(service_name)
             else:
-                enabled.discard(brick_name)
+                enabled.discard(service_name)
 
     return frozenset(enabled)
 
@@ -428,7 +428,7 @@ def resolve_enabled_drivers(
 ) -> frozenset[str]:
     """Resolve the effective set of enabled drivers for a profile.
 
-    Mirrors :func:`resolve_enabled_bricks` for the driver dimension.
+    Mirrors :func:`resolve_enabled_services` for the driver dimension.
     Starts with the profile's default driver set, then applies explicit
     overrides.  Explicit overrides always win over profile defaults.
 

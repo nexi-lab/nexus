@@ -34,7 +34,7 @@ def _compute_features_info(app: "FastAPI", svc: LifespanServices) -> None:
     Called once at startup. The result is immutable and served by
     GET /api/v2/features with O(1) cost.
     """
-    from nexus.contracts.deployment_profile import ALL_BRICK_NAMES, DeploymentProfile
+    from nexus.contracts.deployment_profile import ALL_SERVICE_NAMES, DeploymentProfile
     from nexus.server.api.core.features import FeaturesResponse, PerformanceTuningInfo
 
     # Read profile from svc (set during server init).
@@ -45,8 +45,8 @@ def _compute_features_info(app: "FastAPI", svc: LifespanServices) -> None:
         logger.warning("Unknown deployment profile '%s', defaulting to 'full'", profile_str)
         profile = DeploymentProfile.FULL
 
-    # Read enabled_bricks from svc (set during factory wiring)
-    enabled: frozenset[str] = svc.enabled_bricks or profile.default_bricks()
+    # Read enabled_services from svc (set during factory wiring)
+    enabled: frozenset[str] = svc.enabled_services or profile.default_services()
 
     mode: str = svc.deployment_mode
 
@@ -59,7 +59,7 @@ def _compute_features_info(app: "FastAPI", svc: LifespanServices) -> None:
     except Exception:
         version = "unknown"
 
-    disabled = sorted(ALL_BRICK_NAMES - enabled)
+    disabled = sorted(ALL_SERVICE_NAMES - enabled)
 
     # Issue #2071: include performance tuning summary
     _pt = svc.profile_tuning
@@ -90,7 +90,7 @@ def _compute_features_info(app: "FastAPI", svc: LifespanServices) -> None:
     features_info = FeaturesResponse(
         profile=profile.value,
         mode=mode,
-        enabled_bricks=sorted(enabled),
+        enabled_services=sorted(enabled),
         disabled_bricks=disabled,
         version=version,
         performance_tuning=_perf_info,
@@ -379,6 +379,6 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
             else:
                 await asyncio.get_running_loop().run_in_executor(None, close_fn)
 
-    # CacheBrick stop is now handled by coordinator via aclose() (enlisted as BackgroundService)
+    # CacheService stop is now handled by coordinator via aclose() (enlisted as BackgroundService)
 
     await shutdown_observability(app, svc)

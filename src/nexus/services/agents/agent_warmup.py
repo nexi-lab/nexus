@@ -54,7 +54,7 @@ class AgentWarmupService:
 
     Args:
         agent_registry: AgentRegistry for state queries and transitions.
-        enabled_bricks: Set of brick names enabled in this deployment.
+        enabled_services: Set of brick names enabled in this deployment.
         cache_store: Optional CacheStoreABC for cache warming.
         mcp_config: Optional MCP server configuration.
     """
@@ -62,12 +62,12 @@ class AgentWarmupService:
     def __init__(
         self,
         agent_registry: Any,
-        enabled_bricks: frozenset[str] | None = None,
+        enabled_services: frozenset[str] | None = None,
         cache_store: Any | None = None,
         mcp_config: dict[str, Any] | None = None,
     ) -> None:
         self._agent_registry = agent_registry
-        self._enabled_bricks = enabled_bricks or frozenset()
+        self._enabled_services = enabled_services or frozenset()
         self._cache_store = cache_store
         self._mcp_config = mcp_config
         self._step_registry: dict[str, WarmupStepFn] = {}
@@ -167,7 +167,7 @@ class AgentWarmupService:
             agent_id=agent_id,
             agent_record=record,
             agent_registry=self._agent_registry,
-            enabled_bricks=self._enabled_bricks,
+            enabled_services=self._enabled_services,
             cache_store=self._cache_store,
             mcp_config=self._mcp_config,
         )

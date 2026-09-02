@@ -26,7 +26,7 @@ class TestCacheStoreABCIdentity:
 class TestZeroViolations:
     """nexus/cache/ must have zero imports from nexus.core."""
 
-    def test_no_core_imports_in_cache_brick(self) -> None:
+    def test_no_core_imports_in_cache_service(self) -> None:
         """Verify no runtime imports from nexus.core exist in nexus/cache/ modules."""
         import inspect
 

@@ -422,7 +422,7 @@ def _boot_post_kernel_services(
 
                 agent_warmup_service = AgentWarmupService(
                     agent_registry=_agent_registry,
-                    enabled_bricks=services.get("enabled_bricks", frozenset()),
+                    enabled_services=services.get("enabled_services", frozenset()),
                     cache_store=getattr(services.get("cache_brick"), "cache_store", None),
                     mcp_config=None,
                 )
@@ -477,7 +477,7 @@ def _boot_post_kernel_services(
 
                 agent_warmup_service = AgentWarmupService(
                     agent_registry=_agent_reg,
-                    enabled_bricks=services.get("enabled_bricks", frozenset()),
+                    enabled_services=services.get("enabled_services", frozenset()),
                     cache_store=getattr(services.get("cache_brick"), "cache_store", None),
                     mcp_config=None,
                 )

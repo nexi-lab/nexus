@@ -24,14 +24,14 @@ def app_full_profile() -> FastAPI:
     app = FastAPI()
     profile = DeploymentProfile.FULL
     app.state.deployment_profile = profile.value
-    app.state.enabled_bricks = profile.default_bricks()
+    app.state.enabled_services = profile.default_services()
     app.state.profile_tuning = profile.tuning()
     app.state.deployment_mode = "standalone"
 
     svc = LifespanServices(
         deployment_profile=profile.value,
         deployment_mode="standalone",
-        enabled_bricks=profile.default_bricks(),
+        enabled_services=profile.default_services(),
         profile_tuning=profile.tuning(),
     )
     _compute_features_info(app, svc)
@@ -45,14 +45,14 @@ def app_lite_profile() -> FastAPI:
     app = FastAPI()
     profile = DeploymentProfile.LITE
     app.state.deployment_profile = profile.value
-    app.state.enabled_bricks = profile.default_bricks()
+    app.state.enabled_services = profile.default_services()
     app.state.profile_tuning = profile.tuning()
     app.state.deployment_mode = "standalone"
 
     svc = LifespanServices(
         deployment_profile=profile.value,
         deployment_mode="standalone",
-        enabled_bricks=profile.default_bricks(),
+        enabled_services=profile.default_services(),
         profile_tuning=profile.tuning(),
     )
     _compute_features_info(app, svc)

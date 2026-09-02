@@ -5,10 +5,10 @@ import pathlib
 
 import pytest
 
-BRICK_ROOT = pathlib.Path(__file__).resolve().parent.parent
+SERVICE_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 # Modules that are part of the brick core (must be isolation-clean)
-BRICK_CORE_MODULES = [
+SERVICE_CORE_MODULES = [
     "types.py",
     "protocol.py",
     "base_provider.py",
@@ -35,9 +35,9 @@ def _get_imports(filepath: pathlib.Path) -> list[str]:
     return modules
 
 
-@pytest.mark.parametrize("module_path", BRICK_CORE_MODULES)
+@pytest.mark.parametrize("module_path", SERVICE_CORE_MODULES)
 def test_brick_core_module_isolation(module_path: str) -> None:
-    filepath = BRICK_ROOT / module_path
+    filepath = SERVICE_ROOT / module_path
     if not filepath.exists():
         pytest.skip(f"{module_path} not yet created")
 

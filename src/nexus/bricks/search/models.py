@@ -1,4 +1,4 @@
-"""Search brick model re-exports (Issue #1520).
+"""Search service model re-exports (Issue #1520).
 
 Re-exports ORM models from nexus.storage.models for brick-internal use.
 This avoids direct imports from nexus.storage.models scattered across

@@ -326,7 +326,7 @@ class NexusFS(  # type: ignore[misc]
     def link(
         self,
         *,
-        enabled_bricks: "frozenset[str] | None" = None,
+        enabled_services: "frozenset[str] | None" = None,
         parsing: Any = None,
         workflow_engine: Any = None,
     ) -> None:

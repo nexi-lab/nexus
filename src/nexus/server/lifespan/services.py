@@ -153,7 +153,7 @@ def _startup_agent_lifecycle(app: "FastAPI", svc: "LifespanServices") -> None:
 
         app.state.agent_warmup_service = AgentWarmupService(
             agent_registry=agent_registry,
-            enabled_bricks=getattr(app.state, "enabled_bricks", frozenset()),
+            enabled_services=getattr(app.state, "enabled_services", frozenset()),
             cache_store=getattr(app.state, "cache_brick", None),
             mcp_config=None,
         )
@@ -315,7 +315,7 @@ def _startup_governance(app: "FastAPI", svc: "LifespanServices") -> None:
 
 def _startup_sandbox_auth(app: "FastAPI", svc: "LifespanServices") -> None:
     """Initialize SandboxAuthService for authenticated sandbox creation (Issue #1307)."""
-    if "sandbox" not in (svc.enabled_bricks or frozenset()):
+    if "sandbox" not in (svc.enabled_services or frozenset()):
         app.state.sandbox_auth_service = None
         logger.debug("[SANDBOX-AUTH] Skipped — sandbox brick is disabled")
         return

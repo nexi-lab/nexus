@@ -125,8 +125,8 @@ def _render_ready(data: dict[str, Any]) -> None:
         table.add_row("endpoint", str(data.get("endpoint", "")))
         table.add_row("health", str(data.get("health", "")))
         table.add_row("profile", str(data.get("profile") or "—"))
-        bricks = data.get("enabled_bricks") or []
-        table.add_row("enabled_bricks", ", ".join(bricks) if bricks else "—")
+        bricks = data.get("enabled_services") or []
+        table.add_row("enabled_services", ", ".join(bricks) if bricks else "—")
         console.print(table)
     else:
         console.print()
@@ -263,7 +263,7 @@ def ready(
                 "endpoint": endpoint_str,
                 "health": "healthy",
                 "profile": features.get("profile"),
-                "enabled_bricks": features.get("enabled_bricks") or [],
+                "enabled_services": features.get("enabled_services") or [],
             },
             output_opts=output_opts,
             timing=timing,

@@ -60,7 +60,7 @@ def setup_uvloop() -> bool:
 # =============================================================================
 if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS
-    from nexus.lib.registry import BaseRegistry, BrickInfo, BrickRegistry
+    from nexus.lib.registry import BaseRegistry, ServiceInfo, ServiceModuleRegistry
 
 # Module-level cache for lazy imports
 _lazy_imports_cache: dict[str, Any] = {}
@@ -68,8 +68,8 @@ _lazy_imports_cache: dict[str, Any] = {}
 # Mapping of attribute names to their import paths
 _LAZY_IMPORTS = {
     "BaseRegistry": ("nexus.lib.registry", "BaseRegistry"),
-    "BrickInfo": ("nexus.lib.registry", "BrickInfo"),
-    "BrickRegistry": ("nexus.lib.registry", "BrickRegistry"),
+    "ServiceInfo": ("nexus.lib.registry", "ServiceInfo"),
+    "ServiceModuleRegistry": ("nexus.lib.registry", "ServiceModuleRegistry"),
     "NexusFS": ("nexus.core.nexus_fs", "NexusFS"),
 }
 
@@ -98,8 +98,8 @@ __all__ = [
     "setup_uvloop",
     # Registry base classes (lazy)
     "BaseRegistry",
-    "BrickInfo",
-    "BrickRegistry",
+    "ServiceInfo",
+    "ServiceModuleRegistry",
     # Filesystem classes (lazy)
     "NexusFS",
 ]

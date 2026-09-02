@@ -79,7 +79,7 @@ class WarmupContext:
         agent_id: The agent being warmed up.
         agent_record: Immutable snapshot of the agent at warmup start.
         agent_registry: AgentRegistry for state queries.
-        enabled_bricks: Set of brick names enabled in this deployment.
+        enabled_services: Set of brick names enabled in this deployment.
         cache_store: CacheStoreABC for cache warming (optional).
         mcp_config: MCP server configuration (optional).
     """
@@ -87,7 +87,7 @@ class WarmupContext:
     agent_id: str
     agent_record: Any  # AgentRecord (TYPE_CHECKING import avoided for zero-dep)
     agent_registry: Any  # AgentRegistry
-    enabled_bricks: frozenset[str] = field(default_factory=frozenset)
+    enabled_services: frozenset[str] = field(default_factory=frozenset)
     cache_store: Any | None = None
     mcp_config: dict[str, Any] | None = None
 

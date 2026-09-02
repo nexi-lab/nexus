@@ -1,7 +1,7 @@
-"""CacheBrick — Tier 2 cache brick facade (Issue #1524).
+"""CacheService — Tier 2 cache service facade (Issue #1524).
 
 Single entry point for all cache domain services. Follows the exemplary
-brick pattern (like ``ParsersBrick``):
+service pattern (like ``ParsersService``):
 
 - Zero runtime imports from ``nexus.core``
 - Constructor injection for CacheStoreABC + CacheSettings
@@ -11,7 +11,7 @@ brick pattern (like ``ParsersBrick``):
 
 Architecture::
 
-    CacheBrick
+    CacheService
     ├── CacheStoreABC (injected — Dragonfly, InMemory, or Null)
     ├── PermissionCache (driver-agnostic domain cache)
     ├── TigerCache
@@ -42,7 +42,7 @@ from nexus.contracts.cache_store import NullCacheStore
 logger = logging.getLogger(__name__)
 
 
-class CacheBrick:
+class CacheService:
     """Tier 2 Cache Brick — owns all cache domain services.
 
     Provides protocol-typed accessors for domain caches with
@@ -50,13 +50,13 @@ class CacheBrick:
 
     Example::
 
-        brick = CacheBrick(cache_store=dragonfly_store, settings=settings)
-        await brick.start()
+        service = CacheService(cache_store=dragonfly_store, settings=settings)
+        await service.start()
 
-        perm = brick.permission_cache
+        perm = svc.permission_cache
         result = await perm.get("user", "alice", "read", "file", "/a", "z1")
 
-        await brick.stop()
+        await svc.stop()
     """
 
     def __init__(
@@ -65,7 +65,7 @@ class CacheBrick:
         settings: CacheSettings | None = None,
         record_store: Any | None = None,
     ) -> None:
-        """Initialize the CacheBrick.
+        """Initialize the CacheService.
 
         Args:
             cache_store: CacheStoreABC driver. If None, NullCacheStore is used
@@ -99,7 +99,7 @@ class CacheBrick:
     # ------------------------------------------------------------------
 
     async def start(self) -> None:
-        """Initialize the cache brick.
+        """Initialize the cache service.
 
         Verifies store connectivity. On failure, logs a warning and
         continues (Tier 2 = silent degradation).
@@ -111,25 +111,25 @@ class CacheBrick:
             self._started = True
             if not healthy:
                 logger.warning(
-                    "[CacheBrick] started but health check returned unhealthy (backend=%s)",
+                    "[CacheService] started but health check returned unhealthy (backend=%s)",
                     self.backend_name,
                 )
             else:
-                logger.info("[CacheBrick] started (backend=%s)", self.backend_name)
+                logger.info("[CacheService] started (backend=%s)", self.backend_name)
         except Exception as exc:
-            logger.warning("[CacheBrick] start health check failed: %s", exc)
+            logger.warning("[CacheService] start health check failed: %s", exc)
             self._started = True  # Still mark as started — silent degradation
 
     async def stop(self) -> None:
-        """Shut down the cache brick and close the store connection."""
+        """Shut down the cache service and close the store connection."""
         if not self._started:
             return
         try:
             await self._store.close()
         except Exception as exc:
-            logger.warning("[CacheBrick] stop failed: %s", exc)
+            logger.warning("[CacheService] stop failed: %s", exc)
         self._started = False
-        logger.info("[CacheBrick] stopped")
+        logger.info("[CacheService] stopped")
 
     async def health_check(self) -> bool:
         """Check if the cache backend is healthy.
@@ -149,14 +149,14 @@ class CacheBrick:
     async def initialize(self) -> None:
         """CacheFactory-compatible alias for ``start()``.
 
-        Allows CacheBrick to be used as a drop-in replacement for CacheFactory.
+        Allows CacheService to be used as a drop-in replacement for CacheFactory.
         """
         await self.start()
 
     async def shutdown(self) -> None:
         """CacheFactory-compatible alias for ``stop()``.
 
-        Allows CacheBrick to be used as a drop-in replacement for CacheFactory.
+        Allows CacheService to be used as a drop-in replacement for CacheFactory.
         """
         await self.stop()
 

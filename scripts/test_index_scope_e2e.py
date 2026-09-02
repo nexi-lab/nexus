@@ -567,7 +567,7 @@ def main() -> None:
     # (c) admin DOES bypass the check (already verified above via ADMIN_KEY)
     #
     # The "with grant → 200" path requires a ReBAC write tuple on the
-    # exact path AND a working PermissionEnforcer in the bricks layer.
+    # exact path AND a working PermissionEnforcer in the services layer.
     # That integration is covered by the sync enforcer we call, but the
     # fail-closed path is the important one to prove: a non-admin
     # without explicit grant is denied.

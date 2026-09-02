@@ -123,7 +123,7 @@ def _get_parsed_text_sync(
 ) -> str | None:
     """Sync flavor of ``_NexusFSFileReader._get_parsed_text`` used by RPC path.
 
-    ``parse_fn`` already runs in a worker thread under the ParsersBrick
+    ``parse_fn`` already runs in a worker thread under the ParsersService
     wrapper when an event loop is active, so blocking inside the RPC
     handler for one document at a time is acceptable; we don't need a
     second ``asyncio.to_thread`` hop here.

@@ -1,7 +1,7 @@
 """Offline queue protocol and in-memory implementation.
 
 ``OfflineQueueProtocol`` defines the contract for offline queue backends
-so ``ProxyBrick`` doesn't depend on the concrete ``OfflineQueue`` (SQLite).
+so ``ProxyService`` doesn't depend on the concrete ``OfflineQueue`` (SQLite).
 
 ``InMemoryQueue`` provides a lightweight test/fallback implementation.
 """

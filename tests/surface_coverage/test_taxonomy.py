@@ -3,9 +3,9 @@
 import pytest
 
 from scripts.surface_coverage.taxonomy import (
-    BRICK_CATEGORIES,
     LAYERS,
     MODULES,
+    SERVICE_CATEGORIES,
     all_module_ids,
     bricks_by_category,
     classify_op_id,
@@ -36,7 +36,7 @@ def test_depends_on_targets_exist():
 
 def test_every_brick_in_a_category():
     brick_ids = {m.id for m in MODULES if m.layer == "brick"}
-    categorized = {bid for ids in BRICK_CATEGORIES.values() for bid in ids}
+    categorized = {bid for ids in SERVICE_CATEGORIES.values() for bid in ids}
     assert brick_ids == categorized, (
         f"bricks not in any category: {brick_ids - categorized}; "
         f"category entries that aren't bricks: {categorized - brick_ids}"

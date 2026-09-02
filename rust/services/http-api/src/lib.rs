@@ -84,6 +84,15 @@ pub use search_backend::{BackendError, SearchBackend};
 pub struct AppState {
     pub search: SearchBackend,
     pub auth: Arc<dyn AuthProvider>,
+    /// The kernel-adjacent ReBAC tuple store — grant / list / revoke
+    /// backend for `/v2/rebac/tuples`.  Present iff this crate was
+    /// built `--features rebac`; the composition root in `nexusd`
+    /// (also under `--features rebac`) passes the same
+    /// `RaftReBACTupleStore` the kernel's `PermissionProvider`
+    /// reads, so grants written via HTTP take effect on the next
+    /// permission check without a second SSOT.
+    #[cfg(feature = "rebac")]
+    pub rebac_store: Arc<dyn nexus_rebac::ReBACTupleStore>,
 }
 
 impl AppState {
@@ -98,10 +107,16 @@ impl AppState {
     /// Not for production — the composition root in `nexusd` builds
     /// the same struct field-by-field with the real `SearchBackend`
     /// target + `ApiKeyAuthProvider`.
+    ///
+    /// Under `--features rebac`, wires an in-memory store so rebac
+    /// route tests can exercise grant / list / revoke without a
+    /// live raft cluster.
     pub fn for_tests(grpc_target: impl Into<Arc<str>>) -> Self {
         Self {
             search: SearchBackend::new(grpc_target),
             auth: middleware::auth::default_no_auth_provider(),
+            #[cfg(feature = "rebac")]
+            rebac_store: Arc::new(nexus_rebac::InMemoryReBACTupleStore::new()),
         }
     }
 }
@@ -131,14 +146,18 @@ pub fn router(state: AppState) -> Router {
     let public_router = Router::new()
         .merge(handlers::status::router())
         .with_state(state.clone());
-    let protected_router = Router::new()
-        .merge(handlers::search::router())
-        .merge(handlers::documents::router())
-        .layer(from_fn_with_state(
+    let protected_router = {
+        let r = Router::new()
+            .merge(handlers::search::router())
+            .merge(handlers::documents::router());
+        #[cfg(feature = "rebac")]
+        let r = r.merge(handlers::rebac::router());
+        r.layer(from_fn_with_state(
             state.clone(),
             middleware::auth::require_bearer,
         ))
-        .with_state(state);
+        .with_state(state)
+    };
     Router::new().merge(public_router).merge(protected_router)
 }
 
@@ -232,6 +251,7 @@ pub async fn bind_and_serve(
 /// half-served request), but the "listener is up" invariant is
 /// established synchronously — matches `a2a::install_a2a_stamp_hook`
 /// which also fails install synchronously if setup errors.
+#[cfg(not(feature = "rebac"))]
 pub fn service_decl(
     addr: SocketAddr,
     upstream_grpc: String,
@@ -241,6 +261,28 @@ pub fn service_decl(
     kernel::kernel::ServiceDecl {
         name: "http_api".to_string(),
         install: Box::new(move |_kernel| install_impl(addr, upstream_grpc, auth, runtime)),
+    }
+}
+
+/// `--features rebac` variant of [`service_decl`] — takes the
+/// tuple store the composition root has already wired for the
+/// kernel's `PermissionProvider`, so grants written via
+/// `/v2/rebac/tuples` land in the same store the enforcer reads
+/// (no second SSOT).  Signature adds the last param; every other
+/// arg matches the feature-off version.
+#[cfg(feature = "rebac")]
+pub fn service_decl(
+    addr: SocketAddr,
+    upstream_grpc: String,
+    auth: Arc<dyn AuthProvider>,
+    runtime: tokio::runtime::Handle,
+    rebac_store: Arc<dyn nexus_rebac::ReBACTupleStore>,
+) -> kernel::kernel::ServiceDecl {
+    kernel::kernel::ServiceDecl {
+        name: "http_api".to_string(),
+        install: Box::new(move |_kernel| {
+            install_impl(addr, upstream_grpc, auth, runtime, rebac_store)
+        }),
     }
 }
 
@@ -260,10 +302,13 @@ pub fn install_impl(
     upstream_grpc: String,
     auth: Arc<dyn AuthProvider>,
     runtime: tokio::runtime::Handle,
+    #[cfg(feature = "rebac")] rebac_store: Arc<dyn nexus_rebac::ReBACTupleStore>,
 ) -> Result<(), String> {
     let state = AppState {
         search: SearchBackend::new(upstream_grpc),
         auth,
+        #[cfg(feature = "rebac")]
+        rebac_store,
     };
     // Bind synchronously so `install` surfaces the failure —
     // port-in-use / EACCES / bad interface all become an

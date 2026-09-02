@@ -192,6 +192,13 @@ impl Harness {
         let state = AppState {
             search: SearchBackend::new(grpc_target),
             auth,
+            // Under `--features rebac` (nexusd's `full` build path
+            // exercises this harness transitively via CI), AppState
+            // gains a `rebac_store` field.  Use the same in-memory
+            // default the `for_tests` helper wires — this middleware
+            // suite never hits `/v2/rebac/*`, so any store is fine.
+            #[cfg(feature = "rebac")]
+            rebac_store: std::sync::Arc::new(nexus_rebac::InMemoryReBACTupleStore::new()),
         };
         let (addr, fut) = bind_and_serve("127.0.0.1:0".parse().unwrap(), state)
             .await

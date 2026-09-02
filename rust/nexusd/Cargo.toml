@@ -46,7 +46,14 @@ cohost-sudocode = ["dep:sudocode-tools"]
 # `AHashMap` / `string_interner` transitively, so kept behind an
 # explicit gate.  Compose via `--features full` for the everything
 # build; a la carte `--features rebac,http-api` also works.
-rebac = ["dep:nexus-rebac"]
+#
+# The `nexus-http-api?/rebac` chain propagates the rebac feature
+# into the http-api crate WHEN http-api is also enabled — so
+# `--features http-api,rebac` mounts the `/v2/rebac/tuples`
+# router in addition to installing the syscall-time enforcer.
+# The `?` gate keeps `--features rebac` alone from pulling in the
+# http-api dep (enforcer without HTTP surface is a valid mode).
+rebac = ["dep:nexus-rebac", "nexus-http-api?/rebac"]
 # Meta-feature: the "full superset" build — enables every opt-in
 # service that does not require cross-repo pin coordination
 # (§7: cluster ⊂ … ⊂ full).  Downstream tooling that wants every

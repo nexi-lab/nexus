@@ -8,5 +8,7 @@
 //! adds a field, no handler rewire.
 
 pub mod documents;
+#[cfg(feature = "rebac")]
+pub mod rebac;
 pub mod search;
 pub mod status;

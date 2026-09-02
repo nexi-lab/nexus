@@ -110,6 +110,12 @@ async fn service_decl_install_body_runs_under_a_tokio_runtime() {
         "http://127.0.0.1:1".to_string(),
         default_no_auth_provider(),
         handle,
+        // The `--features rebac` build widens `install_impl` with a
+        // tuple-store arg — use the same in-memory default the
+        // `AppState::for_tests` helper wires (this test never hits
+        // `/v2/rebac/*`, so any store is fine).
+        #[cfg(feature = "rebac")]
+        std::sync::Arc::new(nexus_rebac::InMemoryReBACTupleStore::new()),
     );
     assert!(
         result.is_ok(),
@@ -146,6 +152,8 @@ async fn service_decl_install_body_returns_err_on_bind_failure() {
         "http://127.0.0.1:1".to_string(),
         default_no_auth_provider(),
         handle.clone(),
+        #[cfg(feature = "rebac")]
+        std::sync::Arc::new(nexus_rebac::InMemoryReBACTupleStore::new()),
     );
     assert!(first.is_ok(), "first install must succeed; got {first:?}");
 
@@ -156,6 +164,8 @@ async fn service_decl_install_body_returns_err_on_bind_failure() {
         "http://127.0.0.1:1".to_string(),
         default_no_auth_provider(),
         handle,
+        #[cfg(feature = "rebac")]
+        std::sync::Arc::new(nexus_rebac::InMemoryReBACTupleStore::new()),
     );
     let err = second.expect_err("second install on same addr must Err");
     assert!(

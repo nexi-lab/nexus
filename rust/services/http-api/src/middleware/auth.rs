@@ -355,8 +355,8 @@ mod tests {
             "reached"
         }
         let state = AppState {
-            search: crate::SearchBackend::new("http://127.0.0.1:1"),
             auth: Arc::new(RejectAll),
+            ..AppState::for_tests("http://127.0.0.1:1")
         };
         let app: Router = Router::new()
             .route("/protected", axum::routing::get(inner_ok))
@@ -392,8 +392,8 @@ mod tests {
             "reached"
         }
         let state = AppState {
-            search: crate::SearchBackend::new("http://127.0.0.1:1"),
             auth: default_no_auth_provider(),
+            ..AppState::for_tests("http://127.0.0.1:1")
         };
         let app: Router = Router::new()
             .route("/protected", axum::routing::get(inner_ok))
@@ -431,8 +431,8 @@ mod tests {
             "reached"
         }
         let state = AppState {
-            search: crate::SearchBackend::new("http://127.0.0.1:1"),
             auth: default_no_auth_provider(),
+            ..AppState::for_tests("http://127.0.0.1:1")
         };
         let app: Router = Router::new()
             .route("/protected", axum::routing::get(inner_ok))
@@ -466,8 +466,8 @@ mod tests {
             "reached"
         }
         let state = AppState {
-            search: crate::SearchBackend::new("http://127.0.0.1:1"),
             auth: Arc::new(RejectAll),
+            ..AppState::for_tests("http://127.0.0.1:1")
         };
         let app: Router = Router::new()
             .route("/protected", axum::routing::get(inner_ok))
@@ -507,8 +507,8 @@ mod tests {
             ctx.user_id.clone()
         }
         let state = AppState {
-            search: crate::SearchBackend::new("http://127.0.0.1:1"),
             auth: default_no_auth_provider(), // returns "cluster-internal"
+            ..AppState::for_tests("http://127.0.0.1:1")
         };
         let app: Router = Router::new()
             .route("/protected", axum::routing::get(echo_user_id))

@@ -87,15 +87,46 @@ fn main() -> anyhow::Result<()> {
     // `RaftReBACTupleStore` over (same consensus as `RaftAuthKeyStore`,
     // one namespace over).
     nexus_cluster::run_with_services(move |ctx| {
+        // Build the rebac store ONCE — the enforcer decl AND the
+        // http-api /v2/rebac/tuples router (both feature-gated on
+        // `rebac`) share the same `Arc<dyn ReBACTupleStore>` so a
+        // grant written via HTTP lands in the same store the
+        // enforcer reads.  Cloning the Arc is cheap; sharing means
+        // one SSOT, not two.
+        #[cfg(feature = "rebac")]
+        let rebac_store = build_rebac_store(ctx);
         let mut decls = vec![a2a::service_decl(ctx.auth_armed), managed_agent_decl()];
-        if let Some(decl) = http_api_decl_from(&http_api_config, ctx) {
+        if let Some(decl) = http_api_decl_from(
+            &http_api_config,
+            ctx,
+            #[cfg(feature = "rebac")]
+            std::sync::Arc::clone(&rebac_store),
+        ) {
             decls.push(decl);
         }
-        if let Some(decl) = rebac_decl_from(ctx) {
+        #[cfg(feature = "rebac")]
+        if let Some(decl) = rebac_enforcer_decl(rebac_store) {
             decls.push(decl);
         }
         decls
     })
+}
+
+/// Build the shared `RaftReBACTupleStore` from the boot ctx.
+///
+/// Called ONCE inside the `run_with_services` closure — the resulting
+/// `Arc` is cloned into both consumer decls (the enforcer's kernel
+/// slot install AND the http-api rebac router's `AppState`) so
+/// tuple grants written via HTTP land in the same store the
+/// enforcer reads on every syscall.  One SSOT, two surfaces.
+#[cfg(feature = "rebac")]
+fn build_rebac_store(
+    ctx: &nexus_cluster::ServiceBootCtx,
+) -> std::sync::Arc<dyn nexus_rebac::ReBACTupleStore> {
+    nexus_rebac::RaftReBACTupleStore::new_arc(
+        ctx.credential_consensus.clone(),
+        ctx.credential_zone_runtime.clone(),
+    )
 }
 
 /// HTTP-API config parsed at boot from env — cheap, refused loud
@@ -168,7 +199,7 @@ fn parse_http_api_config() -> anyhow::Result<Option<HttpApiConfig>> {
 /// auth provider + runtime handle) is only available inside
 /// `run_with_services`'s closure, but the config parse must run
 /// upfront to fail-loud on env typos.
-#[cfg(feature = "http-api")]
+#[cfg(all(feature = "http-api", not(feature = "rebac")))]
 fn http_api_decl_from(
     config: &Option<HttpApiConfig>,
     ctx: &nexus_cluster::ServiceBootCtx,
@@ -183,10 +214,45 @@ fn http_api_decl_from(
     ))
 }
 
-#[cfg(not(feature = "http-api"))]
+/// `--features http-api,rebac` variant of the wrapper — passes the
+/// shared `Arc<dyn ReBACTupleStore>` through to
+/// `nexus_http_api::service_decl` so `/v2/rebac/tuples` grants land
+/// in the SAME store the kernel `PermissionProvider` reads.
+///
+/// Signature deliberately mirrors the feature-off shape one extra
+/// arg later — the call site cfg-gates the arg with a single
+/// `#[cfg(feature = "rebac")]` on the `Arc::clone(&rebac_store)`
+/// expression, so a rebac-off build still compiles unchanged.
+#[cfg(all(feature = "http-api", feature = "rebac"))]
+fn http_api_decl_from(
+    config: &Option<HttpApiConfig>,
+    ctx: &nexus_cluster::ServiceBootCtx,
+    rebac_store: std::sync::Arc<dyn nexus_rebac::ReBACTupleStore>,
+) -> Option<kernel::kernel::ServiceDecl> {
+    use std::sync::Arc;
+    let cfg = config.as_ref()?;
+    Some(nexus_http_api::service_decl(
+        cfg.addr,
+        cfg.upstream_grpc.clone(),
+        Arc::clone(&ctx.auth),
+        ctx.runtime.clone(),
+        rebac_store,
+    ))
+}
+
+#[cfg(all(not(feature = "http-api"), not(feature = "rebac")))]
 fn http_api_decl_from(
     _config: &Option<HttpApiConfig>,
     _ctx: &nexus_cluster::ServiceBootCtx,
+) -> Option<kernel::kernel::ServiceDecl> {
+    None
+}
+
+#[cfg(all(not(feature = "http-api"), feature = "rebac"))]
+fn http_api_decl_from(
+    _config: &Option<HttpApiConfig>,
+    _ctx: &nexus_cluster::ServiceBootCtx,
+    _rebac_store: std::sync::Arc<dyn nexus_rebac::ReBACTupleStore>,
 ) -> Option<kernel::kernel::ServiceDecl> {
     None
 }
@@ -219,18 +285,18 @@ fn http_api_decl_from(
 /// The `rebac`-off build never links `nexus-rebac`, so the entire
 /// enforcer + graph engine + `lib::rebac` transitive weight stays
 /// out of the slim `cluster` binary (§7 size budget).
+/// Build the ReBAC enforcer `ServiceDecl` from the shared store.
+/// The store is built ONCE in the main closure ([`build_rebac_store`])
+/// and cloned into both consumers — the enforcer here + the http-api
+/// rebac router (via [`http_api_decl_from`]).  Sharing the same
+/// `Arc<dyn ReBACTupleStore>` is what makes grants written over the
+/// HTTP surface visible to the syscall-time enforcer without a
+/// second SSOT.
 #[cfg(feature = "rebac")]
-fn rebac_decl_from(ctx: &nexus_cluster::ServiceBootCtx) -> Option<kernel::kernel::ServiceDecl> {
+fn rebac_enforcer_decl(
+    store: std::sync::Arc<dyn nexus_rebac::ReBACTupleStore>,
+) -> Option<kernel::kernel::ServiceDecl> {
     use std::sync::Arc;
-    // Build the store + cache + provider OUTSIDE the install
-    // closure so ctx borrows do not need to move into a `'static`
-    // closure (the ServiceInstall signature is `FnOnce(&Arc<
-    // Kernel>) + Send + 'static`).  `store` clones the consensus +
-    // runtime handle; both are Arc-inside — cheap.
-    let store: Arc<dyn nexus_rebac::ReBACTupleStore> = nexus_rebac::RaftReBACTupleStore::new_arc(
-        ctx.credential_consensus.clone(),
-        ctx.credential_zone_runtime.clone(),
-    );
     let cache = Arc::new(nexus_rebac::ReBACGraphCache::new(store));
     let provider: Arc<Box<dyn kernel::core::dispatch::PermissionProvider>> =
         Arc::new(Box::new(nexus_rebac::RebacPermissionProvider::new(cache)));
@@ -241,9 +307,4 @@ fn rebac_decl_from(ctx: &nexus_cluster::ServiceBootCtx) -> Option<kernel::kernel
             Ok(())
         }),
     })
-}
-
-#[cfg(not(feature = "rebac"))]
-fn rebac_decl_from(_ctx: &nexus_cluster::ServiceBootCtx) -> Option<kernel::kernel::ServiceDecl> {
-    None
 }

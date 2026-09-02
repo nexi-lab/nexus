@@ -94,7 +94,13 @@ dependencies = [
     "markdown-it-py>=4.2.0", # CommonMark-compliant markdown AST parser (Issue #3718)
     "mdit-py-plugins>=0.6.0", # markdown-it-py plugins: front_matter (Issue #3718)
     # MCP Server (v0.7.0)
-    "fastmcp>=3.2.4", # Model Context Protocol server
+    # fastmcp<4 pinned deliberately: 4.0.0 (released 2026-08-31) moved
+    # `Tool` + `ToolResult` off `fastmcp.tools.tool` and broke every
+    # `from fastmcp.tools.tool import ...` site (nexus/nexus#4731 CI
+    # post-merge caught it — the pip resolver picks the newest match
+    # each cold install).  Bump the upper bound + migrate imports in a
+    # follow-up (search "fastmcp.tools.tool" for the 3+ call sites).
+    "fastmcp>=3.2.4,<4.0.0", # Model Context Protocol server
     # Default local PDF parser (Rust + PyO3, ~2-3 MB, zero Python deps).
     # On Python 3.14 without a cp314 wheel, pip builds from sdist and needs
     # Rust plus ``PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1`` (both present in

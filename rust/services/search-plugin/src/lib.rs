@@ -59,6 +59,7 @@ pub mod embed_cache;
 pub mod embedder;
 pub mod fts_index;
 pub mod fusion;
+pub mod http_client;
 pub mod index_manager;
 pub mod index_seq;
 pub mod index_state;
@@ -126,27 +127,86 @@ fn create_search_plugin(kernel_handle: &KernelHandle) -> Box<SearchPlugin> {
     let svc = Arc::new(SearchServiceImpl::new(Arc::new(dup_kernel_handle(
         kernel_handle,
     ))));
-    // Tokio runtime build errors are effectively unreachable on
-    // healthy hosts (would need OS-level thread creation failure);
-    // panic here is same posture the sibling `nexus-vault` plugin
-    // takes for its own service state — a broken plugin is worse
-    // than a loud failure at load time.
-    // Single-threaded runtime — same posture as `nexus-vault`.  Search
-    // requests are IO-bound (kernel-syscall walk); parallelism gain
-    // does not justify pulling `rt-multi-thread` into the plugin's
-    // dep tree.
-    let rt = tokio::runtime::Builder::new_current_thread()
+    Box::new(SearchPlugin {
+        svc,
+        rt: build_runtime(),
+    })
+}
+
+/// Idle blocking-pool threads live this long before exiting (#4725).
+/// tokio's default is 10 s, which under a steady request cadence means
+/// a `pthread_create` per request — the churn that exhausted a cgroup
+/// `pids.max` shared with the Python server.  It also means the pool is
+/// usually EMPTY when a request arrives, and tokio turns a thread-spawn
+/// `EAGAIN` into a panic only when the pool is empty (a non-empty pool
+/// just queues the task for a busy thread).  Keeping threads for an
+/// hour bounds the pool at the peak concurrency actually seen and makes
+/// that panic unreachable while traffic flows.
+const BLOCKING_THREAD_KEEP_ALIVE: std::time::Duration = std::time::Duration::from_secs(3600);
+
+/// The plugin's tokio runtime — bridges the sync plugin-ABI dispatch
+/// into the async tonic trait via `block_on`.
+///
+/// Single-threaded, same posture as `nexus-vault`: search requests
+/// are IO-bound (kernel-syscall walk) and heavy work runs on the
+/// blocking pool, so parallelism gain does not justify pulling
+/// `rt-multi-thread` into the plugin's dep tree.  Build errors are
+/// effectively unreachable on healthy hosts (OS-level thread creation
+/// failure); a panic here at load time is the same posture
+/// `nexus-vault` takes — a broken plugin is worse than a loud failure.
+fn build_runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_current_thread()
         .enable_all()
+        // #4725: tokio's default thread name is "tokio-rt-worker",
+        // which reads as a HOST thread in a panic line and sent the
+        // investigation the wrong way.  Name ours.
+        .thread_name("nexus-search-plugin")
+        .thread_keep_alive(BLOCKING_THREAD_KEEP_ALIVE)
         .build()
-        .expect("build search-plugin tokio runtime");
-    Box::new(SearchPlugin { svc, rt })
+        .expect("build search-plugin tokio runtime")
+}
+
+/// Plugin-ABI dispatch entry, wrapped in the last line of defence
+/// (#4725).  A panic escaping a handler here would unwind into the
+/// host's `extern "C"` `nexus_service_dispatch` and abort the WHOLE
+/// nexusd-cluster process — kernel, raft, every plugin — for one
+/// request's worth of trouble.  The realistic source is tokio
+/// refusing a blocking thread (`OS can't spawn worker thread`), which
+/// fires BEFORE any handler work runs, so nothing is left half-
+/// mutated; the deeper stores are transactional regardless (FTS
+/// commit probe, fail-closed dirty marks, `parking_lot` guards that
+/// release on unwind).  tokio's current-thread scheduler hands its
+/// core back from the `CoreGuard` drop when a `block_on` future
+/// panics, so the runtime keeps serving afterwards.  Fail THIS RPC
+/// with `Internal`, count it on Health, carry on.
+fn dispatch_search(plugin: &SearchPlugin, method: &str, payload: &[u8]) -> Result<Vec<u8>, i32> {
+    let guarded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        dispatch_search_inner(plugin, method, payload)
+    }));
+    match guarded {
+        Ok(result) => result,
+        Err(payload) => {
+            let reason = crate::http_client::panic_reason(payload.as_ref());
+            tracing::error!(
+                method = %method,
+                reason = %reason,
+                "nexus-search-plugin: handler panicked — failing this RPC instead of the host process",
+            );
+            plugin.svc.record_dispatch_panic(method, &reason);
+            Err(-3 /* PluginResult::Internal */)
+        }
+    }
 }
 
 /// Legacy short-name Call RPC dispatch is intentionally empty — every
 /// caller reaches us through Phase P gRPC routing.  The plugin ABI
 /// still requires a dispatch function pointer, so we translate any
 /// `/`-prefixed method into `dispatch_grpc` and reject the rest.
-fn dispatch_search(plugin: &SearchPlugin, method: &str, payload: &[u8]) -> Result<Vec<u8>, i32> {
+fn dispatch_search_inner(
+    plugin: &SearchPlugin,
+    method: &str,
+    payload: &[u8],
+) -> Result<Vec<u8>, i32> {
     if method.starts_with('/') {
         return dispatch_grpc(plugin, method, payload);
     }
@@ -473,6 +533,14 @@ fn dispatch_grpc(plugin: &SearchPlugin, method: &str, payload: &[u8]) -> Result<
                 .into_inner();
             Ok(resp.encode_to_vec())
         }
+        // Test seam (#4725): a panic INSIDE `block_on` — the shape a
+        // thread-spawn failure in `spawn_blocking` takes — so the
+        // dispatch-boundary guard and the runtime's recovery are
+        // exercised end to end.
+        #[cfg(test)]
+        "__panic_for_test" => plugin
+            .rt
+            .block_on(async { panic!("injected dispatch panic") }),
         _ => {
             tracing::warn!(method = %method_name, "unknown method");
             Err(-2)
@@ -508,3 +576,116 @@ pub unsafe extern "C" fn nexus_plugin_grpc_services() -> *const c_char {
 // crate root so callers write `use nexus_search_plugin::{GlobRequest,
 // GrepRequest}` without going through the generated module tree.
 pub use search_proto::{GlobResponse as ExportGlobResponse, GrepResponse as ExportGrepResponse};
+
+#[cfg(test)]
+mod tests {
+    //! Dispatch-boundary guard (#4725).  A handler panic must fail its
+    //! own RPC with `Internal`, be counted on Health, and leave the
+    //! runtime serving — never unwind into the host's `extern "C"`
+    //! dispatch (process abort).
+
+    use std::ffi::c_void;
+    use std::os::raw::c_char;
+
+    use super::*;
+    use crate::index_manager::IndexManager;
+    use crate::search_proto::HealthResponse;
+
+    // All-`-1` kernel: Health never touches the kernel; an accidental
+    // touch fails loud instead of hitting a silent stub.
+    unsafe extern "C" fn poison_buf(
+        _: *const c_void,
+        _: *const c_char,
+        _: *mut *mut u8,
+        _: *mut usize,
+    ) -> i32 {
+        -1
+    }
+    unsafe extern "C" fn poison_write(
+        _: *const c_void,
+        _: *const c_char,
+        _: *const u8,
+        _: usize,
+    ) -> i32 {
+        -1
+    }
+    unsafe extern "C" fn poison_path(_: *const c_void, _: *const c_char) -> i32 {
+        -1
+    }
+    unsafe extern "C" fn poison_rename(
+        _: *const c_void,
+        _: *const c_char,
+        _: *const c_char,
+    ) -> i32 {
+        -1
+    }
+
+    fn poison_handle() -> KernelHandle {
+        KernelHandle {
+            sys_read: poison_buf,
+            sys_write: poison_write,
+            sys_stat: poison_buf,
+            sys_readdir: poison_buf,
+            sys_unlink: poison_path,
+            sys_mkdir: poison_path,
+            sys_rmdir: poison_path,
+            sys_rename: poison_rename,
+            sys_stat_batch: poison_buf,
+            free_buf: nexus_plugin_abi::nexus_free,
+            kernel_ptr: std::ptr::null(),
+        }
+    }
+
+    fn plugin_for_test() -> SearchPlugin {
+        let root = tempfile::tempdir().expect("tempdir").keep();
+        let svc = SearchServiceImpl::builder(Arc::new(poison_handle()))
+            .manager(Arc::new(IndexManager::with_root(root)))
+            .no_expander()
+            .no_peer_fanout()
+            .no_context_generator()
+            .build();
+        SearchPlugin {
+            svc: Arc::new(svc),
+            rt: build_runtime(),
+        }
+    }
+
+    fn health(plugin: &SearchPlugin) -> HealthResponse {
+        let bytes = dispatch_search(
+            plugin,
+            "/nexus.search.v1.SearchService/Health",
+            &HealthRequest::default().encode_to_vec(),
+        )
+        .expect("health dispatch");
+        HealthResponse::decode(bytes.as_slice()).expect("decode health")
+    }
+
+    #[test]
+    fn handler_panic_fails_the_rpc_not_the_process_and_is_counted() {
+        let plugin = plugin_for_test();
+        assert_eq!(health(&plugin).dispatch_panics, 0);
+
+        let code = dispatch_search(
+            &plugin,
+            "/nexus.search.v1.SearchService/__panic_for_test",
+            &[],
+        )
+        .expect_err("a panicking handler fails its RPC");
+        assert_eq!(code, -3, "PluginResult::Internal");
+
+        // The runtime survived the panic inside `block_on` and the
+        // service still answers; the panic is on the record.
+        let h = health(&plugin);
+        assert_eq!(h.dispatch_panics, 1);
+        assert!(h.detail.contains("injected dispatch panic"), "{}", h.detail);
+        assert_eq!(
+            h.status, "degraded",
+            "no embedder ⇒ degraded; the caught panic itself does not move status"
+        );
+        assert_eq!(
+            health(&plugin).dispatch_panics,
+            1,
+            "counted per panic, not per poll"
+        );
+    }
+}

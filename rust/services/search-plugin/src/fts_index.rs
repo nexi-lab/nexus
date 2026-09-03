@@ -58,9 +58,34 @@
 //! Readers are cheap — tantivy's `IndexReader` snapshots the last
 //! committed generation and is `Send + Sync`.  The `search` path
 //! takes no locks.
+//!
+//! # Writer liveness (#4725)
+//!
+//! tantivy's `commit()` joins and respawns every indexing worker
+//! thread.  When the OS refuses a thread mid-respawn (`pids.max`
+//! exhausted ⇒ EAGAIN) the writer can be left with NO workers, and its
+//! next `commit()` quietly recreates a live document channel: from
+//! then on `add_document` buffers into a channel nobody drains, every
+//! commit discards the buffer and still succeeds, and the plugin
+//! acknowledges writes that never become searchable.  That was the
+//! 26-hour silent-loss window in #4725.  Two guards close it:
+//!
+//! - **Commit probe.**  Each transaction remembers the last path it
+//!   added; after the commit + reload that path must resolve via the
+//!   exact-match `path` term.  If it does not, the commit is reported
+//!   as [`IndexError::LostWrite`] — the caller never records state or
+//!   returns a success count for it.
+//! - **Rebuild on fault.**  A failed commit or a failed probe drops
+//!   the writer and reopens it.  If the reopen fails too (still under
+//!   thread pressure) the slot stays empty and every mutation fails
+//!   loudly until a later reopen succeeds.
+//!
+//! [`FtsIndex::writer_status`] exposes the fault for the Health RPC so
+//! a poller cannot read `healthy` while the writer is dead.
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 
 use parking_lot::Mutex;
 use tantivy::collector::TopDocs;
@@ -76,6 +101,17 @@ use tantivy::{doc, Index, IndexReader, IndexWriter, ReloadPolicy, TantivyDocumen
 /// and lets a batch of ~1 000 chunks commit without forcing a merge.
 /// The plugin holds at most one writer per zone in memory.
 const WRITER_HEAP_BYTES: usize = 50 * 1024 * 1024;
+
+/// Indexing worker threads per writer (#4725).  tantivy's default is
+/// `min(num_cpus, 8)`, trimmed to 3 by the 50 MiB heap budget — and
+/// `commit()` JOINS + RESPAWNS every worker, so each commit cost three
+/// `pthread_create`s.  The plugin commits per mutating RPC (and every
+/// few docs inside an explicit batch), which under a cgroup `pids.max`
+/// shared with the Python server was the steady thread churn behind
+/// the EAGAIN in #4725.  One worker: indexing is not the bottleneck
+/// (embedding is), and one segment per commit merges cheaper than
+/// three.
+const WRITER_INDEXING_THREADS: usize = 1;
 
 /// Result row returned by [`FtsIndex::search`].
 #[derive(Debug, Clone)]
@@ -156,8 +192,85 @@ pub fn build_schema() -> Schema {
 pub struct FtsIndex {
     index: Index,
     fields: Fields,
-    writer: Mutex<IndexWriter>,
+    writer: Mutex<WriterSlot>,
+    /// Writer liveness for the Health RPC — a side mutex `commit()`
+    /// updates, so a poll never queues behind an in-flight commit.
+    status: Mutex<WriterStatus>,
     reader: IndexReader,
+}
+
+/// The tantivy writer plus the per-transaction bookkeeping the
+/// commit-time liveness check needs (#4725).  Guarded by one
+/// `parking_lot::Mutex`; see the module doc's "Writer liveness".
+struct WriterSlot {
+    /// `None` after a fault whose rebuild failed — every mutation then
+    /// fails loudly until [`FtsIndex::ensure_writer`] reopens it.
+    writer: Option<IndexWriter>,
+    /// Path of the most recent `add_document` in the current
+    /// transaction whose LAST op is still an add (a later
+    /// `delete_all_chunks` on the same path clears it).  `commit()`
+    /// looks it up after the reload: a committed add that is not
+    /// searchable means the writer accepted ops it never indexed.
+    probe: Option<String>,
+    /// Mutations this transaction could not queue because the writer
+    /// was unavailable.  Non-zero fails the commit — the caller must
+    /// not acknowledge a transaction that only partly reached tantivy.
+    lost_ops: u32,
+    #[cfg(test)]
+    fault_injection: FaultInjection,
+}
+
+impl WriterSlot {
+    fn new(writer: IndexWriter) -> Self {
+        Self {
+            writer: Some(writer),
+            probe: None,
+            lost_ops: 0,
+            #[cfg(test)]
+            fault_injection: FaultInjection::default(),
+        }
+    }
+}
+
+/// Test seams for the fault paths — the real trigger (the OS refusing
+/// a thread) cannot be reproduced deterministically in a unit test.
+#[cfg(test)]
+#[derive(Default)]
+struct FaultInjection {
+    /// Accept `add_document` calls without handing them to tantivy —
+    /// the zero-worker writer shape from #4725.
+    drop_adds: bool,
+    /// Fail the next `commit()` before tantivy runs.
+    fail_next_commit: bool,
+}
+
+/// Writer liveness surfaced on the Health RPC (#4725).
+#[derive(Debug, Clone)]
+pub struct WriterStatus {
+    /// False when the last fault's writer rebuild failed: every write
+    /// to this zone errors until a later call manages to reopen it.
+    pub available: bool,
+    /// Most recent fault not yet followed by a probe-verified commit.
+    /// `None` = the writer has proven it indexes what it accepts.
+    pub last_fault: Option<WriterFault>,
+    /// When the writer last proved a write searchable (probe-verified
+    /// commit).  `None` until the first one in this process.  Health
+    /// reports its age so a poller can alert on a writer that stopped
+    /// landing writes.
+    pub last_verified_commit: Option<Instant>,
+}
+
+/// One recorded writer fault.
+#[derive(Debug, Clone)]
+pub struct WriterFault {
+    pub at: Instant,
+    pub detail: String,
+}
+
+fn open_writer(index: &Index) -> Result<IndexWriter, IndexError> {
+    index
+        .writer_with_num_threads::<TantivyDocument>(WRITER_INDEXING_THREADS, WRITER_HEAP_BYTES)
+        .map_err(|e| IndexError::WriterInit(e.to_string()))
 }
 
 impl FtsIndex {
@@ -177,9 +290,7 @@ impl FtsIndex {
 
         let fields = Fields::from_schema(&schema);
 
-        let writer = index
-            .writer::<TantivyDocument>(WRITER_HEAP_BYTES)
-            .map_err(|e| IndexError::WriterInit(e.to_string()))?;
+        let writer = open_writer(&index)?;
 
         let reader = index
             .reader_builder()
@@ -195,7 +306,12 @@ impl FtsIndex {
         Ok(Arc::new(Self {
             index,
             fields,
-            writer: Mutex::new(writer),
+            writer: Mutex::new(WriterSlot::new(writer)),
+            status: Mutex::new(WriterStatus {
+                available: true,
+                last_fault: None,
+                last_verified_commit: None,
+            }),
             reader,
         }))
     }
@@ -222,8 +338,13 @@ impl FtsIndex {
         chunk_text: &str,
         mtime_ms: Option<i64>,
     ) -> Result<(), IndexError> {
-        let writer = self.writer.lock();
-        writer
+        let mut slot = self.writer.lock();
+        #[cfg(test)]
+        if slot.fault_injection.drop_adds {
+            slot.probe = Some(path.to_string());
+            return Ok(());
+        }
+        self.ensure_writer(&mut slot)?
             .add_document(doc!(
                 self.fields.path => path,
                 self.fields.chunk_index => i64::from(chunk_index),
@@ -231,6 +352,9 @@ impl FtsIndex {
                 self.fields.mtime_ms => mtime_ms.unwrap_or(i64::MIN),
             ))
             .map_err(|e| IndexError::AddDoc(path.to_string(), e.to_string()))?;
+        // Commit-time liveness probe (#4725): this path's final op is
+        // an add, so it must be searchable once committed.
+        slot.probe = Some(path.to_string());
         Ok(())
     }
 
@@ -245,8 +369,31 @@ impl FtsIndex {
     /// visible, then N chunks visible; no in-between).  Idempotent:
     /// calling on a path with no live chunks is a no-op.
     pub fn delete_all_chunks(&self, path: &str) {
-        let writer = self.writer.lock();
-        writer.delete_term(Term::from_field_text(self.fields.path, path));
+        let mut slot = self.writer.lock();
+        // The path's final op this transaction is now a delete — an
+        // empty post-commit lookup would be correct, not a lost write.
+        if slot.probe.as_deref() == Some(path) {
+            slot.probe = None;
+        }
+        let queued = match self.ensure_writer(&mut slot) {
+            Ok(writer) => {
+                writer.delete_term(Term::from_field_text(self.fields.path, path));
+                true
+            }
+            Err(e) => {
+                tracing::warn!(
+                    path = %path,
+                    err = %e,
+                    "fts delete could not be queued — the commit will fail",
+                );
+                false
+            }
+        };
+        if !queued {
+            // Infallible signature — the loss is accounted for here and
+            // fails the commit instead (#4725).
+            slot.lost_ops += 1;
+        }
     }
 
     /// Flush buffered adds to disk and make them visible to searchers.
@@ -258,15 +405,161 @@ impl FtsIndex {
     /// `OnCommitWithDelay` policy would otherwise let the reader lag
     /// long enough for tests + tight write-then-read loops to see
     /// stale state.
+    ///
+    /// Liveness (#4725): after the reload, the transaction's probe
+    /// path (its last add) must be searchable.  A commit tantivy
+    /// reported successful whose adds are not searchable is a LOST
+    /// WRITE — reported as [`IndexError::LostWrite`] after the writer
+    /// is rebuilt, so the caller neither records state nor
+    /// acknowledges the batch.  Mutations that could not even be
+    /// queued (writer unavailable) fail the commit the same way.  Only
+    /// a probe-verified commit clears a recorded fault.
     pub fn commit(&self) -> Result<(), IndexError> {
-        let mut writer = self.writer.lock();
-        writer
-            .commit()
-            .map_err(|e| IndexError::Commit(e.to_string()))?;
+        let mut slot = self.writer.lock();
+        let probe = slot.probe.take();
+        let lost_ops = std::mem::take(&mut slot.lost_ops);
+        if lost_ops > 0 {
+            let detail = format!(
+                "{lost_ops} mutation(s) never reached tantivy — the writer was unavailable"
+            );
+            self.fault(&mut slot, &detail);
+            return Err(IndexError::LostWrite(detail));
+        }
+        if let Err(e) = self.commit_writer(&mut slot) {
+            self.fault(&mut slot, &format!("commit failed: {e}"));
+            return Err(e);
+        }
         self.reader
             .reload()
             .map_err(|e| IndexError::Commit(e.to_string()))?;
+        let Some(path) = probe else {
+            // Nothing added this transaction (delete-only / empty):
+            // nothing to verify, and nothing that proves a faulted
+            // writer healthy again.
+            return Ok(());
+        };
+        if self.get_chunks_by_path(&path)?.is_empty() {
+            let detail = format!(
+                "commit succeeded but {path:?} is not searchable — the writer accepted \
+                 mutations it never indexed"
+            );
+            self.fault(&mut slot, &detail);
+            return Err(IndexError::LostWrite(detail));
+        }
+        {
+            let mut status = self.status.lock();
+            status.last_fault = None;
+            status.last_verified_commit = Some(Instant::now());
+        }
         Ok(())
+    }
+
+    /// The tantivy commit proper, isolated so tests can inject a
+    /// failure at exactly this point.
+    fn commit_writer(&self, slot: &mut WriterSlot) -> Result<(), IndexError> {
+        #[cfg(test)]
+        if std::mem::take(&mut slot.fault_injection.fail_next_commit) {
+            return Err(IndexError::Commit("injected commit failure".to_string()));
+        }
+        self.ensure_writer(slot)?
+            .commit()
+            .map(|_opstamp| ())
+            .map_err(|e| IndexError::Commit(e.to_string()))
+    }
+
+    /// Hand back the live writer, reopening it if a previous fault left
+    /// the slot empty.  A failed reopen keeps the slot empty and the
+    /// zone `available: false` on Health — every mutation keeps failing
+    /// loudly rather than being buffered nowhere (#4725).
+    fn ensure_writer<'s>(
+        &self,
+        slot: &'s mut WriterSlot,
+    ) -> Result<&'s mut IndexWriter, IndexError> {
+        if slot.writer.is_none() {
+            match open_writer(&self.index) {
+                Ok(fresh) => {
+                    slot.writer = Some(fresh);
+                    self.status.lock().available = true;
+                    tracing::warn!(
+                        "fts writer reopened after an earlier fault — unverified until the \
+                         next successful write"
+                    );
+                }
+                Err(e) => {
+                    let mut status = self.status.lock();
+                    status.available = false;
+                    if status.last_fault.is_none() {
+                        status.last_fault = Some(WriterFault {
+                            at: Instant::now(),
+                            detail: format!("writer reopen failed: {e}"),
+                        });
+                    }
+                    return Err(IndexError::WriterUnavailable(e.to_string()));
+                }
+            }
+        }
+        slot.writer
+            .as_mut()
+            .ok_or_else(|| IndexError::WriterUnavailable("writer slot empty".to_string()))
+    }
+
+    /// Record a writer fault and replace the writer (#4725).  The
+    /// faulted writer is dropped FIRST: tantivy holds an exclusive
+    /// per-directory writer lock, so a replacement cannot open while it
+    /// lives.  Dropping joins its remaining indexing threads and
+    /// releases the lock; the uncommitted ops it held belong to the
+    /// transaction failing right now, so nothing acknowledged is
+    /// discarded.  When the reopen fails too the slot stays empty and
+    /// Health reports the zone unavailable; every later mutation
+    /// retries the reopen.
+    fn fault(&self, slot: &mut WriterSlot, detail: &str) {
+        slot.writer = None;
+        slot.probe = None;
+        slot.lost_ops = 0;
+        let (available, detail) = match open_writer(&self.index) {
+            Ok(fresh) => {
+                slot.writer = Some(fresh);
+                (
+                    true,
+                    format!(
+                        "{detail}; writer rebuilt — unverified until the next successful write"
+                    ),
+                )
+            }
+            Err(e) => (
+                false,
+                format!(
+                    "{detail}; writer rebuild failed ({e}) — writes fail until a reopen succeeds"
+                ),
+            ),
+        };
+        tracing::error!(available, detail = %detail, "fts writer fault");
+        let mut status = self.status.lock();
+        status.available = available;
+        status.last_fault = Some(WriterFault {
+            at: Instant::now(),
+            detail,
+        });
+    }
+
+    /// Snapshot of the writer's liveness for the Health RPC (#4725).
+    /// Reads the side mutex `commit()` maintains — never the writer
+    /// lock — so a poll cannot queue behind an in-flight commit.
+    pub fn writer_status(&self) -> WriterStatus {
+        self.status.lock().clone()
+    }
+
+    /// Test seam (#4725): make `add_document` accept documents without
+    /// handing them to tantivy — the zero-worker writer shape.
+    #[cfg(test)]
+    fn inject_drop_adds(&self, on: bool) {
+        self.writer.lock().fault_injection.drop_adds = on;
+    }
+
+    /// Test seam (#4725): fail the next `commit()` before tantivy runs.
+    #[cfg(test)]
+    fn inject_fail_next_commit(&self) {
+        self.writer.lock().fault_injection.fail_next_commit = true;
     }
 
     /// Ranked keyword search.  Returns up to `limit` hits ordered by
@@ -463,6 +756,16 @@ pub enum IndexError {
     AddDoc(String, String),
     #[error("commit: {0}")]
     Commit(String),
+    /// The writer faulted and could not be reopened (#4725); the
+    /// mutation was NOT queued.  Callers treat it as transient.
+    #[error("fts writer unavailable: {0}")]
+    WriterUnavailable(String),
+    /// tantivy acknowledged the transaction but the probe document is
+    /// not searchable — or some mutation never reached the writer.
+    /// The writer has been rebuilt; the caller must NOT acknowledge
+    /// the batch (#4725).
+    #[error("fts writer lost the write: {0}")]
+    LostWrite(String),
     #[error("parse query {0:?}: {1}")]
     ParseQuery(String, String),
     #[error("search: {0}")]
@@ -720,6 +1023,103 @@ mod tests {
             idx.generation_id(),
             gen_before,
             "commit must change the generation"
+        );
+    }
+
+    // ── Writer liveness (#4725) ─────────────────────────────────
+
+    #[test]
+    fn lost_write_is_reported_and_writer_rebuilt() {
+        let dir = tempdir().join("fts");
+        let idx = FtsIndex::open_or_create(dir).expect("open");
+        assert!(idx.writer_status().available);
+        assert!(idx.writer_status().last_fault.is_none());
+
+        // A writer that acks adds it never indexes — the zero-worker
+        // shape a failed worker respawn leaves behind.
+        idx.inject_drop_adds(true);
+        idx.add_document("/ghost.md", 0, "ghost text", Some(1))
+            .expect("the add is accepted, as it was in #4725");
+        let err = idx
+            .commit()
+            .expect_err("commit must not acknowledge a write that is not searchable");
+        assert!(matches!(err, IndexError::LostWrite(_)), "{err}");
+        let status = idx.writer_status();
+        assert!(status.available, "rebuild succeeds on a healthy host");
+        let fault = status.last_fault.expect("fault recorded for Health");
+        assert!(fault.detail.contains("/ghost.md"), "{}", fault.detail);
+
+        // Real writer again: the next transaction lands and clears the
+        // fault; the ghost never became searchable.
+        idx.inject_drop_adds(false);
+        idx.add_document("/real.md", 0, "real text", Some(2))
+            .expect("add after rebuild");
+        idx.commit().expect("commit after rebuild");
+        assert_eq!(idx.search("real", 10, None).expect("search").len(), 1);
+        assert!(
+            idx.writer_status().last_fault.is_none(),
+            "a probe-verified commit clears the fault"
+        );
+        assert!(
+            idx.writer_status().last_verified_commit.is_some(),
+            "a probe-verified commit is timestamped for Health"
+        );
+        assert!(idx
+            .get_chunks_by_path("/ghost.md")
+            .expect("lookup")
+            .is_empty());
+    }
+
+    #[test]
+    fn commit_failure_rebuilds_writer_and_next_write_lands() {
+        let dir = tempdir().join("fts");
+        let idx = FtsIndex::open_or_create(dir).expect("open");
+        idx.add_document("/a.md", 0, "alpha", Some(1)).expect("add");
+        idx.inject_fail_next_commit();
+        let err = idx.commit().expect_err("injected failure");
+        assert!(matches!(err, IndexError::Commit(_)), "{err}");
+        let status = idx.writer_status();
+        assert!(status.available);
+        assert!(status.last_fault.is_some());
+
+        // The failed transaction's ops went down with the faulted
+        // writer — the caller retries, exactly as the error told it.
+        idx.add_document("/a.md", 0, "alpha", Some(1))
+            .expect("add after rebuild");
+        idx.commit().expect("commit after rebuild");
+        assert_eq!(idx.search("alpha", 10, None).expect("search").len(), 1);
+        assert!(idx.writer_status().last_fault.is_none());
+    }
+
+    #[test]
+    fn add_then_delete_same_path_in_one_transaction_is_not_a_lost_write() {
+        let dir = tempdir().join("fts");
+        let idx = FtsIndex::open_or_create(dir).expect("open");
+        idx.add_document("/tmp.md", 0, "temporary", Some(1))
+            .expect("add");
+        idx.delete_all_chunks("/tmp.md");
+        idx.commit()
+            .expect("a path whose final op is a delete is legitimately absent");
+        assert!(idx.writer_status().last_fault.is_none());
+        assert!(idx
+            .get_chunks_by_path("/tmp.md")
+            .expect("lookup")
+            .is_empty());
+    }
+
+    #[test]
+    fn delete_only_commit_does_not_clear_an_unverified_fault() {
+        let dir = tempdir().join("fts");
+        let idx = FtsIndex::open_or_create(dir).expect("open");
+        idx.inject_drop_adds(true);
+        idx.add_document("/x.md", 0, "x", Some(1)).expect("add");
+        idx.commit().expect_err("lost write");
+        idx.inject_drop_adds(false);
+        idx.delete_all_chunks("/x.md");
+        idx.commit().expect("delete-only commit");
+        assert!(
+            idx.writer_status().last_fault.is_some(),
+            "only an add that becomes searchable proves the writer indexes again"
         );
     }
 }

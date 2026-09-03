@@ -305,6 +305,46 @@ class TestHealthResponseContract:
         # Degraded = semantic missing; BM25 still answers.
         assert body["bm25_index_loaded"] is True
 
+    def test_writer_liveness_fields_flow_through(self):
+        # #4725: the plugin's structured writer-liveness counters ride
+        # the same dict as ``status`` / ``detail`` so pollers can gate
+        # on numbers instead of parsing prose.
+        from nexus.grpc.search.v1 import search_pb2
+
+        daemon, _ = _daemon_with_stub(
+            Health=search_pb2.HealthResponse(
+                status="degraded",
+                detail="fts writer fault, unverified since — zone 'root' 3s ago",
+                fts_writer_faults=1,
+                fts_writer_unavailable=0,
+                last_verified_commit_age_ms=4200,
+                dispatch_panics=2,
+            )
+        )
+        app = _build_app(daemon)
+
+        body = TestClient(app).get("/api/v2/search/health").json()
+        assert body["status"] == "degraded"
+        assert body["fts_writer_faults"] == 1
+        assert body["fts_writer_unavailable"] == 0
+        assert body["last_verified_commit_age_ms"] == 4200
+        assert body["dispatch_panics"] == 2
+        # Rebuilt-but-unverified writer: keyword leg still answers.
+        assert body["bm25_index_loaded"] is True
+
+    def test_unset_commit_age_is_null(self):
+        from nexus.grpc.search.v1 import search_pb2
+
+        daemon, _ = _daemon_with_stub(
+            Health=search_pb2.HealthResponse(status="healthy", detail="fts + ann online")
+        )
+
+        body = TestClient(_build_app(daemon)).get("/api/v2/search/health").json()
+        assert body["last_verified_commit_age_ms"] is None
+        assert body["fts_writer_faults"] == 0
+        assert body["fts_writer_unavailable"] == 0
+        assert body["dispatch_panics"] == 0
+
     def test_disabled_daemon_keeps_contract_keys(self):
         app = _build_app(None)
 

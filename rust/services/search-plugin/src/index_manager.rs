@@ -44,7 +44,7 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 
 use crate::ann_index::{AnnError, AnnIndex};
-use crate::fts_index::{FtsIndex, IndexError};
+use crate::fts_index::{FtsIndex, IndexError, WriterStatus};
 
 /// Directory name inside a per-zone index root for the FTS store.
 /// Sibling directories (Phase 2's `ann/` for HNSW, etc.) land next
@@ -332,6 +332,28 @@ impl IndexManager {
         Ok(idx)
     }
 
+    /// Writer liveness for every zone this process has opened
+    /// (#4725) — the Health RPC's view of "is a writer dead behind a
+    /// `healthy`?".  Zones never opened have no writer to report.
+    /// Snapshots the handles under the zones lock and reads each
+    /// status outside it, so a slow `open_or_create` on another
+    /// thread cannot stall a health poll.  Sorted by zone for a
+    /// stable operator-facing detail string.
+    pub fn fts_writer_report(&self) -> Vec<(String, WriterStatus)> {
+        let handles: Vec<(String, Arc<FtsIndex>)> = self
+            .zones
+            .lock()
+            .iter()
+            .map(|(zone, idx)| (zone.clone(), Arc::clone(idx)))
+            .collect();
+        let mut report: Vec<(String, WriterStatus)> = handles
+            .into_iter()
+            .map(|(zone, idx)| (zone, idx.writer_status()))
+            .collect();
+        report.sort_by(|a, b| a.0.cmp(&b.0));
+        report
+    }
+
     /// Get the zone's skeleton snapshot, rebuilding when the FTS
     /// index has committed since the cached build.  Generation-keyed
     /// (not call-site invalidated): every Index / Refresh /
@@ -443,6 +465,20 @@ mod tests {
 
     fn tempdir() -> PathBuf {
         tempfile::tempdir().expect("tempdir").keep()
+    }
+
+    #[test]
+    fn fts_writer_report_lists_opened_zones_sorted() {
+        let mgr = IndexManager::with_root(tempdir());
+        assert!(mgr.fts_writer_report().is_empty(), "nothing opened yet");
+        mgr.get_or_open("zoneB").expect("open");
+        mgr.get_or_open("zoneA").expect("open");
+        let report = mgr.fts_writer_report();
+        let zones: Vec<&str> = report.iter().map(|(z, _)| z.as_str()).collect();
+        assert_eq!(zones, ["zoneA", "zoneB"]);
+        assert!(report
+            .iter()
+            .all(|(_, s)| s.available && s.last_fault.is_none()));
     }
 
     #[test]

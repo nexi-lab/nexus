@@ -272,6 +272,7 @@ pub trait ContextGenerator: Send + Sync {
 
 // ── HttpContextGenerator ─────────────────────────────────────────
 
+use crate::http_client::GuardedClient;
 use crate::llm_chat::{self, ChatMessage, ChatRequest};
 
 /// System prompt — cargo-culted from Anthropic's original contextual-
@@ -291,7 +292,7 @@ const CONTEXT_MAX_CHARS: usize = 400;
 
 /// Live HTTP context generator.
 pub struct HttpContextGenerator {
-    client: reqwest::blocking::Client,
+    client: GuardedClient,
     config: ContextualChunkingConfig,
 }
 

@@ -726,6 +726,33 @@ message HealthResponse {
   string status = 1;
   // Human-readable detail — logged / surfaced on operator UIs.
   string detail = 2;
+
+  // ── Writer liveness (#4725) ──────────────────────────────────
+  // Structured twins of what `detail` narrates, so pollers gate on
+  // numbers instead of parsing prose.  Additive: pre-#4725 clients
+  // keep working on `status` + `detail` alone.
+
+  // Opened zones whose FTS writer faulted (a failed commit, or a
+  // commit tantivy acknowledged whose document is not searchable)
+  // and has not yet proven itself with a searchable commit.
+  // Includes the unavailable ones below.  Non-zero ⇒ `status` is at
+  // most "degraded".
+  uint32 fts_writer_faults = 3;
+  // Opened zones whose FTS writer could not be rebuilt after a
+  // fault — every write there fails loudly until a reopen succeeds.
+  // Non-zero ⇒ `status` is "unavailable".
+  uint32 fts_writer_unavailable = 4;
+  // Milliseconds since the most recent probe-verified FTS commit in
+  // any opened zone; unset until the first one in this process.  A
+  // "last commit age" for pollers that alert on a writer that
+  // stopped landing writes while `status` still reads fine.
+  optional int64 last_verified_commit_age_ms = 5;
+  // Handler panics caught at the plugin's dispatch boundary since
+  // process start.  Each failed its own RPC with INTERNAL instead of
+  // taking the host down; a climbing value means the host is under
+  // resource pressure (thread / pid exhaustion).  Does not move
+  // `status` — the affected RPC already failed loudly.
+  uint32 dispatch_panics = 6;
 }
 
 message StatsRequest {

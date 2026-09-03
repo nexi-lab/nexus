@@ -49,6 +49,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::http_client::GuardedClient;
+
 /// Batch text-embedding contract.  One trait so the RPC handler
 /// can hand out an `Arc<dyn Embedder>` and the storage layer stays
 /// oblivious to whether the vectors came from a real ONNX session
@@ -505,7 +507,9 @@ struct EmbeddingItem {
 /// OpenAI-compatible remote embedding backend.  See the module doc
 /// and [`RemoteEmbedderConfig`] for the env contract.
 pub struct RemoteEmbedder {
-    client: reqwest::blocking::Client,
+    /// ONE long-lived client (#4725) — see `http_client` for why it
+    /// resolves DNS inline and survives a panic inside reqwest.
+    client: GuardedClient,
     config: RemoteEmbedderConfig,
     tag: String,
     display: String,
@@ -517,9 +521,7 @@ impl RemoteEmbedder {
     /// a typed `Runtime` error, keeping construction cheap for the
     /// lazy `OnceCell`-style init the service uses.
     pub fn new(config: RemoteEmbedderConfig) -> Result<Self, EmbedError> {
-        let client = reqwest::blocking::Client::builder()
-            .timeout(config.timeout)
-            .build()
+        let client = GuardedClient::new(config.timeout)
             .map_err(|e| EmbedError::Load(format!("remote embedder HTTP client: {e}")))?;
         let tag = config.tag();
         let display = format!("remote:{} ({}d @ {})", config.model, config.dim, config.url);
@@ -541,7 +543,12 @@ impl RemoteEmbedder {
         if let Some(key) = &self.config.api_key {
             req = req.bearer_auth(key);
         }
-        let resp = req.send().map_err(|e| {
+        // A panic inside reqwest (#4725) surfaces here as an ordinary
+        // `Runtime` error: every embed call site treats that as a per-
+        // document retryable condition (ANN stays retryable, queries
+        // answer "semantic unavailable") instead of the panic aborting
+        // the whole Index / Refresh transaction.
+        let resp = self.client.send(req).map_err(|e| {
             EmbedError::Runtime(format!("embeddings request to {}: {e}", self.config.url))
         })?;
 

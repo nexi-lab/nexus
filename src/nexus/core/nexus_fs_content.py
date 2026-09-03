@@ -658,6 +658,7 @@ class ContentMixin:
             io_metrics.record_write_backend_rpc()
 
         # POST-INTERCEPT hooks (Rust handles backend write + metadata + OBSERVE)
+        _projection_seq: int | None = None
         if result.hit and result.post_hook_needed:
             # Rust wrote to backend (CAS or PAS) + built metadata + updated dcache.
             # old_metadata fields come from Rust (dcache/metastore snapshot taken
@@ -689,21 +690,20 @@ class ContentMixin:
                 gen=result.gen,
                 zone_id=zone_id,
             )
-            self._kernel.dispatch_post_hooks(
-                "write",
-                WriteHookContext(
-                    path=path,
-                    content=buf,
-                    context=_ctx,
-                    zone_id=zone_id,
-                    agent_id=agent_id,
-                    is_new_file=result.is_new,
-                    content_id=result.content_id or "",
-                    metadata=_meta_obj,
-                    old_metadata=_old_metadata.to_dict() if _old_metadata else None,
-                    new_version=result.version,
-                ),
+            _post_ctx = WriteHookContext(
+                path=path,
+                content=buf,
+                context=_ctx,
+                zone_id=zone_id,
+                agent_id=agent_id,
+                is_new_file=result.is_new,
+                content_id=result.content_id or "",
+                metadata=_meta_obj,
+                old_metadata=_old_metadata.to_dict() if _old_metadata else None,
+                new_version=result.version,
             )
+            self._kernel.dispatch_post_hooks("write", _post_ctx)
+            _projection_seq = _post_ctx.extra.get("projection_seq")
 
         _write_latency_ms = int((time.perf_counter() - _start) * 1000)
         if result.hit:
@@ -717,10 +717,12 @@ class ContentMixin:
             )
         # Issue #4737: revision token (``<path>@<gen>``) a reader can fence
         # on; None when the kernel reported no gen (e.g. a miss).
+        # #4738: projection sequence of the committed audit/version row.
         return {
             "path": path,
             "bytes_written": len(buf),
             "revision": revision_token(result, path=path),
+            "projection_seq": _projection_seq,
         }
 
     # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
@@ -963,28 +965,26 @@ class ContentMixin:
         _cid = result.content_id or ""
         from nexus.contracts.vfs_hooks import WriteHookContext
 
-        self._kernel.dispatch_post_hooks(
-            "write",
-            WriteHookContext(
+        _post_ctx = WriteHookContext(
+            path=path,
+            content=buf,
+            context=_ctx,
+            zone_id=zone_id,
+            agent_id=agent_id,
+            is_new_file=result.is_new,
+            content_id=_cid,
+            metadata=FileMetadata(
                 path=path,
-                content=buf,
-                context=_ctx,
+                size=result.size,
+                content_id=result.content_id,
+                version=result.version,
+                gen=result.gen,
                 zone_id=zone_id,
-                agent_id=agent_id,
-                is_new_file=result.is_new,
-                content_id=_cid,
-                metadata=FileMetadata(
-                    path=path,
-                    size=result.size,
-                    content_id=result.content_id,
-                    version=result.version,
-                    gen=result.gen,
-                    zone_id=zone_id,
-                ),
-                old_metadata=_old_meta.to_dict() if _old_meta else None,
-                new_version=result.version,
             ),
+            old_metadata=_old_meta.to_dict() if _old_meta else None,
+            new_version=result.version,
         )
+        self._kernel.dispatch_post_hooks("write", _post_ctx)
 
         # Issue #4081: emit OP event for self-observability. Only on hit
         # (mirrors the io_metrics gate for sys_write — a miss is not a
@@ -1009,6 +1009,10 @@ class ContentMixin:
             # reader passes it back as X-Nexus-Min-Revision to observe this
             # write on any node. None only when the kernel reported no gen.
             "revision": revision_token(result, path=path),
+            # #4738: operation_log sequence of this write's committed
+            # projection row (the write observer stashes it on the hook
+            # context); None when unconfirmed or no projection observer.
+            "projection_seq": _post_ctx.extra.get("projection_seq"),
         }
 
     # _write_internal + _write_content deleted — Rust sys_write handles:
@@ -1607,10 +1611,15 @@ class ContentMixin:
         ]
         from nexus.contracts.vfs_hooks import WriteBatchHookContext
 
-        self._dispatch_batch_post_hook(
-            "write_batch",
-            WriteBatchHookContext(items=items, context=context, zone_id=zone_id, agent_id=agent_id),
+        _batch_ctx = WriteBatchHookContext(
+            items=items, context=context, zone_id=zone_id, agent_id=agent_id
         )
+        self._dispatch_batch_post_hook("write_batch", _batch_ctx)
+
+        # #4738: per-item projection sequence from the write observer.
+        _seqs = _batch_ctx.extra.get("projection_seqs")
+        for i, r in enumerate(results):
+            r["projection_seq"] = _seqs[i] if isinstance(_seqs, list) and i < len(_seqs) else None
 
         return results
 

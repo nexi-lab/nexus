@@ -667,10 +667,11 @@ class MetadataMixin:
         exist_ok: bool = True,
         *,
         context: OperationContext | None = None,
-    ) -> None:
+    ) -> dict[str, Any]:
         """Create a directory (Tier 2 convenience over sys_setattr).
 
         Defaults: parents=True, exist_ok=True (mkdir -p semantics).
+        Returns ``{"path", "projection_seq"}`` (#4738).
         DT_DIR metadata creation delegated to Rust kernel sys_setattr.
         """
         self._gate_sys_namespace_mutation((path,), context)
@@ -681,18 +682,31 @@ class MetadataMixin:
         # DT_DIR metadata creation, and dcache update.
         _rust_ctx = self._build_rust_ctx(ctx, ctx.is_admin)
         _mkdir_result = self._kernel.sys_mkdir(path, _rust_ctx, parents, exist_ok)
-        if _mkdir_result.post_hook_needed:
+        _projection_seq: int | None = None
+        # The subprocess kernel cannot see Python hooks, so its
+        # ``post_hook_needed`` is False there; consult the local hook mirror
+        # like sys_rename does, otherwise mkdir never reaches the audit
+        # observer in remote mode (#4738).
+        _post_hook_needed = bool(_mkdir_result.post_hook_needed)
+        if not _post_hook_needed:
+            try:
+                _post_hook_needed = bool(self._kernel.hook_count("mkdir") > 0)
+            except Exception:
+                _post_hook_needed = False
+        if _post_hook_needed:
             from nexus.contracts.vfs_hooks import MkdirHookContext
 
-            self._kernel.dispatch_post_hooks(
-                "mkdir",
-                MkdirHookContext(
-                    path=path,
-                    context=ctx,
-                    zone_id=ctx.zone_id,
-                    agent_id=ctx.agent_id,
-                ),
+            _mkdir_ctx = MkdirHookContext(
+                path=path,
+                context=ctx,
+                zone_id=ctx.zone_id,
+                agent_id=ctx.agent_id,
             )
+            self._kernel.dispatch_post_hooks("mkdir", _mkdir_ctx)
+            _projection_seq = _mkdir_ctx.extra.get("projection_seq")
+        # #4738: operation_log sequence of the committed mkdir audit row
+        # (None when no projection observer confirmed it).
+        return {"path": path, "projection_seq": _projection_seq}
 
     # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
     def rmdir(
@@ -700,13 +714,14 @@ class MetadataMixin:
         path: str,
         recursive: bool = True,
         context: OperationContext | None = None,
-    ) -> None:
+    ) -> dict[str, Any]:
         """Remove a directory with lenient defaults (Tier 2 convenience).
 
         Defaults to recursive=True (rm -rf semantics).
-        Delegates directly to sys_unlink.
+        Delegates directly to sys_unlink and returns its dict (#4738:
+        carries ``projection_seq``).
         """
-        self.sys_unlink(path, recursive=recursive, context=context)
+        return self.sys_unlink(path, recursive=recursive, context=context)
 
     # ── Tier 1 delete/rename/copy ─────────────────────────────────────
 
@@ -795,34 +810,31 @@ class MetadataMixin:
         if _unlink_result.hit:
             # Rust handled the full operation (§12e: DT_DIR handled via internal sys_rmdir).
             et = _unlink_result.entry_type
+            _post_ctx: Any
             if et == DT_DIR:
                 from nexus.contracts.vfs_hooks import RmdirHookContext
 
                 ctx = self._resolve_cred(context)
-                self._kernel.dispatch_post_hooks(
-                    "rmdir",
-                    RmdirHookContext(
-                        path=path,
-                        context=ctx,
-                        zone_id=zone_id,
-                        agent_id=agent_id,
-                        recursive=recursive,
-                        metadata=_pre_delete_meta,
-                    ),
+                _post_ctx = RmdirHookContext(
+                    path=path,
+                    context=ctx,
+                    zone_id=zone_id,
+                    agent_id=agent_id,
+                    recursive=recursive,
+                    metadata=_pre_delete_meta,
                 )
+                self._kernel.dispatch_post_hooks("rmdir", _post_ctx)
             else:
                 from nexus.contracts.vfs_hooks import DeleteHookContext
 
-                self._kernel.dispatch_post_hooks(
-                    "delete",
-                    DeleteHookContext(
-                        path=path,
-                        context=context,
-                        zone_id=zone_id,
-                        agent_id=agent_id,
-                        metadata=_pre_delete_meta,
-                    ),
+                _post_ctx = DeleteHookContext(
+                    path=path,
+                    context=context,
+                    zone_id=zone_id,
+                    agent_id=agent_id,
+                    metadata=_pre_delete_meta,
                 )
+                self._kernel.dispatch_post_hooks("delete", _post_ctx)
             if _unlink_result.entry_type == DT_MOUNT:
                 self._forget_mounted_backend_instance(path)
             emit_op_completed(
@@ -834,7 +846,11 @@ class MetadataMixin:
             )
             # Issue #4737: zone revision the delete was applied at (None
             # when the kernel did not stamp the response).
-            return {"revision": revision_token(_unlink_result)}
+            # #4738: operation_log sequence of the committed delete/rmdir row.
+            return {
+                "revision": revision_token(_unlink_result),
+                "projection_seq": _post_ctx.extra.get("projection_seq"),
+            }
 
         # ── Rust miss: only DT_EXTERNAL_STORAGE (5) or not-found ─────
         et = _unlink_result.entry_type
@@ -1010,6 +1026,7 @@ class MetadataMixin:
             except Exception:
                 post_hook_needed = False
 
+        _projection_seq: int | None = None
         if post_hook_needed:
             from nexus.contracts.metadata import FileMetadata as _FM
             from nexus.contracts.vfs_hooks import RenameHookContext
@@ -1043,10 +1060,12 @@ class MetadataMixin:
                 metadata=_old_meta,
             )
             self._kernel.dispatch_post_hooks("rename", _rename_ctx)
+            _projection_seq = _rename_ctx.extra.get("projection_seq")
 
         # Issue #4737: zone revision the rename was applied at (None when
         # the kernel did not stamp the response).
-        return {"revision": revision_token(_rename_result)}
+        # #4738: operation_log sequence of the rename's committed upsert row.
+        return {"revision": revision_token(_rename_result), "projection_seq": _projection_seq}
 
     # ------------------------------------------------------------------
     # sys_copy — Issue #3329 (Workstream 3: native copy/move)
@@ -1613,8 +1632,15 @@ class MetadataMixin:
         results = {}
         for old_path, new_path in renames:
             try:
-                self.sys_rename(old_path, new_path, context=context)
-                results[old_path] = {"success": True, "new_path": new_path}
+                _renamed = self.sys_rename(old_path, new_path, context=context)
+                results[old_path] = {
+                    "success": True,
+                    "new_path": new_path,
+                    # #4738: per-item projection sequence.
+                    "projection_seq": _renamed.get("projection_seq")
+                    if isinstance(_renamed, dict)
+                    else None,
+                }
             except Exception as e:
                 results[old_path] = {"success": False, "error": str(e)}
 
@@ -2086,13 +2112,15 @@ class MetadataMixin:
     ) -> dict[str, Any]:
         """Flush the write observer so pending version/audit records are committed.
 
-        The RecordStoreWriteObserver accumulates events dispatched by the
-        Rust kernel and flushes them to RecordStore in debounced batches.
-        This method forces an immediate flush, guaranteeing that subsequent
-        queries (e.g. list_versions) see the data.
+        Since #4738 the observer commits ``operation_log`` / ``file_paths`` /
+        ``version_history`` before a write returns and hands the caller a
+        ``projection_seq`` to fence on (``GET /api/v2/operations/wait``), so
+        ``list_versions`` right after a write no longer needs this call.
+        What remains to flush is deferred work (MCL rows, extraction and
+        lineage hooks) plus any event a non-strict timeout left queued.
 
         Returns:
-            Dict with ``flushed`` count.
+            Dict with ``flushed`` count (events committed by this call).
         """
         # Issue #1801: use service registry to find write_observer — no closure needed.
         _wo = self.service("write_observer")

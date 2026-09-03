@@ -74,17 +74,26 @@ class SyncAuditWriteInterceptor:
         self._strict_mode = strict_mode
 
     # ── Sync POST hooks (called by KernelDispatch serial path) ─────────
+    #
+    # #4738: the write-through observer returns the projection sequence
+    # (``operation_log.sequence_number``) of the row it committed.  It is
+    # stashed in ``ctx.extra["projection_seq"]`` (``projection_seqs`` per
+    # item for batches) so ``NexusFS.write`` can return it to the caller;
+    # the legacy synchronous observer returns None and stashes nothing.
 
     def on_post_write(self, ctx: "WriteHookContext") -> None:
         if ctx.path.startswith(_INTERNAL_PIPE_PREFIX):
             return
-        self._observer.on_write(
-            ctx.metadata,
-            is_new=ctx.is_new_file,
-            path=ctx.path,
-            old_metadata=ctx.old_metadata,
-            zone_id=ctx.zone_id,
-            agent_id=ctx.agent_id,
+        _stash_projection_seq(
+            ctx,
+            self._observer.on_write(
+                ctx.metadata,
+                is_new=ctx.is_new_file,
+                path=ctx.path,
+                old_metadata=ctx.old_metadata,
+                zone_id=ctx.zone_id,
+                agent_id=ctx.agent_id,
+            ),
         )
 
     def on_post_write_batch(self, ctx: "WriteBatchHookContext") -> None:
@@ -95,20 +104,29 @@ class SyncAuditWriteInterceptor:
         ]
         if not filtered_items:
             return
-        self._observer.on_write_batch(
+        seqs = self._observer.on_write_batch(
             filtered_items,
             zone_id=ctx.zone_id,
             agent_id=ctx.agent_id,
         )
+        if isinstance(seqs, list) and len(seqs) == len(filtered_items):
+            by_path = {
+                metadata.path: seq
+                for (metadata, _is_new), seq in zip(filtered_items, seqs, strict=True)
+            }
+            ctx.extra["projection_seqs"] = [by_path.get(metadata.path) for metadata, _ in ctx.items]
 
     def on_post_delete(self, ctx: "DeleteHookContext") -> None:
         if ctx.path.startswith(_INTERNAL_PIPE_PREFIX):
             return
-        self._observer.on_delete(
-            path=ctx.path,
-            metadata=ctx.metadata,
-            zone_id=ctx.zone_id,
-            agent_id=ctx.agent_id,
+        _stash_projection_seq(
+            ctx,
+            self._observer.on_delete(
+                path=ctx.path,
+                metadata=ctx.metadata,
+                zone_id=ctx.zone_id,
+                agent_id=ctx.agent_id,
+            ),
         )
 
     def on_post_rename(self, ctx: "RenameHookContext") -> None:
@@ -116,32 +134,49 @@ class SyncAuditWriteInterceptor:
             _INTERNAL_PIPE_PREFIX
         ):
             return
-        self._observer.on_rename(
-            old_path=ctx.old_path,
-            new_path=ctx.new_path,
-            metadata=ctx.metadata,
-            zone_id=ctx.zone_id,
-            agent_id=ctx.agent_id,
+        _stash_projection_seq(
+            ctx,
+            self._observer.on_rename(
+                old_path=ctx.old_path,
+                new_path=ctx.new_path,
+                metadata=ctx.metadata,
+                zone_id=ctx.zone_id,
+                agent_id=ctx.agent_id,
+            ),
         )
 
     def on_post_mkdir(self, ctx: "MkdirHookContext") -> None:
         if ctx.path.startswith(_INTERNAL_PIPE_PREFIX):
             return
-        self._observer.on_mkdir(
-            path=ctx.path,
-            zone_id=ctx.zone_id,
-            agent_id=ctx.agent_id,
+        _stash_projection_seq(
+            ctx,
+            self._observer.on_mkdir(
+                path=ctx.path,
+                zone_id=ctx.zone_id,
+                agent_id=ctx.agent_id,
+            ),
         )
 
     def on_post_rmdir(self, ctx: "RmdirHookContext") -> None:
         if ctx.path.startswith(_INTERNAL_PIPE_PREFIX):
             return
-        self._observer.on_rmdir(
-            path=ctx.path,
-            zone_id=ctx.zone_id,
-            agent_id=ctx.agent_id,
-            recursive=ctx.recursive,
+        _stash_projection_seq(
+            ctx,
+            self._observer.on_rmdir(
+                path=ctx.path,
+                zone_id=ctx.zone_id,
+                agent_id=ctx.agent_id,
+                recursive=ctx.recursive,
+            ),
         )
+
+
+def _stash_projection_seq(ctx: Any, seq: Any) -> None:
+    """Record an observer's projection sequence on the hook context (#4738)."""
+    if isinstance(seq, int) and not isinstance(seq, bool):
+        extra = getattr(ctx, "extra", None)
+        if isinstance(extra, dict):
+            extra["projection_seq"] = seq
 
 
 class AuditWriteInterceptor:

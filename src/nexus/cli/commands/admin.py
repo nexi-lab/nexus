@@ -25,6 +25,7 @@ from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import (
     REMOTE_API_KEY_OPTION,
     REMOTE_URL_OPTION,
+    add_backend_options,
 )
 from nexus.contracts.constants import ROOT_ZONE_ID
 
@@ -1012,6 +1013,134 @@ def admin_fs_flush_write_observer(output_opts: OutputOptions) -> None:
                 output_opts=output_opts,
                 timing=timing,
                 human_formatter=lambda d: console.print(d),
+            )
+        except Exception as e:  # noqa: BLE001
+            console.print(f"[nexus.error]Error:[/nexus.error] {e}")
+            sys.exit(1)
+
+    asyncio.run(_impl())
+
+
+def _format_reconcile_report(data: dict[str, Any]) -> None:
+    """Human rendering for ``admin fs reconcile-projections`` (#4738)."""
+    table = Table(
+        title=f"Projection reconcile — {data.get('prefix', '/')} (zone {data.get('zone_id')})"
+    )
+    table.add_column("Verdict", style="nexus.value")
+    table.add_column("Count", style="nexus.success", justify="right")
+    for key in ("scanned", "in_sync", "created", "repaired", "retired", "stale_kernel", "errors"):
+        table.add_row(key, str(data.get(key, 0)))
+    console.print(table)
+    if data.get("dry_run"):
+        console.print("[nexus.warning]Dry run — nothing was written.[/nexus.warning]")
+    if data.get("truncated"):
+        console.print(
+            "[nexus.warning]Walk truncated by --max-entries; retire skipped.[/nexus.warning]"
+        )
+    for label, key in (
+        ("Created", "created_paths"),
+        ("Repaired", "repaired_paths"),
+        ("Retired", "retired_paths"),
+        ("Stale kernel view", "stale_kernel_paths"),
+    ):
+        paths = data.get(key) or []
+        if paths:
+            console.print(f"[bold]{label}[/bold] (first {len(paths)}):")
+            for p in paths:
+                console.print(f"  {p}")
+    for msg in data.get("error_messages") or []:
+        console.print(f"[nexus.error]error:[/nexus.error] {msg}")
+    console.print(f"[nexus.muted]{data.get('duration_ms', 0)} ms[/nexus.muted]")
+
+
+@admin_fs.command("reconcile-projections")
+@click.option("--prefix", default="/", show_default=True, help="Kernel subtree to reconcile")
+@click.option("--dry-run", is_flag=True, help="Report drift without writing")
+@click.option(
+    "--retire-missing",
+    is_flag=True,
+    help="Soft-delete file_paths rows the kernel no longer lists under PREFIX (opt-in)",
+)
+@click.option("--max-entries", type=int, default=None, help="Stop after this many kernel files")
+@add_backend_options
+@add_output_options
+def admin_fs_reconcile_projections(
+    prefix: str,
+    dry_run: bool,
+    retire_missing: bool,
+    max_entries: int | None,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    output_opts: OutputOptions,
+) -> None:
+    """Repair file_paths / version_history / operation_log from the kernel (#4738).
+
+    After a server crash, a RecordStore outage or a dropped write-observer
+    event the kernel is ahead of the SQL projection.  This walks the kernel
+    under PREFIX and creates or repairs the missing rows.  Runs locally when
+    the CLI holds the RecordStore, otherwise via
+    ``POST /api/v2/admin/reconcile-projections`` (admin key required).
+
+    Examples:
+        nexus admin fs reconcile-projections --prefix /workspace --dry-run
+        nexus admin fs reconcile-projections --prefix /workspace
+    """
+    import asyncio
+
+    from nexus.cli.utils import open_filesystem
+
+    body = {
+        "prefix": prefix,
+        "dry_run": dry_run,
+        "retire_missing": retire_missing,
+        "max_entries": max_entries,
+    }
+
+    async def _impl() -> None:
+        from nexus.cli.config import resolve_connection
+
+        timing = CommandTiming()
+        try:
+            # A configured server (flag, NEXUS_URL, or active profile) means
+            # the RecordStore lives there: go straight to the admin route
+            # instead of opening a remote NexusFS (which would spawn a local
+            # kernel just to discover it has no record_store).
+            conn = resolve_connection(remote_url=remote_url, remote_api_key=remote_api_key)
+            if conn.url:
+                from nexus.cli.api_client import get_api_client_from_options
+
+                client = get_api_client_from_options(remote_url, remote_api_key)
+                with timing.phase("server"):
+                    data: dict[str, Any] = client.post(
+                        "/api/v2/admin/reconcile-projections", json_body=body
+                    )
+            else:
+                async with open_filesystem(None, None, allow_local_default=True) as nx:
+                    record_store = getattr(nx, "record_store", None)
+                    if record_store is None:
+                        raise click.ClickException(
+                            "No RecordStore on this filesystem and no server configured; "
+                            "set NEXUS_URL/--remote-url to reconcile through the admin API."
+                        )
+                    from nexus.storage.projection_reconcile import reconcile_projection
+
+                    with timing.phase("server"):
+                        report = await asyncio.to_thread(
+                            reconcile_projection,
+                            nexus_fs=nx,
+                            session_factory=record_store.session_factory,
+                            prefix=prefix,
+                            zone_id=getattr(nx, "_zone_id", None) or ROOT_ZONE_ID,
+                            dry_run=dry_run,
+                            retire_missing=retire_missing,
+                            max_entries=max_entries,
+                        )
+                    data = report.to_dict()
+            render_output(
+                data=data,
+                output_opts=output_opts,
+                timing=timing,
+                human_formatter=_format_reconcile_report,
             )
         except Exception as e:  # noqa: BLE001
             console.print(f"[nexus.error]Error:[/nexus.error] {e}")

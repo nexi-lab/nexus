@@ -38,13 +38,15 @@ if os.environ.get("NEXUS_RUST_EDITABLE") == "1":
         pass  # maturin-import-hook not installed — skip (warn below)
 
 # ---------------------------------------------------------------------------
-# Issue #3399: default to sync write observer in tests.
-# The piped observer spawns a background consumer task per NexusFS instance;
-# with 10K+ tests this adds significant startup/shutdown overhead and can
-# cause CI timeouts.  Tests that specifically need the piped observer create
-# it directly (e.g. test_piped_write_observer_flush.py).
+# #4738: run the suite against the production-default write observer.
+# Issue #3399 forced the synchronous observer here because the debounced
+# piped observer spawned a background consumer per NexusFS instance and made
+# projection rows visible only after a timer.  The write-through observer
+# commits before a write returns and starts its two daemon threads lazily,
+# so tests see the same observer production runs.  Set
+# NEXUS_ENABLE_WRITE_BUFFER=false to exercise the legacy synchronous one.
 # ---------------------------------------------------------------------------
-os.environ.setdefault("NEXUS_ENABLE_WRITE_BUFFER", "false")
+os.environ.setdefault("NEXUS_ENABLE_WRITE_BUFFER", "true")
 
 # ---------------------------------------------------------------------------
 # OAuthCrypto: allow ephemeral keys in the test suite.

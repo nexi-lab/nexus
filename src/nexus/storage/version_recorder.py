@@ -9,9 +9,16 @@ Populates FilePathModel and VersionHistoryModel so Services
 Architecture:
     Metastore (sled) = SSOT for FileMetadata
     RecordStore (SQL) = supplemental for version history + search indexing
-    If sync fails, the write still succeeds (sled is authoritative).
+    The kernel is authoritative; whether a projection failure fails the
+    write is the observer's ``strict_mode`` policy (#4738).
+
+Each ``version_history`` row stores the kernel ``gen`` of the write it
+records in ``extra_metadata`` (``{"gen": N}``) so
+``storage/projection_reconcile.py`` can tell "kernel is ahead of the
+projection" from "this node's kernel view is stale" (#4738).
 """
 
+import json
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -29,6 +36,24 @@ if TYPE_CHECKING:
 def _utcnow_naive() -> datetime:
     """Return current UTC time as naive datetime (for SQLite compat)."""
     return datetime.now(UTC).replace(tzinfo=None)
+
+
+def _version_extra(metadata: "FileMetadata") -> str | None:
+    """``extra_metadata`` JSON carrying the kernel ``gen`` (None when unknown)."""
+    gen = getattr(metadata, "gen", 0) or 0
+    return json.dumps({"gen": int(gen)}) if gen > 0 else None
+
+
+def version_gen(row: "VersionHistoryModel") -> int | None:
+    """Kernel ``gen`` recorded on a version row, or None for legacy rows."""
+    raw = row.extra_metadata
+    if not raw:
+        return None
+    try:
+        value = json.loads(raw).get("gen")
+    except (ValueError, AttributeError):
+        return None
+    return int(value) if isinstance(value, int) and value > 0 else None
 
 
 class VersionRecorder:
@@ -185,6 +210,7 @@ class VersionRecorder:
                 source_type="original",
                 created_at=file_path.created_at,
                 created_by=created_by,
+                extra_metadata=_version_extra(metadata),
             )
             self.session.add(version_entry)
 
@@ -243,6 +269,7 @@ class VersionRecorder:
                 source_type="original",
                 created_at=_utcnow_naive(),
                 created_by=created_by,
+                extra_metadata=_version_extra(metadata),
             )
             self.session.add(version_entry)
         else:

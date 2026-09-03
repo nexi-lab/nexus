@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
 
+
 @runtime_checkable
 class VFSCoreProtocol(Protocol):
     """Core file operations — read, write, delete, stat, exists, mkdir.
@@ -85,7 +86,7 @@ class VFSCoreProtocol(Protocol):
         parents: bool = False,
         exist_ok: bool = False,
         context: "OperationContext | None" = None,
-    ) -> None:
+    ) -> Any:
         """Create directory at path.
 
         Args:

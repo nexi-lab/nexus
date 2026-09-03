@@ -294,6 +294,15 @@ class WriteRequest(BaseModel):
     )
 
 
+def _projection_seq_of(result: Any) -> int | None:
+    """``projection_seq`` from a NexusFS mutation result dict (#4738), else None."""
+    if isinstance(result, dict):
+        seq = result.get("projection_seq")
+        if isinstance(seq, int) and not isinstance(seq, bool):
+            return seq
+    return None
+
+
 class WriteResponse(BaseModel):
     """Response model for write operation."""
 
@@ -312,6 +321,12 @@ class WriteResponse(BaseModel):
             "revision (#4737)."
         ),
     )
+    # #4738: operation_log sequence of this write's committed projection row
+    # (version history, operation log, file_paths). Poll
+    # GET /api/v2/operations/wait?seq=<value> from any node sharing the
+    # RecordStore to wait for it. null = not confirmed (non-strict audit
+    # mode timed out) or no projection observer.
+    projection_seq: int | None = None
 
 
 class ReadResponse(BaseModel):
@@ -337,6 +352,8 @@ class DeleteResponse(BaseModel):
             "deletes; fence on the parent listing's own writes instead."
         ),
     )
+    # #4738: projection sequence of the committed delete audit row.
+    projection_seq: int | None = None
 
 
 class ExistsResponse(BaseModel):
@@ -496,6 +513,8 @@ class BatchWriteResult(BaseModel):
     revision: str | None = Field(
         None, description="Read-your-writes token ('<path>@<gen>') for this item (#4737)."
     )
+    # #4738: projection sequence of this item's committed audit/version row.
+    projection_seq: int | None = None
 
 
 class BatchWriteResponse(BaseModel):
@@ -564,6 +583,8 @@ class RenameResponse(BaseModel):
         None,
         description="Revision token for this rename (#4737); null on kernels that do not stamp it.",
     )
+    # #4738: projection sequence of the rename's committed upsert row.
+    projection_seq: int | None = None
 
 
 class CopyRequest(BaseModel):
@@ -608,6 +629,8 @@ class BulkRenameResult(BaseModel):
     destination: str
     success: bool
     error: str | None = None
+    # #4738: projection sequence of this rename's committed upsert row.
+    projection_seq: int | None = None
 
 
 class RenameBatchResponse(BaseModel):
@@ -916,6 +939,7 @@ def create_async_files_router(
                     modified_at=str(modified),
                     index=index_result,
                     revision=result.get("revision"),
+                    projection_seq=result.get("projection_seq"),
                 )
                 write_response = Response(
                     content=response_data.model_dump_json(),
@@ -1646,6 +1670,7 @@ def create_async_files_router(
                     revision=unlink_result.get("revision")
                     if isinstance(unlink_result, dict)
                     else None,
+                    projection_seq=_projection_seq_of(unlink_result),
                 )
 
             delete_response = await _run_for_context(context, {"path": path, "zone": zone}, _work)
@@ -1962,9 +1987,13 @@ def create_async_files_router(
 
             async def _work() -> dict[str, Any]:
                 fs = await _get_fs()
-                # fs.mkdir is async — call directly
-                fs.mkdir(request.path, parents=request.parents, context=context)
-                return {"created": True, "path": request.path}
+                _made = fs.mkdir(request.path, parents=request.parents, context=context)
+                return {
+                    "created": True,
+                    "path": request.path,
+                    # #4738: projection sequence of the committed mkdir audit row.
+                    "projection_seq": _projection_seq_of(_made),
+                }
 
             return await _run_for_context(
                 context,
@@ -2139,6 +2168,7 @@ def create_async_files_router(
                         modified_at=r.get("modified_at"),
                         size=r.get("size", 0),
                         revision=r.get("revision"),
+                        projection_seq=r.get("projection_seq"),
                     )
                     for i, r in enumerate(raw_results)
                 ]
@@ -2349,6 +2379,7 @@ def create_async_files_router(
                     revision=rename_result.get("revision")
                     if isinstance(rename_result, dict)
                     else None,
+                    projection_seq=_projection_seq_of(rename_result),
                 )
 
             rename_response = await _run_for_context(context, request, _work)
@@ -2459,6 +2490,7 @@ def create_async_files_router(
                             destination=op.destination,
                             success=entry.get("success", False),
                             error=entry.get("error"),
+                            projection_seq=_projection_seq_of(entry),
                         )
                     )
 

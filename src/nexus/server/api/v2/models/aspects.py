@@ -78,6 +78,47 @@ class ReplayResponse(ApiModel):
     has_more: bool = False
 
 
+class ReconcileProjectionsRequest(ApiModel):
+    """Request body for POST /api/v2/admin/reconcile-projections (#4738)."""
+
+    prefix: str = "/"
+    dry_run: bool = False
+    # Soft-delete active file_paths rows the kernel no longer lists under
+    # ``prefix``.  Opt-in: a partial kernel listing would otherwise retire
+    # live rows.
+    retire_missing: bool = False
+    max_entries: int | None = Field(None, ge=1)
+
+
+class ReconcileProjectionsResponse(ApiModel):
+    """Response for POST /api/v2/admin/reconcile-projections (#4738).
+
+    Every kernel file under ``prefix`` lands in exactly one of ``in_sync``
+    / ``created`` / ``repaired`` / ``stale_kernel`` / ``errors``; path
+    samples are capped at 25 entries.  ``stale_kernel`` means the projection
+    already records a newer kernel generation than this node's kernel
+    reports (follower lag) and the path was left alone.
+    """
+
+    prefix: str
+    zone_id: str
+    dry_run: bool = False
+    scanned: int = 0
+    in_sync: int = 0
+    created: int = 0
+    repaired: int = 0
+    retired: int = 0
+    stale_kernel: int = 0
+    errors: int = 0
+    truncated: bool = False
+    duration_ms: int = 0
+    created_paths: list[str] = Field(default_factory=list)
+    repaired_paths: list[str] = Field(default_factory=list)
+    retired_paths: list[str] = Field(default_factory=list)
+    stale_kernel_paths: list[str] = Field(default_factory=list)
+    error_messages: list[str] = Field(default_factory=list)
+
+
 class ReindexRequest(ApiModel):
     """Request body for POST /api/v2/admin/reindex."""
 

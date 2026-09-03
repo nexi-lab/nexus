@@ -1748,6 +1748,17 @@ full profile. `list_versions` and `diff_versions` are hot-path/history paths;
 `get_version` and `rollback` are content reads/writes and should be benchmarked
 when used on large files.
 
+Version history is committed before a write returns (#4738): `list_versions`
+right after `files/write` includes the new version, and every mutation
+response (write, batch write, delete, rename, mkdir) carries
+`projection_seq`. From another node sharing the RecordStore, call
+`GET /api/v2/operations/wait?seq=<projection_seq>` (200 applied, 412 not yet)
+or `nexus ops wait --seq <projection_seq>` before reading history or the
+operation log. After a server crash an admin runs
+`POST /api/v2/admin/reconcile-projections` or
+`nexus admin fs reconcile-projections --prefix /workspace` to repair history
+from the kernel. See `docs/architecture/record-store-projections.md`.
+
 ### Transactional snapshots
 
 ```bash

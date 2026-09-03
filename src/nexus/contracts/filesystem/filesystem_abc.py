@@ -149,7 +149,7 @@ class NexusFilesystem(Protocol):
         exist_ok: bool = True,
         *,
         context: OperationContext | None = None,
-    ) -> None: ...
+    ) -> dict[str, Any] | None: ...
 
     def rmdir(
         self,
@@ -157,7 +157,7 @@ class NexusFilesystem(Protocol):
         recursive: bool = True,
         *,
         context: OperationContext | None = None,
-    ) -> None: ...
+    ) -> dict[str, Any] | None: ...
 
     def access(self, path: str, *, context: OperationContext | None = None) -> bool: ...
 

@@ -198,6 +198,7 @@ nav:
     - Backend Architecture: architecture/backend-architecture.md
     - CLI Design: architecture/cli-design.md
     - Consistency Contract: architecture/consistency-contract.md
+    - RecordStore Projections: architecture/record-store-projections.md
   - Agents:
     - Self-Observability: agents/self-observability.md
   - Research:

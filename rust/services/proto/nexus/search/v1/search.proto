@@ -565,6 +565,17 @@ message IndexDocumentsResponse {
   // retry — see ParkedList RPC.  Empty in the happy path.
   repeated string parked_paths = 3;
   optional string error = 4;
+  // ── Write-to-searchable contract (#4736) ──────────────────────
+  // Plugin-wide monotonic index sequence assigned AFTER the commit
+  // that made this batch visible.  A caller holding `index_seq = N`
+  // can treat `StatsResponse.last_index_seq >= N` as proof the
+  // batch is served.  Persisted across plugin restarts.
+  uint64 index_seq = 5;
+  // Paths counted in `skipped_count` for CONTENT reasons (empty /
+  // whitespace-only text, chunkless doc, FTS add failure).  Lets a
+  // batch caller report per-document outcome instead of a bare
+  // aggregate.
+  repeated string skipped_paths = 6;
 }
 
 message NotifyFileChangeRequest {
@@ -575,11 +586,16 @@ message NotifyFileChangeRequest {
   string auth_token = 4;
 }
 message NotifyFileChangeResponse {
-  // "accepted" on success; "skipped" when the change is a no-op
-  // (delete on unindexed path, update where mtime already matches
-  // the cache).
+  // "accepted" when the plugin MUTATED the index (delete: chunks
+  // dropped + tombstone recorded); "skipped" when the notification
+  // was a pure ack and nothing was indexed.  Post-P12 "create" /
+  // "update" ALWAYS answer "skipped" — no text travels on this RPC,
+  // so the caller must follow with IndexDocuments (#4736).
   string status = 1;
   optional string error = 2;
+  // Index sequence after the mutation (see
+  // IndexDocumentsResponse.index_seq).  0 when status is "skipped".
+  uint64 index_seq = 3;
 }
 
 message LocateRequest {
@@ -744,4 +760,18 @@ message StatsResponse {
   // partially-built index — pollers gating "healthy-empty is real"
   // decisions should wait for 0.
   uint32 indexing_in_progress = 8;
+  // ── Stall detection (#4736) ───────────────────────────────────
+  // Sequence of the last COMMITTED index mutation (Index /
+  // IndexDocuments / Refresh / NotifyFileChange delete).  Compare
+  // against the `index_seq` an indexing call returned.  Persisted
+  // across restarts; 0 = nothing ever indexed.
+  uint64 last_index_seq = 9;
+  // Documents accepted by in-flight IndexDocuments calls and not yet
+  // returned.  Non-zero for longer than an indexing call should
+  // take, with `last_successful_index_at_ms` not advancing, is the
+  // "acknowledged but never served" signature (#4725).
+  uint32 pending = 10;
+  // Wall-clock (ms since epoch) of the last committed index
+  // mutation.  0 = never.
+  uint64 last_successful_index_at_ms = 11;
 }

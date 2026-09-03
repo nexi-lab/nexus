@@ -430,21 +430,34 @@ class IndexDocumentsRequest(_message.Message):
     ) -> None: ...
 
 class IndexDocumentsResponse(_message.Message):
-    __slots__ = ("indexed_count", "skipped_count", "parked_paths", "error")
+    __slots__ = (
+        "indexed_count",
+        "skipped_count",
+        "parked_paths",
+        "error",
+        "index_seq",
+        "skipped_paths",
+    )
     INDEXED_COUNT_FIELD_NUMBER: _ClassVar[int]
     SKIPPED_COUNT_FIELD_NUMBER: _ClassVar[int]
     PARKED_PATHS_FIELD_NUMBER: _ClassVar[int]
     ERROR_FIELD_NUMBER: _ClassVar[int]
+    INDEX_SEQ_FIELD_NUMBER: _ClassVar[int]
+    SKIPPED_PATHS_FIELD_NUMBER: _ClassVar[int]
     indexed_count: int
     skipped_count: int
     parked_paths: _containers.RepeatedScalarFieldContainer[str]
     error: str
+    index_seq: int
+    skipped_paths: _containers.RepeatedScalarFieldContainer[str]
     def __init__(
         self,
         indexed_count: int | None = ...,
         skipped_count: int | None = ...,
         parked_paths: _Iterable[str] | None = ...,
         error: str | None = ...,
+        index_seq: int | None = ...,
+        skipped_paths: _Iterable[str] | None = ...,
     ) -> None: ...
 
 class NotifyFileChangeRequest(_message.Message):
@@ -466,12 +479,16 @@ class NotifyFileChangeRequest(_message.Message):
     ) -> None: ...
 
 class NotifyFileChangeResponse(_message.Message):
-    __slots__ = ("status", "error")
+    __slots__ = ("status", "error", "index_seq")
     STATUS_FIELD_NUMBER: _ClassVar[int]
     ERROR_FIELD_NUMBER: _ClassVar[int]
+    INDEX_SEQ_FIELD_NUMBER: _ClassVar[int]
     status: str
     error: str
-    def __init__(self, status: str | None = ..., error: str | None = ...) -> None: ...
+    index_seq: int
+    def __init__(
+        self, status: str | None = ..., error: str | None = ..., index_seq: int | None = ...
+    ) -> None: ...
 
 class LocateRequest(_message.Message):
     __slots__ = ("path", "zone_id", "auth_token")
@@ -738,6 +755,9 @@ class StatsResponse(_message.Message):
         "backend",
         "embedding_model",
         "indexing_in_progress",
+        "last_index_seq",
+        "pending",
+        "last_successful_index_at_ms",
     )
     FTS_DOC_COUNT_FIELD_NUMBER: _ClassVar[int]
     FTS_PATH_COUNT_FIELD_NUMBER: _ClassVar[int]
@@ -747,6 +767,9 @@ class StatsResponse(_message.Message):
     BACKEND_FIELD_NUMBER: _ClassVar[int]
     EMBEDDING_MODEL_FIELD_NUMBER: _ClassVar[int]
     INDEXING_IN_PROGRESS_FIELD_NUMBER: _ClassVar[int]
+    LAST_INDEX_SEQ_FIELD_NUMBER: _ClassVar[int]
+    PENDING_FIELD_NUMBER: _ClassVar[int]
+    LAST_SUCCESSFUL_INDEX_AT_MS_FIELD_NUMBER: _ClassVar[int]
     fts_doc_count: int
     fts_path_count: int
     ann_chunk_count: int
@@ -755,6 +778,9 @@ class StatsResponse(_message.Message):
     backend: str
     embedding_model: str
     indexing_in_progress: int
+    last_index_seq: int
+    pending: int
+    last_successful_index_at_ms: int
     def __init__(
         self,
         fts_doc_count: int | None = ...,
@@ -765,4 +791,7 @@ class StatsResponse(_message.Message):
         backend: str | None = ...,
         embedding_model: str | None = ...,
         indexing_in_progress: int | None = ...,
+        last_index_seq: int | None = ...,
+        pending: int | None = ...,
+        last_successful_index_at_ms: int | None = ...,
     ) -> None: ...

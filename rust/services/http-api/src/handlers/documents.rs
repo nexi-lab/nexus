@@ -216,6 +216,12 @@ pub struct BatchResponseBody {
     pub indexed_count: u32,
     pub skipped_count: u32,
     pub parked_paths: Vec<String>,
+    /// #4736: plugin-wide sequence stamped after this batch's commit —
+    /// `stats.last_index_seq >= index_seq` means the batch is served.
+    pub index_seq: u64,
+    /// #4736: paths behind `skipped_count` (empty / whitespace-only /
+    /// chunkless text) so a caller gets a per-document verdict.
+    pub skipped_paths: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -249,6 +255,8 @@ pub async fn batch(
         indexed_count: resp.indexed_count,
         skipped_count: resp.skipped_count,
         parked_paths: resp.parked_paths,
+        index_seq: resp.index_seq,
+        skipped_paths: resp.skipped_paths,
         error: resp.error,
     }))
 }
@@ -291,6 +299,14 @@ pub struct StatsResponseBody {
     /// built index; pollers gating "healthy-empty is real"
     /// decisions wait for 0.
     pub indexing_in_progress: u32,
+    /// #4736 stall detection: sequence of the last COMMITTED index
+    /// mutation — compare with a batch's `index_seq`.
+    pub last_index_seq: u64,
+    /// #4736: documents accepted by in-flight `IndexDocuments` calls
+    /// and not yet returned.
+    pub pending: u32,
+    /// #4736: ms-since-epoch of the last committed mutation; 0 = never.
+    pub last_successful_index_at_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -318,6 +334,9 @@ pub async fn stats(
         backend: resp.backend,
         embedding_model: resp.embedding_model,
         indexing_in_progress: resp.indexing_in_progress,
+        last_index_seq: resp.last_index_seq,
+        pending: resp.pending,
+        last_successful_index_at_ms: resp.last_successful_index_at_ms,
         error: resp.error,
     }))
 }

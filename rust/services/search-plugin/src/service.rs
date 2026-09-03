@@ -157,6 +157,14 @@ pub struct SearchServiceImpl {
     /// operations.  Surfaced on Stats as `indexing_in_progress` so
     /// pollers can tell "genuinely empty" from "still building".
     indexing_ops: Arc<std::sync::atomic::AtomicU32>,
+    /// #4736: plugin-wide index sequence + last-commit clock.  Every
+    /// committed index mutation advances it; IndexDocuments returns
+    /// the value as `index_seq`, Stats reports the latest as
+    /// `last_index_seq` / `last_successful_index_at_ms`.
+    index_seq: Arc<crate::index_seq::IndexSeq>,
+    /// #4736: documents accepted by in-flight IndexDocuments calls
+    /// and not yet returned — Stats `pending`.
+    pending_docs: Arc<std::sync::atomic::AtomicU32>,
     /// Builder override for the hybrid title arm (#4628) — `None` ⇒
     /// read `NEXUS_SEARCH_TITLE_ARM` per query (production);
     /// `Some(_)` pins it (tests must not race the process env).
@@ -219,6 +227,26 @@ impl IndexingGuard {
 impl Drop for IndexingGuard {
     fn drop(&mut self) {
         self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// #4736: `pending` counterpart of [`IndexingGuard`] — adds the batch
+/// size on entry, subtracts it on drop.  Moved INTO the blocking
+/// closure for the same cancellation reason: the count must cover the
+/// work, not the RPC future.
+struct PendingDocsGuard(Arc<std::sync::atomic::AtomicU32>, u32);
+
+impl PendingDocsGuard {
+    fn enter(counter: &Arc<std::sync::atomic::AtomicU32>, n: u32) -> Self {
+        counter.fetch_add(n, std::sync::atomic::Ordering::SeqCst);
+        Self(Arc::clone(counter), n)
+    }
+}
+
+impl Drop for PendingDocsGuard {
+    fn drop(&mut self) {
+        self.0
+            .fetch_sub(self.1, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -709,11 +737,15 @@ impl SearchServiceBuilder {
     }
 
     pub fn build(self) -> SearchServiceImpl {
+        let manager = self
+            .manager
+            .unwrap_or_else(|| Arc::new(IndexManager::new()));
+        // The sequence file lives beside the per-zone index dirs so a
+        // tempdir-rooted manager (tests) gets its own counter.
+        let index_seq = Arc::new(crate::index_seq::IndexSeq::open_or_create(manager.root()));
         SearchServiceImpl {
             handle: self.handle,
-            manager: self
-                .manager
-                .unwrap_or_else(|| Arc::new(IndexManager::new())),
+            manager,
             embedder_slot: Arc::new(Mutex::new(self.embedder)),
             query_cache: self
                 .query_cache
@@ -722,6 +754,8 @@ impl SearchServiceBuilder {
                 .embed_cache
                 .unwrap_or_else(|| Arc::new(QueryEmbedCache::from_env())),
             indexing_ops: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+            index_seq,
+            pending_docs: Arc::new(std::sync::atomic::AtomicU32::new(0)),
             title_arm: self.title_arm,
             expander_slot: Arc::new(pin_to_once_lock(self.expander_pin)),
             expansion_cache: Arc::new(ExpansionCache::new()),
@@ -2776,6 +2810,17 @@ fn do_refresh(
 /// the request-level default.  Groups by zone so we open each
 /// zone's FTS + ANN + IndexState once, not per doc.
 #[allow(clippy::too_many_arguments)]
+/// Outcome of one `do_index_documents` pass.
+struct IndexDocumentsOutcome {
+    indexed: u32,
+    skipped: u32,
+    /// Paths behind `skipped` — content skips (empty / chunkless) and
+    /// FTS add failures (#4736).  Lets the HTTP layer report a
+    /// per-document verdict for batch write+index instead of a bare
+    /// aggregate.
+    skipped_paths: Vec<String>,
+}
+
 fn do_index_documents(
     manager: &IndexManager,
     embedder: Option<&Arc<dyn Embedder>>,
@@ -2784,7 +2829,7 @@ fn do_index_documents(
     default_zone: &str,
     documents: Vec<crate::search_proto::DocumentInput>,
     cache: &crate::query_cache::SharedQueryCache,
-) -> Result<(u32, u32), String> {
+) -> Result<IndexDocumentsOutcome, String> {
     // Bucket by zone so per-zone open + commit happens once.
     let mut by_zone: std::collections::HashMap<String, Vec<crate::search_proto::DocumentInput>> =
         std::collections::HashMap::new();
@@ -2799,6 +2844,7 @@ fn do_index_documents(
 
     let mut total_indexed: u32 = 0;
     let mut total_skipped: u32 = 0;
+    let mut skipped_paths: Vec<String> = Vec::new();
 
     for (zone_id, docs) in by_zone {
         // Serialize writers per zone — same rationale as do_index.
@@ -2883,6 +2929,7 @@ fn do_index_documents(
                     zone_transient += 1;
                 }
                 total_skipped += 1;
+                skipped_paths.push(doc.path.clone());
                 continue;
             }
             let mut chunks = crate::chunker::chunk_document(&doc.text);
@@ -2891,6 +2938,7 @@ fn do_index_documents(
                     zone_transient += 1;
                 }
                 total_skipped += 1;
+                skipped_paths.push(doc.path.clone());
                 continue;
             }
             // Feature 3 — contextual chunking (see index_one's twin
@@ -2918,6 +2966,7 @@ fn do_index_documents(
             }
             if !fts_ok {
                 total_skipped += 1;
+                skipped_paths.push(doc.path.clone());
                 zone_transient += 1;
                 continue;
             }
@@ -3020,7 +3069,11 @@ fn do_index_documents(
         }
     }
 
-    Ok((total_indexed, total_skipped))
+    Ok(IndexDocumentsOutcome {
+        indexed: total_indexed,
+        skipped: total_skipped,
+        skipped_paths,
+    })
 }
 
 /// Per-file change event.  "delete" drops the file from every
@@ -3036,6 +3089,17 @@ fn do_notify_file_change(
     change_type: &str,
     cache: &crate::query_cache::SharedQueryCache,
 ) -> Result<String, String> {
+    if matches!(change_type, "create" | "update" | "") {
+        // No text on the wire — nothing to add.  "skipped" tells the
+        // caller this was an ack, not a re-index: making a written
+        // file searchable takes IndexDocuments (#4736).  Answered
+        // BEFORE the zone write lock and the state-file open so a
+        // stray ack never contends with real indexing.  Mutates
+        // nothing, so it neither sets nor clears the zone's dirty
+        // mark.
+        return Ok("skipped".to_string());
+    }
+
     // Serialize writers per zone — same rationale as do_index.
     let zone_lock = manager.zone_write_lock(zone_id);
     let _zone_guard = zone_lock.lock();
@@ -3093,17 +3157,6 @@ fn do_notify_file_change(
                 manager.clear_zone_dirty(zone_id);
             }
             Ok("accepted".to_string())
-        }
-        "create" | "update" | "" => {
-            // No text on the wire — nothing to add.  Return
-            // "skipped" so the caller knows it's an ack, not a
-            // re-index.  A future NotifyFileChangeRequest with an
-            // inline text field would let us do more here, but
-            // matching Python's shape means callers pair this
-            // event with a follow-up IndexDocuments.  This arm
-            // mutates nothing, so it neither sets nor clears the
-            // zone's dirty mark.
-            Ok("skipped".to_string())
         }
         other => Err(format!("unknown change_type: {other:?}")),
     }
@@ -3691,6 +3744,7 @@ impl SearchService for SearchServiceImpl {
         // (the closure below moves the owned copy into
         // spawn_blocking).
         let zone_for_invalidate = zone_id.clone();
+        let index_seq = Arc::clone(&self.index_seq);
         let outcome = tokio::task::spawn_blocking(move || {
             let _indexing = indexing; // held until the WORK ends, not the RPC
             do_index(
@@ -3704,6 +3758,12 @@ impl SearchService for SearchServiceImpl {
                 recursive,
                 max_docs,
             )
+            // #4736: the sequence advances strictly AFTER the commit,
+            // inside the task, so an RPC cancelled mid-flight still
+            // records the mutation it caused.
+            .inspect(|_| {
+                index_seq.advance();
+            })
         })
         .await
         .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
@@ -3757,6 +3817,7 @@ impl SearchService for SearchServiceImpl {
         let (embedder, embed_broken) = self.indexing_embedder();
         let context_generator = self.get_or_init_context_generator();
         let zone_for_invalidate = zone_id.clone();
+        let index_seq = Arc::clone(&self.index_seq);
         let outcome = tokio::task::spawn_blocking(move || {
             let _indexing = indexing; // held until the WORK ends, not the RPC
             do_refresh(
@@ -3770,6 +3831,9 @@ impl SearchService for SearchServiceImpl {
                 recursive,
                 max_docs,
             )
+            .inspect(|_| {
+                index_seq.advance(); // #4736 — see Index
+            })
         })
         .await
         .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
@@ -3892,13 +3956,17 @@ impl SearchService for SearchServiceImpl {
     ) -> Result<Response<IndexDocumentsResponse>, Status> {
         let indexing = IndexingGuard::enter(&self.indexing_ops);
         let req = request.into_inner();
+        // #4736: `pending` covers accept → return for the whole batch.
+        let pending = PendingDocsGuard::enter(&self.pending_docs, req.documents.len() as u32);
         let default_zone = resolve_zone(&req.zone_id).to_string();
         let manager = Arc::clone(&self.manager);
         let (embedder, embed_broken) = self.indexing_embedder();
         let context_generator = self.get_or_init_context_generator();
         let cache = Arc::clone(&self.query_cache);
+        let index_seq = Arc::clone(&self.index_seq);
         let outcome = tokio::task::spawn_blocking(move || {
             let _indexing = indexing; // held until the WORK ends, not the RPC
+            let _pending = pending;
             do_index_documents(
                 &manager,
                 embedder.as_ref(),
@@ -3908,22 +3976,30 @@ impl SearchService for SearchServiceImpl {
                 req.documents,
                 &cache,
             )
+            // Sequence assigned AFTER the per-zone commits above —
+            // `last_index_seq >= this` on Stats means the batch is
+            // served (#4736).
+            .map(|outcome| (outcome, index_seq.advance().seq))
         })
         .await
         .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
 
         match outcome {
-            Ok((indexed, skipped)) => Ok(Response::new(IndexDocumentsResponse {
-                indexed_count: indexed,
-                skipped_count: skipped,
+            Ok((outcome, seq)) => Ok(Response::new(IndexDocumentsResponse {
+                indexed_count: outcome.indexed,
+                skipped_count: outcome.skipped,
                 parked_paths: Vec::new(), // parked queue lands in step 4
                 error: None,
+                index_seq: seq,
+                skipped_paths: outcome.skipped_paths,
             })),
             Err(err) => Ok(Response::new(IndexDocumentsResponse {
                 indexed_count: 0,
                 skipped_count: 0,
                 parked_paths: Vec::new(),
                 error: Some(err),
+                index_seq: 0,
+                skipped_paths: Vec::new(),
             })),
         }
     }
@@ -3938,20 +4014,32 @@ impl SearchService for SearchServiceImpl {
         let path = req.path.clone();
         let manager = Arc::clone(&self.manager);
         let cache = Arc::clone(&self.query_cache);
+        let index_seq = Arc::clone(&self.index_seq);
         let outcome = tokio::task::spawn_blocking(move || {
-            do_notify_file_change(&manager, &zone_id, &path, &change, &cache)
+            do_notify_file_change(&manager, &zone_id, &path, &change, &cache).map(|status| {
+                // Only a MUTATING outcome advances the sequence — a
+                // "skipped" ack committed nothing (#4736).
+                let seq = if status == "accepted" {
+                    index_seq.advance().seq
+                } else {
+                    0
+                };
+                (status, seq)
+            })
         })
         .await
         .map_err(|e| Status::internal(format!("spawn_blocking joined error: {e}")))?;
 
         match outcome {
-            Ok(status) => Ok(Response::new(NotifyFileChangeResponse {
+            Ok((status, seq)) => Ok(Response::new(NotifyFileChangeResponse {
                 status,
                 error: None,
+                index_seq: seq,
             })),
             Err(err) => Ok(Response::new(NotifyFileChangeResponse {
                 status: String::new(),
                 error: Some(err),
+                index_seq: 0,
             })),
         }
     }
@@ -4323,6 +4411,10 @@ impl SearchService for SearchServiceImpl {
         // ops are in flight — "empty results" during that window mean
         // "still building", not "no matches".
         let indexing_in_progress = self.indexing_ops.load(std::sync::atomic::Ordering::SeqCst);
+        // #4736 stall-detection triple: last committed seq + its clock,
+        // and the documents accepted but not yet returned.
+        let seq_snapshot = self.index_seq.snapshot();
+        let pending = self.pending_docs.load(std::sync::atomic::Ordering::SeqCst);
         let outcome = tokio::task::spawn_blocking(move || -> Result<StatsResponse, String> {
             // FTS side: count chunks + distinct paths in the zone.
             // FtsIndex doesn't expose a raw count today, so we open
@@ -4369,6 +4461,9 @@ impl SearchService for SearchServiceImpl {
                 backend: SEARCH_BACKEND_NAME.to_string(),
                 embedding_model,
                 indexing_in_progress,
+                last_index_seq: seq_snapshot.seq,
+                pending,
+                last_successful_index_at_ms: seq_snapshot.at_ms,
             })
         })
         .await
@@ -4385,6 +4480,9 @@ impl SearchService for SearchServiceImpl {
                 backend: SEARCH_BACKEND_NAME.to_string(),
                 embedding_model: String::new(),
                 indexing_in_progress: 0,
+                last_index_seq: 0,
+                pending: 0,
+                last_successful_index_at_ms: 0,
             })),
         }
     }

@@ -60,6 +60,11 @@ class PermissionConfig:
     enable_tiger_cache: bool = True
     enable_deferred: bool = True
     deferred_flush_interval: float = 0.05
+    # Issue #4739: with enable_deferred, hierarchy (parent) tuples are still
+    # batched, but the creating subject's ``direct_owner`` grant is written
+    # synchronously so the writer's own list/search/check see the new file
+    # immediately. Set False to defer the owner grant as well (pre-#4739).
+    sync_owner_grant: bool = True
 
 
 @dataclass(frozen=True)

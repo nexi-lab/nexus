@@ -43,6 +43,26 @@ def get_zone_id(context: Any) -> str:
     return ROOT_ZONE_ID
 
 
+def get_consistency(context: Any, explicit: str | None = None) -> str | None:
+    """Resolve the permission-cache consistency for a call (Issue #4739).
+
+    An explicit ``consistency`` argument wins; otherwise an ``OperationContext``
+    supplies ``context.consistency`` (set from ``X-Nexus-Consistency``). Dict
+    (ABAC) contexts and ``None`` carry no consistency.
+
+    Examples:
+        >>> get_consistency(OperationContext(user_id="a", groups=[], consistency="strong"))
+        'strong'
+        >>> get_consistency({"time": "14:30"}, "strong")
+        'strong'
+    """
+    if explicit is not None:
+        return explicit
+    if isinstance(context, OperationContext):
+        return context.consistency
+    return None
+
+
 def get_user_identity(context: Any) -> tuple[str, str | None]:
     """
     Extract user identity (type, id) from context.

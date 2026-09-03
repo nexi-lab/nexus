@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 from fastapi import Depends, Header, HTTPException, Request
 
 from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.contracts.rebac_types import ConsistencyLevel
 from nexus.server.token_utils import parse_sk_token
 
 if TYPE_CHECKING:
@@ -320,21 +321,55 @@ async def resolve_auth(
     return None
 
 
+CONSISTENCY_HEADER = "X-Nexus-Consistency"
+_CONSISTENCY_LEVELS = frozenset(level.value for level in ConsistencyLevel)
+
+
+def parse_consistency_header(value: str | None) -> str | None:
+    """Validate the ``X-Nexus-Consistency`` header (Issue #4739).
+
+    Returns the normalised level (``"eventual"`` or ``"strong"``) or ``None``
+    when the header is absent/blank. Raises 400 on any other value so a typo
+    never silently degrades to cached reads.
+    """
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    if not normalized:
+        return None
+    if normalized not in _CONSISTENCY_LEVELS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Invalid {CONSISTENCY_HEADER}: {value!r}. "
+                f"Expected one of: {', '.join(sorted(_CONSISTENCY_LEVELS))}"
+            ),
+        )
+    return normalized
+
+
 async def get_auth_result(
     request: Request,
     authorization: str | None = Header(None, alias="Authorization"),
     x_agent_id: str | None = Header(None, alias="X-Agent-ID"),
     x_nexus_subject: str | None = Header(None, alias="X-Nexus-Subject"),
     x_nexus_zone_id: str | None = Header(None, alias="X-Nexus-Zone-ID"),
+    x_nexus_consistency: str | None = Header(None, alias=CONSISTENCY_HEADER),
 ) -> dict[str, Any] | None:
     """FastAPI dependency wrapper for :func:`resolve_auth`.
 
     Extracts headers via FastAPI DI and delegates to the core auth logic.
     For WebSocket endpoints (where ``Depends()`` is unsupported), call
     :func:`resolve_auth` directly with ``websocket.app.state``.
+
+    ``X-Nexus-Consistency: strong`` (Issue #4739) is validated here and
+    carried on the auth result so :func:`get_operation_context` stamps it on
+    the ``OperationContext``; permission ``check`` / ``list`` / ``search`` for
+    that request then bypass the L1 / Tiger / lease caches.
     """
+    consistency = parse_consistency_header(x_nexus_consistency)
     client_host = request.client.host if request.client else None
-    return await resolve_auth(
+    result = await resolve_auth(
         app_state=request.app.state,
         authorization=authorization,
         x_agent_id=x_agent_id,
@@ -342,6 +377,11 @@ async def get_auth_result(
         x_nexus_zone_id=x_nexus_zone_id,
         client_host=client_host,
     )
+    if result is not None and consistency is not None:
+        # Copy: resolve_auth may hand back a cached/shared dict and the
+        # consistency level is per-request, not per-token.
+        result = {**result, "consistency": consistency}
+    return result
 
 
 async def require_auth(
@@ -454,4 +494,6 @@ def get_operation_context(auth_result: dict[str, Any]) -> Any:
         admin_capabilities=admin_capabilities,
         agent_generation=agent_generation,
         zone_perms=zone_perms,
+        # Issue #4739: per-request permission-cache consistency (X-Nexus-Consistency)
+        consistency=auth_result.get("consistency"),
     )

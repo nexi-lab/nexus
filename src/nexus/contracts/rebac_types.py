@@ -14,11 +14,14 @@ Backward-compat shims:
 """
 
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Any
 
 __all__ = [
     "WriteResult",
     "CheckResult",
+    "ConsistencyLevel",
+    "is_strong_consistency",
     "TraversalStats",
     "GraphLimits",
     "GraphLimitExceeded",
@@ -88,6 +91,44 @@ class CheckResult:
     traversal_stats: TraversalStats | None = None
     indeterminate: bool = False  # BUGFIX (Issue #5): Track limit-driven denials
     limit_exceeded: "GraphLimitExceeded | None" = None  # BUGFIX (Issue #5): Which limit was hit
+
+
+# ============================================================================
+# Consistency level (Issue #4739)
+# ============================================================================
+
+
+class ConsistencyLevel(StrEnum):
+    """Read consistency a caller may request for a permission decision.
+
+    ``EVENTUAL`` (the default) lets ``check`` / ``list`` / ``search`` answer
+    from the permission caches: the L1 result cache (grants 300 s, denials
+    60 s), the Tiger bitmaps (3600 s) and the boundary / lease caches.
+
+    ``STRONG`` is the SpiceDB ``fully_consistent`` analog: the decision for
+    that one call is resolved from the tuple store, bypassing every cached
+    *allow* or *deny*.  Fresh results are still written back into the caches
+    so a strong read also repairs stale entries.
+    """
+
+    EVENTUAL = "eventual"
+    STRONG = "strong"
+
+
+def is_strong_consistency(value: Any) -> bool:
+    """Return ``True`` when *value* requests :attr:`ConsistencyLevel.STRONG`.
+
+    Accepts the enum, its string value (case-insensitive) or ``None``.  Any
+    other value is treated as eventual so callers that pass ``None`` or an
+    unrelated object keep today's cached behaviour.
+    """
+    if value is None:
+        return False
+    if isinstance(value, ConsistencyLevel):
+        return value is ConsistencyLevel.STRONG
+    if isinstance(value, str):
+        return value.strip().lower() == ConsistencyLevel.STRONG.value
+    return False
 
 
 # ============================================================================

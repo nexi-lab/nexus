@@ -105,6 +105,12 @@ class OperationContext:
             Populated by the router when a request is dispatched to a mounted backend.
             Used by the virtual ``.readme/`` overlay to render absolute paths in
             auto-generated skill docs without per-connector instance state.
+        consistency: Permission-cache consistency requested for this operation
+            (Issue #4739). ``None`` / ``"eventual"`` serves permission decisions
+            from the L1 / Tiger / boundary / lease caches; ``"strong"`` resolves
+            ``check``, ``list`` and ``search`` decisions for this call from the
+            tuple store (SpiceDB ``fully_consistent`` analog). Set by the HTTP
+            layer from the ``X-Nexus-Consistency`` header.
 
     Examples:
         >>> ctx = OperationContext(
@@ -141,6 +147,11 @@ class OperationContext:
 
     # TTL for ephemeral content — routes to TTL-bucketed volumes (Issue #3405)
     ttl_seconds: float | None = None
+
+    # Permission-cache consistency for this operation (Issue #4739).
+    # None / "eventual" = cached decisions; "strong" = bypass L1/Tiger/lease
+    # caches for check/list/search on this call.
+    consistency: str | None = None
 
     def __post_init__(self) -> None:
         """Validate context and apply defaults.

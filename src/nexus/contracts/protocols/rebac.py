@@ -39,6 +39,7 @@ class ReBACBrickProtocol(Protocol):
         object: tuple[str, str],
         context: dict[str, Any] | None = None,
         zone_id: str | None = None,
+        consistency: Any = None,
     ) -> bool: ...
 
     def rebac_write(
@@ -68,6 +69,7 @@ class ReBACBrickProtocol(Protocol):
         self,
         checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
         zone_id: str,
+        consistency: Any = None,
     ) -> dict[tuple[tuple[str, str], str, tuple[str, str]], bool]: ...
 
     def rebac_list_objects(

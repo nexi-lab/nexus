@@ -1276,7 +1276,14 @@ class _SysWriteResult:
         self.version = 1
         self.gen = gen
         self.size = size
-        self.is_new = False
+        # Issue #4739: the typed Write RPC (vfs.proto WriteResponse) carries
+        # only content_id / size / gen, not the kernel's ``is_new``.  The
+        # kernel computes ``new_gen = old_gen + 1`` with ``old_gen = 0`` when
+        # no entry existed (rust/kernel/src/kernel/io.rs), so ``gen == 1`` is
+        # exactly its ``is_new = old_entry.is_none()``.  Without this the
+        # post-write hooks never saw a new file and the creator's owner grant
+        # was never written over the kernel RPC.
+        self.is_new = gen == 1
         self.old_content_id: str | None = None
         self.old_size: int | None = None
         self.old_version: int | None = None

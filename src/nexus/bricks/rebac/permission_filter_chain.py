@@ -9,6 +9,11 @@ Decomposes the ~450-line filter_list() into a chain of composable strategies:
 
 Each strategy receives remaining paths and returns (allowed, remaining).
 The chain short-circuits once all paths are resolved.
+
+Issue #4739: when ``FilterContext.consistency`` is ``"strong"`` the chain is
+``STRONG_FILTER_CHAIN`` — zone pre-filter plus the authoritative bulk ReBAC
+pass with ``consistency="strong"`` — so no Tiger bitmap, Leopard index or L1
+entry can answer for the call.
 """
 
 import logging
@@ -18,6 +23,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
 from nexus.bricks.rebac._path_utils import get_ancestors
+from nexus.contracts.rebac_types import is_strong_consistency
 from nexus.core.path_utils import unscope_internal_path
 
 if TYPE_CHECKING:
@@ -39,6 +45,19 @@ class FilterContext:
     cache: "PermissionCacheCoordinator"
     rebac_manager: "ReBACManager"
     dlc: Any = None
+    # Issue #4739: None / "eventual" (cached) or "strong" (bypass caches).
+    consistency: str | None = None
+
+    def bulk_kwargs(self) -> dict[str, Any]:
+        """Keyword arguments for ``rebac_manager.rebac_check_bulk``.
+
+        ``consistency`` is only forwarded when strong so managers (and test
+        doubles) that predate the parameter keep working for cached calls.
+        """
+        kwargs: dict[str, Any] = {"zone_id": self.zone_id}
+        if is_strong_consistency(self.consistency):
+            kwargs["consistency"] = self.consistency
+        return kwargs
 
 
 @dataclass
@@ -166,7 +185,7 @@ class HierarchyPreFilterStrategy:
         subject = ctx.subject
 
         checks_by_parent, parent_checks = _dedupe_checks_by_path(subject, unique_parents)
-        parent_results = ctx.rebac_manager.rebac_check_bulk(parent_checks, zone_id=ctx.zone_id)
+        parent_results = ctx.rebac_manager.rebac_check_bulk(parent_checks, **ctx.bulk_kwargs())
 
         accessible_parents = {
             parent
@@ -258,12 +277,13 @@ class BulkReBACStrategy:
         checks_by_path, checks = _dedupe_checks_by_path(subject, remaining)
 
         # Retry-once on transient I/O failures only
+        bulk_kwargs = ctx.bulk_kwargs()
         try:
-            results = ctx.rebac_manager.rebac_check_bulk(checks, zone_id=ctx.zone_id)
+            results = ctx.rebac_manager.rebac_check_bulk(checks, **bulk_kwargs)
         except (OSError, ConnectionError, TimeoutError) as e:
             logger.warning(f"[BULK-REBAC] Bulk check failed, retrying once: {e}")
             try:
-                results = ctx.rebac_manager.rebac_check_bulk(checks, zone_id=ctx.zone_id)
+                results = ctx.rebac_manager.rebac_check_bulk(checks, **bulk_kwargs)
             except Exception as e2:  # fail-safe: second failure → deny all (fail-closed)
                 logger.error(f"[BULK-REBAC] Bulk check failed twice: {e2}")
                 return FilterResult(allowed=[], remaining=[], short_circuit=True)
@@ -309,6 +329,14 @@ DEFAULT_FILTER_CHAIN: list[FilterStrategy] = [
     BulkReBACStrategy(),
 ]
 
+# Issue #4739: strong consistency — only non-cache strategies.  The zone
+# pre-filter is pure path arithmetic; BulkReBACStrategy forwards
+# consistency="strong" so the manager skips its own L1 / Tiger phases.
+STRONG_FILTER_CHAIN: list[FilterStrategy] = [
+    ZonePreFilterStrategy(),
+    BulkReBACStrategy(),
+]
+
 
 def run_filter_chain(
     ctx: FilterContext,
@@ -323,12 +351,18 @@ def run_filter_chain(
 
     Args:
         ctx: Filter context with paths, subject, caches, etc.
-        chain: Optional custom strategy chain (defaults to DEFAULT_FILTER_CHAIN)
+        chain: Optional custom strategy chain (defaults to DEFAULT_FILTER_CHAIN,
+            or STRONG_FILTER_CHAIN when ``ctx.consistency`` is ``"strong"``)
 
     Returns:
         List of allowed paths.
     """
-    strategies = chain if chain is not None else DEFAULT_FILTER_CHAIN
+    if chain is not None:
+        strategies = chain
+    elif is_strong_consistency(ctx.consistency):
+        strategies = STRONG_FILTER_CHAIN
+    else:
+        strategies = DEFAULT_FILTER_CHAIN
     allowed: list[str] = []
     remaining = list(ctx.paths)
 

@@ -19,6 +19,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID, SYSTEM_PATH_PREFIX
+from nexus.contracts.rebac_types import is_strong_consistency
 from nexus.contracts.types import Permission
 from nexus.core.path_utils import parent_path
 
@@ -114,6 +115,15 @@ class RebacPermissionCheckHook:
         """Extract agent_id from context, or None if unavailable."""
         return getattr(context, "agent_id", None) if context else None
 
+    @staticmethod
+    def _is_strong(context: Any) -> bool:
+        """``True`` when the caller asked for strong consistency (Issue #4739).
+
+        A permission lease is a cached *allow*, so the lease fast path is
+        skipped for that call; the full check then re-stamps the lease.
+        """
+        return is_strong_consistency(getattr(context, "consistency", None)) if context else False
+
     # ------------------------------------------------------------------
     # Rust PermissionProvider entry point
     # ------------------------------------------------------------------
@@ -167,7 +177,7 @@ class RebacPermissionCheckHook:
         agent_id = self._extract_agent_id(context)
 
         # Fast path: check permission lease
-        if self._lease_check(ctx.path, agent_id):
+        if not self._is_strong(context) and self._lease_check(ctx.path, agent_id):
             return
 
         # Slow path: full ReBAC check
@@ -204,8 +214,8 @@ class RebacPermissionCheckHook:
 
         agent_id = self._extract_agent_id(context)
 
-        # Fast path: check permission lease (~100-200ns)
-        if self._lease_check(checked_path, agent_id):
+        # Fast path: check permission lease (~100-200ns); skipped under strong (#4739)
+        if not self._is_strong(context) and self._lease_check(checked_path, agent_id):
             return  # lease valid — skip full ReBAC check
 
         # Slow path: full ReBAC check (raises PermissionError on denial)
@@ -230,7 +240,7 @@ class RebacPermissionCheckHook:
         context = ctx.context or self._default_context
         agent_id = self._extract_agent_id(context)
 
-        if self._lease_check(ctx.path, agent_id):
+        if not self._is_strong(context) and self._lease_check(ctx.path, agent_id):
             return
 
         self._checker.check(ctx.path, Permission.WRITE, context)
@@ -293,7 +303,7 @@ class RebacPermissionCheckHook:
         context = ctx.context or self._default_context
         agent_id = self._extract_agent_id(context)
 
-        if self._lease_check(ctx.path, agent_id):
+        if not self._is_strong(context) and self._lease_check(ctx.path, agent_id):
             return
 
         self._checker.check(ctx.path, Permission.WRITE, context)

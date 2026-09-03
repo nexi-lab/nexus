@@ -299,8 +299,20 @@ async def _startup_durable_invalidation(app: "FastAPI", svc: "LifespanServices")
             if coordinator is not None:
                 _dlm = distributed_lease_mgr  # capture for closure
 
-                def _distributed_lease_invalidate(affected_zone_id: str) -> None:
+                def _distributed_lease_invalidate(
+                    affected_zone_id: str,
+                    _subject: tuple[str, str],
+                    _relation: str,
+                    _object: tuple[str, str],
+                ) -> None:
                     """Zone-wide distributed lease revocation on permission change.
+
+                    Signature follows ``CacheCoordinator.register_lease_invalidator``:
+                    ``(zone_id, subject, relation, object)``.  Issue #4739: the
+                    callback used to take only ``zone_id``, so every notification
+                    raised ``TypeError`` inside the coordinator (logged, swallowed)
+                    and distributed leases were never revoked; it surfaced once
+                    ``rebac_delete`` started notifying lease invalidators.
 
                     This runs in sync context (from invalidate_for_write).
                     Schedules the async revocation as fire-and-forget on the

@@ -1775,7 +1775,7 @@ operations:
   transports:
     grpc_expose:
       name: backfill_directory_index
-      source: src/nexus/core/nexus_fs_metadata.py:2078
+      source: src/nexus/core/nexus_fs_metadata.py:2109
     sdk:
       name: MCPClient.backfill_directory_index
       source: src/nexus/remote/domain/mcp.py:91
@@ -2217,7 +2217,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.count_by_state
-      source: src/nexus/remote/kernel_client.py:1660
+      source: src/nexus/remote/kernel_client.py:1667
   profiles:
     lite: supported
     sandbox: supported
@@ -2525,7 +2525,7 @@ operations:
   transports:
     grpc_expose:
       name: delete_batch
-      source: src/nexus/core/nexus_fs_metadata.py:1464
+      source: src/nexus/core/nexus_fs_metadata.py:1465
   profiles:
     lite: supported
     sandbox: supported
@@ -2881,7 +2881,7 @@ operations:
   transports:
     grpc_expose:
       name: exists_batch
-      source: src/nexus/core/nexus_fs_metadata.py:1359
+      source: src/nexus/core/nexus_fs_metadata.py:1360
     sdk:
       name: KernelClient.exists_batch
       source: src/nexus/remote/kernel_client.py:815
@@ -3412,7 +3412,7 @@ operations:
       source: src/nexus/server/_kernel_syscall_dispatch.py:52
     grpc_expose:
       name: list
-      source: src/nexus/bricks/search/search_service.py:480
+      source: src/nexus/bricks/search/search_service.py:481
   profiles:
     lite: supported
     sandbox: supported
@@ -3741,7 +3741,7 @@ operations:
       source: src/nexus/cli/commands/file_ops.py:1
     grpc_expose:
       name: stat
-      source: src/nexus/core/nexus_fs_metadata.py:1139
+      source: src/nexus/core/nexus_fs_metadata.py:1140
   profiles:
     lite: supported
     sandbox: supported
@@ -3868,7 +3868,7 @@ operations:
   transports:
     grpc_expose:
       name: flush_write_observer
-      source: src/nexus/core/nexus_fs_metadata.py:2108
+      source: src/nexus/core/nexus_fs_metadata.py:2139
   profiles:
     lite: supported
     sandbox: supported
@@ -3970,7 +3970,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.get
-      source: src/nexus/remote/kernel_client.py:1607
+      source: src/nexus/remote/kernel_client.py:1614
   profiles:
     lite: supported
     sandbox: supported
@@ -3987,7 +3987,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.heartbeat
-      source: src/nexus/remote/kernel_client.py:1633
+      source: src/nexus/remote/kernel_client.py:1640
   profiles:
     lite: supported
     sandbox: supported
@@ -4072,7 +4072,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.register
-      source: src/nexus/remote/kernel_client.py:1568
+      source: src/nexus/remote/kernel_client.py:1575
   profiles:
     lite: supported
     sandbox: supported
@@ -4140,7 +4140,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.signal
-      source: src/nexus/remote/kernel_client.py:1610
+      source: src/nexus/remote/kernel_client.py:1617
   profiles:
     lite: supported
     sandbox: supported
@@ -4225,7 +4225,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.unregister
-      source: src/nexus/remote/kernel_client.py:1601
+      source: src/nexus/remote/kernel_client.py:1608
   profiles:
     lite: supported
     sandbox: supported
@@ -4339,7 +4339,7 @@ operations:
   transports:
     grpc_expose:
       name: get_content_id
-      source: src/nexus/core/nexus_fs_metadata.py:628
+      source: src/nexus/core/nexus_fs_metadata.py:629
     sdk:
       name: KernelClient.get_content_id
       source: src/nexus/remote/kernel_client.py:806
@@ -4359,7 +4359,7 @@ operations:
   transports:
     grpc_expose:
       name: get_dynamic_viewer_config
-      source: src/nexus/bricks/rebac/rebac_service.py:1597
+      source: src/nexus/bricks/rebac/rebac_service.py:1607
   profiles:
     lite: supported
     sandbox: supported
@@ -4427,7 +4427,7 @@ operations:
   transports:
     grpc_expose:
       name: get_namespace
-      source: src/nexus/bricks/rebac/rebac_service.py:1083
+      source: src/nexus/bricks/rebac/rebac_service.py:1093
   profiles:
     lite: supported
     sandbox: supported
@@ -4478,7 +4478,7 @@ operations:
   transports:
     grpc_expose:
       name: get_rebac_option
-      source: src/nexus/bricks/rebac/rebac_service.py:991
+      source: src/nexus/bricks/rebac/rebac_service.py:1001
   profiles:
     lite: supported
     sandbox: supported
@@ -4529,7 +4529,7 @@ operations:
   transports:
     grpc_expose:
       name: get_top_level_mounts
-      source: src/nexus/core/nexus_fs_metadata.py:269
+      source: src/nexus/core/nexus_fs_metadata.py:270
     sdk:
       name: KernelClient.get_top_level_mounts
       source: src/nexus/remote/kernel_client.py:827
@@ -4601,7 +4601,7 @@ operations:
   transports:
     grpc_expose:
       name: glob_batch
-      source: src/nexus/bricks/search/search_service.py:2061
+      source: src/nexus/bricks/search/search_service.py:2076
   profiles:
     lite: supported
     sandbox: supported
@@ -4687,7 +4687,7 @@ operations:
   transports:
     grpc_expose:
       name: grant_consent
-      source: src/nexus/bricks/rebac/rebac_service.py:1210
+      source: src/nexus/bricks/rebac/rebac_service.py:1220
   profiles:
     lite: supported
     sandbox: supported
@@ -5012,7 +5012,7 @@ operations:
   transports:
     grpc_expose:
       name: initialize_semantic_search
-      source: src/nexus/bricks/search/search_service.py:4942
+      source: src/nexus/bricks/search/search_service.py:4957
   profiles:
     lite: supported
     sandbox: supported
@@ -5169,7 +5169,7 @@ operations:
       source: src/nexus/services/agents/agent_rpc_service.py:584
     sdk:
       name: _AgentRegistryProxy.list_agents
-      source: src/nexus/remote/kernel_client.py:1636
+      source: src/nexus/remote/kernel_client.py:1643
   profiles:
     lite: supported
     sandbox: supported
@@ -5187,7 +5187,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.list_by_priority
-      source: src/nexus/remote/kernel_client.py:1664
+      source: src/nexus/remote/kernel_client.py:1671
   profiles:
     lite: supported
     sandbox: supported
@@ -5260,7 +5260,7 @@ operations:
   transports:
     grpc_expose:
       name: list_incoming_shares
-      source: src/nexus/bricks/rebac/rebac_service.py:1539
+      source: src/nexus/bricks/rebac/rebac_service.py:1549
   profiles:
     lite: supported
     sandbox: supported
@@ -5315,7 +5315,7 @@ operations:
   transports:
     grpc_expose:
       name: list_outgoing_shares
-      source: src/nexus/bricks/rebac/rebac_service.py:1489
+      source: src/nexus/bricks/rebac/rebac_service.py:1499
   profiles:
     lite: supported
     sandbox: supported
@@ -5332,7 +5332,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.list_processes
-      source: src/nexus/remote/kernel_client.py:1639
+      source: src/nexus/remote/kernel_client.py:1646
   profiles:
     lite: supported
     sandbox: supported
@@ -5523,7 +5523,7 @@ operations:
   transports:
     grpc_expose:
       name: make_private
-      source: src/nexus/bricks/rebac/rebac_service.py:1292
+      source: src/nexus/bricks/rebac/rebac_service.py:1302
   profiles:
     lite: supported
     sandbox: supported
@@ -5540,7 +5540,7 @@ operations:
   transports:
     grpc_expose:
       name: make_public
-      source: src/nexus/bricks/rebac/rebac_service.py:1273
+      source: src/nexus/bricks/rebac/rebac_service.py:1283
   profiles:
     lite: supported
     sandbox: supported
@@ -5746,7 +5746,7 @@ operations:
   transports:
     grpc_expose:
       name: metadata_batch
-      source: src/nexus/core/nexus_fs_metadata.py:1369
+      source: src/nexus/core/nexus_fs_metadata.py:1370
   profiles:
     lite: supported
     sandbox: supported
@@ -5940,7 +5940,7 @@ operations:
   transports:
     grpc_expose:
       name: namespace_delete
-      source: src/nexus/bricks/rebac/rebac_service.py:1128
+      source: src/nexus/bricks/rebac/rebac_service.py:1138
   profiles:
     lite: supported
     sandbox: supported
@@ -5957,7 +5957,7 @@ operations:
   transports:
     grpc_expose:
       name: namespace_list
-      source: src/nexus/bricks/rebac/rebac_service.py:1104
+      source: src/nexus/bricks/rebac/rebac_service.py:1114
   profiles:
     lite: supported
     sandbox: supported
@@ -7024,7 +7024,7 @@ operations:
   transports:
     grpc_expose:
       name: read_with_dynamic_viewer
-      source: src/nexus/bricks/rebac/rebac_service.py:1688
+      source: src/nexus/bricks/rebac/rebac_service.py:1698
   profiles:
     lite: supported
     sandbox: supported
@@ -7077,7 +7077,7 @@ operations:
   transports:
     grpc_expose:
       name: rebac_check
-      source: src/nexus/bricks/rebac/rebac_service.py:427
+      source: src/nexus/bricks/rebac/rebac_service.py:428
   profiles:
     lite: supported
     sandbox: supported
@@ -7094,7 +7094,7 @@ operations:
   transports:
     grpc_expose:
       name: rebac_check_batch
-      source: src/nexus/bricks/rebac/rebac_service.py:650
+      source: src/nexus/bricks/rebac/rebac_service.py:655
   profiles:
     lite: supported
     sandbox: supported
@@ -7128,7 +7128,7 @@ operations:
   transports:
     grpc_expose:
       name: rebac_create
-      source: src/nexus/bricks/rebac/rebac_service.py:212
+      source: src/nexus/bricks/rebac/rebac_service.py:213
   profiles:
     lite: supported
     sandbox: supported
@@ -7145,7 +7145,7 @@ operations:
   transports:
     grpc_expose:
       name: rebac_delete
-      source: src/nexus/bricks/rebac/rebac_service.py:756
+      source: src/nexus/bricks/rebac/rebac_service.py:766
   profiles:
     lite: supported
     sandbox: supported
@@ -7162,7 +7162,7 @@ operations:
   transports:
     grpc_expose:
       name: rebac_expand
-      source: src/nexus/bricks/rebac/rebac_service.py:514
+      source: src/nexus/bricks/rebac/rebac_service.py:519
   profiles:
     lite: supported
     sandbox: supported
@@ -7179,7 +7179,7 @@ operations:
   transports:
     grpc_expose:
       name: rebac_expand_with_privacy
-      source: src/nexus/bricks/rebac/rebac_service.py:1163
+      source: src/nexus/bricks/rebac/rebac_service.py:1173
   profiles:
     lite: supported
     sandbox: supported
@@ -7197,7 +7197,7 @@ operations:
   transports:
     grpc_expose:
       name: rebac_explain
-      source: src/nexus/bricks/rebac/rebac_service.py:570
+      source: src/nexus/bricks/rebac/rebac_service.py:575
   profiles:
     lite: supported
     sandbox: supported
@@ -7214,7 +7214,7 @@ operations:
   transports:
     grpc_expose:
       name: rebac_list_objects
-      source: src/nexus/bricks/rebac/rebac_service.py:899
+      source: src/nexus/bricks/rebac/rebac_service.py:909
   profiles:
     lite: supported
     sandbox: supported
@@ -7231,7 +7231,7 @@ operations:
   transports:
     grpc_expose:
       name: rebac_list_tuples
-      source: src/nexus/bricks/rebac/rebac_service.py:798
+      source: src/nexus/bricks/rebac/rebac_service.py:808
   profiles:
     lite: supported
     sandbox: supported
@@ -7283,7 +7283,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.register_external
-      source: src/nexus/remote/kernel_client.py:1571
+      source: src/nexus/remote/kernel_client.py:1578
   profiles:
     lite: supported
     sandbox: supported
@@ -7317,7 +7317,7 @@ operations:
   transports:
     grpc_expose:
       name: register_namespace
-      source: src/nexus/bricks/rebac/rebac_service.py:1022
+      source: src/nexus/bricks/rebac/rebac_service.py:1032
   profiles:
     lite: supported
     sandbox: supported
@@ -7371,7 +7371,7 @@ operations:
   transports:
     grpc_expose:
       name: rename_batch
-      source: src/nexus/core/nexus_fs_metadata.py:1603
+      source: src/nexus/core/nexus_fs_metadata.py:1604
   profiles:
     lite: supported
     sandbox: supported
@@ -7408,7 +7408,7 @@ operations:
   transports:
     grpc_expose:
       name: revoke_consent
-      source: src/nexus/bricks/rebac/rebac_service.py:1238
+      source: src/nexus/bricks/rebac/rebac_service.py:1248
   profiles:
     lite: supported
     sandbox: supported
@@ -7459,7 +7459,7 @@ operations:
   transports:
     grpc_expose:
       name: revoke_share
-      source: src/nexus/bricks/rebac/rebac_service.py:1401
+      source: src/nexus/bricks/rebac/rebac_service.py:1411
   profiles:
     lite: supported
     sandbox: supported
@@ -7476,7 +7476,7 @@ operations:
   transports:
     grpc_expose:
       name: revoke_share_by_id
-      source: src/nexus/bricks/rebac/rebac_service.py:1465
+      source: src/nexus/bricks/rebac/rebac_service.py:1475
   profiles:
     lite: supported
     sandbox: supported
@@ -7747,7 +7747,7 @@ operations:
       source: src/nexus/cli/commands/search.py:1
     grpc_expose:
       name: glob
-      source: src/nexus/bricks/search/search_service.py:1808
+      source: src/nexus/bricks/search/search_service.py:1823
     http:
       name: POST /api/v2/search/glob
       source: src/nexus/server/api/v2/routers/search.py:1694
@@ -7774,7 +7774,7 @@ operations:
       source: src/nexus/cli/commands/search.py:1
     grpc_expose:
       name: grep
-      source: src/nexus/bricks/search/search_service.py:2118
+      source: src/nexus/bricks/search/search_service.py:2133
     http:
       name: POST /api/v2/search/grep
       source: src/nexus/server/api/v2/routers/search.py:1555
@@ -7968,7 +7968,7 @@ operations:
   transports:
     grpc_expose:
       name: semantic_search
-      source: src/nexus/bricks/search/search_service.py:4449
+      source: src/nexus/bricks/search/search_service.py:4464
     mcp:
       name: nexus_semantic_search
       source: src/nexus/config/tool_profiles.yaml:1
@@ -7989,7 +7989,7 @@ operations:
   transports:
     grpc_expose:
       name: semantic_search_index
-      source: src/nexus/bricks/search/search_service.py:4800
+      source: src/nexus/bricks/search/search_service.py:4815
   profiles:
     lite: supported
     sandbox: supported
@@ -8006,7 +8006,7 @@ operations:
   transports:
     grpc_expose:
       name: semantic_search_stats
-      source: src/nexus/bricks/search/search_service.py:4894
+      source: src/nexus/bricks/search/search_service.py:4909
   profiles:
     lite: supported
     sandbox: supported
@@ -8210,7 +8210,7 @@ operations:
   transports:
     grpc_expose:
       name: set_rebac_option
-      source: src/nexus/bricks/rebac/rebac_service.py:954
+      source: src/nexus/bricks/rebac/rebac_service.py:964
   profiles:
     lite: supported
     sandbox: supported
@@ -8261,7 +8261,7 @@ operations:
   transports:
     grpc_expose:
       name: share_with_group
-      source: src/nexus/bricks/rebac/rebac_service.py:1364
+      source: src/nexus/bricks/rebac/rebac_service.py:1374
   profiles:
     lite: supported
     sandbox: supported
@@ -8278,7 +8278,7 @@ operations:
   transports:
     grpc_expose:
       name: share_with_user
-      source: src/nexus/bricks/rebac/rebac_service.py:1327
+      source: src/nexus/bricks/rebac/rebac_service.py:1337
   profiles:
     lite: supported
     sandbox: supported
@@ -8521,7 +8521,7 @@ operations:
   transports:
     grpc_expose:
       name: stat_bulk
-      source: src/nexus/core/nexus_fs_metadata.py:1227
+      source: src/nexus/core/nexus_fs_metadata.py:1228
   profiles:
     lite: supported
     sandbox: supported
@@ -9393,7 +9393,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.unregister_external
-      source: src/nexus/remote/kernel_client.py:1604
+      source: src/nexus/remote/kernel_client.py:1611
   profiles:
     lite: supported
     sandbox: supported
@@ -9482,7 +9482,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.update_state
-      source: src/nexus/remote/kernel_client.py:1622
+      source: src/nexus/remote/kernel_client.py:1629
   profiles:
     lite: supported
     sandbox: supported

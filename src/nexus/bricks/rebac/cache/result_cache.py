@@ -906,12 +906,17 @@ class ReBACPermissionCache:
             self._entry_metadata[key] = (time.time(), jittered_ttl, delta, current_revision)
 
             # Route to appropriate cache based on result (Issue #877)
-            # Grants get longer TTL, denials get shorter TTL for security
+            # Grants get longer TTL, denials get shorter TTL for security.
+            # Issue #4739: a fresh result must supersede a stale entry of the
+            # opposite polarity — get() consults the grant cache first, so a
+            # stale True would otherwise outlive a freshly computed False.
             if result:
+                self._denial_cache.pop(key, None)
                 self._grant_cache[key] = result
                 if self._enable_metrics:
                     self._grant_sets += 1
             else:
+                self._grant_cache.pop(key, None)
                 self._denial_cache[key] = result
                 if self._enable_metrics:
                     self._denial_sets += 1

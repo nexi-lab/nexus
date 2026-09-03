@@ -1076,6 +1076,7 @@ Search surface coverage matrix:
 | Find exact text | `nexus grep "TODO" /workspace` | `POST /api/v2/search/grep`, RPC `SearchService.grep`, MCP `nexus_grep` | You know the token or regex to match. |
 | Query retrieved chunks | `nexus search query "auth flow" --mode hybrid` | `GET /api/v2/search/query`, RPC `SearchService.semantic_search`, MCP `nexus_semantic_search` | You need ranked chunks, not only exact text. |
 | Build or refresh indexes | `nexus search init`, `nexus search index`, `nexus reindex` | `POST /api/v2/search/index`, `/refresh`, `/index-directory`, `/indexing-mode` | You are preparing a corpus or changing indexing scope. |
+| Make a written file searchable | `nexus search index <path>` | `POST /api/v2/files/write` with `"index": true`, `POST /api/v2/search/refresh?path=…`, `POST /api/v2/search/index` | A plain write is never indexed; index in the same call or right after, then compare the returned `index_seq` with `/search/stats` `last_index_seq` (see `docs/deployment/search-plugin.md`). |
 | Explain ranking context | `nexus path-context set src/nexus/bricks/search "Hybrid search brick"` | `PUT /api/v2/path-contexts/` | You want path-level descriptions attached to retrieval results. |
 
 Expected outcomes are deliberately boring:

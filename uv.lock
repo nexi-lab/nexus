@@ -2708,7 +2708,7 @@ requires-dist = [
     { name = "fastcdc", specifier = ">=1.7.0" },
     { name = "fastembed", marker = "extra == 'performance'", specifier = ">=0.8.0" },
     { name = "fastembed", marker = "extra == 'sandbox'", specifier = ">=0.8.0" },
-    { name = "fastmcp", specifier = ">=3.2.4" },
+    { name = "fastmcp", specifier = ">=3.2.4,<4.0.0" },
     { name = "freezegun", marker = "extra == 'dev'", specifier = ">=1.5.5" },
     { name = "freezegun", marker = "extra == 'test'", specifier = ">=1.5.5" },
     { name = "frozenlist", specifier = ">=1.8.0" },

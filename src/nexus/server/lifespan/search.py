@@ -1,7 +1,12 @@
 """Search startup — construct SearchDaemon and wire it to the Rust
-``nexus-search-plugin`` cdylib, register VFS auto-index hooks so file
-mutations refresh the plugin's index, and initialise the zone-search
+``nexus-search-plugin`` cdylib, register VFS hooks that evict deleted /
+renamed paths from the plugin's index, and initialise the zone-search
 registry used by federated search.
+
+Writes are NOT auto-indexed (#4736): the plugin's ``NotifyFileChange``
+carries no text, so making a written file searchable is the caller's
+explicit step (``files/write`` with ``index: true``, ``/search/refresh``
+or ``/search/index`` — see ``docs/deployment/search-plugin.md``).
 
 ``NEXUS_SEARCH_DAEMON`` — default auto-enable when a database URL is
 present; ``true`` forces on, ``false`` forces off.
@@ -118,7 +123,15 @@ async def shutdown_search(app: "FastAPI", svc: "LifespanServices") -> None:  # n
 
 
 def _wire_notify_hooks(app: "FastAPI", svc: "LifespanServices") -> None:
-    """Register VFS post-hooks that call ``notify_file_change`` on the daemon.
+    """Register VFS post-hooks that EVICT deleted / renamed paths from the
+    plugin's index via ``notify_file_change(path, "delete")``.
+
+    Writes and copies are deliberately not relayed (#4736): post-P12 the
+    plugin's ``NotifyFileChange`` carries no text, so a ``create`` /
+    ``update`` event is a pure ``skipped`` ack that used to cost a gRPC
+    round-trip per write for nothing.  A rename evicts the OLD path only;
+    the new path — like any written file — becomes searchable through an
+    explicit indexing call.
 
     VFS hooks fire from synchronous ``asyncio.to_thread`` contexts, so we
     capture the event loop at registration time and hand notifications back
@@ -126,33 +139,20 @@ def _wire_notify_hooks(app: "FastAPI", svc: "LifespanServices") -> None:
     from the worker thread).
     """
     _nexus_fs = svc.nexus_fs
-    if _nexus_fs is None or not hasattr(_nexus_fs, "register_intercept_write"):
+    if _nexus_fs is None or not hasattr(_nexus_fs, "register_intercept_delete"):
         return
 
     _daemon_ref = app.state.search_daemon
     _loop = asyncio.get_running_loop()
 
-    from nexus.contracts.vfs_hooks import (
-        CopyHookContext,
-        DeleteHookContext,
-        RenameHookContext,
-        WriteHookContext,
-    )
+    from nexus.contracts.vfs_hooks import DeleteHookContext, RenameHookContext
 
-    def _notify(path: str, change_type: str) -> None:
+    def _evict(path: str) -> None:
         with contextlib.suppress(RuntimeError):
             _loop.call_soon_threadsafe(
                 _loop.create_task,
-                _daemon_ref.notify_file_change(path, change_type),
+                _daemon_ref.notify_file_change(path, "delete"),
             )
-
-    class _SearchWriteHook:
-        @property
-        def name(self) -> str:
-            return "search_auto_index"
-
-        def on_post_write(self, ctx: WriteHookContext) -> None:
-            _notify(ctx.path, "update")
 
     class _SearchDeleteHook:
         @property
@@ -160,7 +160,7 @@ def _wire_notify_hooks(app: "FastAPI", svc: "LifespanServices") -> None:
             return "search_auto_delete"
 
         def on_post_delete(self, ctx: DeleteHookContext) -> None:
-            _notify(ctx.path, "delete")
+            _evict(ctx.path)
 
     class _SearchRenameHook:
         @property
@@ -168,22 +168,11 @@ def _wire_notify_hooks(app: "FastAPI", svc: "LifespanServices") -> None:
             return "search_auto_rename"
 
         def on_post_rename(self, ctx: RenameHookContext) -> None:
-            _notify(ctx.old_path, "delete")
-            _notify(ctx.new_path, "update")
+            _evict(ctx.old_path)
 
-    class _SearchCopyHook:
-        @property
-        def name(self) -> str:
-            return "search_auto_copy"
-
-        def on_post_copy(self, ctx: CopyHookContext) -> None:
-            _notify(ctx.dst_path, "update")
-
-    _nexus_fs.register_intercept_write(_SearchWriteHook())
     _nexus_fs.register_intercept_delete(_SearchDeleteHook())
     _nexus_fs.register_intercept_rename(_SearchRenameHook())
-    _nexus_fs.register_intercept_copy(_SearchCopyHook())
-    logger.info("Search auto-index hooks registered (write/delete/rename/copy)")
+    logger.info("Search eviction hooks registered (delete/rename)")
 
 
 def _init_zone_registry(app: "FastAPI", svc: "LifespanServices") -> None:

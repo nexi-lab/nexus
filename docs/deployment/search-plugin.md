@@ -64,11 +64,82 @@ docker build \
    the whole server lifetime with a loud warning; fix the wiring and
    restart the server.
 
-3. **Shared filesystem**: on `NotifyFileChange` / `Index` the plugin
-   reads files **by absolute path through its own VFS/filesystem** —
-   the server and the plugin host must see the same bytes at the same
+3. **Shared filesystem**: on `Index` / `Refresh` (directory walks) the
+   plugin reads files **by absolute path through its own VFS/filesystem**
+   — the server and the plugin host must see the same bytes at the same
    paths (shared volume in Docker, same host mount, or the kernel VFS
-   in federated topologies).
+   in federated topologies). `IndexDocuments` (what `files/write`
+   `index: true`, `search/refresh` and `search/index` use) carries the
+   text inline and needs no shared filesystem.
+
+## Write-to-searchable contract (#4736)
+
+**A write does not index.** The server relays nothing to the plugin
+on a write: the plugin's `NotifyFileChange` carries no text, so a
+`create` / `update` event would be a pure ack (it answers `skipped` and
+mutates nothing), and the server's VFS hooks only send `delete` for
+deleted and renamed paths. The plugin has no background poller or
+scheduler: text enters the index only through an explicit indexing
+call. A document written with a bare `POST /api/v2/files/write` is
+therefore **never** searchable, however long you wait — pair the write
+with one of the calls below. The same holds for **overwrites**: writing
+new bytes to an already-indexed path leaves the *previous* text
+searchable until the path is re-indexed, so pair every write of an
+indexed file with `index: true` or a `refresh`.
+
+All indexing calls are **synchronous**: the response returns after the
+plugin has committed, so there is no "queued" state to poll for.
+
+Every indexing call indexes into the caller's **token zone** — the same
+zone `GET /api/v2/search/query` reads (the `?zone=` override on
+`files/write` wins when given) — so what you index is what your queries
+hit. `GET /api/v2/search/stats` is scoped the same way and echoes the
+zone as `zone_id`.
+
+| Call | What it indexes | Returns |
+|---|---|---|
+| `POST /api/v2/files/write` with `"index": true` or `"index": {"text": "…"}` | The file just written, in the same request | `index.status`: `indexed` + `index.index_seq`, `skipped` + `reason`, or `error` |
+| `POST /api/v2/files/batch/write` with request-level `"index": true` and/or per-file `index` | Every requested file, one plugin round-trip after the writes land | per-result `index` verdict |
+| `POST /api/v2/search/refresh?path=P&change_type=update` | One existing path, read server-side through the VFS with the caller's permissions | 200 `{"status": "indexed", "index_seq"}`; 404 missing; 409 `{"status": "skipped", "reason"}` |
+| `POST /api/v2/search/refresh?path=P&change_type=delete` | Evicts one path (chunks dropped, tombstone recorded) | 200 `{"status": "deleted", "index_seq"}` |
+| `POST /api/v2/search/index` `{"documents": [{"path", "text"}]}` | Caller-supplied text, any number of documents | `count`, `skippedCount`, `skippedPaths`, `indexSeq` |
+| `nexus search index <dir>` / plugin `Index` + `Refresh` RPCs | A directory walk through the plugin host's VFS | counts |
+| `POST /api/v2/admin/reindex` with `target` `all` or `search` (admin) | Every path in the replayed operation log: deletes evict, the rest are read server-side and indexed in bounded batches (non-UTF-8 or > 2 MiB files are `skipped`) | `search_paths_indexed` / `_deleted` / `_skipped` (+ reason histogram), `search_index_errors` + failed paths, `search_index_seq` |
+
+`index: true` on a write and `search/refresh` decode the written bytes
+as UTF-8. A binary payload is reported `skipped` with a reason instead
+of being silently acknowledged — pass `index: {"text": "<extracted
+text>"}` to index it. Empty or whitespace-only content is `skipped`
+too (409 on refresh).
+
+When `index` is requested and the search plugin is unreachable, the
+write fails with **503 before anything is written**, so a write+index
+request never half-succeeds. A plugin failure *after* the write landed
+is reported as `index.status = "error"` (HTTP 200: the write itself
+succeeded); re-drive indexing with `search/refresh` or `search/index`.
+
+### Confirming a document is served
+
+Every indexing call returns the plugin's **`index_seq`**: a
+plugin-wide, persisted, monotonic sequence stamped *after* the commit
+that made the batch visible. `GET /api/v2/search/stats` reports:
+
+| Field | Meaning |
+|---|---|
+| `last_index_seq` | Sequence of the last committed index mutation. `last_index_seq >= <your index_seq>` means your batch is served. |
+| `pending` | Documents accepted by in-flight `search/index` / write+index calls and not yet returned. |
+| `last_successful_index_at` | ISO-8601 UTC instant of the last committed mutation (`null` = never). `last_index_refresh` carries the same instant as float epoch seconds for pre-P12 pollers. |
+| `indexing_in_progress` | In-flight `Index` / `IndexDocuments` / `Refresh` operations (#4623). |
+| `zone_id` | The zone these counters describe: the caller's token zone, or the root zone for a token-less poller. |
+
+Stall signature — the #4725 class, index acknowledged but nothing
+served: `pending > 0` or `indexing_in_progress > 0` for longer than one
+indexing call should take, while `last_successful_index_at` does not
+advance. Alert on that instead of running a synthetic write probe.
+
+The sequence lives in `<data>/plugins/search/index_seq.json` and
+survives plugin-host restarts, so a seq captured before a restart still
+compares correctly afterwards.
 
 ## Environment reference (plugin host)
 

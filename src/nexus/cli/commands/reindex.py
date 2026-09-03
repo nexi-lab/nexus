@@ -249,29 +249,37 @@ def _reindex_via_rest(
     table.add_row("Errors", str(result.get("errors", 0)))
     table.add_row("Dry run", str(result.get("dry_run", dry_run)))
 
-    # Issue #4241 + round-2 review (codex MEDIUM): surface the queued
-    # search-refresh fields so remote operators don't mistake
-    # "processed=N" for "BM25/vector index rebuilt". notify_file_change
-    # only wakes the async consumer loop; the actual indexing happens
-    # afterwards, so the count below is paths *enqueued*, not completed.
-    enqueued = result.get("search_paths_enqueued")
-    if enqueued is not None:
-        table.add_row("Search paths queued (async)", str(enqueued))
-    enqueued_at = result.get("search_refresh_enqueued_at")
-    if enqueued_at is not None:
+    # #4241 / #4736: the REST reindex drives the search plugin
+    # SYNCHRONOUSLY — these are completion counts, not queue depths.
+    indexed = result.get("search_paths_indexed")
+    if indexed is not None:
+        table.add_row("Search paths indexed", str(indexed))
+    deleted = int(result.get("search_paths_deleted") or 0)
+    if deleted:
+        table.add_row("Search paths evicted", str(deleted))
+    skipped = int(result.get("search_paths_skipped") or 0)
+    if skipped:
+        reasons = result.get("search_skip_reasons") or {}
+        detail = ", ".join(f"{kind}={n}" for kind, n in sorted(reasons.items()))
+        table.add_row("Search paths skipped", f"{skipped} ({detail})" if detail else str(skipped))
+    index_seq = result.get("search_index_seq")
+    if index_seq is not None:
+        table.add_row("Search index_seq", str(index_seq))
+    indexed_at = result.get("search_indexed_at")
+    if indexed_at is not None:
         from datetime import UTC, datetime
 
-        ts = datetime.fromtimestamp(float(enqueued_at), tz=UTC).isoformat(timespec="seconds")
-        table.add_row("Search refresh enqueued at", ts)
+        ts = datetime.fromtimestamp(float(indexed_at), tz=UTC).isoformat(timespec="seconds")
+        table.add_row("Search indexed at", ts)
 
-    # Round-5 review (codex MEDIUM): surface enqueue failures so
-    # partial-failure isn't hidden behind processed=N, errors=0.
-    enqueue_errors = int(result.get("search_enqueue_errors") or 0)
-    failed_paths = result.get("search_enqueue_failed_paths") or []
-    if enqueue_errors:
+    # Partial failure must not hide behind processed=N, errors=0.
+    index_errors = int(result.get("search_index_errors") or 0)
+    failed_paths = result.get("search_index_failed_paths") or []
+    first_error = result.get("search_index_error")
+    if index_errors:
         table.add_row(
-            "Search refresh enqueue errors",
-            f"[nexus.warning]{enqueue_errors}[/nexus.warning]",
+            "Search index errors",
+            f"[nexus.warning]{index_errors}[/nexus.warning]",
         )
 
     if target == "all":
@@ -279,29 +287,37 @@ def _reindex_via_rest(
             "\n[nexus.warning]Note:[/nexus.warning] Semantic reindex requires local filesystem access "
             "and was skipped. Only search + versions targets were processed."
         )
-    if enqueued:
+    if indexed or deleted:
         console.print(
-            "\n[nexus.muted]Search refresh is asynchronous. Poll "
-            "/api/v2/search/stats or wait for BM25 to return expected hits "
-            "before declaring success.[/nexus.muted]"
+            "\n[nexus.muted]Search indexing is synchronous: the paths above are served "
+            "now. To confirm, check /api/v2/search/stats last_index_seq >= "
+            f"{index_seq if index_seq is not None else 'search_index_seq'}.[/nexus.muted]"
         )
-    if enqueue_errors:
+    if skipped:
         console.print(
-            f"\n[nexus.warning]⚠ {enqueue_errors} path(s) failed to enqueue for search "
-            "refresh — those paths will NOT appear in BM25/vector results until "
-            "the next write or a successful /search/refresh call.[/nexus.warning]"
+            f"\n[nexus.muted]{skipped} path(s) skipped (empty, non-text or over 2 MiB) — "
+            "index binaries with /search/index and extracted text, oversize files with "
+            "`nexus search index <dir>`.[/nexus.muted]"
         )
+    if index_errors:
+        console.print(
+            f"\n[nexus.warning]⚠ {index_errors} path(s) failed to index — those paths "
+            "will NOT appear in search results until re-indexed (files/write with "
+            "index:true, /search/refresh, or /search/index).[/nexus.warning]"
+        )
+        if first_error:
+            console.print(f"First error: {first_error}")
         if failed_paths:
             shown = "\n  ".join(failed_paths[:10])
             extra = f"\n  ... and {len(failed_paths) - 10} more" if len(failed_paths) > 10 else ""
             console.print(f"\nFailed paths:\n  {shown}{extra}")
     console.print(table)
 
-    # Round-5: non-zero CLI exit on partial enqueue failure for the
-    # search/all targets so CI / operator scripts can detect it.
-    if enqueue_errors and target in ("all", "search"):
+    # Non-zero CLI exit on partial index failure for the search/all
+    # targets so CI / operator scripts can detect it.
+    if index_errors and target in ("all", "search"):
         raise click.ClickException(
-            f"Reindex completed but {enqueue_errors} search-refresh enqueue(s) failed. "
+            f"Reindex completed but {index_errors} search index operation(s) failed. "
             "See the table above for details."
         )
 

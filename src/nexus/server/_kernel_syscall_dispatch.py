@@ -151,6 +151,20 @@ def _build_kwargs(
     return kwargs
 
 
+def _with_projection_seq(wire: dict[str, Any], raw_result: Any) -> dict[str, Any]:
+    """Carry a confirmed ``projection_seq`` (#4738) into a legacy wire shape.
+
+    Legacy Tier 2 shapes (``{"deleted": True}`` …) stay byte-identical when
+    no projection observer confirmed the row; when it did, RPC / gRPC
+    callers get the same sequence the REST routes return.
+    """
+    if isinstance(raw_result, dict):
+        seq = raw_result.get("projection_seq")
+        if isinstance(seq, int) and not isinstance(seq, bool):
+            wire["projection_seq"] = seq
+    return wire
+
+
 def _apply_result_adapter(
     method: str,
     raw_result: Any,
@@ -176,13 +190,13 @@ def _apply_result_adapter(
     )
 
     if method in ("delete", "sys_unlink"):
-        return {"deleted": True}
+        return _with_projection_seq({"deleted": True}, raw_result)
     if method in ("rename", "sys_rename"):
-        return {"renamed": True}
+        return _with_projection_seq({"renamed": True}, raw_result)
     if method in ("mkdir", "sys_mkdir"):
-        return {"created": True}
+        return _with_projection_seq({"created": True}, raw_result)
     if method in ("rmdir", "sys_rmdir"):
-        return {"removed": True}
+        return _with_projection_seq({"removed": True}, raw_result)
     if method in ("write", "sys_write"):
         content = params.get("content") or params.get("buf") or b""
         content_len = len(content.encode("utf-8")) if isinstance(content, str) else len(content)

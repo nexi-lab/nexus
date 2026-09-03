@@ -23,6 +23,10 @@ class OperationLogger:
             session: SQLAlchemy session for database operations.
         """
         self.session = session
+        # #4738: ``sequence_number`` of the most recent row this logger
+        # inserted.  The write observer reads it after each
+        # ``log_operation`` to hand the caller a projection sequence.
+        self.last_sequence_number: int | None = None
 
     @staticmethod
     def _apply_filters(
@@ -155,6 +159,7 @@ class OperationLogger:
                 nested.commit()
                 if flush:
                     self.session.flush()
+                self.last_sequence_number = next_seq
                 return operation.operation_id
             except IntegrityError:
                 nested.rollback()
@@ -205,6 +210,31 @@ class OperationLogger:
             yield from batch
             last_seq = batch[-1].sequence_number
             current_seq = (last_seq + 1) if last_seq is not None else current_seq + batch_size
+
+    def projection_state(self, seq: int, *, zone_id: str | None = None) -> tuple[bool, int | None]:
+        """Report whether projection sequence ``seq`` is committed (#4738).
+
+        ``seq`` is the ``sequence_number`` a write returned as
+        ``projection_seq``.  Returns ``(applied, latest_seq)`` where
+        ``applied`` is True when a row with that sequence exists in the
+        caller's zone and ``latest_seq`` is the highest committed sequence
+        in that zone (``None`` when the zone has no rows yet).  Rows of
+        other zones never satisfy the check, so a foreign sequence looks
+        exactly like one that has not landed.
+
+        Callers polling this must start a fresh transaction per probe
+        (SQLite keeps a read snapshot for the life of a transaction).
+        """
+        exists_stmt = select(OperationLogModel.sequence_number).where(
+            OperationLogModel.sequence_number == seq
+        )
+        latest_stmt = select(func.max(OperationLogModel.sequence_number))
+        if zone_id is not None:
+            exists_stmt = exists_stmt.where(OperationLogModel.zone_id == zone_id)
+            latest_stmt = latest_stmt.where(OperationLogModel.zone_id == zone_id)
+        applied = self.session.execute(exists_stmt.limit(1)).scalar_one_or_none() is not None
+        latest = self.session.execute(latest_stmt).scalar_one_or_none()
+        return applied, (int(latest) if latest is not None else None)
 
     def get_operation(self, operation_id: str) -> OperationLogModel | None:
         """Get operation by ID.

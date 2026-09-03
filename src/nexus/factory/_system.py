@@ -133,9 +133,12 @@ def _boot_pre_kernel_services(
                 elif env_val in ("false", "0", "no"):
                     use_buffer = False
                 else:
-                    # Issue #3399: default to piped (async) observer for all profiles.
-                    # DFUSE principle: defer non-consistency-critical work from I/O path.
-                    # Set NEXUS_ENABLE_WRITE_BUFFER=false for strict audit compliance.
+                    # Issue #3399: default to the group-commit observer for all
+                    # profiles.  Since #4738 it is write-through for the
+                    # consistency-critical rows (operation_log, file_paths,
+                    # version_history) and defers only MCL + hooks; set
+                    # NEXUS_ENABLE_WRITE_BUFFER=false for the fully inline
+                    # observer (adds /__sys__/versioning snapshots + inline MCL).
                     use_buffer = True
 
             if use_buffer:
@@ -143,10 +146,23 @@ def _boot_pre_kernel_services(
                     RecordStoreWriteObserver as ObserverWriteObserver,
                 )
 
+                # #4738: how long a write waits for its projection row to
+                # commit before strict_mode raises AuditLogError (or, non-strict,
+                # the write returns projection_seq=None).
+                _timeout_env = os.environ.get("NEXUS_PROJECTION_TIMEOUT_S", "").strip()
+                try:
+                    _projection_timeout = float(_timeout_env) if _timeout_env else 5.0
+                except ValueError:
+                    logger.warning(
+                        "NEXUS_PROJECTION_TIMEOUT_S=%r is not a number; using 5.0", _timeout_env
+                    )
+                    _projection_timeout = 5.0
+
                 write_observer = ObserverWriteObserver(
                     ctx.record_store,
                     strict_mode=ctx.audit.strict_mode,
                     event_signal=ctx.event_signal,
+                    write_through_timeout_s=_projection_timeout,
                 )
             else:
                 from nexus.storage.record_store_write_observer import RecordStoreWriteObserver

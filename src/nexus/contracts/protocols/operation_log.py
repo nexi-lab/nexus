@@ -120,6 +120,15 @@ class OperationLogProtocol(Protocol):
         """Count operations matching filters."""
         ...
 
+    def projection_state(self, seq: int, *, zone_id: str | None = None) -> tuple[bool, int | None]:
+        """Return ``(applied, latest_seq)`` for a projection sequence (#4738).
+
+        ``applied`` is True once the operation_log row with
+        ``sequence_number == seq`` is committed in ``zone_id``;
+        ``latest_seq`` is the highest committed sequence in that zone.
+        """
+        ...
+
     def get_last_operation(
         self,
         *,

@@ -168,6 +168,45 @@ ETAG_CHECKS = Counter(
     ["result"],
 )
 
+# ---------------------------------------------------------------------------
+# RecordStore projection (write observer) — #4738
+# ---------------------------------------------------------------------------
+# ``queue`` is ``pending`` (events accepted but not yet committed to
+# operation_log / file_paths / version_history) or ``deferred`` (committed
+# events awaiting MCL + post-flush hooks).  A non-zero ``dropped`` counter
+# means projection rows were lost and ``POST /api/v2/admin/reconcile-
+# projections`` should be run.
+_PROJECTION_QUEUES = frozenset({"pending", "deferred", "other"})
+
+PROJECTION_EVENTS_DROPPED = Counter(
+    "nexus_projection_events_dropped_total",
+    "Write-observer events dropped because a bounded queue overflowed.",
+    ["queue"],
+)
+
+PROJECTION_EVENTS_FAILED = Counter(
+    "nexus_projection_events_failed_total",
+    "Write-observer events whose RecordStore commit failed after retries.",
+)
+
+PROJECTION_WRITE_THROUGH_TIMEOUTS = Counter(
+    "nexus_projection_write_through_timeouts_total",
+    "Writes that returned before their projection row was confirmed committed.",
+)
+
+PROJECTION_PENDING_EVENTS = Gauge(
+    "nexus_projection_pending_events",
+    "Write-observer events currently queued, by queue.",
+    ["queue"],
+)
+
+# Pre-register both queue series so `/metrics` exposes them at 0 from boot
+# (a labelled Counter is otherwise absent until its first increment, and an
+# absent "dropped" series is indistinguishable from an unscraped one).
+for _queue in ("pending", "deferred"):
+    PROJECTION_EVENTS_DROPPED.labels(queue=_queue)
+    PROJECTION_PENDING_EVENTS.labels(queue=_queue).set(0)
+
 
 def record_cache_request(tier: str, result: str) -> None:
     CACHE_REQUESTS.labels(
@@ -264,3 +303,23 @@ def record_write_backend_rpc() -> None:
 
 def record_generation_mismatch() -> None:
     GENERATION_MISMATCH.inc()
+
+
+def record_projection_dropped(queue: str, count: int) -> None:
+    PROJECTION_EVENTS_DROPPED.labels(queue=_bounded(queue, _PROJECTION_QUEUES)).inc(
+        _nonnegative(count)
+    )
+
+
+def record_projection_failed(count: int) -> None:
+    PROJECTION_EVENTS_FAILED.inc(_nonnegative(count))
+
+
+def record_projection_write_through_timeout() -> None:
+    PROJECTION_WRITE_THROUGH_TIMEOUTS.inc()
+
+
+def set_projection_pending(queue: str, count: int) -> None:
+    PROJECTION_PENDING_EVENTS.labels(queue=_bounded(queue, _PROJECTION_QUEUES)).set(
+        _nonnegative(count)
+    )

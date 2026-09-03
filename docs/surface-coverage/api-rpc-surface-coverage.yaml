@@ -439,13 +439,31 @@ operations:
     and covered by connector/search benchmarks when enabled.
   gap_issue: null
   owning_issue: 4136
+- id: admin.reconcile_projections
+  module: uncategorized
+  summary: Repair file_paths / version_history / operation_log from the kernel after a crash, outage or dropped projection
+    event (#4738).
+  transports:
+    http:
+      name: POST /api/v2/admin/reconcile-projections
+      source: src/nexus/server/api/v2/routers/replay.py:250
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: tests/unit/server/api/v2/test_admin_reconcile_projections.py; tests/unit/storage/test_projection_reconcile.py
+  perf_class: control
+  perf_link: operator recovery surface; walks the kernel under a prefix, not on the data-plane hot path
+  gap_issue: null
+  owning_issue: 4738
 - id: admin.reindex
   module: search
   summary: ''
   transports:
     http:
       name: POST /api/v2/admin/reindex
-      source: src/nexus/server/api/v2/routers/replay.py:88
+      source: src/nexus/server/api/v2/routers/replay.py:95
   profiles:
     lite: supported
     sandbox: supported
@@ -1018,7 +1036,7 @@ operations:
   transports:
     http:
       name: POST /batch/read
-      source: src/nexus/server/api/v2/routers/async_files.py:2176
+      source: src/nexus/server/api/v2/routers/async_files.py:2206
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1037,7 +1055,7 @@ operations:
   transports:
     http:
       name: POST /batch/write
-      source: src/nexus/server/api/v2/routers/async_files.py:2091
+      source: src/nexus/server/api/v2/routers/async_files.py:2120
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1056,7 +1074,7 @@ operations:
   transports:
     http:
       name: POST /copy
-      source: src/nexus/server/api/v2/routers/async_files.py:2370
+      source: src/nexus/server/api/v2/routers/async_files.py:2401
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1075,7 +1093,7 @@ operations:
   transports:
     http:
       name: POST /copy-bulk
-      source: src/nexus/server/api/v2/routers/async_files.py:2477
+      source: src/nexus/server/api/v2/routers/async_files.py:2509
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1094,7 +1112,7 @@ operations:
   transports:
     http:
       name: DELETE /delete
-      source: src/nexus/server/api/v2/routers/async_files.py:1582
+      source: src/nexus/server/api/v2/routers/async_files.py:1606
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1112,7 +1130,7 @@ operations:
   transports:
     http:
       name: GET /exists
-      source: src/nexus/server/api/v2/routers/async_files.py:1667
+      source: src/nexus/server/api/v2/routers/async_files.py:1692
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1130,7 +1148,7 @@ operations:
   transports:
     http:
       name: GET /glob
-      source: src/nexus/server/api/v2/routers/async_files.py:2554
+      source: src/nexus/server/api/v2/routers/async_files.py:2586
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1148,7 +1166,7 @@ operations:
   transports:
     http:
       name: GET /grep
-      source: src/nexus/server/api/v2/routers/async_files.py:2613
+      source: src/nexus/server/api/v2/routers/async_files.py:2645
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1167,7 +1185,7 @@ operations:
   transports:
     http:
       name: GET /list
-      source: src/nexus/server/api/v2/routers/async_files.py:1704
+      source: src/nexus/server/api/v2/routers/async_files.py:1729
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1185,7 +1203,7 @@ operations:
   transports:
     http:
       name: GET /md-structure
-      source: src/nexus/server/api/v2/routers/async_files.py:1484
+      source: src/nexus/server/api/v2/routers/async_files.py:1508
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1203,7 +1221,7 @@ operations:
   transports:
     http:
       name: GET /metadata
-      source: src/nexus/server/api/v2/routers/async_files.py:1987
+      source: src/nexus/server/api/v2/routers/async_files.py:2016
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1221,7 +1239,7 @@ operations:
   transports:
     http:
       name: POST /mkdir
-      source: src/nexus/server/api/v2/routers/async_files.py:1949
+      source: src/nexus/server/api/v2/routers/async_files.py:1974
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1239,7 +1257,7 @@ operations:
   transports:
     http:
       name: GET /read
-      source: src/nexus/server/api/v2/routers/async_files.py:945
+      source: src/nexus/server/api/v2/routers/async_files.py:969
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1257,7 +1275,7 @@ operations:
   transports:
     http:
       name: GET /read-url
-      source: src/nexus/server/api/v2/routers/async_files.py:1320
+      source: src/nexus/server/api/v2/routers/async_files.py:1344
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1276,7 +1294,7 @@ operations:
   transports:
     http:
       name: POST /rename
-      source: src/nexus/server/api/v2/routers/async_files.py:2326
+      source: src/nexus/server/api/v2/routers/async_files.py:2356
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1294,7 +1312,7 @@ operations:
   transports:
     http:
       name: POST /rename-batch
-      source: src/nexus/server/api/v2/routers/async_files.py:2435
+      source: src/nexus/server/api/v2/routers/async_files.py:2466
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1312,7 +1330,7 @@ operations:
   transports:
     http:
       name: GET /stream
-      source: src/nexus/server/api/v2/routers/async_files.py:2255
+      source: src/nexus/server/api/v2/routers/async_files.py:2285
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1330,7 +1348,7 @@ operations:
   transports:
     http:
       name: POST /write
-      source: src/nexus/server/api/v2/routers/async_files.py:716
+      source: src/nexus/server/api/v2/routers/async_files.py:739
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1757,7 +1775,7 @@ operations:
   transports:
     grpc_expose:
       name: backfill_directory_index
-      source: src/nexus/core/nexus_fs_metadata.py:2052
+      source: src/nexus/core/nexus_fs_metadata.py:2078
     sdk:
       name: MCPClient.backfill_directory_index
       source: src/nexus/remote/domain/mcp.py:91
@@ -2507,7 +2525,7 @@ operations:
   transports:
     grpc_expose:
       name: delete_batch
-      source: src/nexus/core/nexus_fs_metadata.py:1445
+      source: src/nexus/core/nexus_fs_metadata.py:1464
   profiles:
     lite: supported
     sandbox: supported
@@ -2863,7 +2881,7 @@ operations:
   transports:
     grpc_expose:
       name: exists_batch
-      source: src/nexus/core/nexus_fs_metadata.py:1340
+      source: src/nexus/core/nexus_fs_metadata.py:1359
     sdk:
       name: KernelClient.exists_batch
       source: src/nexus/remote/kernel_client.py:815
@@ -3215,7 +3233,7 @@ operations:
       source: src/nexus/cli/commands/file_ops.py:1
     grpc_expose:
       name: append
-      source: src/nexus/core/nexus_fs_content.py:1092
+      source: src/nexus/core/nexus_fs_content.py:1096
   profiles:
     lite: supported
     sandbox: supported
@@ -3336,7 +3354,7 @@ operations:
   transports:
     grpc_expose:
       name: edit
-      source: src/nexus/core/nexus_fs_content.py:1213
+      source: src/nexus/core/nexus_fs_content.py:1217
   profiles:
     lite: supported
     sandbox: supported
@@ -3723,7 +3741,7 @@ operations:
       source: src/nexus/cli/commands/file_ops.py:1
     grpc_expose:
       name: stat
-      source: src/nexus/core/nexus_fs_metadata.py:1120
+      source: src/nexus/core/nexus_fs_metadata.py:1139
   profiles:
     lite: supported
     sandbox: supported
@@ -3850,7 +3868,7 @@ operations:
   transports:
     grpc_expose:
       name: flush_write_observer
-      source: src/nexus/core/nexus_fs_metadata.py:2082
+      source: src/nexus/core/nexus_fs_metadata.py:2108
   profiles:
     lite: supported
     sandbox: supported
@@ -5728,7 +5746,7 @@ operations:
   transports:
     grpc_expose:
       name: metadata_batch
-      source: src/nexus/core/nexus_fs_metadata.py:1350
+      source: src/nexus/core/nexus_fs_metadata.py:1369
   profiles:
     lite: supported
     sandbox: supported
@@ -6276,7 +6294,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/operations/agents/{agent_id}/activity
-      source: src/nexus/server/api/v2/routers/operations.py:135
+      source: src/nexus/server/api/v2/routers/operations.py:225
   profiles:
     lite: supported
     sandbox: supported
@@ -6293,7 +6311,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/operations
-      source: src/nexus/server/api/v2/routers/operations.py:58
+      source: src/nexus/server/api/v2/routers/operations.py:70
   profiles:
     lite: supported
     sandbox: supported
@@ -6304,13 +6322,30 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4138
+- id: operations.wait
+  module: uncategorized
+  summary: Wait until a write's projection_seq (operation_log sequence) is committed; 412 on timeout (#4738).
+  transports:
+    http:
+      name: GET /api/v2/operations/wait
+      source: src/nexus/server/api/v2/routers/operations.py:147
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: tests/unit/server/api/v2/test_operations_wait.py
+  perf_class: control
+  perf_link: read-your-writes fence; one indexed EXISTS probe per poll, not on the data-plane hot path
+  gap_issue: null
+  owning_issue: 4738
 - id: ops.replay
   module: uncategorized
   summary: ''
   transports:
     http:
       name: GET /api/v2/ops/replay
-      source: src/nexus/server/api/v2/routers/replay.py:30
+      source: src/nexus/server/api/v2/routers/replay.py:37
   profiles:
     lite: supported
     sandbox: supported
@@ -6914,7 +6949,7 @@ operations:
   transports:
     grpc_expose:
       name: read_batch
-      source: src/nexus/core/nexus_fs_content.py:1626
+      source: src/nexus/core/nexus_fs_content.py:1635
     sdk:
       name: KernelClient.read_batch
       source: src/nexus/remote/kernel_client.py:649
@@ -7336,7 +7371,7 @@ operations:
   transports:
     grpc_expose:
       name: rename_batch
-      source: src/nexus/core/nexus_fs_metadata.py:1584
+      source: src/nexus/core/nexus_fs_metadata.py:1603
   profiles:
     lite: supported
     sandbox: supported
@@ -8486,7 +8521,7 @@ operations:
   transports:
     grpc_expose:
       name: stat_bulk
-      source: src/nexus/core/nexus_fs_metadata.py:1208
+      source: src/nexus/core/nexus_fs_metadata.py:1227
   profiles:
     lite: supported
     sandbox: supported
@@ -9684,7 +9719,7 @@ operations:
   transports:
     grpc_expose:
       name: write_batch
-      source: src/nexus/core/nexus_fs_content.py:1463
+      source: src/nexus/core/nexus_fs_content.py:1467
     sdk:
       name: KernelClient.write_batch
       source: src/nexus/remote/kernel_client.py:1114
@@ -9877,6 +9912,14 @@ parity_warnings:
   - mcp
   - sdk
 - operation_id: access_manifests.{manifest_id}_revoke
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: admin.reconcile_projections
   has:
   - http
   missing:
@@ -11805,6 +11848,14 @@ parity_warnings:
   - mcp
   - sdk
 - operation_id: operations.api_v2
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: operations.wait
   has:
   - http
   missing:

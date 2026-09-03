@@ -285,6 +285,9 @@ class WriteBatchHookContext:
     zone_id: str | None = None
     agent_id: str | None = None
     warnings: list[OperationWarning] = field(default_factory=list)
+    # Hook-to-caller side channel (mirrors the single-item contexts).  The
+    # audit interceptor stores the per-item ``projection_seqs`` here (#4738).
+    extra: dict[str, Any] = field(default_factory=dict)
 
 
 @runtime_checkable

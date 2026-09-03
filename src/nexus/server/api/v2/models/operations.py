@@ -36,6 +36,23 @@ class OperationListResponse(ApiModel):
     next_cursor: str | None = None
 
 
+class ProjectionWaitResponse(ApiModel):
+    """Response for GET /api/v2/operations/wait (#4738).
+
+    ``seq`` is the ``projection_seq`` a write returned; ``applied`` is True
+    once the operation_log row with that sequence is committed in the
+    caller's zone (the endpoint answers 412 instead when the timeout
+    passes first).  ``latest_seq`` is the highest committed sequence in
+    that zone, usable as a ``/api/v2/ops/replay`` cursor.
+    """
+
+    seq: int
+    applied: bool
+    latest_seq: int | None = None
+    zone_id: str
+    waited_ms: int = 0
+
+
 class AgentActivityResponse(ApiModel):
     """Response for GET /api/v2/operations/agents/{agent_id}/activity.
 

@@ -121,7 +121,12 @@ def test_delete_without_kernel_stamp_reports_null(client: TestClient) -> None:
     resp = client.delete("/delete", params={"path": "/a.txt"})
 
     assert resp.status_code == 200, resp.text
-    assert resp.json() == {"deleted": True, "path": "/a.txt", "revision": None}
+    assert resp.json() == {
+        "deleted": True,
+        "path": "/a.txt",
+        "revision": None,
+        "projection_seq": None,
+    }
     assert REVISION_HEADER not in resp.headers
 
 

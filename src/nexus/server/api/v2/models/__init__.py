@@ -38,6 +38,7 @@ from nexus.server.api.v2.models.operations import (
     AgentActivityResponse,
     OperationListResponse,
     OperationResponse,
+    ProjectionWaitResponse,
 )
 from nexus.server.api.v2.models.playbooks import (
     PlaybookCreateRequest,
@@ -118,4 +119,5 @@ __all__ = [
     "OperationResponse",
     "OperationListResponse",
     "AgentActivityResponse",
+    "ProjectionWaitResponse",
 ]

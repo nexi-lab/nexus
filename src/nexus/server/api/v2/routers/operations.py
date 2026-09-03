@@ -2,6 +2,7 @@
 
 Provides endpoints for querying filesystem operation history:
 - GET /api/v2/operations — List operations with offset or cursor pagination
+- GET /api/v2/operations/wait — Wait for a write's projection sequence (#4738)
 - GET /api/v2/operations/agents/{agent_id}/activity — Agent activity summary
 
 Supports filtering by agent_id, operation_type, path_pattern, status,
@@ -12,24 +13,35 @@ Issue #1197: Add Event Replay API for Agent Mesh support.
 Issue #1198: Add Agent Activity Summary endpoint.
 """
 
+import asyncio
 import json
 import logging
+import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.protocols.operation_log import OperationLogProtocol
-from nexus.server.api.v2.dependencies import get_operation_logger
+from nexus.server.api.v2.dependencies import get_nexus_fs, get_operation_logger
 from nexus.server.api.v2.models import (
     AgentActivityResponse,
     OperationListResponse,
     OperationResponse,
+    ProjectionWaitResponse,
 )
+from nexus.server.dependencies import get_operation_context, require_auth
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_ACTIVITY_WINDOW_HOURS = 24
+
+# GET /wait polling: start fast, back off to a quarter second.
+_WAIT_POLL_INITIAL_S = 0.02
+_WAIT_POLL_MAX_S = 0.25
+_WAIT_DEFAULT_TIMEOUT_MS = 5_000
+_WAIT_MAX_TIMEOUT_MS = 30_000
 
 router = APIRouter(prefix="/api/v2/operations", tags=["operations"])
 
@@ -130,6 +142,84 @@ async def list_operations(
     except Exception as e:
         logger.error("Operations query error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to query operations") from e
+
+
+@router.get("/wait", response_model=ProjectionWaitResponse)
+async def wait_for_projection(
+    seq: int = Query(..., ge=1, description="projection_seq returned by a write"),
+    timeout_ms: int = Query(
+        _WAIT_DEFAULT_TIMEOUT_MS,
+        ge=0,
+        le=_WAIT_MAX_TIMEOUT_MS,
+        description="How long to wait for the sequence to be committed; 0 probes once",
+    ),
+    nexus_fs: Any = Depends(get_nexus_fs),
+    auth_result: dict[str, Any] = Depends(require_auth),
+) -> ProjectionWaitResponse:
+    """Wait until the projection row ``seq`` is committed (#4738).
+
+    Every write returns ``projection_seq`` — the ``operation_log`` sequence
+    of the row that also carries its ``version_history`` / ``file_paths``
+    update.  This endpoint polls the RecordStore until that row exists in
+    the caller's zone, so a client can fence ``list_versions``, operation
+    replay and the search zone join on it instead of calling the admin-only
+    ``flush_write_observer`` RPC.  With the write-through observer the
+    sequence is normally already committed when the write returns; the
+    wait matters for a non-strict audit mode that timed out, and for other
+    nodes sharing the same RecordStore.
+
+    * **200** — applied; ``latest_seq`` is the zone's newest sequence.
+    * **412** — not committed before ``timeout_ms`` elapsed (also the answer
+      for a sequence that belongs to another zone).
+    """
+    from nexus.storage.operation_logger import OperationLogger
+
+    context = get_operation_context(auth_result)
+    zone_id = context.zone_id or ROOT_ZONE_ID
+    record_store = getattr(nexus_fs, "record_store", None)
+    session_factory = (
+        record_store.session_factory
+        if record_store is not None
+        else getattr(nexus_fs, "SessionLocal", None)
+    )
+    if session_factory is None:
+        raise HTTPException(status_code=503, detail="RecordStore not initialized")
+
+    def _probe() -> tuple[bool, int | None]:
+        # A fresh session per probe: SQLite keeps a read snapshot for the
+        # life of a transaction, so a long-lived session would never see
+        # rows committed after its first query.
+        with session_factory() as session:
+            return OperationLogger(session).projection_state(seq, zone_id=zone_id)
+
+    started = time.monotonic()
+    deadline = started + timeout_ms / 1000.0
+    interval = _WAIT_POLL_INITIAL_S
+    while True:
+        try:
+            applied, latest = await asyncio.to_thread(_probe)
+        except Exception as e:
+            logger.error("projection wait query error: %s", e, exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to query projection state") from e
+        waited_ms = int((time.monotonic() - started) * 1000)
+        if applied:
+            return ProjectionWaitResponse(
+                seq=seq, applied=True, latest_seq=latest, zone_id=zone_id, waited_ms=waited_ms
+            )
+        now = time.monotonic()
+        if now >= deadline:
+            raise HTTPException(
+                status_code=412,
+                detail={
+                    "error": "projection_not_applied",
+                    "seq": seq,
+                    "latest_seq": latest,
+                    "zone_id": zone_id,
+                    "waited_ms": waited_ms,
+                },
+            )
+        await asyncio.sleep(min(interval, deadline - now))
+        interval = min(interval * 2, _WAIT_POLL_MAX_S)
 
 
 @router.get("/agents/{agent_id}/activity", response_model=AgentActivityResponse)

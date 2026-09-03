@@ -11,10 +11,19 @@ derive whatever they need (e.g. snapshot_hash = metadata.content_id).
 
 Current implementations:
 - RecordStoreWriteObserver (record_store_write_observer): synchronous audit trail + versioning (strict_mode)
-- RecordStoreWriteObserver (piped_record_store_write_observer): OBSERVE-phase observer with debounced batch flush
+- RecordStoreWriteObserver (piped_record_store_write_observer): write-through group
+  commit of operation_log / file_paths / version_history; MCL + hooks deferred (#4738)
 
 The kernel is a pure caller — it never catches observer exceptions.
 Each implementation decides its own failure handling strategy.
+
+Return values (#4738): ``on_write`` / ``on_delete`` / ``on_rename`` /
+``on_mkdir`` / ``on_rmdir`` may return the ``operation_log.sequence_number``
+of the row they committed (the *projection sequence*) and ``on_write_batch``
+a list of them; ``None`` means "not confirmed" (legacy observer, or a
+non-strict observer whose commit did not complete within its timeout).
+The audit interceptor copies the value into ``ctx.extra["projection_seq"]``
+so ``NexusFS.write`` can return it to the caller.
 
 Tracked by: #55 (Move _audit_strict_mode from kernel to observer)
 Issue #900: Replaced snapshot_hash/metadata_snapshot with metadata.
@@ -47,7 +56,7 @@ class WriteObserverProtocol(Protocol):
         old_metadata: FileMetadata | None = ...,
         zone_id: str | None = ...,
         agent_id: str | None = ...,
-    ) -> None:
+    ) -> int | None:
         """Called after a single file write completes in Metastore.
 
         Args:
@@ -56,6 +65,10 @@ class WriteObserverProtocol(Protocol):
             path: Virtual path of the file.
             old_metadata: Previous metadata before write (for undo).
                           None when is_new=True.
+
+        Returns:
+            The projection sequence of the committed audit row, or None
+            when the observer does not confirm commits (#4738).
         """
         ...
 
@@ -66,11 +79,14 @@ class WriteObserverProtocol(Protocol):
         zone_id: str | None = ...,
         agent_id: str | None = ...,
         urgency: str | None = ...,
-    ) -> None:
+    ) -> list[int | None] | None:
         """Called after a batch write completes in Metastore.
 
         Args:
             items: List of (metadata, is_new) tuples.
+
+        Returns:
+            One projection sequence per item (same order), or None (#4738).
         """
         ...
 
@@ -82,7 +98,7 @@ class WriteObserverProtocol(Protocol):
         metadata: FileMetadata | None = ...,
         zone_id: str | None = ...,
         agent_id: str | None = ...,
-    ) -> None:
+    ) -> int | None:
         """Called after a file rename completes in Metastore."""
         ...
 
@@ -93,7 +109,7 @@ class WriteObserverProtocol(Protocol):
         metadata: FileMetadata | None = ...,
         zone_id: str | None = ...,
         agent_id: str | None = ...,
-    ) -> None:
+    ) -> int | None:
         """Called after a file delete completes in Metastore."""
         ...
 
@@ -103,7 +119,7 @@ class WriteObserverProtocol(Protocol):
         *,
         zone_id: str | None = ...,
         agent_id: str | None = ...,
-    ) -> None:
+    ) -> int | None:
         """Called after a directory creation completes in Metastore."""
         ...
 
@@ -114,6 +130,6 @@ class WriteObserverProtocol(Protocol):
         zone_id: str | None = ...,
         agent_id: str | None = ...,
         recursive: bool = ...,
-    ) -> None:
+    ) -> int | None:
         """Called after a directory removal completes in Metastore."""
         ...

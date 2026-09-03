@@ -3,15 +3,22 @@
 Provides endpoints for MCL replay and index rebuilding:
 - GET /api/v2/ops/replay -- Cursor-based MCL replay
 - POST /api/v2/admin/reindex -- Trigger index rebuild
+- POST /api/v2/admin/reconcile-projections -- Repair file_paths / version_history
+  / operation_log from the kernel (#4738)
 """
 
+import asyncio
 import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.server.api.v2.dependencies import get_auth_result, get_operation_logger
 from nexus.server.api.v2.models.aspects import (
+    ReconcileProjectionsRequest,
+    ReconcileProjectionsResponse,
     ReindexRequest,
     ReindexResponse,
     ReplayResponse,
@@ -238,3 +245,66 @@ async def trigger_reindex(
     except Exception as e:
         logger.error("reindex error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to run reindex") from e
+
+
+@router.post("/api/v2/admin/reconcile-projections", response_model=ReconcileProjectionsResponse)
+async def reconcile_projections(
+    request: Request,
+    body: ReconcileProjectionsRequest,
+    auth_result: dict[str, Any] = Depends(get_auth_result),
+) -> ReconcileProjectionsResponse:
+    """Repair the RecordStore projection from the kernel (#4738).
+
+    The write observer commits ``file_paths`` / ``version_history`` /
+    ``operation_log`` before a write returns, but the kernel commit lands
+    first: a crash between the two, a RecordStore outage that outlived the
+    observer's retries, or a dropped queue entry
+    (``nexus_projection_events_dropped_total``) leaves the kernel ahead of
+    the projection.  This walks the kernel under ``prefix`` and, per file,
+    creates the missing rows or appends a version for content the
+    projection does not have; paths whose projected kernel ``gen`` is
+    already newer than this node's kernel view are reported
+    ``stale_kernel`` and left alone.  Rows are keyed by the caller's zone
+    (the zone writes in that token's context were recorded under).
+    ``dry_run`` reports without writing.  Requires admin privileges.
+    """
+    if not auth_result.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required for reconcile")
+
+    nexus_fs = getattr(request.app.state, "nexus_fs", None)
+    if nexus_fs is None:
+        raise HTTPException(status_code=503, detail="NexusFS not initialized")
+    record_store = getattr(nexus_fs, "record_store", None)
+    session_factory = (
+        record_store.session_factory
+        if record_store is not None
+        else getattr(nexus_fs, "SessionLocal", None)
+    )
+    if session_factory is None:
+        raise HTTPException(status_code=503, detail="RecordStore not initialized")
+
+    from nexus.server.dependencies import get_operation_context
+    from nexus.storage.projection_reconcile import reconcile_projection
+
+    context = get_operation_context(auth_result)
+    zone_id = context.zone_id or ROOT_ZONE_ID
+    try:
+        report = await asyncio.to_thread(
+            reconcile_projection,
+            nexus_fs=nexus_fs,
+            session_factory=session_factory,
+            prefix=body.prefix,
+            zone_id=zone_id,
+            context=context,
+            dry_run=body.dry_run,
+            retire_missing=body.retire_missing,
+            max_entries=body.max_entries,
+        )
+    except NexusFileNotFoundError as e:
+        raise HTTPException(
+            status_code=404, detail=f"prefix not found in the kernel: {body.prefix} ({e})"
+        ) from e
+    except Exception as e:
+        logger.error("reconcile-projections error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to reconcile projections") from e
+    return ReconcileProjectionsResponse(**report.to_dict())

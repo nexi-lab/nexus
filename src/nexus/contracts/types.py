@@ -35,7 +35,7 @@ class VFSOperations(Protocol):
 
     def mkdir(
         self, path: str, parents: bool = True, exist_ok: bool = True, context: Any = None
-    ) -> None: ...
+    ) -> Any: ...
 
     def sys_write(self, path: str, buf: bytes | str, *, context: Any = None) -> int: ...
 
@@ -47,7 +47,7 @@ class VFSOperations(Protocol):
 
     def sys_readdir(self, path: str = "/", **kw: Any) -> list: ...
 
-    def sys_unlink(self, path: str, **kw: Any) -> None: ...
+    def sys_unlink(self, path: str, **kw: Any) -> Any: ...
 
 
 class Permission(IntFlag):
@@ -393,10 +393,14 @@ class AuditConfig:
     trails. ``strict_mode=True`` (default) ensures writes fail if audit
     logging fails, preventing silent audit gaps.
 
-    Note on observers: ``strict_mode`` is enforced by the synchronous
-    ``RecordStoreWriteObserver``.  The OBSERVE-phase observer receives
-    events from the Rust kernel; error handling (retry + drop) is
-    managed by the debounced flush, not by ``strict_mode``.
+    Note on observers: both observers enforce ``strict_mode`` (#4738).  The
+    synchronous ``RecordStoreWriteObserver`` raises ``AuditLogError`` when
+    its inline commit fails; the write-through group-commit observer
+    (``piped_record_store_write_observer``) raises when the commit fails
+    after retries or is not confirmed within ``NEXUS_PROJECTION_TIMEOUT_S``
+    (default 5 s).  With ``strict_mode=False`` the write succeeds, the
+    event stays queued for retry and the write reports ``projection_seq``
+    as ``None``.
     """
 
     strict_mode: bool = True

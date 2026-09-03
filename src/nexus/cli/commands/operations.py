@@ -365,6 +365,70 @@ def ops_replay(
         )
 
 
+@ops_group.command(name="wait")
+@click.option("--seq", type=int, required=True, help="projection_seq returned by a write")
+@click.option(
+    "--timeout-ms",
+    type=int,
+    default=5000,
+    show_default=True,
+    help="How long the server waits for the row to be committed (0 probes once)",
+)
+@add_backend_options
+@click.pass_context
+def ops_wait(
+    ctx: click.Context,
+    seq: int,
+    timeout_ms: int,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
+    """Wait until a write's projection sequence is committed (#4738).
+
+    Every write returns ``projection_seq`` — the operation_log sequence of
+    the row that also carries its version history.  This blocks until that
+    row is committed in your zone (exit 0) or the timeout passes (exit 1),
+    so version history and the operation log can be read right after.
+
+    Examples:
+        nexus ops wait --seq 1234
+        nexus ops wait --seq 1234 --timeout-ms 0
+    """
+    import httpx
+
+    from nexus.cli.api_client import get_api_client_from_options
+
+    profile_name = (ctx.obj or {}).get("profile")
+    client = get_api_client_from_options(remote_url, remote_api_key, profile_name=profile_name)
+    try:
+        result = client.get(
+            "/api/v2/operations/wait", params={"seq": seq, "timeout_ms": timeout_ms}
+        )
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 412:
+            try:
+                detail = e.response.json().get("detail") or {}
+            except ValueError:
+                detail = {}
+            console.print(
+                f"[nexus.warning]Not applied:[/nexus.warning] seq {seq} "
+                f"(latest_seq={detail.get('latest_seq')}, zone={detail.get('zone_id')}, "
+                f"waited {detail.get('waited_ms', timeout_ms)} ms)"
+            )
+            raise SystemExit(1) from e
+        console.print(f"[nexus.error]Error:[/nexus.error] {e}")
+        raise SystemExit(1) from e
+    except Exception as e:
+        console.print(f"[nexus.error]Error:[/nexus.error] {e}")
+        raise SystemExit(1) from e
+
+    console.print(
+        f"[nexus.success]Applied:[/nexus.success] seq {result.get('seq', seq)} "
+        f"(latest_seq={result.get('latest_seq')}, zone={result.get('zone_id')}, "
+        f"waited {result.get('waited_ms', 0)} ms)"
+    )
+
+
 @click.command(name="undo")
 @click.option("--agent", "-a", help="Filter by agent ID (undo last operation by this agent)")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation")

@@ -35,7 +35,7 @@ import time
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
 from nexus.bricks.search.results import BACKEND_LEG_TIMING_KEYS as _BACKEND_LEG_TIMING_KEYS
 from nexus.contracts.search_types import BatchQueryFailure, SearchRequest
@@ -44,6 +44,7 @@ from nexus.lib.rebac_filter import apply_rebac_filter as _apply_rebac_filter
 from nexus.lib.rebac_filter import compute_rebac_fetch_limit as _compute_rebac_fetch_limit
 from nexus.lib.rebac_filter import rebac_denial_stats as _rebac_denial_stats
 from nexus.runtime.zone_resolution import target_zone_for_context
+from nexus.server.api.v2._revision_fence import RevisionFence, get_revision_fence
 from nexus.server.api.v2.routers._index_on_write import (
     REASON_EMPTY,
     REASON_NON_TEXT,
@@ -249,6 +250,7 @@ async def search_daemon_stats(
 @router.get("/query")
 async def search_query(
     request: Request,
+    response: Response,
     q: str = Query(..., description="Search query text", min_length=1),
     type: str = Query("hybrid", description="Search type: keyword, semantic, or hybrid"),
     limit: int = Query(10, description="Maximum number of results", ge=1, le=100),
@@ -285,6 +287,7 @@ async def search_query(
     search_daemon: Any = Depends(_get_search_daemon),
     async_session_factory: Any = Depends(_get_async_read_session_factory),
     record_store: Any = Depends(_get_record_store),
+    revision_fence: RevisionFence = Depends(get_revision_fence),
 ) -> dict[str, Any]:
     """Execute a fast search query using the search daemon."""
     from nexus.contracts.constants import ROOT_ZONE_ID
@@ -318,6 +321,16 @@ async def search_query(
 
     if not search_daemon.is_initialized:
         raise HTTPException(status_code=503, detail="Search daemon is still initializing")
+
+    # Issue #4737: read-your-writes fence — wait until this node has applied
+    # the caller's zone revision before the query runs. This fences the VFS
+    # state the plugin reads from; whether the write is *indexed* is the
+    # separate index_seq contract (#4736).
+    await revision_fence.enforce(
+        getattr(request.app.state, "nexus_fs", None),
+        context=get_operation_context(auth_result),
+    )
+    revision_fence.stamp(response)
 
     if type not in ("keyword", "semantic", "hybrid"):
         raise HTTPException(
@@ -897,8 +910,10 @@ async def _handle_federated_search(
 @router.post("/query/batch")
 async def search_query_batch(
     request: Request,
+    response: Response,
     auth_result: dict[str, Any] = Depends(require_auth),
     search_daemon: Any = Depends(_get_search_daemon),
+    revision_fence: RevisionFence = Depends(get_revision_fence),
 ) -> dict[str, Any]:
     """Batch search: run N queries through the full hybrid pipeline.
 
@@ -969,6 +984,13 @@ async def search_query_batch(
 
     if not search_daemon.is_initialized:
         raise HTTPException(status_code=503, detail="Search daemon is still initializing")
+
+    # Issue #4737: read-your-writes fence (see /query).
+    await revision_fence.enforce(
+        getattr(request.app.state, "nexus_fs", None),
+        context=get_operation_context(auth_result),
+    )
+    revision_fence.stamp(response)
 
     # Same ReBAC hook the single-query endpoint uses.
     permission_enforcer = getattr(request.app.state, "permission_enforcer", None)
@@ -1451,6 +1473,7 @@ def _resolve_section_filter(section: str | None, in_section: str | None) -> str 
 @router.get("/grep")
 async def search_grep(
     request: Request,
+    response: Response,
     pattern: str = Query(..., description="Regex pattern to search for", min_length=1),
     path: str = Query("/", description="Base path to search from"),
     ignore_case: bool = Query(False, description="Case-insensitive match"),
@@ -1487,6 +1510,7 @@ async def search_grep(
         description="Alias for section, matching the CLI --in-section flag (#4186).",
     ),
     auth_result: dict[str, Any] = Depends(require_auth),
+    revision_fence: RevisionFence = Depends(get_revision_fence),
 ) -> dict[str, Any]:
     """Search file contents via regex (#3701 Issue 1A).
 
@@ -1505,6 +1529,12 @@ async def search_grep(
     those, use ``POST /api/v2/search/grep`` which accepts the same fields
     as a JSON body — no URL length constraint.
     """
+    # Issue #4737: read-your-writes fence (see /query).
+    await revision_fence.enforce(
+        getattr(request.app.state, "nexus_fs", None),
+        context=get_operation_context(auth_result),
+    )
+    revision_fence.stamp(response)
     return await _do_grep_operation(
         request,
         auth_result,
@@ -1525,7 +1555,9 @@ async def search_grep(
 @router.post("/grep")
 async def search_grep_post(
     request: Request,
+    response: Response,
     auth_result: dict[str, Any] = Depends(require_auth),
+    revision_fence: RevisionFence = Depends(get_revision_fence),
 ) -> dict[str, Any]:
     """POST variant of ``/api/v2/search/grep`` accepting a JSON body.
 
@@ -1592,6 +1624,12 @@ async def search_grep_post(
         raise HTTPException(status_code=400, detail="Field 'block_type' must be a string")
     section = _resolve_section_filter(body.get("section"), body.get("in_section"))
 
+    # Issue #4737: read-your-writes fence (see /query).
+    await revision_fence.enforce(
+        getattr(request.app.state, "nexus_fs", None),
+        context=get_operation_context(auth_result),
+    )
+    revision_fence.stamp(response)
     return await _do_grep_operation(
         request,
         auth_result,
@@ -1612,6 +1650,7 @@ async def search_grep_post(
 @router.get("/glob")
 async def search_glob(
     request: Request,
+    response: Response,
     pattern: str = Query(..., description="Glob pattern (e.g. '**/*.py')", min_length=1),
     path: str = Query("/", description="Base path to search from"),
     limit: int = Query(100, ge=1, le=10000, description="Max results to return"),
@@ -1624,6 +1663,7 @@ async def search_glob(
         ),
     ),
     auth_result: dict[str, Any] = Depends(require_auth),
+    revision_fence: RevisionFence = Depends(get_revision_fence),
 ) -> dict[str, Any]:
     """Search file paths via glob pattern (#3701 Issue 1A).
 
@@ -1634,6 +1674,12 @@ async def search_glob(
     length limit of your HTTP client (typically >500–2000 paths), use
     ``POST /api/v2/search/glob`` with a JSON body.
     """
+    # Issue #4737: read-your-writes fence (see /query).
+    await revision_fence.enforce(
+        getattr(request.app.state, "nexus_fs", None),
+        context=get_operation_context(auth_result),
+    )
+    revision_fence.stamp(response)
     return await _do_glob_operation(
         request,
         auth_result,
@@ -1648,7 +1694,9 @@ async def search_glob(
 @router.post("/glob")
 async def search_glob_post(
     request: Request,
+    response: Response,
     auth_result: dict[str, Any] = Depends(require_auth),
+    revision_fence: RevisionFence = Depends(get_revision_fence),
 ) -> dict[str, Any]:
     """POST variant of ``/api/v2/search/glob`` accepting a JSON body.
 
@@ -1696,6 +1744,12 @@ async def search_glob_post(
     offset = _body_get_int(body, "offset", 0, ge=0)
     files = _body_get_files(body)
 
+    # Issue #4737: read-your-writes fence (see /query).
+    await revision_fence.enforce(
+        getattr(request.app.state, "nexus_fs", None),
+        context=get_operation_context(auth_result),
+    )
+    revision_fence.stamp(response)
     return await _do_glob_operation(
         request,
         auth_result,

@@ -1045,6 +1045,38 @@ A second acquirer of a held lock is refused/blocked; release frees it.
   migration-only**, sunset **2026-06-25** (Issue #1133). Use gRPC `Call` or
   the typed `Read`/`Write`/`Delete` RPCs (what the CLI uses).
 
+### Read-your-writes across nodes (revision token)
+
+In a multi-node deployment a read can land on a follower that has not yet
+applied your write. Every write returns a **revision token** you can fence a
+later read on (Issue #4737):
+
+```bash
+curl -s -X POST "$NEXUS/api/v2/files/write" -H "Authorization: Bearer $KEY" \
+  -H 'Content-Type: application/json' -d '{"path":"/w/a.txt","content":"hello"}'
+# {"content_id":"…","version":3,"size":5,"modified_at":"…","revision":"/w/a.txt@3"}
+
+curl -s -D - "$NEXUS/api/v2/files/list?path=/w" -H "Authorization: Bearer $KEY" \
+  -H "X-Nexus-Min-Revision: /w/a.txt@3" -H "X-Nexus-Revision-Timeout-Ms: 5000"
+# 200 + X-Nexus-Revision: /w/a.txt@3   — this node has applied the write
+# 412 + current_revision in the body    — this node is still behind
+```
+
+- `revision` (also the `X-Nexus-Revision` header) is `"<path>@<gen>"` on
+  `files/write`, `files/batch/write` (per item) and `files/copy`. Because
+  raft applies entries in order, a node that shows the path at that gen has
+  applied every earlier write in the zone, so listings, glob, grep and
+  search include it too.
+- `X-Nexus-Min-Revision` (or `?min_revision=`) is honoured by `files/read`,
+  `metadata`, `exists`, `list`, `glob`, `grep`, `stream`, `batch-read`,
+  `batch/read` and `search/query`, `search/query/batch`, `search/grep`,
+  `search/glob`. Timeout via `X-Nexus-Revision-Timeout-Ms` /
+  `?revision_timeout_ms=` (default 5000, max 30000, 0 = probe once).
+- Search visibility is a separate contract: `min_revision` fences the files
+  the search plugin can see, `index_seq` (§5) tells you the write is indexed.
+
+Full semantics: [Consistency Contract](../architecture/consistency-contract.md).
+
 ### Performance (guidance, not CI gates)
 
 Hot paths benchmarked in `tests/benchmarks/bench_read_write_overhead.py`

@@ -29,6 +29,7 @@ from nexus.contracts.metadata import FileMetadata
 from nexus.contracts.types import OperationContext
 from nexus.lib import io_metrics
 from nexus.lib.rpc_decorator import rpc_expose
+from nexus.lib.zone_revision import revision_token
 
 if TYPE_CHECKING:
     pass
@@ -714,7 +715,13 @@ class ContentMixin:
                 bytes_count=len(buf),
                 latency_ms=_write_latency_ms,
             )
-        return {"path": path, "bytes_written": len(buf)}
+        # Issue #4737: revision token (``<path>@<gen>``) a reader can fence
+        # on; None when the kernel reported no gen (e.g. a miss).
+        return {
+            "path": path,
+            "bytes_written": len(buf),
+            "revision": revision_token(result, path=path),
+        }
 
     # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
     def read(
@@ -997,6 +1004,11 @@ class ContentMixin:
             "gen": result.gen,
             "modified_at": None,
             "size": result.size,
+            # Issue #4737: read-your-writes token — ``<path>@<gen>`` (or a
+            # kernel-stamped ``zone@applied_index`` when available). A
+            # reader passes it back as X-Nexus-Min-Revision to observe this
+            # write on any node. None only when the kernel reported no gen.
+            "revision": revision_token(result, path=path),
         }
 
     # _write_internal + _write_content deleted — Rust sys_write handles:
@@ -1575,6 +1587,7 @@ class ContentMixin:
                     "gen": r.gen,
                     "modified_at": now,
                     "size": r.size,
+                    "revision": revision_token(r, path=path),
                 }
             )
             metadata_list.append(

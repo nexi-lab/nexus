@@ -18,6 +18,7 @@ may enumerate — or refuses.
 | Caller | View |
 |--------|------|
 | `context is None` (kernel / internal caller) | unrestricted |
+| the kernel's own init credential (`NexusFS._init_cred`) passed explicitly — the embedded operator, e.g. the MCP tools in sandbox mode; matched by identity, a copy is an ordinary caller | unrestricted, same as `context is None` |
 | `is_system` without a zone claim (internal service scans) | unrestricted |
 | `is_system` with a zone (ReBAC expansion, zone export) | that zone's namespace, plus root-namespace rows (see §1.1) |
 | credential with `zone_perms` | zones granting `r` or `x`; write-only grants see nothing |

@@ -15,6 +15,11 @@ This module is the single source of truth for what a caller may enumerate.
 The rules, in order:
 
 1. ``context is None`` — the kernel or an internal caller.  Unrestricted.
+   The kernel's own init credential (``NexusFS._init_cred``, the embedded
+   operator that ``context=None`` resolves to) gets the same view when a
+   caller passes it explicitly — the MCP tools do in sandbox mode.  It is
+   matched by identity, so a copy with the same fields is an ordinary
+   zone-less caller.
 2. ``all_zones=True`` — only admins may ask; the caller gets the global
    view and the request is audited by the caller (``audit_all_zones``).
    A non-admin asking for ``all_zones`` is refused, not silently narrowed.
@@ -148,17 +153,26 @@ def resolve_zone_view(
     *,
     all_zones: bool = False,
     operation: str = "list",
+    init_cred: Any = None,
 ) -> ZoneView:
     """Resolve the zones *context* may enumerate; fail closed.
 
     Accepts an ``OperationContext``, a plain dict with the same keys, or
     ``None`` (kernel / internal caller → unrestricted).
 
+    ``init_cred`` is the kernel's own credential (``NexusFS._init_cred``).
+    When *context* **is** that object (identity, not equality) the caller is
+    the embedded operator — the same principal ``context=None`` resolves to
+    — and gets the unrestricted view instead of being refused as a
+    zone-less tenant.  The MCP tools pass it explicitly in sandbox mode.
+
     Raises:
         PermissionDeniedError: for a non-admin ``all_zones`` request, or for
             an authenticated non-admin, non-system caller with no zone claim.
     """
     if context is None:
+        return UNRESTRICTED_VIEW
+    if init_cred is not None and context is init_cred:
         return UNRESTRICTED_VIEW
 
     is_admin = bool(_attr(context, "is_admin", False))

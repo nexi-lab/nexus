@@ -511,8 +511,15 @@ class SearchService:
         # Issue #4740: resolve the caller's zone view first and fail closed —
         # a zone-less non-admin caller is refused instead of receiving the
         # root/global view, and admins only cross zones with an explicit,
-        # audited ``all_zones=True``.
-        _zone_view = resolve_zone_view(context, all_zones=all_zones, operation="search.list")
+        # audited ``all_zones=True``.  The service's default context is the
+        # kernel's own init credential (embedded operator): passed explicitly
+        # it keeps the unrestricted view ``context=None`` would get.
+        _zone_view = resolve_zone_view(
+            context,
+            all_zones=all_zones,
+            operation="search.list",
+            init_cred=self._default_context,
+        )
         if _zone_view.all_zones:
             audit_all_zones(context, operation="search.list", path=path)
 
@@ -1654,7 +1661,9 @@ class SearchService:
         from nexus.lib.pagination import encode_cursor
 
         if zone_view is None:
-            zone_view = resolve_zone_view(context, operation="search.list")
+            zone_view = resolve_zone_view(
+                context, operation="search.list", init_cred=self._default_context
+            )
         context = context or self._default_context
         import time as _time
 

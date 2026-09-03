@@ -215,3 +215,41 @@ class TestAuditAllZones:
         assert len(zv._RECENT_AUDITS) == 3
         # evicted keys are treated as new again
         assert zv._already_audited("req-0", "list") is False
+
+
+class TestProcessCredential:
+    """The kernel's own init credential is the embedded operator, not a zone-less tenant.
+
+    ``create_nexus_fs`` installs ``OperationContext(user_id="system")`` — no
+    zone, not admin — as ``NexusFS._init_cred``; the MCP tools pass it
+    explicitly in sandbox mode.  Refusing it broke
+    ``test_issue_4129_sandbox_search_e2e`` in CI.
+    """
+
+    def test_init_cred_passed_explicitly_is_unrestricted(self) -> None:
+        cred = _ctx(user_id="system")
+        assert resolve_zone_view(cred, init_cred=cred).unrestricted is True
+
+    def test_identity_not_equality(self) -> None:
+        import dataclasses
+
+        cred = _ctx(user_id="system")
+        twin = dataclasses.replace(cred)
+        assert twin is not cred
+        with pytest.raises(PermissionDeniedError):
+            resolve_zone_view(twin, init_cred=cred)
+
+    def test_same_context_without_init_cred_is_refused(self) -> None:
+        cred = _ctx(user_id="system")
+        with pytest.raises(PermissionDeniedError):
+            resolve_zone_view(cred)
+
+    def test_init_cred_matches_context_none_even_with_a_zone(self) -> None:
+        # ``context=None`` resolves to the init credential and is unrestricted;
+        # passing the credential explicitly must not narrow that.
+        cred = _ctx(user_id="system", zone_id="acme")
+        assert resolve_zone_view(cred, init_cred=cred).unrestricted is True
+
+    def test_all_zones_from_init_cred_is_not_refused(self) -> None:
+        cred = _ctx(user_id="system")
+        assert resolve_zone_view(cred, all_zones=True, init_cred=cred).unrestricted is True

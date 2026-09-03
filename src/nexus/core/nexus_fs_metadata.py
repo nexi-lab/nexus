@@ -1843,9 +1843,16 @@ class MetadataMixin:
         # 403) instead of receiving the root/global view; root-tagged entries
         # are visible only to callers that can read the root zone; admins
         # see across zones only with an explicit ``all_zones=True``, which is
-        # audited.  ``context=None`` (kernel / internal callers) and
-        # zone-less ``is_system`` contexts keep the unrestricted view.
-        _view = resolve_zone_view(context, all_zones=all_zones, operation="list")
+        # audited.  ``context=None`` (kernel / internal callers), zone-less
+        # ``is_system`` contexts and the kernel's own init credential passed
+        # explicitly (embedded operator, e.g. the MCP tools in sandbox mode)
+        # keep the unrestricted view.
+        _view = resolve_zone_view(
+            context,
+            all_zones=all_zones,
+            operation="list",
+            init_cred=getattr(self, "_init_cred", None),
+        )
         if _view.all_zones:
             # Deduplicated per request_id, so the nested calls made by the
             # paginated branch and _expand_recursive_readdir log once.

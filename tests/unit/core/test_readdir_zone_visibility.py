@@ -96,6 +96,7 @@ class _FakeFS(MetadataMixin):
         self._hook_specs = {}
         self.metadata = None
         self._driver_coordinator = None
+        self._init_cred: Any = None
 
     def _get_context_identity(self, context: Any = None) -> tuple[str | None, str | None, bool]:
         if context is None:
@@ -256,3 +257,29 @@ class TestPaginated:
     def test_paginated_zone_less_non_admin_is_refused(self, fs: _FakeFS) -> None:
         with pytest.raises(PermissionDeniedError):
             fs.sys_readdir("/", recursive=True, limit=10, context=_ctx())
+
+
+class TestProcessCredential:
+    """``fs._init_cred`` passed explicitly (MCP tools in sandbox mode) is the embedded operator."""
+
+    def test_init_cred_sees_everything_like_context_none(self, fs: _FakeFS) -> None:
+        fs._init_cred = _ctx(user_id="system")  # factory default: zone-less, non-admin
+        assert _paths(fs.sys_readdir("/", context=fs._init_cred)) == ALL_PATHS
+
+    def test_init_cred_fast_path_skips_stat_batch(self, fs: _FakeFS) -> None:
+        fs._init_cred = _ctx(user_id="system")
+        got = fs.sys_readdir("/", recursive=False, context=fs._init_cred)
+        assert _paths(got) == {ROOT_FILE, FLAT_TA}
+        assert fs._kernel.stat_batch_calls == 0
+
+    def test_init_cred_paginated_sees_everything(self, fs: _FakeFS) -> None:
+        fs._init_cred = _ctx(user_id="system")
+        page = fs.sys_readdir("/", recursive=True, context=fs._init_cred, limit=10)
+        assert _paths(page) == ALL_PATHS
+
+    def test_equal_copy_of_init_cred_is_an_ordinary_zone_less_caller(self, fs: _FakeFS) -> None:
+        import dataclasses
+
+        fs._init_cred = _ctx(user_id="system")
+        with pytest.raises(PermissionDeniedError):
+            fs.sys_readdir("/", context=dataclasses.replace(fs._init_cred))

@@ -85,6 +85,7 @@ from nexus.contracts.rebac_types import (
     GraphLimits,
     TraversalStats,
     WriteResult,
+    is_strong_consistency,
 )
 from nexus.lib.zone import normalize_zone_id
 
@@ -498,8 +499,16 @@ class ReBACManager:
         object: tuple[str, str],
         context: dict[str, Any] | None = None,
         zone_id: str | None = None,  # Issue #773: Defaults to "root" internally
+        consistency: Any = None,
     ) -> bool:
-        """Check permission (always uses cached/eventual consistency).
+        """Check permission.
+
+        Uses cached (eventual) consistency by default: the boundary cache,
+        Tiger bitmaps and L1 result cache may answer the check.  Pass
+        ``consistency="strong"`` (Issue #4739, SpiceDB ``fully_consistent``
+        analog) to bypass every cached allow/deny for this one call and
+        resolve from the tuple store; the fresh result is still written back
+        to the caches.
 
         Args:
             subject: (subject_type, subject_id) tuple
@@ -507,6 +516,7 @@ class ReBACManager:
             object: (object_type, object_id) tuple
             context: Optional ABAC context for condition evaluation
             zone_id: Zone ID to scope check
+            consistency: ``None`` / ``"eventual"`` (cached) or ``"strong"``
 
         Returns:
             True if permission is granted, False otherwise
@@ -516,10 +526,12 @@ class ReBACManager:
 
         Example:
             result = manager.rebac_check(subject, permission, object)
+            fresh = manager.rebac_check(subject, permission, object, consistency="strong")
         """
         logger.debug(
             f"ReBACManager.rebac_check called: enforce_zone_isolation={self.enforce_zone_isolation}, MAX_DEPTH={GraphLimits.MAX_DEPTH}"
         )
+        strong = is_strong_consistency(consistency)
 
         # Issue #702: OTel tracing — wrap the entire check in a root span
         check_start = time.perf_counter()
@@ -528,7 +540,7 @@ class ReBACManager:
             permission=permission,
             obj=object,
             zone_id=zone_id,
-            consistency="cached",
+            consistency="strong" if strong else "cached",
         ) as _check_span:
             result = self._rebac_check_inner(
                 subject,
@@ -536,6 +548,7 @@ class ReBACManager:
                 object,
                 context,
                 zone_id,
+                consistency=consistency,
             )
             decision_ms = (time.perf_counter() - check_start) * 1000
             record_check_result(_check_span, allowed=result, decision_time_ms=decision_ms)
@@ -548,11 +561,15 @@ class ReBACManager:
         object: tuple[str, str],
         context: dict[str, Any] | None,
         zone_id: str | None,
+        consistency: Any = None,
     ) -> bool:
         """Inner body of rebac_check, extracted for clean span wrapping (Issue #702)."""
         object_type, object_id = object
         subject_type, subject_id = subject
         effective_zone = normalize_zone_id(zone_id)
+        # Issue #4739: strong consistency skips every cached allow (boundary,
+        # Tiger, L1) and goes straight to the tuple store.
+        strong = is_strong_consistency(consistency)
 
         # OPTIMIZATION 1: Boundary Cache (Issue #922) - O(1) inheritance shortcut
         # For file permissions, check if we have a cached boundary (nearest ancestor with grant)
@@ -561,6 +578,7 @@ class ReBACManager:
             and permission in ("read", "write", "execute")
             and self._boundary_cache
             and context is None
+            and not strong
         ):
             boundary = self._boundary_cache.get_boundary(
                 effective_zone, subject_type, subject_id, permission, object_id
@@ -585,7 +603,7 @@ class ReBACManager:
 
         # OPTIMIZATION 2: Try Tiger Cache (O(1) bitmap lookup)
         # Tiger Cache stores pre-materialized permissions as Roaring Bitmaps
-        if self._tiger_cache and zone_id and context is None:
+        if self._tiger_cache and zone_id and context is None and not strong:
             tiger_result = self.tiger_check_access(
                 subject=subject,
                 permission=permission,
@@ -604,7 +622,9 @@ class ReBACManager:
         if not self.enforce_zone_isolation:
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug(f"  -> Falling back to base check path, max_depth={self.max_depth}")
-            result = self._rebac_check_base(subject, permission, object, context, zone_id)
+            result = self._rebac_check_base(
+                subject, permission, object, context, zone_id, consistency=consistency
+            )
 
             # Write-through to Tiger Cache (Issue #935)
             if result and self._tiger_cache and zone_id and context is None:
@@ -617,7 +637,9 @@ class ReBACManager:
             return result
 
         logger.debug("  -> Using rebac_check_detailed")
-        detailed_result = self.rebac_check_detailed(subject, permission, object, context, zone_id)
+        detailed_result = self.rebac_check_detailed(
+            subject, permission, object, context, zone_id, consistency=consistency
+        )
         logger.debug(
             f"  -> rebac_check_detailed result: allowed={detailed_result.allowed}, indeterminate={detailed_result.indeterminate}"
         )
@@ -817,10 +839,12 @@ class ReBACManager:
         object: tuple[str, str],
         context: dict[str, Any] | None = None,
         zone_id: str | None = None,  # Issue #773: Defaults to "root" internally
+        consistency: Any = None,
     ) -> CheckResult:
         """Check permission with detailed result metadata.
 
-        Always uses cached (eventual) consistency.
+        Uses cached (eventual) consistency unless ``consistency="strong"``
+        (Issue #4739), which skips the cache lookup and computes from tuples.
 
         Args:
             subject: (subject_type, subject_id) tuple
@@ -828,6 +852,7 @@ class ReBACManager:
             object: (object_type, object_id) tuple
             context: Optional ABAC context for condition evaluation
             zone_id: Zone ID to scope check
+            consistency: ``None`` / ``"eventual"`` (cached) or ``"strong"``
 
         Returns:
             CheckResult with consistency metadata and traversal stats
@@ -871,8 +896,9 @@ class ReBACManager:
         self._cleanup_expired_tuples_if_needed()
 
         # Context-sensitive ABAC checks cannot use the context-free cache key.
-        if context is None:
-            # Always use cached (eventual) consistency: Use cache (up to cache_ttl_seconds staleness)
+        # Issue #4739: strong consistency never serves a cached decision.
+        if context is None and not is_strong_consistency(consistency):
+            # Cached (eventual) consistency: Use cache (up to cache_ttl_seconds staleness)
             cached = self._get_cached_check_zone_aware(
                 subject_entity, permission, object_entity, zone_id
             )
@@ -1746,40 +1772,91 @@ class ReBACManager:
             if zone_id:
                 self.invalidate_zone_graph_cache(zone_id)
 
+            subject_type = tuple_info["subject_type"]
+            subject_id = tuple_info["subject_id"]
+            relation = tuple_info["relation"]
+            object_type = tuple_info["object_type"]
+            object_id = tuple_info["object_id"]
+            effective_zone = normalize_zone_id(zone_id)
+            has_full_tuple = bool(subject_type and subject_id and object_type and object_id)
+
+            # Issue #4739: a revocation must reach every cache that can hold a
+            # stale *allow*, not only the L1 / boundary / visibility caches
+            # handled further down.  CacheCoordinator.invalidate_for_write() is
+            # the single entry point: it also clears permission leases, evicts
+            # the Tiger L1/L2 bitmaps (this process and — via DT_STREAM,
+            # Pub/Sub and the durable stream — other processes and zones) and
+            # the iterator cache.  Grants keep their write-through path: adding
+            # a tuple cannot make a cached allow wrong, so rebac_write does not
+            # need this and stays cheap.
+            if has_full_tuple:
+                try:
+                    self._cache_coordinator.invalidate_for_write(
+                        zone_id=effective_zone,
+                        subject=(subject_type, subject_id),
+                        relation=relation,
+                        object=(object_type, object_id),
+                    )
+                except Exception:
+                    logger.warning(
+                        "[ReBACManager] coordinator invalidation failed for deleted tuple %s",
+                        tuple_id,
+                        exc_info=True,
+                    )
+
             # Tiger Cache: Write-through revocation
-            if self._tiger_cache:
-                subject_type = tuple_info["subject_type"]
-                subject_id = tuple_info["subject_id"]
-                relation = tuple_info["relation"]
-                object_type = tuple_info["object_type"]
-                object_id = tuple_info["object_id"]
+            if self._tiger_cache and has_full_tuple:
+                permissions = RELATION_TO_PERMISSIONS.get(relation, [])
+                object_is_pattern = is_path_pattern(object_type, object_id)
+                # Issue #4739: rebac_write expanded a directory grant to every
+                # descendant (Leopard-style).  persist_revoke only drops the
+                # directory's own bit, so a revoked viewer would keep seeing the
+                # files until the Tiger TTL (3600 s).  Drop the directory-grant
+                # record (stops future files being added to the bitmap) and the
+                # subject's bitmap for that permission (L1 + L2 + L3) so the next
+                # access recomputes from tuples — targeted to subject+permission,
+                # not zone-wide.
+                is_directory_grant = (
+                    object_type == "file"
+                    and not object_is_pattern
+                    and self._is_directory_path(object_id)
+                )
 
-                if subject_type and subject_id and object_type and object_id:
-                    permissions = RELATION_TO_PERMISSIONS.get(relation, [])
-
-                    effective_zone = normalize_zone_id(zone_id)
-
-                    # Revoke each permission immediately
-                    for permission in permissions:
-                        try:
-                            if is_path_pattern(object_type, object_id):
-                                self.tiger_invalidate_cache(
-                                    (subject_type, subject_id),
-                                    permission,
-                                    object_type,
-                                    effective_zone,
-                                )
-                            else:
-                                self.tiger_persist_revoke(
-                                    subject=(subject_type, subject_id),
-                                    permission=permission,
-                                    resource_type=object_type,
-                                    resource_id=object_id,
-                                    zone_id=effective_zone,
-                                )
-                        except (OperationalError, ProgrammingError) as e:
-                            if logger.isEnabledFor(logging.DEBUG):
-                                logger.debug(f"[TIGER] Revoke failed: {e}")
+                # Revoke each permission immediately
+                for permission in permissions:
+                    try:
+                        if object_is_pattern:
+                            self.tiger_invalidate_cache(
+                                (subject_type, subject_id),
+                                permission,
+                                object_type,
+                                effective_zone,
+                            )
+                            continue
+                        self.tiger_persist_revoke(
+                            subject=(subject_type, subject_id),
+                            permission=permission,
+                            resource_type=object_type,
+                            resource_id=object_id,
+                            zone_id=effective_zone,
+                        )
+                        if is_directory_grant:
+                            self._tiger_cache.remove_directory_grant(
+                                subject_type=subject_type,
+                                subject_id=subject_id,
+                                permission=permission,
+                                directory_path=object_id,
+                                zone_id=effective_zone,
+                            )
+                            self.tiger_invalidate_cache(
+                                (subject_type, subject_id),
+                                permission,
+                                object_type,
+                                effective_zone,
+                            )
+                    except (OperationalError, ProgrammingError) as e:
+                        if logger.isEnabledFor(logging.DEBUG):
+                            logger.debug(f"[TIGER] Revoke failed: {e}")
 
             # Leopard: Update transitive closure for membership relations
             if tuple_info["relation"] in self.MEMBERSHIP_RELATIONS:
@@ -2206,6 +2283,7 @@ class ReBACManager:
         self,
         checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
         zone_id: str,
+        consistency: Any = None,
     ) -> dict[tuple[tuple[str, str], str, tuple[str, str]], bool]:
         """Check permissions for multiple (subject, permission, object) tuples in batch.
 
@@ -2214,6 +2292,9 @@ class ReBACManager:
         Performance impact: 100x reduction in database queries for N=20 objects.
         - Before: 20 files * 15 queries/file = 300 queries
         - After: 1-2 queries to fetch all tuples + in-memory computation
+
+        ``consistency="strong"`` (Issue #4739) skips the L1 and Tiger phases
+        so every check is resolved from the tuple store.
         """
         # Keep mutable refs in sync before delegating
         self._bulk_checker.update_refs(
@@ -2221,7 +2302,7 @@ class ReBACManager:
             tiger_cache=self._tiger_cache,
             tuple_version=getattr(self, "_tuple_version", 0),
         )
-        return self._bulk_checker.check_bulk(checks, zone_id)
+        return self._bulk_checker.check_bulk(checks, zone_id, consistency=consistency)
 
     def rebac_list_objects(
         self,
@@ -3392,11 +3473,14 @@ class ReBACManager:
         object: tuple[str, str],
         context: dict[str, Any] | None = None,
         zone_id: str | None = None,
+        consistency: Any = None,
     ) -> bool:
         """Check if subject has permission on object.
 
         Uses caching and recursive graph traversal to compute permissions.
         Supports ABAC-style contextual conditions (time, location, device, etc.).
+        ``consistency="strong"`` (Issue #4739) skips the L1 lookup and
+        stampede wait; the fresh result is still cached.
 
         Args:
             subject: (subject_type, subject_id) tuple
@@ -3446,8 +3530,10 @@ class ReBACManager:
         self._cleanup_expired_tuples_if_needed()
 
         # Check cache first with refresh-ahead (Issue #932)
-        # Only if no context, since context makes checks dynamic
-        if context is None:
+        # Only if no context, since context makes checks dynamic.
+        # Issue #4739: strong consistency bypasses the L1 lookup (and the
+        # stampede wait, which would hand back another caller's cached result).
+        if context is None and not is_strong_consistency(consistency):
             # Use refresh-ahead pattern to proactively refresh cache before expiry
             if self._l1_cache:
                 cached, needs_refresh, cache_key = self._l1_cache.get_with_refresh_check(
@@ -3570,14 +3656,18 @@ class ReBACManager:
     def rebac_check_batch(
         self,
         checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
+        consistency: Any = None,
     ) -> list[bool]:
         """Batch permission checks for efficiency.
 
         Checks cache first for each check, then computes uncached checks.
         More efficient than individual checks when checking multiple permissions.
+        ``consistency="strong"`` (Issue #4739) skips the cache lookup; results
+        are still written back.
 
         Args:
             checks: List of (subject, permission, object) tuples to check
+            consistency: ``None`` / ``"eventual"`` (cached) or ``"strong"``
 
         Returns:
             List of boolean results in the same order as input
@@ -3599,13 +3689,18 @@ class ReBACManager:
         # Map to track results by index
         results: dict[int, bool] = {}
         uncached_checks: list[tuple[int, Entity, str, Entity]] = []
+        strong = is_strong_consistency(consistency)
 
-        # Phase 1: Check cache for all checks
+        # Phase 1: Check cache for all checks (skipped under strong, #4739)
         for i, (subject, permission, obj) in enumerate(checks):
             subject_entity = Entity(subject[0], subject[1])
             object_entity = Entity(obj[0], obj[1])
 
-            cached = self._get_cached_check(subject_entity, permission, object_entity)
+            cached = (
+                None
+                if strong
+                else self._get_cached_check(subject_entity, permission, object_entity)
+            )
             if cached is not None:
                 results[i] = cached
             else:
@@ -3630,15 +3725,19 @@ class ReBACManager:
         self,
         checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
         use_rust: bool = True,
+        consistency: Any = None,
     ) -> list[bool]:
         """Batch permission checks with optional Rust acceleration.
 
         This method is identical to rebac_check_batch but uses Rust for bulk
         computation of uncached checks, providing 50-85x speedup for large batches.
+        ``consistency="strong"`` (Issue #4739) skips the cache lookup; results
+        are still written back.
 
         Args:
             checks: List of (subject, permission, object) tuples to check
             use_rust: Use Rust acceleration if available (default: True)
+            consistency: ``None`` / ``"eventual"`` (cached) or ``"strong"``
 
         Returns:
             List of boolean results in the same order as input
@@ -3667,13 +3766,18 @@ class ReBACManager:
         # Map to track results by index
         results: dict[int, bool] = {}
         uncached_checks: list[tuple[int, tuple[tuple[str, str], str, tuple[str, str]]]] = []
+        strong = is_strong_consistency(consistency)
 
-        # Phase 1: Check cache for all checks
+        # Phase 1: Check cache for all checks (skipped under strong, #4739)
         for i, (subject, permission, obj) in enumerate(checks):
             subject_entity = Entity(subject[0], subject[1])
             object_entity = Entity(obj[0], obj[1])
 
-            cached = self._get_cached_check(subject_entity, permission, object_entity)
+            cached = (
+                None
+                if strong
+                else self._get_cached_check(subject_entity, permission, object_entity)
+            )
             if cached is not None:
                 results[i] = cached
             else:

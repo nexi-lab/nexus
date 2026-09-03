@@ -28,6 +28,7 @@ from nexus.contracts.exceptions import (
 from nexus.contracts.metadata import DT_DIR, DT_MOUNT, FileMetadata
 from nexus.contracts.types import OperationContext
 from nexus.core.nexus_fs_content import emit_op_completed
+from nexus.core.readdir_rebac_filter import readdir_visible_paths
 from nexus.kernel_helpers import metastore_list_iter
 from nexus.lib.rpc_decorator import rpc_expose
 from nexus.lib.zone_revision import revision_token
@@ -1895,6 +1896,10 @@ class MetadataMixin:
                     and not self._is_internal_path(child)
                     and _etype not in (DT_DIR, DT_MOUNT)
                 ]
+                # Issue #4739: ReBAC post-filter (non-admin callers only).
+                _visible = readdir_visible_paths(self, [(c, False) for c in _children], context)
+                if _visible is not None:
+                    _children = [c for c in _children if c in _visible]
                 # Issue #3786 / Codex Round 7 finding #1: federation tokens
                 # land here as zone_id="root", so without an explicit zone_perms
                 # filter they would receive every name the kernel returns,
@@ -2026,6 +2031,14 @@ class MetadataMixin:
                 if not self._is_internal_path(e.path) and _zone_allowed(e)
             )
             result = paginate_iter(items_iter, limit=limit, cursor_path=cursor)
+            # Issue #4739: ReBAC post-filter (non-admin callers only). A page
+            # may come back short; the HTTP route already advances the cursor
+            # until a page has visible items.
+            _visible = readdir_visible_paths(
+                self, [(e.path, e.entry_type in (DT_DIR, DT_MOUNT)) for e in result.items], context
+            )
+            if _visible is not None:
+                result.items = [e for e in result.items if e.path in _visible]
             if details:
                 result.items = [self._entry_to_detail_dict(e, recursive) for e in result.items]
             else:
@@ -2058,6 +2071,17 @@ class MetadataMixin:
                 ]
             else:
                 _result = [self._entry_to_detail_dict(e, recursive) for e in entries_iter]
+            # Issue #4739: ReBAC post-filter (non-admin callers only), applied
+            # before recursive expansion — children of expanded directories
+            # are filtered by their own sys_readdir call.
+            _visible = readdir_visible_paths(
+                self,
+                [(d["path"], self._readdir_item_is_dir(d, context=context)) for d in _result],
+                context,
+            )
+            if _visible is not None:
+                _result = [d for d in _result if d["path"] in _visible]
+            if recursive:
                 _result = self._expand_recursive_readdir(
                     _result,
                     details=True,
@@ -2065,7 +2089,14 @@ class MetadataMixin:
                 )
             _emit_list()
             return _result
-        _result = [e.path for e in entries_iter]
+        _entries = list(entries_iter)
+        # Issue #4739: ReBAC post-filter (non-admin callers only).
+        _visible = readdir_visible_paths(
+            self, [(e.path, e.entry_type in (DT_DIR, DT_MOUNT)) for e in _entries], context
+        )
+        if _visible is not None:
+            _entries = [e for e in _entries if e.path in _visible]
+        _result = [e.path for e in _entries]
         if recursive:
             _result = self._expand_recursive_readdir(
                 _result,

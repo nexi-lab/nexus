@@ -25,7 +25,7 @@ from nexus.bricks.rebac.domain import WILDCARD_SUBJECT, Entity
 from nexus.bricks.rebac.graph._operators import parent_path_of
 from nexus.bricks.rebac.path_patterns import is_path_pattern, path_pattern_candidates
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.contracts.rebac_types import CROSS_ZONE_ALLOWED_RELATIONS
+from nexus.contracts.rebac_types import CROSS_ZONE_ALLOWED_RELATIONS, is_strong_consistency
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -107,6 +107,7 @@ class BulkPermissionChecker:
         self,
         checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
         zone_id: str,
+        consistency: Any = None,
     ) -> dict[tuple[tuple[str, str], str, tuple[str, str]], bool]:
         """Check permissions for multiple (subject, permission, object) tuples in batch.
 
@@ -118,11 +119,14 @@ class BulkPermissionChecker:
         3. Runs permission checks against the cached graph
         4. Returns all results in a single call
 
-        Always uses cached (eventual) consistency.
+        Uses cached (eventual) consistency by default.  ``consistency="strong"``
+        (Issue #4739) skips Phase 0 (L1) and Phase 0.5 (Tiger) so every check
+        is resolved from the tuple store; results are still written to L1.
 
         Args:
             checks: List of (subject, permission, object) tuples to check
             zone_id: Zone ID to scope all checks
+            consistency: ``None`` / ``"eventual"`` (cached) or ``"strong"``
 
         Returns:
             Dict mapping each check tuple to its result (True/False)
@@ -158,15 +162,20 @@ class BulkPermissionChecker:
         results: dict[tuple[tuple[str, str], str, tuple[str, str]], bool] = {}
         cache_misses: list[tuple[tuple[str, str], str, tuple[str, str]]] = []
 
-        # PHASE 0: L1 in-memory cache
-        cache_misses = self._phase_l1_cache(checks, zone_id, results, bulk_start)
-        if not cache_misses:
-            return results
+        if is_strong_consistency(consistency):
+            # Issue #4739: strong consistency — no cached allow/deny may answer.
+            logger.debug("[BULK] strong consistency: skipping L1 and Tiger phases")
+            cache_misses = list(checks)
+        else:
+            # PHASE 0: L1 in-memory cache
+            cache_misses = self._phase_l1_cache(checks, zone_id, results, bulk_start)
+            if not cache_misses:
+                return results
 
-        # PHASE 0.5: Tiger Cache
-        cache_misses = self._phase_tiger_cache(cache_misses, zone_id, results, bulk_start)
-        if not cache_misses:
-            return results
+            # PHASE 0.5: Tiger Cache
+            cache_misses = self._phase_tiger_cache(cache_misses, zone_id, results, bulk_start)
+            if not cache_misses:
+                return results
 
         logger.debug(f"Cache misses: {len(cache_misses)}, fetching tuples in bulk")
 

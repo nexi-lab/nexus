@@ -7,6 +7,7 @@ duplicate implementation.
 
 from nexus.bricks.rebac.permission_filter_chain import (
     DEFAULT_FILTER_CHAIN,
+    STRONG_FILTER_CHAIN,
     BulkReBACStrategy,
     FilterContext,
     FilterResult,
@@ -20,6 +21,7 @@ from nexus.bricks.rebac.permission_filter_chain import (
 
 __all__ = [
     "DEFAULT_FILTER_CHAIN",
+    "STRONG_FILTER_CHAIN",
     "BulkReBACStrategy",
     "FilterContext",
     "FilterResult",

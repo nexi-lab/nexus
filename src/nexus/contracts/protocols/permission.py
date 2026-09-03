@@ -38,12 +38,14 @@ class PermissionProtocol(Protocol):
         object: tuple[str, str],
         context: Any = None,
         zone_id: str | None = None,
+        consistency: str | None = None,
     ) -> bool: ...
 
     async def rebac_check_batch(
         self,
         checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
         zone_id: str | None = None,
+        consistency: str | None = None,
     ) -> list[bool]: ...
 
     async def rebac_create(

@@ -668,9 +668,15 @@ def _register_vfs_hooks(
     if _dpb is not None:
         from nexus.bricks.rebac.deferred_permission_hook import DeferredPermissionHook
 
+        # Issue #4739: hierarchy tuples stay deferred; the creator's owner
+        # grant is written synchronously unless PermissionConfig opts out.
         _enlist(
             "deferred_permission",
-            DeferredPermissionHook(_dpb, rebac_manager=_rebac_for_perm),
+            DeferredPermissionHook(
+                _dpb,
+                rebac_manager=_rebac_for_perm,
+                sync_owner_grant=getattr(nx._perm_config, "sync_owner_grant", True),
+            ),
         )
     else:
         # Sync fallback — same logic, runs as post-write hook instead of inline kernel code

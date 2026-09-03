@@ -13,6 +13,7 @@ from sqlalchemy.exc import OperationalError
 
 from nexus.contracts.constants import ROOT_ZONE_ID, SYSTEM_PATH_PREFIX
 from nexus.contracts.protocols.activity import EventKind, Result, emit
+from nexus.contracts.rebac_types import is_strong_consistency
 from nexus.contracts.types import OperationContext, Permission
 
 
@@ -293,6 +294,9 @@ class PermissionEnforcer:
             return {}
 
         start = time.time()
+        # Issue #4739: under strong consistency a Tiger miss is "unknown", not
+        # "denied" — misses are confirmed from the tuple store below.
+        strong = is_strong_consistency(getattr(context, "consistency", None))
         tiger_cache = getattr(self.rebac_manager, "_tiger_cache", None)
         if tiger_cache is None:
             logger.debug("[BATCH-OPT] No Tiger cache, returning all True (fallback)")
@@ -339,12 +343,16 @@ class PermissionEnforcer:
                     f"[BATCH-OPT] No bitmap for {subject_type}:{subject_id}, "
                     f"returning all False for {len(prefixes)} prefixes (fail-closed)"
                 )
+                if strong:
+                    return self._authoritative_prefix_visibility(prefixes, context)
                 return dict.fromkeys(prefixes, False)
 
             if not accessible_paths:
                 if fully_resolved:
                     if logger.isEnabledFor(logging.DEBUG):
                         logger.debug(f"[BATCH-OPT] Empty paths for {subject_type}:{subject_id}")
+                    if strong:
+                        return self._authoritative_prefix_visibility(prefixes, context)
                     return dict.fromkeys(prefixes, False)
                 # All-orphan: indeterminate. Drop False entries so the
                 # caller (search_service uses dict.get(prefix, True)) falls
@@ -370,6 +378,18 @@ class PermissionEnforcer:
                 # to "include" (matches search_service.py:1027 semantics).
                 results = {k: v for k, v in results.items() if v}
 
+            if strong:
+                # Issue #4739: a bitmap miss may be stale-negative (directory
+                # created moments ago, grant not yet materialised).  Confirm the
+                # misses from the tuple store; Tiger's True answers are kept.
+                unresolved = [p for p in prefixes if not results.get(p, False)]
+                if unresolved:
+                    for prefix, visible in self._authoritative_prefix_visibility(
+                        unresolved, context
+                    ).items():
+                        if visible:
+                            results[prefix] = True
+
             elapsed = (time.time() - start) * 1000
             found_count = sum(1 for v in results.values() if v)
             logger.debug(
@@ -391,6 +411,50 @@ class PermissionEnforcer:
             )
             # Fail-closed: deny access on error (security-critical)
             return dict.fromkeys(prefixes, False)
+
+    def _authoritative_prefix_visibility(
+        self,
+        prefixes: list[str],
+        context: OperationContext,
+    ) -> dict[str, bool]:
+        """Resolve directory visibility from the tuple store (Issue #4739).
+
+        A prefix is visible when the subject can READ the directory itself or
+        one of its ancestors — the same checks ``filter_list`` runs for a
+        file, issued with ``consistency="strong"``.  Grants that exist only on
+        deeper descendants are not discovered here (that remains Tiger's job),
+        so callers use this to confirm a Tiger *miss*, never to override a hit.
+        Fails closed on error.
+        """
+        if not prefixes:
+            return {}
+        if self.rebac_manager is None:
+            return dict.fromkeys(prefixes, False)
+
+        from nexus.bricks.rebac.permission_filter_chain import _dedupe_checks_by_path
+
+        subject = context.get_subject()
+        zone_id = context.zone_id or ROOT_ZONE_ID
+        dir_paths = [p.rstrip("/") or "/" for p in prefixes]
+        checks_by_path, checks = _dedupe_checks_by_path(subject, dir_paths)
+        try:
+            results = self.rebac_manager.rebac_check_bulk(
+                checks, zone_id=zone_id, consistency="strong"
+            )
+        except Exception:
+            logger.warning(
+                "[BATCH-OPT] authoritative prefix visibility failed for zone=%s subject=%s; "
+                "returning all False (fail-closed)",
+                zone_id,
+                subject,
+                exc_info=True,
+            )
+            return dict.fromkeys(prefixes, False)
+
+        return {
+            prefix: any(results.get(check, False) for check in checks_by_path[dir_path])
+            for prefix, dir_path in zip(prefixes, dir_paths, strict=True)
+        }
 
     def _effective_zone_perms(self, context: OperationContext) -> tuple:
         """Return the request's effective zone_perms from context directly.
@@ -689,16 +753,30 @@ class PermissionEnforcer:
         # Threshold 3 avoids rebac_check_bulk SQLite race on some platforms.
         depth = object_id.count("/") if object_id else 0
 
+        # Issue #4739: honour the caller's consistency level (OperationContext).
+        consistency = getattr(context, "consistency", None)
+
         if depth <= SEQUENTIAL_DEPTH_THRESHOLD or permission_name not in (
             "read",
             "write",
             "traverse",
         ):
             return self._check_rebac_sequential(
-                subject, permission_name, object_type, object_id, zone_id
+                subject, permission_name, object_type, object_id, zone_id, consistency=consistency
             )
 
-        return self._check_rebac_batched(subject, permission_name, object_type, object_id, zone_id)
+        return self._check_rebac_batched(
+            subject, permission_name, object_type, object_id, zone_id, consistency=consistency
+        )
+
+    @staticmethod
+    def _check_kwargs(consistency: Any) -> dict[str, Any]:
+        """Extra kwargs for ``rebac_check`` / ``rebac_check_bulk`` (Issue #4739).
+
+        ``consistency`` is forwarded only when strong so managers and test
+        doubles without the parameter keep working for cached calls.
+        """
+        return {"consistency": consistency} if is_strong_consistency(consistency) else {}
 
     def _check_rebac_sequential(
         self,
@@ -707,13 +785,18 @@ class PermissionEnforcer:
         object_type: str,
         object_id: str,
         zone_id: str,
+        consistency: Any = None,
     ) -> bool:
         """Sequential permission check for shallow paths (depth <= 3).
 
         Performs direct check, TRAVERSE implication, boundary cache lookup,
         and parent walk one level at a time. Efficient when only 1-2 parents.
+        ``consistency="strong"`` (Issue #4739) skips the boundary cache and
+        is forwarded to every ``rebac_check`` so the manager skips its caches.
         """
         assert self.rebac_manager is not None  # guaranteed by _check_rebac guard
+        strong = is_strong_consistency(consistency)
+        check_kwargs = self._check_kwargs(consistency)
 
         # 1. Direct permission check
         result = self.rebac_manager.rebac_check(
@@ -721,6 +804,7 @@ class PermissionEnforcer:
             permission=permission_name,
             object=(object_type, object_id),
             zone_id=zone_id,
+            **check_kwargs,
         )
         if result:
             return True
@@ -733,6 +817,7 @@ class PermissionEnforcer:
                     permission=implied_perm,
                     object=(object_type, object_id),
                     zone_id=zone_id,
+                    **check_kwargs,
                 ):
                     logger.debug(
                         f"[_check_rebac] ALLOW TRAVERSE (has {implied_perm.upper()} permission)"
@@ -743,8 +828,8 @@ class PermissionEnforcer:
         if permission_name in ("read", "write", "traverse") and object_id:
             subject_type, subject_id = subject
 
-            # FAST PATH: Boundary cache (Issue #922)
-            if self._boundary_cache:
+            # FAST PATH: Boundary cache (Issue #922) — skipped under strong (#4739)
+            if self._boundary_cache and not strong:
                 boundary = self._boundary_cache.get_boundary(
                     zone_id, subject_type, subject_id, permission_name, object_id
                 )
@@ -776,6 +861,7 @@ class PermissionEnforcer:
                     permission=permission_name,
                     object=(object_type, parent_path),
                     zone_id=zone_id,
+                    **check_kwargs,
                 )
                 if parent_result:
                     if logger.isEnabledFor(logging.DEBUG):
@@ -803,19 +889,22 @@ class PermissionEnforcer:
         object_type: str,
         object_id: str,
         zone_id: str,
+        consistency: Any = None,
     ) -> bool:
         """Batch permission check for deep paths (depth > 2) (Issue #899).
 
         Collects all check variants (direct, implied TRAVERSE, all ancestors)
         and resolves them in a single rebac_check_bulk() call instead of O(D)
-        sequential queries.
+        sequential queries.  ``consistency="strong"`` (Issue #4739) skips the
+        boundary cache and is forwarded to ``rebac_check_bulk``.
         """
         assert self.rebac_manager is not None  # guaranteed by _check_rebac guard
 
         subject_type, subject_id = subject
+        strong = is_strong_consistency(consistency)
 
-        # FAST PATH: Boundary cache (Issue #922)
-        if self._boundary_cache:
+        # FAST PATH: Boundary cache (Issue #922) — skipped under strong (#4739)
+        if self._boundary_cache and not strong:
             boundary = self._boundary_cache.get_boundary(
                 zone_id, subject_type, subject_id, permission_name, object_id
             )
@@ -861,7 +950,9 @@ class PermissionEnforcer:
                     checks.append((subject, "write", (object_type, ancestor)))
 
         # ONE bulk call instead of O(D) sequential calls
-        results = self.rebac_manager.rebac_check_bulk(checks, zone_id=zone_id)
+        results = self.rebac_manager.rebac_check_bulk(
+            checks, zone_id=zone_id, **self._check_kwargs(consistency)
+        )
 
         # Process results: direct > implied > inherited (priority order)
         for check in checks:
@@ -1148,6 +1239,10 @@ class PermissionEnforcer:
         4. Zone pre-filter (cross-zone elimination)
         5. Bulk ReBAC (final fallback)
 
+        When ``context.consistency == "strong"`` (Issue #4739) only steps 4
+        and 5 run, with ``consistency="strong"`` forwarded to the bulk check,
+        so no Tiger / Leopard / L1 entry can answer for this call.
+
         Args:
             paths: List of paths to filter
             context: Operation context
@@ -1206,6 +1301,7 @@ class PermissionEnforcer:
                 cache=self._cache,
                 rebac_manager=self.rebac_manager,
                 dlc=self.dlc,
+                consistency=getattr(context, "consistency", None),
             )
 
             filtered = run_filter_chain(filter_ctx)
@@ -1232,6 +1328,7 @@ class PermissionEnforcer:
         user_id: str,
         zone_id: str,
         is_admin: bool = False,
+        consistency: str | None = None,
     ) -> list[str]:
         """Filter search result paths by read permission via bulk check.
 
@@ -1247,6 +1344,7 @@ class PermissionEnforcer:
             user_id: The authenticated user's ID
             zone_id: Zone ID for isolation
             is_admin: Whether the user is an admin (bypasses checks)
+            consistency: ``None`` / ``"eventual"`` or ``"strong"`` (Issue #4739)
 
         Returns:
             Filtered list of paths the user can read
@@ -1262,7 +1360,9 @@ class PermissionEnforcer:
             return []  # fail-closed: no manager = no access
 
         try:
-            return self._filter_search_bulk(paths, user_id=user_id, zone_id=zone_id)
+            return self._filter_search_bulk(
+                paths, user_id=user_id, zone_id=zone_id, consistency=consistency
+            )
         except Exception:
             logger.warning(
                 "filter_search_results failed, denying all (fail-closed)",
@@ -1276,6 +1376,7 @@ class PermissionEnforcer:
         *,
         user_id: str,
         zone_id: str,
+        consistency: str | None = None,
     ) -> list[str]:
         """Check only the given paths via the authoritative ReBAC bulk path."""
         from nexus.bricks.rebac.permission_filter_chain import _dedupe_checks_by_path
@@ -1288,7 +1389,10 @@ class PermissionEnforcer:
         # forces a fresh Rust graph per call (tuple_version = time_ns()), so
         # the process-global GRAPH_CACHE cannot leak stale results across call
         # sites. A separate freshness workaround here would be redundant.
-        results = self.rebac_manager.rebac_check_bulk(checks, zone_id=zone_id)
+        # Issue #4739: consistency="strong" additionally skips its L1/Tiger phases.
+        results = self.rebac_manager.rebac_check_bulk(
+            checks, zone_id=zone_id, **self._check_kwargs(consistency)
+        )
 
         return [
             path

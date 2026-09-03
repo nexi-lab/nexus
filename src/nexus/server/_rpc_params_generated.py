@@ -104,14 +104,12 @@ __all__ = [
     "SemanticSearchIndexParams",
     "SemanticSearchParams",
     "ShareWithUserParams",
-    "SnapshotBeginParams",
     "SnapshotCommitParams",
     "SnapshotCreateParams",
     "SnapshotGetParams",
     "SnapshotListEntriesParams",
     "SnapshotListParams",
     "SnapshotRestoreParams",
-    "SnapshotRollbackParams",
     "StatBulkParams",
     "StatParams",
     "SysWatchParams",
@@ -809,6 +807,7 @@ class RebacCheckParams:
     object: tuple[str, str]
     context: Any = None
     zone_id: str | None = None
+    consistency: str | None = None
 
     def __post_init__(self) -> None:
         """Convert lists to tuples (JSON deserializes tuples as lists)."""
@@ -1004,16 +1003,6 @@ class ShareWithUserParams:
 
 
 @dataclass
-class SnapshotBeginParams:
-    """Parameters for snapshot_begin(): Begin a transactional snapshot."""
-
-    agent_id: str | None = None
-    zone_id: str | None = None
-    description: str | None = None
-    ttl_seconds: int = 3600
-
-
-@dataclass
 class SnapshotCommitParams:
     """Parameters for snapshot_commit() method."""
 
@@ -1026,6 +1015,7 @@ class SnapshotCreateParams:
 
     description: str | None = None
     ttl_seconds: int = 3600
+    context: dict | Any | None = None
 
 
 @dataclass
@@ -1039,7 +1029,7 @@ class SnapshotGetParams:
 class SnapshotListParams:
     """Parameters for snapshot_list() method."""
 
-    pass
+    context: dict | Any | None = None
 
 
 @dataclass
@@ -1054,13 +1044,6 @@ class SnapshotRestoreParams:
     """Parameters for snapshot_restore() method."""
 
     txn_id: str
-
-
-@dataclass
-class SnapshotRollbackParams:
-    """Parameters for snapshot_rollback(): Rollback a snapshot — restore paths to pre-snapshot state."""
-
-    snapshot_id: str
 
 
 @dataclass
@@ -1210,14 +1193,12 @@ METHOD_PARAMS: dict[str, type] = {
     "semantic_search": SemanticSearchParams,
     "semantic_search_index": SemanticSearchIndexParams,
     "share_with_user": ShareWithUserParams,
-    "snapshot_begin": SnapshotBeginParams,
     "snapshot_commit": SnapshotCommitParams,
     "snapshot_create": SnapshotCreateParams,
     "snapshot_get": SnapshotGetParams,
     "snapshot_list": SnapshotListParams,
     "snapshot_list_entries": SnapshotListEntriesParams,
     "snapshot_restore": SnapshotRestoreParams,
-    "snapshot_rollback": SnapshotRollbackParams,
     "stat": StatParams,
     "stat_bulk": StatBulkParams,
     "sys_watch": SysWatchParams,

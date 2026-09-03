@@ -27,8 +27,9 @@ from nexus.bricks.rebac.dynamic_viewer import (
 )
 from nexus.bricks.rebac.share_mixin import ReBACShareMixin
 from nexus.contracts.exceptions import CircuitOpenError
+from nexus.contracts.rebac_types import is_strong_consistency
 from nexus.contracts.types import OperationContext
-from nexus.lib.context_utils import get_subject_from_context
+from nexus.lib.context_utils import get_consistency, get_subject_from_context
 from nexus.lib.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
@@ -432,12 +433,13 @@ class ReBACService(ReBACShareMixin):
         object: tuple[str, str],
         context: Any = None,
         zone_id: str | None = None,
+        consistency: str | None = None,
     ) -> bool:
         """Check if subject has permission on object.
 
         Uses relationship graph traversal to determine access, supporting both
         direct relationships and inherited permissions through group membership.
-        Always uses cached (eventual) consistency.
+        Cached (eventual) consistency; ``consistency="strong"`` bypasses caches (#4739).
 
         Args:
             subject: Subject tuple e.g., ("user", "alice")
@@ -445,6 +447,7 @@ class ReBACService(ReBACShareMixin):
             object: Object tuple e.g., ("file", "/doc.txt")
             context: Optional ABAC context for condition evaluation (time, ip, device, attributes)
             zone_id: Zone ID for multi-zone isolation
+            consistency: ``None``/``"eventual"`` or ``"strong"``; defaults to ``context.consistency``
 
         Returns:
             True if permission granted, False otherwise
@@ -460,6 +463,7 @@ class ReBACService(ReBACShareMixin):
                 object=("file", "/doc.txt")
             )
         """
+        effective_consistency = get_consistency(context, consistency)
 
         def _check_sync() -> bool:
             """Synchronous implementation for thread pool execution."""
@@ -480,7 +484,7 @@ class ReBACService(ReBACShareMixin):
 
             manager_context = None if isinstance(context, OperationContext) else context
 
-            # Check permission with optional ABAC context (always cached consistency)
+            # Check permission with optional ABAC context
             # Manager guaranteed by _run_in_thread
             assert self._rebac_manager is not None
             result: bool = self._rebac_manager.rebac_check(
@@ -489,15 +493,16 @@ class ReBACService(ReBACShareMixin):
                 object=object,
                 context=manager_context,
                 zone_id=effective_zone_id,
+                consistency=effective_consistency,
             )
 
             return result
 
-        # Read operation — supports L1 cache fallback (Decision 3A)
+        # Read operation — L1 cache fallback (Decision 3A); never for a strong check (#4739)
         try:
             return await self._run_in_thread(_check_sync)
         except CircuitOpenError:
-            if self._rebac_manager:
+            if self._rebac_manager and not is_strong_consistency(effective_consistency):
                 cached: bool | None = self._rebac_manager.get_cached_permission(
                     subject=subject, permission=permission, object=object, zone_id=zone_id
                 )
@@ -652,6 +657,7 @@ class ReBACService(ReBACShareMixin):
         self,
         checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
         zone_id: str | None = None,
+        consistency: str | None = None,
     ) -> list[bool]:
         """Check multiple permissions in a single call for efficiency.
 
@@ -661,6 +667,7 @@ class ReBACService(ReBACShareMixin):
         Args:
             checks: List of (subject, permission, object) tuples
             zone_id: Zone ID (currently unused by manager)
+            consistency: ``None``/``"eventual"`` or ``"strong"`` for every check in the batch (#4739)
 
         Returns:
             List of boolean results (same order as input)
@@ -702,12 +709,15 @@ class ReBACService(ReBACShareMixin):
                         permission=perm,
                         object=obj,
                         zone_id=zone_id,
+                        consistency=consistency,
                     )
                     batch_results.append(result)
                 return batch_results
 
             # No zone_id: use optimized batch path (Rust acceleration)
-            return self._rebac_manager.rebac_check_batch_fast(checks=normalized_checks)
+            return self._rebac_manager.rebac_check_batch_fast(
+                checks=normalized_checks, consistency=consistency
+            )
 
         # Issue #702: Wrap batch check in a summary span
         import time as _time
@@ -732,7 +742,7 @@ class ReBACService(ReBACShareMixin):
                 )
                 return batch_results
             except CircuitOpenError:
-                if self._rebac_manager:
+                if self._rebac_manager and not is_strong_consistency(consistency):
                     results: list[bool] = []
                     all_cached = True
                     for check in checks:
@@ -2105,8 +2115,9 @@ class ReBACService(ReBACShareMixin):
         object: tuple[str, str],
         context: Any = None,
         zone_id: str | None = None,
+        consistency: str | None = None,
     ) -> bool:
-        """Synchronous rebac_check — full business logic with traverse fallback."""
+        """Synchronous rebac_check — traverse fallback; ``consistency="strong"`` bypasses caches."""
         mgr = self._require_manager()
 
         if not isinstance(subject, tuple) or len(subject) != 2:
@@ -2127,6 +2138,7 @@ class ReBACService(ReBACShareMixin):
             object=object,
             context=context,
             zone_id=effective_zone_id,
+            consistency=get_consistency(context, consistency),
         )
 
         # Unix-like TRAVERSE fallback
@@ -2185,11 +2197,12 @@ class ReBACService(ReBACShareMixin):
     def rebac_check_batch_sync(
         self,
         checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
+        consistency: str | None = None,
     ) -> list[bool]:
-        """Synchronous rebac_check_batch."""
+        """Synchronous rebac_check_batch (``consistency="strong"`` bypasses caches, #4739)."""
         mgr = self._require_manager()
         normalized_checks = [_coerce_check_tuple(check, i) for i, check in enumerate(checks)]
-        results: list[bool] = mgr.rebac_check_batch_fast(checks=normalized_checks)
+        results: list[bool] = mgr.rebac_check_batch_fast(normalized_checks, consistency=consistency)
         return results
 
     def rebac_delete_sync(self, tuple_id: str) -> bool:

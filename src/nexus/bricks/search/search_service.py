@@ -28,6 +28,7 @@ from nexus.bricks.search.primitives import glob_helpers, trigram_fast
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import PermissionDeniedError
 from nexus.contracts.protocols.activity import EventKind, Result, emit
+from nexus.contracts.rebac_types import is_strong_consistency
 from nexus.contracts.search_types import (
     GLOB_RUST_THRESHOLD,
     GREP_CACHED_TEXT_RATIO,
@@ -622,6 +623,9 @@ class SearchService:
                 subject_id,
                 _revision_before,
                 _rebac_manager,
+                # Issue #4739: strong consistency must not pre-filter by the
+                # Tiger bitmap; fall through to filter_list (strong chain).
+                use_tiger_pushdown=not is_strong_consistency(getattr(context, "consistency", None)),
             )
             sample_paths = [m["path"] for m in all_files[:5]]
             logger.info(f"[LIST-DEBUG] FALLBACK all_files sample: {sample_paths}")
@@ -1229,8 +1233,13 @@ class SearchService:
         subject_id: str | None,
         _revision_before: int | None,
         _rebac_manager: Any,
+        use_tiger_pushdown: bool = True,
     ) -> tuple[builtins.list[Any], set[int] | None]:
-        """Full recursive metadata scan with predicate pushdown optimization."""
+        """Full recursive metadata scan with predicate pushdown optimization.
+
+        ``use_tiger_pushdown=False`` (Issue #4739, strong consistency) skips
+        the Tiger bitmap pre-filter so every candidate reaches ``filter_list``.
+        """
         import os as _os
         import time as _time
 
@@ -1240,7 +1249,13 @@ class SearchService:
             "true",
         )
 
-        if self._enforce_permissions and subject_type and subject_id and not _pushdown_disabled:
+        if (
+            self._enforce_permissions
+            and subject_type
+            and subject_id
+            and not _pushdown_disabled
+            and use_tiger_pushdown
+        ):
             _pushdown_start = _time.time()
             tiger_cache = getattr(_rebac_manager, "_tiger_cache", None) if _rebac_manager else None
             if tiger_cache is not None:

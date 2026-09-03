@@ -122,3 +122,97 @@ def test_hierarchy_prefilter_does_not_drop_direct_leaf_grants() -> None:
     )
 
     assert allowed == [paths[0]]
+
+
+# ---------------------------------------------------------------------------
+# Issue #4739: consistency="strong" — authoritative chain, no cache strategies
+# ---------------------------------------------------------------------------
+
+
+class _RecordingBulkReBAC:
+    """Bulk checker that records the kwargs it was called with."""
+
+    def __init__(self, allowed_objects: set[str]) -> None:
+        self.allowed_objects = allowed_objects
+        self.kwargs: list[dict[str, Any]] = []
+
+    def rebac_check_bulk(self, checks: list[Check], **kwargs: Any) -> dict[Check, bool]:
+        self.kwargs.append(dict(kwargs))
+        return {check: check[2][1] in self.allowed_objects for check in checks}
+
+
+class _StaleTigerCache(_FakeCache):
+    """Cache whose Tiger bitmap still allows everything (stale after a revoke)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.tiger_calls = 0
+        self.leopard_calls = 0
+
+    def try_bitmap_filter(self, paths: list[str], *_args: Any, **_kwargs: Any) -> Any:
+        self.tiger_calls += 1
+        return (list(paths), [])
+
+    def try_leopard_lookup(self, paths: list[str], *_args: Any, **_kwargs: Any) -> Any:
+        self.leopard_calls += 1
+        return ([], list(paths))
+
+    def is_bitmap_complete(self, *_args: Any, **_kwargs: Any) -> bool:
+        return True
+
+
+def _ctx_with(cache: Any, rebac: Any, paths: list[str], consistency: str | None) -> FilterContext:
+    return FilterContext(
+        paths=paths,
+        subject=("user", "alice"),
+        zone_id="root",
+        context=object(),
+        cache=cast(Any, cache),
+        rebac_manager=cast(Any, rebac),
+        consistency=consistency,
+    )
+
+
+def test_strong_chain_skips_tiger_and_leopard_and_forwards_consistency() -> None:
+    paths = ["/workspace/a.md", "/workspace/b.md"]
+    cache = _StaleTigerCache()
+    rebac = _RecordingBulkReBAC(allowed_objects={"/workspace/a.md"})
+
+    allowed = run_filter_chain(_ctx_with(cache, rebac, paths, "strong"))
+
+    # The stale bitmap would have allowed both; the tuple store allows one.
+    assert allowed == ["/workspace/a.md"]
+    assert cache.tiger_calls == 0
+    assert cache.leopard_calls == 0
+    assert rebac.kwargs == [{"zone_id": "root", "consistency": "strong"}]
+
+
+def test_default_chain_still_uses_tiger_and_omits_consistency_kwarg() -> None:
+    paths = ["/workspace/a.md", "/workspace/b.md"]
+    cache = _StaleTigerCache()
+    rebac = _RecordingBulkReBAC(allowed_objects=set())
+
+    allowed = run_filter_chain(_ctx_with(cache, rebac, paths, None))
+
+    assert allowed == paths  # served by the (stale) bitmap
+    assert cache.tiger_calls == 1
+    assert rebac.kwargs == []  # bulk never reached; and if it were, no consistency kwarg
+
+
+def test_strong_chain_keeps_zone_prefilter() -> None:
+    paths = ["/zone/other/secret.md", "/workspace/a.md"]
+    rebac = _RecordingBulkReBAC(allowed_objects={"/zone/other/secret.md", "/workspace/a.md"})
+
+    allowed = run_filter_chain(_ctx_with(_StaleTigerCache(), rebac, paths, "strong"))
+
+    assert allowed == ["/workspace/a.md"]
+
+
+def test_bulk_kwargs_only_forward_strong() -> None:
+    rebac = _RecordingBulkReBAC(allowed_objects=set())
+    assert _ctx_with(_FakeCache(), rebac, [], None).bulk_kwargs() == {"zone_id": "root"}
+    assert _ctx_with(_FakeCache(), rebac, [], "eventual").bulk_kwargs() == {"zone_id": "root"}
+    assert _ctx_with(_FakeCache(), rebac, [], "strong").bulk_kwargs() == {
+        "zone_id": "root",
+        "consistency": "strong",
+    }

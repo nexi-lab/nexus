@@ -10,6 +10,7 @@
 
 use std::sync::Arc;
 use std::sync::OnceLock;
+use std::time::Instant;
 
 use futures_util::StreamExt;
 use nexus_plugin_abi::KernelHandle;
@@ -22,7 +23,7 @@ use crate::contextual_chunker::{
 };
 use crate::embed_cache::{embed_query_cached, QueryEmbedCache};
 use crate::embedder::{build_default_embedder, EmbedError, Embedder};
-use crate::fts_index::FtsHit;
+use crate::fts_index::{FtsHit, WriterFault, WriterStatus};
 use crate::fusion::{self, DEFAULT_ALPHA, DEFAULT_RRF_K};
 use crate::index_manager::IndexManager;
 use crate::internal_call::{is_internal_call, INSIDE_MIDDLEWARE};
@@ -194,6 +195,9 @@ pub struct SearchServiceImpl {
     /// `Chunk::embed_input` (not `Chunk::text`) so semantic recall
     /// lifts without polluting BM25.
     context_generator_slot: Arc<OnceLock<Option<SharedContextGenerator>>>,
+    /// Handler panics caught at the plugin's dispatch boundary
+    /// (#4725) — surfaced on Health.  Recorded from `lib.rs`.
+    dispatch_panics: DispatchPanicLog,
 }
 
 /// Bundle used by the query wrapper — the live expander plus its
@@ -227,6 +231,44 @@ impl IndexingGuard {
 impl Drop for IndexingGuard {
     fn drop(&mut self) {
         self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// One handler panic caught at the plugin's dispatch boundary (#4725).
+#[derive(Debug, Clone)]
+pub struct DispatchPanic {
+    pub at: Instant,
+    pub method: String,
+    pub reason: String,
+}
+
+/// Handler panics caught at the dispatch boundary since process start
+/// (#4725).  `lib.rs` records; Health reports the count and the last
+/// one.  A caught panic already failed its own RPC with `Internal`, so
+/// it is informational here — it does not move `status` — but a
+/// climbing count is the operator's signal that the host is under
+/// thread / pid pressure.
+#[derive(Default)]
+pub struct DispatchPanicLog {
+    count: std::sync::atomic::AtomicU32,
+    last: Mutex<Option<DispatchPanic>>,
+}
+
+impl DispatchPanicLog {
+    fn record(&self, method: &str, reason: &str) {
+        self.count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        *self.last.lock() = Some(DispatchPanic {
+            at: Instant::now(),
+            method: method.to_string(),
+            reason: reason.to_string(),
+        });
+    }
+
+    fn snapshot(&self) -> (u32, Option<DispatchPanic>) {
+        (
+            self.count.load(std::sync::atomic::Ordering::SeqCst),
+            self.last.lock().clone(),
+        )
     }
 }
 
@@ -276,6 +318,12 @@ impl SearchServiceImpl {
             peer_fanout_pin: None,
             context_generator_pin: None,
         }
+    }
+
+    /// Record a handler panic caught at the dispatch boundary (#4725);
+    /// see [`DispatchPanicLog`].
+    pub fn record_dispatch_panic(&self, method: &str, reason: &str) {
+        self.dispatch_panics.record(method, reason);
     }
 
     /// Whether the hybrid title arm runs for this query — builder
@@ -761,6 +809,7 @@ impl SearchServiceBuilder {
             expansion_cache: Arc::new(ExpansionCache::new()),
             peer_fanout_slot: Arc::new(pin_to_once_lock(self.peer_fanout_pin)),
             context_generator_slot: Arc::new(pin_to_once_lock(self.context_generator_pin)),
+            dispatch_panics: DispatchPanicLog::default(),
         }
     }
 }
@@ -3191,6 +3240,113 @@ fn do_locate(
 
 // ── tonic trait impl ──────────────────────────────────────────────
 
+/// Structured health verdict (#4725) — the wire fields of
+/// `HealthResponse` before serialisation.
+struct HealthVerdict {
+    status: &'static str,
+    detail: String,
+    /// Opened zones with an unverified FTS writer fault (includes the
+    /// unavailable ones).
+    writer_faults: u32,
+    /// Opened zones whose FTS writer could not be rebuilt.
+    writer_unavailable: u32,
+    /// Age of the most recent probe-verified commit across zones.
+    last_verified_commit_age_ms: Option<i64>,
+}
+
+/// Health verdict (#4725).  Writer liveness dominates the embedder
+/// check: a zone whose FTS writer could not be rebuilt after a fault
+/// is `unavailable` (every write there fails loudly); a writer that
+/// was rebuilt but has not yet proven itself with a searchable commit
+/// is `degraded`; otherwise the embedder slot decides between
+/// `healthy` and `degraded` exactly as before.  Caught handler panics
+/// ride along in `detail` and the structured count without moving
+/// `status` — each already failed its own RPC loudly.  `status` +
+/// `detail` keep their pre-#4725 shape so old pollers need no change;
+/// the structured twins let new ones gate on numbers.
+fn health_verdict(
+    has_embedder: bool,
+    writers: &[(String, WriterStatus)],
+    panic_count: u32,
+    last_panic: Option<&DispatchPanic>,
+) -> HealthVerdict {
+    fn describe(zone: &str, fault: &WriterFault) -> String {
+        format!(
+            "zone {zone:?} {}s ago: {}",
+            fault.at.elapsed().as_secs(),
+            fault.detail
+        )
+    }
+    let embedder_note = if has_embedder {
+        "ann online"
+    } else {
+        "semantic unavailable (embedder not initialised — normal on lite profile)"
+    };
+    let unavailable: Vec<String> = writers
+        .iter()
+        .filter(|(_, s)| !s.available)
+        .map(|(zone, s)| match &s.last_fault {
+            Some(fault) => describe(zone, fault),
+            None => format!("zone {zone:?}: writer unavailable"),
+        })
+        .collect();
+    let faulted: Vec<String> = writers
+        .iter()
+        .filter_map(|(zone, s)| s.last_fault.as_ref().map(|f| describe(zone, f)))
+        .collect();
+    let last_verified_commit_age_ms = writers
+        .iter()
+        .filter_map(|(_, s)| s.last_verified_commit)
+        .max()
+        .map(|at| at.elapsed().as_millis() as i64);
+
+    let (status, mut detail) = if !unavailable.is_empty() {
+        (
+            "unavailable",
+            format!(
+                "fts writer unavailable — {}; {embedder_note}",
+                unavailable.join("; ")
+            ),
+        )
+    } else if !faulted.is_empty() {
+        (
+            "degraded",
+            format!(
+                "fts writer fault, unverified since — {}; {embedder_note}",
+                faulted.join("; ")
+            ),
+        )
+    } else if has_embedder {
+        ("healthy", "fts + ann online".to_string())
+    } else {
+        (
+            "degraded",
+            "fts online; semantic unavailable (embedder not initialised — normal on lite profile)"
+                .to_string(),
+        )
+    };
+    if panic_count > 0 {
+        detail.push_str(&format!(
+            "; {panic_count} handler panic(s) caught at dispatch"
+        ));
+        if let Some(p) = last_panic {
+            detail.push_str(&format!(
+                " — last {}s ago in {}: {}",
+                p.at.elapsed().as_secs(),
+                p.method,
+                p.reason
+            ));
+        }
+    }
+    HealthVerdict {
+        status,
+        detail,
+        writer_faults: faulted.len() as u32,
+        writer_unavailable: unavailable.len() as u32,
+        last_verified_commit_age_ms,
+    }
+}
+
 #[async_trait]
 impl SearchService for SearchServiceImpl {
     async fn glob(&self, request: Request<GlobRequest>) -> Result<Response<GlobResponse>, Status> {
@@ -4366,23 +4522,25 @@ impl SearchService for SearchServiceImpl {
         &self,
         _request: Request<HealthRequest>,
     ) -> Result<Response<HealthResponse>, Status> {
-        // Health is trivial + valuable during cutover — land the
-        // real impl inline rather than another commit.  Semantic
-        // "degraded" surfaces when the embedder slot is empty; if
-        // the plugin ever fails to open the FTS on request, that
-        // caller sees `unavailable` at the failing RPC (this poll
-        // says "healthy" because it doesn't itself open anything).
+        // Three inputs (#4725): the embedder slot (semantic leg), the
+        // per-zone FTS writer liveness the index manager reports, and
+        // the dispatch-boundary panic log.  The writer report is a
+        // side-mutex snapshot — it never queues behind an in-flight
+        // commit, so a poll stays cheap.  If the plugin ever fails to
+        // OPEN an FTS on request, that caller sees `unavailable` at the
+        // failing RPC; the writer report covers the zones this process
+        // has opened.
         let has_embedder = self.embedder_slot.lock().is_some();
-        let status = if has_embedder { "healthy" } else { "degraded" };
-        let detail = if has_embedder {
-            "fts + ann online".to_string()
-        } else {
-            "fts online; semantic unavailable (embedder not initialised — normal on lite profile)"
-                .to_string()
-        };
+        let writers = self.manager.fts_writer_report();
+        let (panic_count, last_panic) = self.dispatch_panics.snapshot();
+        let verdict = health_verdict(has_embedder, &writers, panic_count, last_panic.as_ref());
         Ok(Response::new(HealthResponse {
-            status: status.to_string(),
-            detail,
+            status: verdict.status.to_string(),
+            detail: verdict.detail,
+            fts_writer_faults: verdict.writer_faults,
+            fts_writer_unavailable: verdict.writer_unavailable,
+            last_verified_commit_age_ms: verdict.last_verified_commit_age_ms,
+            dispatch_panics: panic_count,
         }))
     }
 
@@ -4496,6 +4654,79 @@ mod tests {
     //! where a MockKernelHandle can provide a canned filesystem.
 
     use super::*;
+
+    #[test]
+    fn health_verdict_surfaces_writer_faults_and_panics() {
+        let ok = |zone: &str| {
+            (
+                zone.to_string(),
+                WriterStatus {
+                    available: true,
+                    last_fault: None,
+                    last_verified_commit: None,
+                },
+            )
+        };
+        let faulted = |zone: &str, available: bool| {
+            (
+                zone.to_string(),
+                WriterStatus {
+                    available,
+                    last_fault: Some(WriterFault {
+                        at: Instant::now(),
+                        detail: "commit succeeded but \"/a\" is not searchable".to_string(),
+                    }),
+                    last_verified_commit: Some(Instant::now()),
+                },
+            )
+        };
+
+        // Pre-#4725 behaviour is unchanged when no writer faulted.
+        let v = health_verdict(true, &[], 0, None);
+        assert_eq!(
+            (v.status, v.detail.as_str()),
+            ("healthy", "fts + ann online")
+        );
+        assert_eq!((v.writer_faults, v.writer_unavailable), (0, 0));
+        assert_eq!(v.last_verified_commit_age_ms, None);
+        assert_eq!(
+            health_verdict(true, &[ok("root")], 0, None).status,
+            "healthy"
+        );
+        assert_eq!(
+            health_verdict(false, &[ok("root")], 0, None).status,
+            "degraded"
+        );
+
+        let v = health_verdict(true, &[ok("root"), faulted("zoneA", true)], 0, None);
+        assert_eq!(v.status, "degraded", "rebuilt-but-unverified writer");
+        assert!(
+            v.detail.contains("zoneA") && v.detail.contains("not searchable"),
+            "{}",
+            v.detail
+        );
+        assert_eq!((v.writer_faults, v.writer_unavailable), (1, 0));
+        assert!(v.last_verified_commit_age_ms.is_some());
+
+        let v = health_verdict(true, &[faulted("zoneA", false)], 0, None);
+        assert_eq!(v.status, "unavailable", "writer could not be rebuilt");
+        assert!(v.detail.contains("zoneA"), "{}", v.detail);
+        assert_eq!((v.writer_faults, v.writer_unavailable), (1, 1));
+
+        // Caught handler panics are reported but do not move status.
+        let panic = DispatchPanic {
+            at: Instant::now(),
+            method: "/nexus.search.v1.SearchService/Index".to_string(),
+            reason: "OS can't spawn worker thread".to_string(),
+        };
+        let v = health_verdict(true, &[ok("root")], 3, Some(&panic));
+        assert_eq!(v.status, "healthy");
+        assert!(
+            v.detail.contains("3 handler panic(s)") && v.detail.contains("spawn worker thread"),
+            "{}",
+            v.detail
+        );
+    }
 
     #[test]
     fn strip_root_handles_trailing_slash() {

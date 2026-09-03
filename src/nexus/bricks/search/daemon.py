@@ -439,7 +439,27 @@ class SearchDaemon:
 
     async def get_health(self) -> dict[str, Any]:
         resp = await self._get_stub().Health(search_pb2.HealthRequest())
-        return {"status": resp.status, "detail": resp.detail}
+        return {
+            "status": resp.status,
+            "detail": resp.detail,
+            # #4725 structured writer liveness — twins of what ``detail``
+            # narrates, so pollers gate on numbers.  ``fts_writer_faults``
+            # > 0: a zone's writer faulted and has not yet proven itself
+            # with a searchable commit (status at most "degraded").
+            # ``fts_writer_unavailable`` > 0: writes to that zone fail
+            # loudly (status "unavailable").  ``dispatch_panics`` counts
+            # handler panics the plugin caught at its dispatch boundary
+            # since process start — informational, each already failed
+            # its own RPC.
+            "fts_writer_faults": resp.fts_writer_faults,
+            "fts_writer_unavailable": resp.fts_writer_unavailable,
+            "last_verified_commit_age_ms": (
+                resp.last_verified_commit_age_ms
+                if resp.HasField("last_verified_commit_age_ms")
+                else None
+            ),
+            "dispatch_panics": resp.dispatch_panics,
+        }
 
     async def get_stats(self, zone_id: str | None = None) -> dict[str, Any]:
         """Plugin counters for ``zone_id`` (empty / None ⇒ the plugin's ROOT zone).

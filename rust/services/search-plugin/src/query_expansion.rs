@@ -209,6 +209,7 @@ pub trait QueryExpander: Send + Sync {
 
 // ── HttpQueryExpander ─────────────────────────────────────────────
 
+use crate::http_client::GuardedClient;
 use crate::llm_chat::{self, ChatMessage, ChatRequest, ResponseFormat};
 
 /// Live HTTP query expander.  Sends a single chat-completion request
@@ -217,7 +218,7 @@ use crate::llm_chat::{self, ChatMessage, ChatRequest, ResponseFormat};
 /// parse error — the wrapper in service.rs converts those to a
 /// tracing warning and falls through to the single-query path.
 pub struct HttpQueryExpander {
-    client: reqwest::blocking::Client,
+    client: GuardedClient,
     config: QueryExpansionConfig,
 }
 

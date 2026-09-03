@@ -730,12 +730,35 @@ class HealthRequest(_message.Message):
     def __init__(self, auth_token: str | None = ...) -> None: ...
 
 class HealthResponse(_message.Message):
-    __slots__ = ("status", "detail")
+    __slots__ = (
+        "status",
+        "detail",
+        "fts_writer_faults",
+        "fts_writer_unavailable",
+        "last_verified_commit_age_ms",
+        "dispatch_panics",
+    )
     STATUS_FIELD_NUMBER: _ClassVar[int]
     DETAIL_FIELD_NUMBER: _ClassVar[int]
+    FTS_WRITER_FAULTS_FIELD_NUMBER: _ClassVar[int]
+    FTS_WRITER_UNAVAILABLE_FIELD_NUMBER: _ClassVar[int]
+    LAST_VERIFIED_COMMIT_AGE_MS_FIELD_NUMBER: _ClassVar[int]
+    DISPATCH_PANICS_FIELD_NUMBER: _ClassVar[int]
     status: str
     detail: str
-    def __init__(self, status: str | None = ..., detail: str | None = ...) -> None: ...
+    fts_writer_faults: int
+    fts_writer_unavailable: int
+    last_verified_commit_age_ms: int
+    dispatch_panics: int
+    def __init__(
+        self,
+        status: str | None = ...,
+        detail: str | None = ...,
+        fts_writer_faults: int | None = ...,
+        fts_writer_unavailable: int | None = ...,
+        last_verified_commit_age_ms: int | None = ...,
+        dispatch_panics: int | None = ...,
+    ) -> None: ...
 
 class StatsRequest(_message.Message):
     __slots__ = ("zone_id", "auth_token")

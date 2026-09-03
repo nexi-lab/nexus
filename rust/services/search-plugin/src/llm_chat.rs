@@ -11,6 +11,10 @@
 //!   sites already run inside `spawn_blocking` — an async client
 //!   would either need to bridge back to the tokio runtime or
 //!   force the caller onto async, both worse than blocking here.
+//!   The client is the crate's [`GuardedClient`] (#4725): one per
+//!   feature, DNS resolved inline (no thread per lookup), a panic
+//!   inside reqwest surfaced as an error instead of unwinding the
+//!   caller.
 //! - Returns only the assistant `content` string on success; the
 //!   caller parses that string according to its own contract
 //!   (JSON envelope for query expansion, plain text for contextual
@@ -21,6 +25,8 @@
 //!   decision value.
 
 use std::time::Duration;
+
+use crate::http_client::GuardedClient;
 
 /// One chat message (system/user/assistant + content).
 #[derive(Debug, Clone, serde::Serialize)]
@@ -75,15 +81,13 @@ pub enum LlmChatError {
     Http(String),
 }
 
-/// Build a fresh blocking client with the given timeout.  A dedicated
-/// client per call site is fine — `reqwest::blocking::Client` is
-/// cheap; sharing one across features would just entangle their
-/// timeouts.
-pub fn build_client(timeout: Duration) -> Result<reqwest::blocking::Client, LlmChatError> {
-    reqwest::blocking::Client::builder()
-        .timeout(timeout)
-        .build()
-        .map_err(|e| LlmChatError::Http(format!("HTTP client build: {e}")))
+/// Build a feature's long-lived HTTP client with the given timeout.
+/// One per feature (query expansion, contextual chunking) so their
+/// timeouts stay independent, each reused for the process lifetime —
+/// see `http_client` (#4725) for why a client per CALL is exactly the
+/// wrong shape (every build spawns a runtime thread).
+pub fn build_client(timeout: Duration) -> Result<GuardedClient, LlmChatError> {
+    GuardedClient::new(timeout).map_err(|e| LlmChatError::Http(format!("HTTP client build: {e}")))
 }
 
 /// POST the request body to `endpoint` with `Authorization: Bearer
@@ -99,16 +103,14 @@ pub fn build_client(timeout: Duration) -> Result<reqwest::blocking::Client, LlmC
 ///   caller's job because contextual chunking wants plain text and
 ///   query expansion wants JSON.
 pub fn chat_completion(
-    client: &reqwest::blocking::Client,
+    client: &GuardedClient,
     endpoint: &str,
     api_key: &str,
     body: &ChatRequest<'_>,
 ) -> Result<String, LlmChatError> {
+    let req = client.post(endpoint).bearer_auth(api_key).json(body);
     let resp = client
-        .post(endpoint)
-        .bearer_auth(api_key)
-        .json(body)
-        .send()
+        .send(req)
         .map_err(|e| LlmChatError::Http(format!("request to {endpoint}: {e}")))?;
     let status = resp.status();
     if !status.is_success() {

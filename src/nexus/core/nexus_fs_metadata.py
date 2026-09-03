@@ -30,6 +30,7 @@ from nexus.contracts.types import OperationContext
 from nexus.core.nexus_fs_content import emit_op_completed
 from nexus.kernel_helpers import metastore_list_iter
 from nexus.lib.rpc_decorator import rpc_expose
+from nexus.lib.zone_revision import revision_token
 
 if TYPE_CHECKING:
     pass
@@ -831,7 +832,9 @@ class MetadataMixin:
                 bytes_count=0,
                 latency_ms=int((time.perf_counter() - _unlink_start) * 1000),
             )
-            return {}
+            # Issue #4737: zone revision the delete was applied at (None
+            # when the kernel did not stamp the response).
+            return {"revision": revision_token(_unlink_result)}
 
         # ── Rust miss: only DT_EXTERNAL_STORAGE (5) or not-found ─────
         et = _unlink_result.entry_type
@@ -1041,7 +1044,9 @@ class MetadataMixin:
             )
             self._kernel.dispatch_post_hooks("rename", _rename_ctx)
 
-        return {}
+        # Issue #4737: zone revision the rename was applied at (None when
+        # the kernel did not stamp the response).
+        return {"revision": revision_token(_rename_result)}
 
     # ------------------------------------------------------------------
     # sys_copy — Issue #3329 (Workstream 3: native copy/move)

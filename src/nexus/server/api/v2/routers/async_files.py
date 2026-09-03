@@ -35,6 +35,11 @@ from nexus.runtime.zone_resolution import (
     zone_from_path,
     zones_from_params,
 )
+from nexus.server.api.v2._revision_fence import (
+    RevisionFence,
+    get_revision_fence,
+    stamp_revision,
+)
 from nexus.server.api.v2.routers._index_on_write import (
     IndexOnWrite,
     WriteIndexResult,
@@ -298,6 +303,15 @@ class WriteResponse(BaseModel):
     modified_at: str
     # Present when `index` was requested: indexed | skipped | error (#4736).
     index: WriteIndexResult | None = None
+    revision: str | None = Field(
+        None,
+        description=(
+            "Read-your-writes token ('<path>@<gen>') for this write. Pass it back as "
+            "X-Nexus-Min-Revision / ?min_revision= on a later read, list, glob, grep or "
+            "search to observe the write on any node, or get 412 with the node's current "
+            "revision (#4737)."
+        ),
+    )
 
 
 class ReadResponse(BaseModel):
@@ -316,6 +330,13 @@ class DeleteResponse(BaseModel):
 
     deleted: bool
     path: str
+    revision: str | None = Field(
+        None,
+        description=(
+            "Revision token for this delete (#4737). null on kernels that do not stamp "
+            "deletes; fence on the parent listing's own writes instead."
+        ),
+    )
 
 
 class ExistsResponse(BaseModel):
@@ -472,6 +493,9 @@ class BatchWriteResult(BaseModel):
     size: int
     # Present when indexing was requested for this file (#4736).
     index: WriteIndexResult | None = None
+    revision: str | None = Field(
+        None, description="Read-your-writes token ('<path>@<gen>') for this item (#4737)."
+    )
 
 
 class BatchWriteResponse(BaseModel):
@@ -536,6 +560,10 @@ class RenameResponse(BaseModel):
     success: bool
     source: str
     destination: str
+    revision: str | None = Field(
+        None,
+        description="Revision token for this rename (#4737); null on kernels that do not stamp it.",
+    )
 
 
 class CopyRequest(BaseModel):
@@ -552,6 +580,10 @@ class CopyResponse(BaseModel):
     source: str
     destination: str
     bytes_copied: int
+    revision: str | None = Field(
+        None,
+        description="Read-your-writes token ('<destination>@<gen>') for the copied file (#4737).",
+    )
 
 
 class RenameOperation(BaseModel):
@@ -883,11 +915,14 @@ def create_async_files_router(
                     size=result["size"],
                     modified_at=str(modified),
                     index=index_result,
+                    revision=result.get("revision"),
                 )
-                return Response(
+                write_response = Response(
                     content=response_data.model_dump_json(),
                     media_type="application/json",
                 )
+                stamp_revision(write_response, response_data.revision)
+                return write_response
 
             return await _run_for_context(context, {"path": request.path, "zone": zone}, _work)
 
@@ -941,6 +976,7 @@ def create_async_files_router(
         ),
         context: Any = Depends(get_context),
         auth_result: dict[str, Any] = Depends(require_auth),
+        revision_fence: RevisionFence = Depends(get_revision_fence),
     ) -> Response:
         """
         Read file content.
@@ -968,6 +1004,7 @@ def create_async_files_router(
 
             async def _work() -> Any:
                 fs = await _get_fs()
+                await revision_fence.enforce(fs, context=context)
 
                 # Fast path: content-hash (content_id) lookup — used by the diff viewer
                 # to retrieve a historical snapshot stored in CAS.
@@ -1256,7 +1293,11 @@ def create_async_files_router(
                         media_type="application/json",
                     )
 
-            return await _run_for_context(context, {"path": path, "zone": zone}, _work)
+            read_response: Response = await _run_for_context(
+                context, {"path": path, "zone": zone}, _work
+            )
+            revision_fence.stamp(read_response)
+            return read_response
 
         except HTTPException:
             # Preserve explicit HTTP status codes (e.g., 400 transaction_id
@@ -1540,6 +1581,7 @@ def create_async_files_router(
 
     @router.delete("/delete", response_model=DeleteResponse)
     async def delete_file(
+        response: Response,
         path: str = Query(..., description="Path to delete"),
         transaction_id: str | None = Query(
             None,
@@ -1581,7 +1623,7 @@ def create_async_files_router(
                         except Exception:
                             _original_hash = None
 
-                fs.sys_unlink(path, context=context)
+                unlink_result = fs.sys_unlink(path, context=context)
 
                 if (
                     _ss is not None
@@ -1598,9 +1640,17 @@ def create_async_files_router(
                     except Exception as _track_err:
                         logger.warning("txn track delete failed: %s", _track_err)
 
-                return DeleteResponse(deleted=True, path=path)
+                return DeleteResponse(
+                    deleted=True,
+                    path=path,
+                    revision=unlink_result.get("revision")
+                    if isinstance(unlink_result, dict)
+                    else None,
+                )
 
-            return await _run_for_context(context, {"path": path, "zone": zone}, _work)
+            delete_response = await _run_for_context(context, {"path": path, "zone": zone}, _work)
+            stamp_revision(response, delete_response.revision)
+            return delete_response
 
         except _PERMISSION_ERRORS as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
@@ -1616,6 +1666,7 @@ def create_async_files_router(
 
     @router.get("/exists", response_model=ExistsResponse)
     async def file_exists(
+        response: Response,
         path: str = Query(..., description="Path to check"),
         zone: str | None = Query(
             None,
@@ -1623,6 +1674,7 @@ def create_async_files_router(
         ),
         context: Any = Depends(get_context),
         auth_result: dict[str, Any] = Depends(require_auth),
+        revision_fence: RevisionFence = Depends(get_revision_fence),
     ) -> ExistsResponse:
         """Check if a file or directory exists."""
         context = _apply_zone_override(context, zone, auth_result)
@@ -1630,11 +1682,17 @@ def create_async_files_router(
 
             async def _work() -> ExistsResponse:
                 fs = await _get_fs()
+                await revision_fence.enforce(fs, context=context)
                 exists = fs.access(path, context=context)
                 return ExistsResponse(exists=exists)
 
-            return await _run_for_context(context, {"path": path, "zone": zone}, _work)
+            exists_response = await _run_for_context(context, {"path": path, "zone": zone}, _work)
+            revision_fence.stamp(response)
+            return exists_response
 
+        except HTTPException:
+            # Preserve explicit statuses (412/501 from the revision fence).
+            raise
         except _PERMISSION_ERRORS as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
         except InvalidPathError as e:
@@ -1645,6 +1703,7 @@ def create_async_files_router(
 
     @router.get("/list", response_model=ListResponse, response_model_by_alias=True)
     async def list_directory(
+        response: Response,
         path: str = Query(..., description="Directory path to list"),
         limit: int | None = Query(
             None, ge=1, le=1000, description="Max items per page (default: all)"
@@ -1658,6 +1717,7 @@ def create_async_files_router(
         ),
         context: Any = Depends(get_context),
         auth_result: dict[str, Any] = Depends(require_auth),
+        revision_fence: RevisionFence = Depends(get_revision_fence),
     ) -> ListResponse:
         """List directory contents with optional cursor pagination.
 
@@ -1673,6 +1733,7 @@ def create_async_files_router(
 
             async def _work() -> Any:
                 fs = await _get_fs()
+                await revision_fence.enforce(fs, context=context)
 
                 # Decode opaque cursor (base64-encoded path)
                 cursor_path: str | None = None
@@ -1860,7 +1921,11 @@ def create_async_files_router(
                 ]
                 return ListResponse(items=file_items, has_more=False)
 
-            return await _run_for_context(context, {"path": path, "zone": zone}, _work)
+            list_response: ListResponse = await _run_for_context(
+                context, {"path": path, "zone": zone}, _work
+            )
+            revision_fence.stamp(response)
+            return list_response
 
         except HTTPException:
             raise
@@ -1921,6 +1986,7 @@ def create_async_files_router(
 
     @router.get("/metadata", response_model=MetadataResponse)
     async def get_file_metadata(
+        response: Response,
         path: str = Query(..., description="Path to get metadata for"),
         zone: str | None = Query(
             None,
@@ -1928,6 +1994,7 @@ def create_async_files_router(
         ),
         context: Any = Depends(get_context),
         auth_result: dict[str, Any] = Depends(require_auth),
+        revision_fence: RevisionFence = Depends(get_revision_fence),
     ) -> MetadataResponse:
         """Get file or directory metadata."""
         context = _apply_zone_override(context, zone, auth_result)
@@ -1935,14 +2002,20 @@ def create_async_files_router(
 
             async def _work() -> MetadataResponse:
                 fs = await _get_fs()
+                await revision_fence.enforce(fs, context=context)
                 meta = fs.sys_stat(path, context=context)
                 if meta is None:
                     raise NexusFileNotFoundError(path=path)
 
                 return _to_metadata_response(meta, fallback_path=path)
 
-            return await _run_for_context(context, {"path": path, "zone": zone}, _work)
+            metadata_response = await _run_for_context(context, {"path": path, "zone": zone}, _work)
+            revision_fence.stamp(response)
+            return metadata_response
 
+        except HTTPException:
+            # Preserve explicit statuses (412/501 from the revision fence).
+            raise
         except AuthenticationError:
             # Preserve structured re-auth signal (see /list and /read handlers).
             raise
@@ -1958,6 +2031,7 @@ def create_async_files_router(
 
     @router.post("/batch-read")
     async def batch_read_files(
+        response: Response,
         request: BatchReadRequest,
         zone: str | None = Query(
             None,
@@ -1965,6 +2039,7 @@ def create_async_files_router(
         ),
         context: Any = Depends(get_context),
         auth_result: dict[str, Any] = Depends(require_auth),
+        revision_fence: RevisionFence = Depends(get_revision_fence),
     ) -> dict[str, Any]:
         """
         Read multiple files in a single request.
@@ -1977,6 +2052,7 @@ def create_async_files_router(
 
             async def _work() -> dict[str, Any]:
                 fs = await _get_fs()
+                await revision_fence.enforce(fs, context=context)
                 results = await asyncio.to_thread(fs.read_bulk, request.paths, context=context)
 
                 # Convert bytes to string for JSON response
@@ -1993,12 +2069,17 @@ def create_async_files_router(
 
                 return response
 
-            return await _run_for_context(
+            bulk_response = await _run_for_context(
                 context,
                 {"paths": request.paths, "zone": zone},
                 _work,
             )
+            revision_fence.stamp(response)
+            return bulk_response
 
+        except HTTPException:
+            # Preserve explicit statuses (412/501 from the revision fence).
+            raise
         except _PERMISSION_ERRORS as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
         except InvalidPathError as e:
@@ -2057,6 +2138,7 @@ def create_async_files_router(
                         version=r.get("version", 0),
                         modified_at=r.get("modified_at"),
                         size=r.get("size", 0),
+                        revision=r.get("revision"),
                     )
                     for i, r in enumerate(raw_results)
                 ]
@@ -2093,8 +2175,10 @@ def create_async_files_router(
 
     @router.post("/batch/read", response_model=BatchReadResponse)
     async def batch_read_files_v2(
+        response: Response,
         request: BatchReadAtomicRequest,
         context: Any = Depends(get_context),
+        revision_fence: RevisionFence = Depends(get_revision_fence),
     ) -> BatchReadResponse:
         """
         Read multiple files in a single atomic round-trip.
@@ -2110,6 +2194,7 @@ def create_async_files_router(
 
             async def _work() -> BatchReadResponse:
                 fs = await _get_fs()
+                await revision_fence.enforce(fs, context=context)
                 raw_results = await _maybe_await(
                     fs.read_batch(request.paths, partial=request.partial, context=context)
                 )
@@ -2146,7 +2231,9 @@ def create_async_files_router(
                         )
                 return BatchReadResponse(results=items)
 
-            return await _run_for_context(context, request, _work)
+            batch_response = await _run_for_context(context, request, _work)
+            revision_fence.stamp(response)
+            return batch_response
         except NexusFileNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except _PERMISSION_ERRORS as e:
@@ -2171,6 +2258,7 @@ def create_async_files_router(
         path: str = Query(..., description="Path to stream"),
         chunk_size: int = Query(65536, description="Chunk size in bytes"),
         context: Any = Depends(get_context),
+        revision_fence: RevisionFence = Depends(get_revision_fence),
     ) -> Response | StreamingResponse:
         """
         Stream file content in chunks with HTTP Range support (RFC 9110).
@@ -2185,6 +2273,7 @@ def create_async_files_router(
 
             async def _work() -> Response | StreamingResponse:
                 fs = await _get_fs()
+                await revision_fence.enforce(fs, context=context)
                 meta = fs.sys_stat(path, context=context)
                 if meta is None:
                     raise NexusFileNotFoundError(path=path)
@@ -2215,8 +2304,13 @@ def create_async_files_router(
                     filename=path.split("/")[-1],
                 )
 
-            return await _run_for_context(context, {"path": path}, _work)
+            stream_response = await _run_for_context(context, {"path": path}, _work)
+            revision_fence.stamp(stream_response)
+            return stream_response
 
+        except HTTPException:
+            # Preserve explicit statuses (412/501 from the revision fence).
+            raise
         except _PERMISSION_ERRORS as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
         except NexusFileNotFoundError as e:
@@ -2231,6 +2325,7 @@ def create_async_files_router(
 
     @router.post("/rename", response_model=RenameResponse)
     async def rename_file(
+        response: Response,
         request: RenameRequest,
         context: Any = Depends(get_context),
     ) -> RenameResponse:
@@ -2244,16 +2339,21 @@ def create_async_files_router(
 
             async def _work() -> RenameResponse:
                 fs = await _get_fs()
-                await _maybe_await(
+                rename_result = await _maybe_await(
                     fs.sys_rename(request.source, request.destination, context=context)
                 )
                 return RenameResponse(
                     success=True,
                     source=request.source,
                     destination=request.destination,
+                    revision=rename_result.get("revision")
+                    if isinstance(rename_result, dict)
+                    else None,
                 )
 
-            return await _run_for_context(context, request, _work)
+            rename_response = await _run_for_context(context, request, _work)
+            stamp_revision(response, rename_response.revision)
+            return rename_response
 
         except _PERMISSION_ERRORS as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
@@ -2269,6 +2369,7 @@ def create_async_files_router(
 
     @router.post("/copy", response_model=CopyResponse)
     async def copy_file(
+        response: Response,
         request: CopyRequest,
         context: Any = Depends(get_context),
     ) -> CopyResponse:
@@ -2293,24 +2394,31 @@ def create_async_files_router(
                 if file_size < STREAMING_COPY_THRESHOLD:
                     # Small file: read all then write all
                     content = await _maybe_await(fs.sys_read(request.source, context=context))
-                    await _maybe_await(fs.write(request.destination, buf=content, context=context))
+                    write_result = await _maybe_await(
+                        fs.write(request.destination, buf=content, context=context)
+                    )
                     bytes_copied = len(content)
                 else:
                     # Large file: streaming copy
                     chunks = await asyncio.to_thread(fs.stream, request.source, context=context)
-                    result = await asyncio.to_thread(
+                    write_result = await asyncio.to_thread(
                         fs.write_stream, request.destination, chunks, context=context
                     )
-                    bytes_copied = result.get("size", file_size)
+                    bytes_copied = write_result.get("size", file_size)
 
                 return CopyResponse(
                     success=True,
                     source=request.source,
                     destination=request.destination,
                     bytes_copied=bytes_copied,
+                    revision=write_result.get("revision")
+                    if isinstance(write_result, dict)
+                    else None,
                 )
 
-            return await _run_for_context(context, request, _work)
+            copy_response = await _run_for_context(context, request, _work)
+            stamp_revision(response, copy_response.revision)
+            return copy_response
 
         except _PERMISSION_ERRORS as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
@@ -2445,10 +2553,12 @@ def create_async_files_router(
 
     @router.get("/glob", response_model=GlobResponse)
     async def glob_search(
+        response: Response,
         pattern: str = Query(..., description="Glob pattern to match (e.g. '**/*.py')"),
         path: str = Query("/", description="Base path to search under"),
         limit: int = Query(100, description="Maximum number of results", ge=1, le=1000),
         context: Any = Depends(get_context),
+        revision_fence: RevisionFence = Depends(get_revision_fence),
     ) -> GlobResponse:
         """
         Search for files matching a glob pattern.
@@ -2460,6 +2570,7 @@ def create_async_files_router(
 
             async def _work() -> GlobResponse:
                 fs = await _get_fs()
+                await revision_fence.enforce(fs, context=context)
 
                 # List all files without blocking the zone runner when a
                 # synchronous NexusFS implementation performs recursive I/O.
@@ -2484,8 +2595,13 @@ def create_async_files_router(
                     base_path=path,
                 )
 
-            return await _run_for_context(context, {"path": path}, _work)
+            glob_response = await _run_for_context(context, {"path": path}, _work)
+            revision_fence.stamp(response)
+            return glob_response
 
+        except HTTPException:
+            # Preserve explicit statuses (412/501 from the revision fence).
+            raise
         except _PERMISSION_ERRORS as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
         except InvalidPathError as e:
@@ -2496,11 +2612,13 @@ def create_async_files_router(
 
     @router.get("/grep", response_model=GrepResponse)
     async def grep_search(
+        response: Response,
         pattern: str = Query(..., description="Regex pattern to search for"),
         path: str = Query("/", description="Base path to search under"),
         ignore_case: bool = Query(False, description="Case-insensitive matching"),
         limit: int = Query(100, description="Maximum number of results", ge=1, le=1000),
         context: Any = Depends(get_context),
+        revision_fence: RevisionFence = Depends(get_revision_fence),
     ) -> GrepResponse:
         """
         Search for content matching a regex pattern within files.
@@ -2514,6 +2632,7 @@ def create_async_files_router(
 
             async def _work() -> GrepResponse:
                 fs = await _get_fs()
+                await revision_fence.enforce(fs, context=context)
 
                 flags = re.IGNORECASE if ignore_case else 0
                 try:
@@ -2632,7 +2751,9 @@ def create_async_files_router(
                     base_path=path,
                 )
 
-            return await _run_for_context(context, {"path": path}, _work)
+            grep_response = await _run_for_context(context, {"path": path}, _work)
+            revision_fence.stamp(response)
+            return grep_response
 
         except HTTPException:
             raise

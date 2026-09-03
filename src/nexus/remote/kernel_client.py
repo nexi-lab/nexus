@@ -29,6 +29,7 @@ from typing import IO, Any
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.rpc_types import RPCErrorCode
 from nexus.lib.rpc_codec import decode_rpc_message
+from nexus.lib.zone_revision import revision_fields as _revision_fields
 from nexus.remote.rpc_transport import RPCTransport
 
 logger = logging.getLogger(__name__)
@@ -492,6 +493,8 @@ class KernelClient:
             content_id=result.get("content_id"),
             size=result.get("size", 0),
             gen=result.get("gen", 0),
+            zone_id=result.get("zone_id") or None,
+            applied_index=int(result.get("applied_index") or 0) or None,
         )
 
     def sys_stat(self, path: str, zone_id: str = ROOT_ZONE_ID) -> Any:
@@ -541,6 +544,7 @@ class KernelClient:
                 "path": r.path,
                 "content_id": r.content_id or None,
                 "size": r.size,
+                **_revision_fields(r),
             }
         )
 
@@ -550,7 +554,7 @@ class KernelClient:
         """Create a directory via the typed Mkdir RPC."""
         assert self._transport is not None
         r = self._transport.mkdir(path, parents=parents, exist_ok=exist_ok)
-        return _SysMkdirResult({"hit": r.hit})
+        return _SysMkdirResult({"hit": r.hit, **_revision_fields(r)})
 
     def sys_rename(
         self,
@@ -572,6 +576,7 @@ class KernelClient:
                 "old_modified_at_ms": r.old_modified_at_ms
                 if r.HasField("old_modified_at_ms")
                 else None,
+                **_revision_fields(r),
             }
         )
 
@@ -592,6 +597,7 @@ class KernelClient:
                 "size": r.size,
                 "version": r.version,
                 "gen": r.gen,
+                **_revision_fields(r),
             }
         )
 
@@ -1124,6 +1130,7 @@ class KernelClient:
                     "size": item.size,
                     "gen": item.gen,
                     "version": item.version,
+                    **_revision_fields(item),
                 }
             )
             for item in self._transport.batch_write(files)
@@ -1251,9 +1258,18 @@ class _SysWriteResult:
         "old_size",
         "old_version",
         "old_modified_at_ms",
+        "zone_id",
+        "applied_index",
     )
 
-    def __init__(self, content_id: str | None = None, size: int = 0, gen: int = 0) -> None:
+    def __init__(
+        self,
+        content_id: str | None = None,
+        size: int = 0,
+        gen: int = 0,
+        zone_id: str | None = None,
+        applied_index: int | None = None,
+    ) -> None:
         self.hit = True
         self.content_id = content_id
         self.post_hook_needed = True
@@ -1265,23 +1281,39 @@ class _SysWriteResult:
         self.old_size: int | None = None
         self.old_version: int | None = None
         self.old_modified_at_ms: int | None = None
+        # Zone revision (#4737): raft zone the write landed in + the
+        # serving node's applied_index after the apply. None when the
+        # kernel did not stamp the response.
+        self.zone_id: str | None = zone_id
+        self.applied_index: int | None = applied_index
 
 
 class _SysMkdirResult:
     """Result wrapper for sys_mkdir Call RPC response."""
 
-    __slots__ = ("hit", "post_hook_needed")
+    __slots__ = ("hit", "post_hook_needed", "zone_id", "applied_index")
 
     def __init__(self, d: dict[str, Any] | None = None) -> None:
         d = d or {}
         self.hit = d.get("hit", True)
         self.post_hook_needed = d.get("post_hook_needed", False)
+        self.zone_id = d.get("zone_id")
+        self.applied_index = d.get("applied_index")
 
 
 class _SysUnlinkResult:
     """Result wrapper for sys_unlink Call RPC response."""
 
-    __slots__ = ("hit", "post_hook_needed", "entry_type", "path", "content_id", "size")
+    __slots__ = (
+        "hit",
+        "post_hook_needed",
+        "entry_type",
+        "path",
+        "content_id",
+        "size",
+        "zone_id",
+        "applied_index",
+    )
 
     def __init__(self, d: dict[str, Any] | None = None) -> None:
         d = d or {}
@@ -1291,6 +1323,8 @@ class _SysUnlinkResult:
         self.path = d.get("path", "")
         self.content_id = d.get("content_id")
         self.size = d.get("size", 0)
+        self.zone_id = d.get("zone_id")
+        self.applied_index = d.get("applied_index")
 
 
 class _SysRenameResult:
@@ -1305,6 +1339,8 @@ class _SysRenameResult:
         "old_size",
         "old_version",
         "old_modified_at_ms",
+        "zone_id",
+        "applied_index",
     )
 
     def __init__(self, d: dict[str, Any] | None = None) -> None:
@@ -1317,12 +1353,24 @@ class _SysRenameResult:
         self.old_size = d.get("old_size")
         self.old_version = d.get("old_version")
         self.old_modified_at_ms = d.get("old_modified_at_ms")
+        self.zone_id = d.get("zone_id")
+        self.applied_index = d.get("applied_index")
 
 
 class _SysCopyResult:
     """Result wrapper for sys_copy Call RPC response."""
 
-    __slots__ = ("hit", "post_hook_needed", "dst_path", "content_id", "size", "version", "gen")
+    __slots__ = (
+        "hit",
+        "post_hook_needed",
+        "dst_path",
+        "content_id",
+        "size",
+        "version",
+        "gen",
+        "zone_id",
+        "applied_index",
+    )
 
     def __init__(self, d: dict[str, Any] | None = None) -> None:
         d = d or {}
@@ -1333,6 +1381,8 @@ class _SysCopyResult:
         self.size = d.get("size", 0)
         self.version = d.get("version", 1)
         self.gen = d.get("gen", 0)
+        self.zone_id = d.get("zone_id")
+        self.applied_index = d.get("applied_index")
 
 
 class _SysSetAttrResult:
@@ -1350,7 +1400,7 @@ class _SysSetAttrResult:
 class _BatchWriteItemResult:
     """Result wrapper for individual write_batch item."""
 
-    __slots__ = ("content_id", "size", "gen", "version")
+    __slots__ = ("content_id", "size", "gen", "version", "zone_id", "applied_index")
 
     def __init__(self, d: dict[str, Any] | None = None) -> None:
         d = d or {}
@@ -1358,6 +1408,8 @@ class _BatchWriteItemResult:
         self.size = d.get("size", 0)
         self.gen = d.get("gen", 0)
         self.version = d.get("version", 1)
+        self.zone_id = d.get("zone_id")
+        self.applied_index = d.get("applied_index")
 
 
 class _AttrDict(dict):

@@ -38,6 +38,7 @@ from nexus.contracts.exceptions import (
 from nexus.grpc.defaults import build_channel_options
 from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
 from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
+from nexus.lib.zone_revision import revision_fields as _revision_fields
 from nexus.remote.base_client import BaseRemoteNexusFS
 
 if TYPE_CHECKING:
@@ -358,7 +359,9 @@ class RPCTransport:
         """Write file content via typed Write RPC — no JSON/base64 overhead.
 
         Returns:
-            Dict with ``content_id``, ``size``, and ``gen``.
+            Dict with ``content_id``, ``size``, ``gen``, plus the zone
+            revision fields ``zone_id`` / ``applied_index`` when the kernel
+            stamps them (#4737; empty / 0 on kernels that do not).
         """
         request = vfs_pb2.WriteRequest(
             path=path,
@@ -373,7 +376,12 @@ class RPCTransport:
             self._raise_transport_error(exc, timeout, "Write")
         if response.is_error:
             self._handle_typed_error(response.error_payload)
-        return {"content_id": response.content_id, "size": response.size, "gen": response.gen}
+        return {
+            "content_id": response.content_id,
+            "size": response.size,
+            "gen": response.gen,
+            **_revision_fields(response),
+        }
 
     @retry(
         stop=stop_after_attempt(3),

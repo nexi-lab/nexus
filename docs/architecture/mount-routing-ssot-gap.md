@@ -134,3 +134,8 @@ and the test hits it deterministically.
 - Workaround for PR #3765: the `applied_index` gate + tight raft
   transport keepalive shrinks the window enough that most runs pass,
   but the test remains flaky on slow hosts.
+- nexi-lab/nexus#4737: a read fenced with `X-Nexus-Min-Revision`
+  (`consistency-contract.md` §3) stats the written path first, so in the
+  window above it answers 412 with the revision this node has instead of
+  `metadata: None`. Readiness still does not gate on convergence; that
+  needs the kernel signal listed in `consistency-contract.md` §5.

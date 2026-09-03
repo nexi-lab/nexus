@@ -19,6 +19,7 @@ from nexus.bricks.auth.user_queries import (
     get_user_by_username,
     validate_user_uniqueness,
 )
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.storage.models import UserModel
 
 logger = logging.getLogger(__name__)
@@ -116,7 +117,11 @@ class DatabaseLocalAuth(LocalAuth):
         user_info = {
             "subject_type": "user",
             "subject_id": user.user_id,
-            "zone_id": None,
+            # Issue #4740: local users without an assigned zone live in the
+            # root zone explicitly — the server no longer coerces a missing
+            # zone to ROOT, and zone-less non-admins are refused on list /
+            # search.
+            "zone_id": getattr(user, "zone_id", None) or ROOT_ZONE_ID,
             "is_admin": user.is_global_admin == 1,
             "name": user.display_name or user.username or user.email,
         }
@@ -155,7 +160,8 @@ class DatabaseLocalAuth(LocalAuth):
             user_info = {
                 "subject_type": "user",
                 "subject_id": user.user_id,
-                "zone_id": None,
+                # Issue #4740: see register_user_and_login — explicit ROOT.
+                "zone_id": getattr(user, "zone_id", None) or ROOT_ZONE_ID,
                 "is_admin": user.is_global_admin == 1,
                 "name": user.display_name or user.username or user.email,
             }
@@ -279,7 +285,8 @@ class DatabaseLocalAuth(LocalAuth):
             return {
                 "subject_type": "user",
                 "subject_id": user.user_id,
-                "zone_id": user.zone_id,
+                # Issue #4740: explicit ROOT for zone-less local users.
+                "zone_id": user.zone_id or ROOT_ZONE_ID,
                 "is_admin": user.is_global_admin == 1,
                 "name": user.display_name or user.username or user.email,
                 "api_key": user.api_key,

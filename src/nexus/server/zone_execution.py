@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import copy
+import dataclasses
 from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar, cast
 
@@ -34,9 +36,28 @@ def context_for_target_zone(context: Any, target_zone: str | None) -> Any:
     if getattr(context, "is_admin", False):
         updates["zone_set"] = (target_zone,)
         updates["zone_perms"] = ((target_zone, "rw"),)
+    return _with_updates(context, updates)
+
+
+def _with_updates(context: Any, updates: dict[str, Any]) -> Any:
+    """Return a copy of *context* with *updates* applied — never mutate the caller's.
+
+    Issue #4740: the request-scoped context can be shared (batch executors,
+    retries, cached auth results), so retargeting it in place leaked the
+    admin ``zone_perms=((target, "rw"),)`` grant into later operations.
+    ``dataclasses.replace`` re-runs ``OperationContext.__post_init__`` so
+    ``zone_set`` / ``zone_perms`` stay consistent; non-dataclass contexts
+    (tests use ``SimpleNamespace``) fall back to a shallow copy.
+    """
+    if dataclasses.is_dataclass(context) and not isinstance(context, type):
+        try:
+            return dataclasses.replace(context, **updates)
+        except (TypeError, ValueError):
+            pass
+    clone = copy.copy(context)
     for key, value in updates.items():
-        setattr(context, key, value)
-    return context
+        setattr(clone, key, value)
+    return clone
 
 
 async def run_zone_scoped(

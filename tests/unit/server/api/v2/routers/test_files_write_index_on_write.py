@@ -109,7 +109,10 @@ def test_plain_write_does_not_index() -> None:
     assert resp.status_code == 200
     assert resp.json()["index"] is None
     daemon.index_documents.assert_not_awaited()
-    assert fs.writes == [("/docs/a.md", b"hello")]
+    # #4740: the REST route writes into the caller's zone namespace
+    # (auth zone "eng"), exactly like the RPC path; the index leg keeps the
+    # caller-facing path (see the indexing tests below).
+    assert fs.writes == [("/zone/eng/docs/a.md", b"hello")]
 
 
 def test_index_true_indexes_the_written_text_in_the_same_call() -> None:
@@ -143,7 +146,7 @@ def test_index_text_override_replaces_the_written_bytes() -> None:
     assert resp.json()["index"]["status"] == "indexed"
     docs, _ = _sent_docs(daemon)
     assert docs[0]["text"] == "extracted words"
-    assert fs.writes == [("/docs/report.pdf", b"\x00\x01\x02")]
+    assert fs.writes == [("/zone/eng/docs/report.pdf", b"\x00\x01\x02")]
 
 
 def test_binary_content_without_text_is_skipped_locally() -> None:

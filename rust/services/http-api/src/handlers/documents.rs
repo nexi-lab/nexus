@@ -30,7 +30,8 @@
 
 use axum::extract::{Query, State};
 use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
+use contracts::operation_context::OperationContext;
 use serde::{Deserialize, Serialize};
 
 use crate::handlers::search::SearchError;
@@ -38,15 +39,16 @@ use crate::search_proto::{
     DocumentInput as ProtoDocumentInput, IndexDocumentsRequest, IndexRequest, RefreshRequest,
     StatsRequest,
 };
+use crate::zone::{effective_zone, is_privileged, scope_request_path, ZoneError};
 use crate::AppState;
 
 // ── shared field-shape helpers ───────────────────────────────────
 
 fn default_zone() -> String {
-    // Empty ⇒ server-side default (ROOT_ZONE_ID); matches the
-    // sibling search routes.  Kept as an explicit helper so a
-    // future zone-required route can flip the shape without
-    // touching every field.
+    // Empty ⇒ the caller's zone (#4740): resolved from the
+    // authenticated context by `crate::zone::effective_zone`, never
+    // from the wire alone.  Admin / system callers may still name a
+    // zone explicitly; everyone else is refused on a mismatch.
     String::new()
 }
 
@@ -88,12 +90,15 @@ pub struct IndexResponseBody {
 /// Handler for `POST /v2/documents/index`.
 pub async fn index(
     State(state): State<AppState>,
+    Extension(ctx): Extension<OperationContext>,
     Json(body): Json<IndexBody>,
 ) -> Result<Json<IndexResponseBody>, SearchError> {
+    let zone_id = effective_zone(&ctx, &body.zone_id)?;
+    let root_path = scope_request_path(&ctx, &zone_id, &body.root_path)?;
     let mut client = state.search.client().await?;
     let req = IndexRequest {
-        root_path: body.root_path,
-        zone_id: body.zone_id,
+        root_path,
+        zone_id,
         recursive: body.recursive,
         max_docs: body.max_docs,
         auth_token: body.auth_token,
@@ -147,12 +152,15 @@ pub struct RefreshResponseBody {
 /// Handler for `POST /v2/documents/refresh`.
 pub async fn refresh(
     State(state): State<AppState>,
+    Extension(ctx): Extension<OperationContext>,
     Json(body): Json<RefreshBody>,
 ) -> Result<Json<RefreshResponseBody>, SearchError> {
+    let zone_id = effective_zone(&ctx, &body.zone_id)?;
+    let root_path = scope_request_path(&ctx, &zone_id, &body.root_path)?;
     let mut client = state.search.client().await?;
     let req = RefreshRequest {
-        root_path: body.root_path,
-        zone_id: body.zone_id,
+        root_path,
+        zone_id,
         recursive: body.recursive,
         max_docs: body.max_docs,
         auth_token: body.auth_token,
@@ -229,21 +237,40 @@ pub struct BatchResponseBody {
 /// Handler for `POST /v2/documents/batch`.
 pub async fn batch(
     State(state): State<AppState>,
+    Extension(ctx): Extension<OperationContext>,
     Json(body): Json<BatchBody>,
 ) -> Result<Json<BatchResponseBody>, SearchError> {
+    let zone_id = effective_zone(&ctx, &body.zone_id)?;
+    // #4740: a non-privileged caller indexes into its own zone only —
+    // a per-document override naming another zone is refused, never
+    // silently honoured.  Privileged callers' documents pass through
+    // verbatim (an empty per-doc zone keeps falling back at the plugin).
+    let privileged = is_privileged(&ctx);
+    let mut documents = Vec::with_capacity(body.documents.len());
+    for d in body.documents {
+        let doc_zone = if privileged {
+            d.zone_id
+        } else if d.zone_id.is_empty() {
+            zone_id.clone()
+        } else if d.zone_id == zone_id {
+            d.zone_id
+        } else {
+            return Err(SearchError::Forbidden(ZoneError::Mismatch {
+                requested: d.zone_id,
+                caller: zone_id,
+            }));
+        };
+        documents.push(ProtoDocumentInput {
+            path: d.path,
+            text: d.text,
+            mtime_ms: d.mtime_ms,
+            zone_id: doc_zone,
+        });
+    }
     let mut client = state.search.client().await?;
     let req = IndexDocumentsRequest {
-        documents: body
-            .documents
-            .into_iter()
-            .map(|d| ProtoDocumentInput {
-                path: d.path,
-                text: d.text,
-                mtime_ms: d.mtime_ms,
-                zone_id: d.zone_id,
-            })
-            .collect(),
-        zone_id: body.zone_id,
+        documents,
+        zone_id,
         auth_token: body.auth_token,
     };
     let resp = client

@@ -199,12 +199,17 @@ async def resolve_auth(
 
         is_admin = subject_id in _STATIC_ADMINS if subject_id else False
 
+        # Issue #4740: open-access mode has no tenant model — the loopback
+        # caller IS the operator — so the absence of a zone header means the
+        # ROOT zone explicitly, not "zone-less" (which list/search now
+        # refuse for non-admins).  This is still tighter than before: a root
+        # caller sees root-tagged entries, not every ``/zone/<id>/`` tree.
         return {
             "authenticated": True,
             "is_admin": is_admin,
             "subject_type": subject_type,
             "subject_id": subject_id,
-            "zone_id": zone_id,
+            "zone_id": zone_id or ROOT_ZONE_ID,
             "inherit_permissions": True,  # Open access mode always inherits
             "metadata": {"open_access": True},
             "x_agent_id": x_agent_id,
@@ -426,8 +431,16 @@ def get_operation_context(auth_result: dict[str, Any]) -> Any:
 
     subject_type = auth_result.get("subject_type") or "user"
     subject_id = auth_result.get("subject_id") or "anonymous"
-    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
     is_admin = auth_result.get("is_admin", False)
+    # Issue #4740: a missing zone claim is no longer coerced to ROOT for
+    # non-admin callers.  The context keeps ``zone_id=None`` and the
+    # enumeration surfaces (sys_readdir, search list/glob/grep) refuse it
+    # (403) instead of handing out the global view.  Admins keep ROOT as
+    # their default zone — that is the operator's own namespace, and cross-
+    # zone listing still needs an explicit ``all_zones=true``.  Providers
+    # that legitimately mean "the default zone" (open-access mode, local
+    # users, OIDC without a zone claim) now say ROOT explicitly upstream.
+    zone_id = auth_result.get("zone_id") or (ROOT_ZONE_ID if is_admin else None)
     agent_id = auth_result.get("x_agent_id")
     user_id = subject_id
 

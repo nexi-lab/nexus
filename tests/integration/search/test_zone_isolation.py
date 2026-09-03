@@ -1,285 +1,204 @@
-"""Integration tests for zone-level isolation and ReBAC file-level filtering.
+"""Zone isolation through the post-P12 ``SearchDaemon`` gRPC proxy.
 
-Validates:
-- Zone-level isolation via zone_id SQL WHERE clause (txtai backend)
-- Cross-zone document visibility
-- Zone_id=None / ROOT_ZONE_ID fallback
-- ReBAC file-level filtering (PermissionEnforcer.filter_list) in router layer
-- Over-fetch compensation for filtered results
+Every search / index / evict call the server makes must carry the caller's
+zone to the Rust ``nexus-search-plugin`` — the plugin keeps one tantivy +
+HNSW index per zone, so a dropped or wrong ``zone_id`` either leaks another
+tenant's documents into a query or files a tenant's document where its own
+queries never look.  These tests run the REAL proxy over a fake gRPC stub
+and pin the zone on every outgoing request (same pattern as
+``tests/integration/services/test_search_response_contracts.py``).
+
+Rewritten for P12 (#4598 / #4736): the previous version drove the deleted
+in-process daemon (``DaemonConfig`` / ``create_backend`` / txtai SQL WHERE
+clauses) and had failed at collection since the pivot.
 """
 
-from unittest.mock import AsyncMock, patch
+from __future__ import annotations
 
-import pytest
+import asyncio
+import sys
+import types
 
-from nexus.bricks.search.results import BaseSearchResult
+# nexus.bricks.search.__init__ imports SearchService → nexus_runtime (Rust
+# extension).  Stub it before any nexus.bricks.search import triggers it.
+if "nexus_runtime" not in sys.modules:
+    from unittest.mock import MagicMock as _MagicMock
+
+    _nexus_runtime_stub = _MagicMock()
+    _nexus_runtime_stub.__name__ = "nexus_runtime"
+    _nexus_runtime_stub.__spec__ = types.ModuleType("nexus_runtime")
+    sys.modules["nexus_runtime"] = _nexus_runtime_stub
+
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.search_types import SearchRequest
-
-daemon_mod = pytest.importorskip(
-    "nexus.bricks.search.daemon",
-    reason="daemon module not available in this environment",
-)
-
-# Skip if this is the old daemon (worktree not active)
-_cfg = daemon_mod.DaemonConfig()
-if not hasattr(_cfg, "search_backend"):
-    pytest.skip("New daemon.py not available (worktree not active)", allow_module_level=True)
-del _cfg
-
-DaemonConfig = daemon_mod.DaemonConfig
-SearchDaemon = daemon_mod.SearchDaemon
-
-# =============================================================================
-# Helpers
-# =============================================================================
+from nexus.grpc.search.v1 import search_pb2
 
 
-def _make_backend_results(
-    paths: list[str], zone_id: str = "corp", base_score: float = 0.9
-) -> list[BaseSearchResult]:
-    """Create a list of mock BaseSearchResult for a given zone."""
-    _ = zone_id  # zone_id is enforced at SQL layer, not stored on result object
-    return [
-        BaseSearchResult(
-            path=p,
-            chunk_text=f"content of {p}",
-            score=base_score - (i * 0.01),
-        )
-        for i, p in enumerate(paths)
-    ]
+def _daemon_with_stub(**responses):
+    """Real SearchDaemon proxy over a fake gRPC stub.
 
-
-async def _make_daemon_with_mock() -> tuple[SearchDaemon, AsyncMock]:
-    """Create a SearchDaemon backed by a mock backend."""
-    daemon = SearchDaemon()
-    mock_backend = AsyncMock()
-    mock_backend.search.return_value = []
-    mock_backend.upsert.return_value = 0
-    mock_backend.delete.return_value = 0
-    with patch("nexus.bricks.search.daemon.create_backend", return_value=mock_backend):
-        await daemon.startup()
-    return daemon, mock_backend
-
-
-# =============================================================================
-# Zone-level isolation tests (txtai SQL WHERE)
-# =============================================================================
-
-
-class TestZoneLevelIsolation:
-    """Test that zone_id is enforced on all search/index operations."""
-
-    @pytest.mark.asyncio
-    async def test_search_passes_zone_id_to_backend(self) -> None:
-        """zone_id should be forwarded to backend.search(SearchRequest(query=))."""
-        daemon, mock_backend = await _make_daemon_with_mock()
-        await daemon.search(SearchRequest(query="test query", zone_id="corp"))
-        call_kwargs = mock_backend.search.call_args[1]
-        assert call_kwargs["zone_id"] == "corp"
-        await daemon.shutdown()
-
-    @pytest.mark.asyncio
-    async def test_search_different_zone_gets_different_results(self) -> None:
-        """Searching zone A vs zone B should produce different backend calls."""
-        daemon, mock_backend = await _make_daemon_with_mock()
-
-        # Zone A returns files from zone A
-        mock_backend.search.return_value = _make_backend_results(["/a1.py", "/a2.py"], "zone-a")
-        results_a = await daemon.search(SearchRequest(query="test", zone_id="zone-a"))
-
-        # Zone B returns files from zone B
-        mock_backend.search.return_value = _make_backend_results(["/b1.py", "/b2.py"], "zone-b")
-        results_b = await daemon.search(SearchRequest(query="test", zone_id="zone-b"))
-
-        # Verify different zone_ids were passed to backend
-        calls = mock_backend.search.call_args_list
-        assert calls[0][1]["zone_id"] == "zone-a"
-        assert calls[1][1]["zone_id"] == "zone-b"
-
-        # Results should differ
-        assert {r.path for r in results_a} == {"/a1.py", "/a2.py"}
-        assert {r.path for r in results_b} == {"/b1.py", "/b2.py"}
-        await daemon.shutdown()
-
-    @pytest.mark.asyncio
-    async def test_search_zone_none_uses_root_zone(self) -> None:
-        """When zone_id is None, ROOT_ZONE_ID should be used."""
-        daemon, mock_backend = await _make_daemon_with_mock()
-        await daemon.search(SearchRequest(query="test"))
-
-        call_kwargs = mock_backend.search.call_args[1]
-        from nexus.contracts.constants import ROOT_ZONE_ID
-
-        assert call_kwargs["zone_id"] == ROOT_ZONE_ID
-        await daemon.shutdown()
-
-    @pytest.mark.asyncio
-    async def test_index_stamps_zone_id(self) -> None:
-        """index_documents should pass zone_id to backend.upsert()."""
-        daemon, mock_backend = await _make_daemon_with_mock()
-        docs = [{"id": "1", "text": "hello", "path": "/a.py"}]
-        await daemon.index_documents(docs, zone_id="corp")
-
-        mock_backend.upsert.assert_awaited_once()
-        call_args = mock_backend.upsert.call_args
-        assert call_args[1]["zone_id"] == "corp"
-        await daemon.shutdown()
-
-    @pytest.mark.asyncio
-    async def test_delete_passes_zone_id(self) -> None:
-        """delete_documents should pass zone_id to backend.delete()."""
-        daemon, mock_backend = await _make_daemon_with_mock()
-        await daemon.delete_documents(["id1", "id2"], zone_id="corp")
-
-        mock_backend.delete.assert_awaited_once()
-        call_args = mock_backend.delete.call_args
-        assert call_args[1]["zone_id"] == "corp"
-        await daemon.shutdown()
-
-    @pytest.mark.asyncio
-    async def test_delete_zone_a_does_not_affect_zone_b(self) -> None:
-        """Deleting from zone A uses zone A's zone_id, not zone B's."""
-        daemon, mock_backend = await _make_daemon_with_mock()
-
-        await daemon.delete_documents(["id1"], zone_id="zone-a")
-        await daemon.delete_documents(["id2"], zone_id="zone-b")
-
-        calls = mock_backend.delete.call_args_list
-        assert calls[0][1]["zone_id"] == "zone-a"
-        assert calls[1][1]["zone_id"] == "zone-b"
-        await daemon.shutdown()
-
-    @pytest.mark.asyncio
-    async def test_auto_index_groups_by_zone(self) -> None:
-        """Auto-indexed docs should be grouped by zone_id before upsert."""
-        config = DaemonConfig(auto_index_on_write=True, refresh_debounce_seconds=0.1)
-        daemon = SearchDaemon(config)
-        mock_backend = AsyncMock()
-        mock_backend.upsert.return_value = 1
-        with patch("nexus.bricks.search.daemon.create_backend", return_value=mock_backend):
-            await daemon.startup()
-
-        # Queue docs for two different zones
-        await daemon.notify_file_change("/a.py", "content-a", zone_id="zone-a")
-        await daemon.notify_file_change("/b.py", "content-b", zone_id="zone-b")
-        await daemon.notify_file_change("/c.py", "content-c", zone_id="zone-a")
-
-        assert len(daemon._pending_index_docs) == 3
-
-        await daemon.shutdown()
-
-
-# =============================================================================
-# ReBAC file-level filtering tests (router layer simulation)
-# =============================================================================
-
-
-class TestReBACFileFiltering:
-    """Test ReBAC file-level filtering that happens in the router layer.
-
-    SearchDaemon does zone-level isolation (pre-filtering).
-    The router layer does file-level ReBAC filtering (post-retrieval).
+    ``responses`` maps RPC method name → canned pb response.
     """
+    from nexus.bricks.search.daemon import SearchDaemon
 
-    def _simulate_rebac_filter(
-        self,
-        results: list[BaseSearchResult],
-        permitted_paths: set[str],
-        limit: int = 10,
-    ) -> list[BaseSearchResult]:
-        """Simulate router-layer ReBAC filtering.
+    class _FakeStub:
+        def __init__(self):
+            self.requests = []
 
-        This mirrors what the search router does:
-        1. Daemon returns zone-filtered results
-        2. Router applies PermissionEnforcer.filter_list()
-        3. Only permitted files are returned
-        """
-        return [r for r in results if r.path in permitted_paths][:limit]
+    def _make(method, resp):
+        async def _call(req):
+            stub.requests.append((method, req))
+            return resp
 
-    def test_user_without_read_gets_no_results(self) -> None:
-        """User without READ on any file -> 0 results."""
-        results = _make_backend_results(["/secret.py", "/private.py"])
-        filtered = self._simulate_rebac_filter(results, permitted_paths=set())
-        assert filtered == []
+        return _call
 
-    def test_user_with_read_gets_results(self) -> None:
-        """User with READ on file -> file appears in results."""
-        results = _make_backend_results(["/a.py", "/b.py", "/c.py"])
-        filtered = self._simulate_rebac_filter(results, permitted_paths={"/a.py", "/c.py"})
-        assert len(filtered) == 2
-        assert {r.path for r in filtered} == {"/a.py", "/c.py"}
+    daemon = SearchDaemon(target="127.0.0.1:1")  # never dialed
+    stub = _FakeStub()
+    for method, resp in responses.items():
+        setattr(stub, method, _make(method, resp))
+    daemon._stub = stub
+    return daemon, stub
 
-    def test_admin_sees_all_files(self) -> None:
-        """Admin user -> sees all files in zone."""
-        paths = ["/a.py", "/b.py", "/c.py", "/d.py"]
-        results = _make_backend_results(paths)
-        filtered = self._simulate_rebac_filter(results, permitted_paths=set(paths))
-        assert len(filtered) == 4
 
-    def test_mixed_permissions(self) -> None:
-        """User has READ on 3/10 files -> only 3 returned."""
-        paths = [f"/file_{i}.py" for i in range(10)]
-        results = _make_backend_results(paths)
-        permitted = {"/file_2.py", "/file_5.py", "/file_8.py"}
-        filtered = self._simulate_rebac_filter(results, permitted_paths=permitted)
-        assert len(filtered) == 3
-        assert {r.path for r in filtered} == permitted
+def _hit(path: str, zone_id: str) -> search_pb2.QueryResult:
+    return search_pb2.QueryResult(
+        path=path, chunk_index=0, chunk_text="x", score=0.9, zone_id=zone_id
+    )
 
-    def test_overfetch_compensates(self) -> None:
-        """Over-fetch (3x) compensates for filtered-out results."""
-        # Daemon fetches 30 (3x of limit=10), ReBAC filters down
-        paths = [f"/file_{i}.py" for i in range(30)]
-        results = _make_backend_results(paths)
-        # Only 15 are permitted, user wants top 10
-        permitted = {f"/file_{i}.py" for i in range(0, 30, 2)}  # even numbers only
-        filtered = self._simulate_rebac_filter(results, permitted_paths=permitted, limit=10)
-        assert len(filtered) == 10
 
-    def test_rebac_filter_preserves_score_ordering(self) -> None:
-        """Filtered results maintain original score ordering."""
-        results = [
-            BaseSearchResult(path="/high.py", chunk_text="high", score=0.95),
-            BaseSearchResult(path="/mid.py", chunk_text="mid", score=0.80),
-            BaseSearchResult(path="/low.py", chunk_text="low", score=0.60),
+class TestQueryZoneStamping:
+    def test_search_forwards_the_request_zone(self) -> None:
+        daemon, stub = _daemon_with_stub(Query=search_pb2.QueryResponse(results=[]))
+
+        asyncio.run(daemon.search(SearchRequest(query="test query", zone_id="corp")))
+
+        ((method, req),) = stub.requests
+        assert method == "Query"
+        assert req.zone_id == "corp"
+
+    def test_search_zone_none_is_empty_on_the_wire(self) -> None:
+        """Empty ``zone_id`` is the plugin's ROOT-zone selector — the proxy
+        must not invent a zone the caller did not ask for."""
+        daemon, stub = _daemon_with_stub(Query=search_pb2.QueryResponse(results=[]))
+
+        asyncio.run(daemon.search(SearchRequest(query="test")))
+
+        ((_, req),) = stub.requests
+        assert req.zone_id == ""
+
+    def test_different_zones_are_different_requests(self) -> None:
+        daemon, stub = _daemon_with_stub(Query=search_pb2.QueryResponse(results=[]))
+
+        asyncio.run(daemon.search(SearchRequest(query="test", zone_id="zone-a")))
+        asyncio.run(daemon.search(SearchRequest(query="test", zone_id="zone-b")))
+
+        assert [req.zone_id for _, req in stub.requests] == ["zone-a", "zone-b"]
+
+    def test_results_keep_the_plugin_zone(self) -> None:
+        """A hit's zone rides back on the result so the router can scope
+        ReBAC / path unscoping per zone."""
+        daemon, _ = _daemon_with_stub(
+            Query=search_pb2.QueryResponse(results=[_hit("/a.py", "corp"), _hit("/b.py", "corp")])
+        )
+
+        results = asyncio.run(daemon.search(SearchRequest(query="test", zone_id="corp")))
+
+        assert [r.path for r in results] == ["/a.py", "/b.py"]
+        assert all(getattr(r, "zone_id", "corp") == "corp" for r in results)
+
+
+class TestIndexZoneStamping:
+    def test_index_documents_stamps_request_and_every_document(self) -> None:
+        daemon, stub = _daemon_with_stub(
+            IndexDocuments=search_pb2.IndexDocumentsResponse(indexed_count=2, index_seq=1)
+        )
+
+        asyncio.run(
+            daemon.index_documents(
+                [{"path": "/a.py", "text": "hello"}, {"path": "/b.py", "text": "world"}],
+                zone_id="corp",
+            )
+        )
+
+        ((method, req),) = stub.requests
+        assert method == "IndexDocuments"
+        assert req.zone_id == "corp"
+        assert [d.zone_id for d in req.documents] == ["corp", "corp"]
+
+    def test_authorized_zone_overrides_caller_supplied_document_zones(self) -> None:
+        """Tenant boundary (review R2): a per-document ``zone_id`` is a
+        plugin routing override, so honouring a caller-controlled value
+        would let zone A write into zone B's index."""
+        daemon, stub = _daemon_with_stub(
+            IndexDocuments=search_pb2.IndexDocumentsResponse(indexed_count=1, index_seq=1)
+        )
+
+        asyncio.run(
+            daemon.index_documents(
+                [{"path": "/a.py", "text": "hello", "zone_id": "zone-b"}], zone_id="zone-a"
+            )
+        )
+
+        ((_, req),) = stub.requests
+        assert req.zone_id == "zone-a"
+        assert [d.zone_id for d in req.documents] == ["zone-a"]
+
+    def test_without_an_authorized_zone_document_zones_pass_through(self) -> None:
+        daemon, stub = _daemon_with_stub(
+            IndexDocuments=search_pb2.IndexDocumentsResponse(indexed_count=1, index_seq=1)
+        )
+
+        asyncio.run(daemon.index_documents([{"path": "/a.py", "text": "hello", "zone_id": "corp"}]))
+
+        ((_, req),) = stub.requests
+        assert req.zone_id == ""
+        assert [d.zone_id for d in req.documents] == ["corp"]
+
+    def test_evict_stamps_zone(self) -> None:
+        daemon, stub = _daemon_with_stub(
+            NotifyFileChange=search_pb2.NotifyFileChangeResponse(status="accepted", index_seq=2)
+        )
+
+        asyncio.run(daemon.notify_file_change("/a.py", "delete", zone_id="zone-a"))
+        asyncio.run(daemon.notify_file_change("/b.py", "delete", zone_id="zone-b"))
+
+        assert [(req.path, req.change_type, req.zone_id) for _, req in stub.requests] == [
+            ("/a.py", "delete", "zone-a"),
+            ("/b.py", "delete", "zone-b"),
         ]
-        filtered = self._simulate_rebac_filter(results, permitted_paths={"/high.py", "/low.py"})
-        assert filtered[0].path == "/high.py"
-        assert filtered[1].path == "/low.py"
-        assert filtered[0].score > filtered[1].score
 
-    def test_rebac_limit_applied_after_filter(self) -> None:
-        """Limit is applied after filtering, not before."""
-        paths = [f"/file_{i}.py" for i in range(20)]
-        results = _make_backend_results(paths)
-        permitted = set(paths)  # all permitted
-        filtered = self._simulate_rebac_filter(results, permitted_paths=permitted, limit=5)
-        assert len(filtered) == 5
-
-    @pytest.mark.asyncio
-    async def test_end_to_end_zone_then_rebac(self) -> None:
-        """Full flow: zone-level pre-filter (daemon) then ReBAC post-filter (router)."""
-        daemon, mock_backend = await _make_daemon_with_mock()
-
-        # Backend returns 10 zone-filtered results
-        zone_results = _make_backend_results(
-            [f"/corp/file_{i}.py" for i in range(10)], zone_id="corp"
+    def test_locate_stamps_zone(self) -> None:
+        daemon, stub = _daemon_with_stub(
+            Locate=search_pb2.LocateResponse(indexed=True, chunk_count=1, zone_id="corp")
         )
-        mock_backend.search.return_value = zone_results
 
-        # Daemon search (zone-level isolation)
-        results = await daemon.search(SearchRequest(query="test", zone_id="corp", limit=10))
-        assert len(results) == 10
+        asyncio.run(daemon.locate("/a.py", zone_id="corp"))
 
-        # Router-layer ReBAC filtering (user can only read 4 files)
-        permitted = {"/corp/file_0.py", "/corp/file_3.py", "/corp/file_6.py", "/corp/file_9.py"}
-        final = self._simulate_rebac_filter(
-            [
-                BaseSearchResult(path=r.path, chunk_text=r.chunk_text, score=r.score)
-                for r in results
-            ],
-            permitted_paths=permitted,
+        ((method, req),) = stub.requests
+        assert method == "Locate"
+        assert req.zone_id == "corp"
+
+
+class TestRootZoneFallback:
+    def test_root_zone_constant_is_what_the_http_layer_defaults_to(self) -> None:
+        """The HTTP routes default a token without ``zone_id`` to
+        ``ROOT_ZONE_ID`` (see ``index_zone_for``); the proxy sends that
+        name verbatim, so the plugin's ``resolve_zone`` receives the
+        same zone the server believes it indexed into."""
+        from nexus.server.api.v2.routers._index_on_write import index_zone_for
+
+        assert index_zone_for(None) == ROOT_ZONE_ID
+        assert index_zone_for({"zone_id": ""}) == ROOT_ZONE_ID
+        assert index_zone_for({"zone_id": "corp"}) == "corp"
+        assert index_zone_for({"zone_id": "corp"}, override="other") == "other"
+
+        daemon, stub = _daemon_with_stub(
+            IndexDocuments=search_pb2.IndexDocumentsResponse(indexed_count=1, index_seq=1)
         )
-        assert len(final) == 4
-        assert all(r.path in permitted for r in final)
-
-        await daemon.shutdown()
+        asyncio.run(
+            daemon.index_documents(
+                [{"path": "/a.py", "text": "hello"}], zone_id=index_zone_for({"zone_id": None})
+            )
+        )
+        ((_, req),) = stub.requests
+        assert req.zone_id == ROOT_ZONE_ID

@@ -35,6 +35,16 @@ from nexus.runtime.zone_resolution import (
     zone_from_path,
     zones_from_params,
 )
+from nexus.server.api.v2.routers._index_on_write import (
+    IndexOnWrite,
+    WriteIndexResult,
+    effective_index_option,
+    index_after_batch_write,
+    index_after_write,
+    index_requested,
+    index_zone_for,
+    require_search_daemon,
+)
 from nexus.server.zone_execution import run_zone_scoped
 
 logger = logging.getLogger(__name__)
@@ -268,6 +278,15 @@ class WriteRequest(BaseModel):
     encoding: str | None = Field(None, description="Content encoding: 'utf8' (default) or 'base64'")
     if_match: str | None = Field(None, description="ETag for optimistic concurrency")
     if_none_match: bool = Field(False, description="Only write if file doesn't exist")
+    index: bool | IndexOnWrite | None = Field(
+        None,
+        description=(
+            "Make the written file searchable in the same call (#4736). `true` indexes "
+            'the written content as UTF-8; `{"text": ...}` indexes the given text instead '
+            "(e.g. extracted text for a binary). Without it a write is NOT indexed — see "
+            "docs/deployment/search-plugin.md. 503 before writing when search is unavailable."
+        ),
+    )
 
 
 class WriteResponse(BaseModel):
@@ -277,6 +296,8 @@ class WriteResponse(BaseModel):
     version: int
     size: int
     modified_at: str
+    # Present when `index` was requested: indexed | skipped | error (#4736).
+    index: WriteIndexResult | None = None
 
 
 class ReadResponse(BaseModel):
@@ -396,6 +417,13 @@ class BatchWriteFileItem(BaseModel):
 
     path: str = Field(..., description="Virtual path to write")
     content_base64: str = Field(..., description="File content encoded as base64")
+    index: bool | IndexOnWrite | None = Field(
+        None,
+        description=(
+            "Per-file override of the request-level `index` option (#4736). "
+            '`{"text": ...}` indexes the given text instead of the written bytes.'
+        ),
+    )
 
     @field_validator("content_base64")
     @classmethod
@@ -414,6 +442,13 @@ class BatchWriteRequest(BaseModel):
         ...,
         description=f"Files to write (max {_MAX_BATCH_FILES})",
         max_length=_MAX_BATCH_FILES,
+    )
+    index: bool | None = Field(
+        None,
+        description=(
+            "Index every written file in the same call (#4736); a per-file `index` "
+            "overrides it. 503 before writing when search is unavailable."
+        ),
     )
 
     @field_validator("files")
@@ -435,6 +470,8 @@ class BatchWriteResult(BaseModel):
     version: int
     modified_at: Any | None
     size: int
+    # Present when indexing was requested for this file (#4736).
+    index: WriteIndexResult | None = None
 
 
 class BatchWriteResponse(BaseModel):
@@ -668,12 +705,25 @@ def create_async_files_router(
         Content can be provided as:
         - Plain string (UTF-8 encoded automatically)
         - Base64 encoded binary (set encoding="base64")
+
+        A write is NOT searchable on its own (#4736). Pass ``index: true``
+        (or ``index: {"text": ...}``) to index it in the same call; the
+        response then carries ``index.status`` (``indexed`` with
+        ``index_seq``, ``skipped`` with a reason, or ``error``). The
+        request fails with 503 BEFORE writing when search is unavailable.
         """
         context = _apply_zone_override(context, zone, auth_result, required_perm="w")
         try:
 
             async def _work() -> Any:
                 fs = await _get_fs()
+                # #4736 write+index: resolve the daemon BEFORE writing so a
+                # request that asked for indexing never half-succeeds.
+                index_daemon = (
+                    require_search_daemon(http_request.app.state)
+                    if index_requested(request.index)
+                    else None
+                )
 
                 # Snapshot tracking setup: validate conflict + capture original state BEFORE write
                 _ss = None
@@ -815,11 +865,24 @@ def create_async_files_router(
                 modified = result["modified_at"]
                 if hasattr(modified, "isoformat"):
                     modified = modified.isoformat()
+                index_result: WriteIndexResult | None = None
+                if index_daemon is not None:
+                    index_result = await index_after_write(
+                        index_daemon,
+                        path=request.path,
+                        content=content,
+                        option=request.index,
+                        modified_at=result.get("modified_at"),
+                        # Same zone /search/query reads (#4736); the
+                        # gated ``?zone=`` override wins when given.
+                        zone_id=index_zone_for(auth_result, override=zone),
+                    )
                 response_data = WriteResponse(
                     content_id=result["content_id"],
                     version=response_version,
                     size=result["size"],
                     modified_at=str(modified),
+                    index=index_result,
                 )
                 return Response(
                     content=response_data.model_dump_json(),
@@ -1947,7 +2010,9 @@ def create_async_files_router(
     @router.post("/batch/write", response_model=BatchWriteResponse)
     async def batch_write_files(
         request: BatchWriteRequest,
+        http_request: Request,
         context: Any = Depends(get_context),
+        auth_result: dict[str, Any] = Depends(require_auth),
     ) -> BatchWriteResponse:
         """
         Write multiple files in a single round-trip for improved performance.
@@ -1962,29 +2027,62 @@ def create_async_files_router(
 
         Content must be base64-encoded. Max {_MAX_BATCH_FILES} files and
         {_MAX_BATCH_TOTAL_BYTES // (1024*1024)} MB total decoded size per request.
+
+        Writes are NOT searchable on their own (#4736). ``index: true`` at the
+        request level (or per file, where ``{"text": ...}`` supplies the text)
+        indexes the written files in ONE plugin round-trip after the writes
+        land; each result then carries its own ``index`` verdict. 503 BEFORE
+        writing when search is unavailable.
         """
         try:
 
             async def _work() -> BatchWriteResponse:
                 fs = await _get_fs()
+                index_daemon = (
+                    require_search_daemon(http_request.app.state)
+                    if any(
+                        index_requested(effective_index_option(item.index, request.index))
+                        for item in request.files
+                    )
+                    else None
+                )
                 files = [
                     (item.path, base64.b64decode(item.content_base64)) for item in request.files
                 ]
                 raw_results = await _maybe_await(fs.write_batch(files, context=context))
-                return BatchWriteResponse(
-                    results=[
-                        BatchWriteResult(
-                            path=r["path"] if "path" in r else files[i][0],
-                            content_id=r.get("content_id"),
-                            version=r.get("version", 0),
-                            modified_at=r.get("modified_at"),
-                            size=r.get("size", 0),
-                        )
-                        for i, r in enumerate(raw_results)
-                    ]
-                )
+                results = [
+                    BatchWriteResult(
+                        path=r["path"] if "path" in r else files[i][0],
+                        content_id=r.get("content_id"),
+                        version=r.get("version", 0),
+                        modified_at=r.get("modified_at"),
+                        size=r.get("size", 0),
+                    )
+                    for i, r in enumerate(raw_results)
+                ]
+                if index_daemon is not None:
+                    verdicts = await index_after_batch_write(
+                        index_daemon,
+                        [
+                            (
+                                res.path,
+                                files[i][1],
+                                effective_index_option(request.files[i].index, request.index),
+                                res.modified_at,
+                            )
+                            for i, res in enumerate(results)
+                        ],
+                        zone_id=index_zone_for(auth_result),
+                    )
+                    for res in results:
+                        res.index = verdicts.get(res.path)
+                return BatchWriteResponse(results=results)
 
             return await _run_for_context(context, request, _work)
+        except HTTPException:
+            # The #4736 pre-write 503 (index requested, search unavailable)
+            # must reach the client as-is, not as a wrapped 500.
+            raise
         except _PERMISSION_ERRORS as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
         except InvalidPathError as e:

@@ -60,6 +60,7 @@ pub mod embedder;
 pub mod fts_index;
 pub mod fusion;
 pub mod index_manager;
+pub mod index_seq;
 pub mod index_state;
 pub mod indexed_dirs_state;
 pub mod internal_call;

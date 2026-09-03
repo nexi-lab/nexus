@@ -392,11 +392,11 @@ class TestMCLProcessorRebuildsAspectStore:
 # ---------------------------------------------------------------------------
 
 
-def test_reindex_via_rest_renders_queued_fields(monkeypatch, capsys) -> None:
-    """``nexus reindex`` against the remote REST endpoint must render
-    ``search_paths_enqueued`` and ``search_refresh_enqueued_at`` (and
-    flag them as queued, not completed) so edge-image operators don't
-    mistake processed=N for completed indexing (codex round-2 MEDIUM).
+def test_reindex_via_rest_renders_search_completion_fields(monkeypatch, capsys) -> None:
+    """``nexus reindex`` against the remote REST endpoint must render the
+    synchronous completion fields (#4241 / #4736) — paths indexed, the
+    plugin ``index_seq`` and the completion time — and say the result is
+    served now, not "queued".
     """
     from nexus.cli.commands import reindex as reindex_mod
 
@@ -412,8 +412,12 @@ def test_reindex_via_rest_renders_queued_fields(monkeypatch, capsys) -> None:
                 "processed": 3,
                 "errors": 0,
                 "dry_run": False,
-                "search_paths_enqueued": 3,
-                "search_refresh_enqueued_at": 1700000000.0,
+                "search_paths_indexed": 3,
+                "search_paths_deleted": 1,
+                "search_paths_skipped": 2,
+                "search_skip_reasons": {"non_text": 1, "oversize": 1},
+                "search_index_seq": 41,
+                "search_indexed_at": 1700000000.0,
                 "last_sequence": 12,
             }
 
@@ -440,20 +444,22 @@ def test_reindex_via_rest_renders_queued_fields(monkeypatch, capsys) -> None:
     )
 
     text = rec_console.export_text()
-    # Queued count must be rendered AND labeled as async / not completed.
-    assert "Search paths queued" in text, text
-    assert "3" in text
-    assert "Search refresh enqueued at" in text, text
-    assert "asynchronous" in text.lower(), (
-        "Operators must see the async caveat — otherwise round-2 MEDIUM is unfixed."
-    )
+    assert "Search paths indexed" in text, text
+    assert "Search paths evicted" in text, text
+    assert "Search paths skipped" in text and "non_text=1" in text, text
+    assert "Search index_seq" in text and "41" in text, text
+    assert "Search indexed at" in text, text
+    assert "synchronous" in text.lower(), text
+    assert "last_index_seq >= 41" in text, text
+    assert "asynchronous" not in text.lower(), "the queue is gone; never promise one"
+    assert "queued" not in text.lower(), text
     assert captured["path"] == "/api/v2/admin/reindex"
 
 
-def test_reindex_via_rest_surfaces_enqueue_errors(monkeypatch) -> None:
-    """Round-5 review (codex MEDIUM): the remote CLI must render
-    ``search_enqueue_errors`` and the failed-paths list, plus exit
-    non-zero so operator scripts can detect partial failure.
+def test_reindex_via_rest_surfaces_index_errors(monkeypatch) -> None:
+    """The remote CLI must render ``search_index_errors``, the first error
+    text and the failed-paths list, plus exit non-zero so operator scripts
+    can detect partial failure.
     """
     import click
 
@@ -467,10 +473,11 @@ def test_reindex_via_rest_surfaces_enqueue_errors(monkeypatch) -> None:
                 "processed": 3,
                 "errors": 0,
                 "dry_run": False,
-                "search_paths_enqueued": 2,
-                "search_refresh_enqueued_at": 1700000000.0,
-                "search_enqueue_errors": 1,
-                "search_enqueue_failed_paths": ["/bad.md"],
+                "search_paths_indexed": 2,
+                "search_indexed_at": 1700000000.0,
+                "search_index_errors": 1,
+                "search_index_failed_paths": ["/bad.md"],
+                "search_index_error": "read failed (404): path not found: /bad.md",
             }
 
     monkeypatch.setattr(
@@ -496,18 +503,18 @@ def test_reindex_via_rest_surfaces_enqueue_errors(monkeypatch) -> None:
         )
 
     text = rec_console.export_text()
-    assert "Search refresh enqueue errors" in text, text
+    assert "Search index errors" in text, text
     assert "/bad.md" in text, text
-    assert "failed to enqueue" in text.lower()
-    assert "1 search-refresh enqueue(s) failed" in str(exc_info.value.message), (
-        "CLI must exit non-zero so operator scripts detect partial enqueue failures"
+    assert "failed to index" in text.lower()
+    assert "path not found" in text, "the first error text is shown, not just a count"
+    assert "1 search index operation(s) failed" in str(exc_info.value.message), (
+        "CLI must exit non-zero so operator scripts detect partial index failures"
     )
 
 
-def test_reindex_via_rest_no_queued_when_zero(monkeypatch) -> None:
-    """When ``search_paths_enqueued=0`` (e.g. target=versions), the
-    async caveat banner should NOT print — nothing was actually queued
-    to wait for."""
+def test_reindex_via_rest_no_search_banner_when_nothing_indexed(monkeypatch) -> None:
+    """When nothing was indexed or evicted (e.g. target=versions), the
+    "served now" banner should NOT print."""
     from nexus.cli.commands import reindex as reindex_mod
 
     class _FakeClient:
@@ -518,8 +525,9 @@ def test_reindex_via_rest_no_queued_when_zero(monkeypatch) -> None:
                 "processed": 5,
                 "errors": 0,
                 "dry_run": False,
-                "search_paths_enqueued": 0,
-                "search_refresh_enqueued_at": None,
+                "search_paths_indexed": 0,
+                "search_paths_deleted": 0,
+                "search_indexed_at": None,
             }
 
     monkeypatch.setattr(
@@ -544,4 +552,5 @@ def test_reindex_via_rest_no_queued_when_zero(monkeypatch) -> None:
     )
 
     text = rec_console.export_text()
-    assert "asynchronous" not in text.lower(), "no async caveat when nothing was queued"
+    assert "served" not in text.lower(), "no completion banner when nothing was indexed"
+    assert "asynchronous" not in text.lower()

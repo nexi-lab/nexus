@@ -333,12 +333,15 @@ def test_live_search_http_surface_correctness_and_latency(live_search_app: LiveS
         "/api/v2/search/refresh",
         params={"path": "/workspace/src/main.py", "change_type": "update"},
     )
+    # #4736: refresh reads the file server-side and indexes it synchronously —
+    # "indexed" with the plugin's sequence, never a bare "accepted" ack.
     assert refresh_response.status_code == 200
-    assert refresh_body == {
-        "status": "accepted",
-        "path": "/workspace/src/main.py",
-        "change_type": "update",
-    }
+    assert refresh_body["status"] == "indexed"
+    assert refresh_body["path"] == "/workspace/src/main.py"
+    assert refresh_body["change_type"] == "update"
+    assert isinstance(refresh_body["index_seq"], int) and refresh_body["index_seq"] >= 1
+    _, stats_after_refresh = _request(live, "get", "/api/v2/search/stats")
+    assert stats_after_refresh["last_index_seq"] >= refresh_body["index_seq"]
 
     expand_response, expand_body = _request(
         live,
@@ -653,3 +656,199 @@ def test_live_path_context_weight_moves_ranking(live_search_app: LiveSearchApp) 
     assert reset_response.status_code == 200
     reset_paths = [r["path"] for r in reset_body["results"]]
     assert reset_paths[:2] == ["/workspace/win/win.md", "/workspace/lose/lose.md"], reset_paths
+
+
+def test_live_write_to_searchable_contract(live_search_app: LiveSearchApp) -> None:
+    """#4736 acceptance, against the real kernel + worktree plugin.
+
+    write → ONE indexing call → query serves the document, with the
+    returned ``index_seq`` visible on ``/search/stats``; refresh on a
+    missing / empty path is 404 / 409, never a bare "accepted"; delete
+    evicts.  Skips (not xfails) without the plugin so a regression can't
+    hide behind the sibling test's glob/grep xfail.
+    """
+    import base64
+
+    live = live_search_app
+    if not live.plugin_loaded:
+        pytest.skip("search-plugin dylib not loaded into the spawned kernel")
+    slow = 10_000.0  # indexing round-trips, not the read-path latency budget
+
+    live.nx.mkdir("/ws", exist_ok=True)
+    live.nx.write("/ws/doc.md", b"zebrafish sentinel document\n")
+
+    # refresh(update) on an existing file → indexed + seq …
+    r, body = _request(
+        live,
+        "post",
+        "/api/v2/search/refresh",
+        params={"path": "/ws/doc.md", "change_type": "update"},
+        max_wall_ms=slow,
+    )
+    assert r.status_code == 200, body
+    assert body["status"] == "indexed" and body["index_seq"] >= 1, body
+    seq = body["index_seq"]
+
+    # … stats caught up, in the token's zone …
+    r, stats = _request(live, "get", "/api/v2/search/stats", max_wall_ms=slow)
+    assert stats["last_index_seq"] >= seq, stats
+    assert stats["pending"] == 0, stats
+    assert stats["last_successful_index_at"] is not None, stats
+    assert isinstance(stats["last_index_refresh"], float), stats
+    assert "zone_id" in stats, stats
+
+    # … and the document is served.
+    r, q = _request(
+        live,
+        "get",
+        "/api/v2/search/query",
+        params={"q": "zebrafish", "type": "keyword", "limit": 5},
+        max_wall_ms=slow,
+    )
+    assert any(x["path"] == "/ws/doc.md" for x in q["results"]), q
+
+    # Missing path → 404, never "accepted".
+    r, body = _request(
+        live,
+        "post",
+        "/api/v2/search/refresh",
+        params={"path": "/ws/missing.md", "change_type": "update"},
+        max_wall_ms=slow,
+    )
+    assert r.status_code == 404, body
+    assert "accepted" not in r.text
+
+    # Empty content → 409 skipped.
+    live.nx.write("/ws/empty.md", b"   \n")
+    r, body = _request(
+        live,
+        "post",
+        "/api/v2/search/refresh",
+        params={"path": "/ws/empty.md", "change_type": "update"},
+        max_wall_ms=slow,
+    )
+    assert r.status_code == 409, body
+    assert body["detail"]["status"] == "skipped", body
+
+    # write + index in ONE call → served.
+    r, body = _request(
+        live,
+        "post",
+        "/api/v2/files/write",
+        json={"path": "/ws/one.md", "content": "quokka single call document", "index": True},
+        max_wall_ms=slow,
+    )
+    assert r.status_code == 200, body
+    assert body["index"]["status"] == "indexed", body
+    assert body["index"]["index_seq"] > seq, body
+    r, q = _request(
+        live,
+        "get",
+        "/api/v2/search/query",
+        params={"q": "quokka", "type": "keyword", "limit": 5},
+        max_wall_ms=slow,
+    )
+    assert any(x["path"] == "/ws/one.md" for x in q["results"]), q
+
+    # batch write + index: text is served, binary is reported skipped.
+    r, body = _request(
+        live,
+        "post",
+        "/api/v2/files/batch/write",
+        json={
+            "index": True,
+            "files": [
+                {
+                    "path": "/ws/b1.md",
+                    "content_base64": base64.b64encode(b"wallaby batch doc one").decode(),
+                },
+                {
+                    "path": "/ws/b2.bin",
+                    "content_base64": base64.b64encode(b"\xff\xfe\x00").decode(),
+                },
+            ],
+        },
+        max_wall_ms=slow,
+    )
+    assert r.status_code == 200, body
+    by_path = {x["path"]: x for x in body["results"]}
+    assert by_path["/ws/b1.md"]["index"]["status"] == "indexed", body
+    assert by_path["/ws/b2.bin"]["index"]["status"] == "skipped", body
+    r, q = _request(
+        live,
+        "get",
+        "/api/v2/search/query",
+        params={"q": "wallaby", "type": "keyword", "limit": 5},
+        max_wall_ms=slow,
+    )
+    assert any(x["path"] == "/ws/b1.md" for x in q["results"]), q
+
+    # delete → deleted, and the path is no longer served.
+    r, body = _request(
+        live,
+        "post",
+        "/api/v2/search/refresh",
+        params={"path": "/ws/doc.md", "change_type": "delete"},
+        max_wall_ms=slow,
+    )
+    assert r.status_code == 200 and body["status"] == "deleted", body
+    r, q = _request(
+        live,
+        "get",
+        "/api/v2/search/query",
+        params={"q": "zebrafish", "type": "keyword", "limit": 5},
+        max_wall_ms=slow,
+    )
+    assert not any(x["path"] == "/ws/doc.md" for x in q["results"]), q
+
+
+def test_live_admin_reindex_indexes_replayed_paths(live_search_app: LiveSearchApp) -> None:
+    """#4241 / #4736: ``POST /api/v2/admin/reindex`` with ``target=search``
+    indexes every replayed path SYNCHRONOUSLY against the real kernel +
+    plugin — the response counts completions, not queue depth, and the
+    documents are served immediately afterwards."""
+    live = live_search_app
+    if not live.plugin_loaded:
+        pytest.skip("search-plugin dylib not loaded into the spawned kernel")
+    slow = 30_000.0
+
+    live.nx.mkdir("/rx", exist_ok=True)
+    live.nx.write("/rx/one.md", b"axolotl reindex document one\n")
+    live.nx.write("/rx/two.md", b"axolotl reindex document two\n")
+    live.nx.write("/rx/blob.bin", b"\xff\xfe\x00\x01")
+
+    # Nothing is searchable yet — a bare write never indexes.
+    r, q = _request(
+        live,
+        "get",
+        "/api/v2/search/query",
+        params={"q": "axolotl", "type": "keyword", "limit": 5},
+        max_wall_ms=slow,
+    )
+    assert not any(x["path"].startswith("/rx/") for x in q["results"]), q
+
+    r, body = _request(
+        live, "post", "/api/v2/admin/reindex", json={"target": "search"}, max_wall_ms=slow
+    )
+    assert r.status_code == 200, body
+    assert body["processed"] >= 3, body
+    assert body["search_paths_indexed"] >= 2, body
+    assert body["search_skip_reasons"].get("non_text", 0) >= 1, body
+    assert body["search_index_errors"] == 0, body
+    assert isinstance(body["search_index_seq"], int) and body["search_index_seq"] >= 1, body
+    assert isinstance(body["search_indexed_at"], float), body
+    for stale in ("search_paths_enqueued", "search_refresh_enqueued_at"):
+        assert stale not in body, body
+
+    r, stats = _request(live, "get", "/api/v2/search/stats", max_wall_ms=slow)
+    assert stats["last_index_seq"] >= body["search_index_seq"], stats
+
+    r, q = _request(
+        live,
+        "get",
+        "/api/v2/search/query",
+        params={"q": "axolotl", "type": "keyword", "limit": 5},
+        max_wall_ms=slow,
+    )
+    hit_paths = {x["path"] for x in q["results"]}
+    assert {"/rx/one.md", "/rx/two.md"} <= hit_paths, q

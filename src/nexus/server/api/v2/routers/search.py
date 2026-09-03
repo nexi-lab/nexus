@@ -44,13 +44,23 @@ from nexus.lib.rebac_filter import apply_rebac_filter as _apply_rebac_filter
 from nexus.lib.rebac_filter import compute_rebac_fetch_limit as _compute_rebac_fetch_limit
 from nexus.lib.rebac_filter import rebac_denial_stats as _rebac_denial_stats
 from nexus.runtime.zone_resolution import target_zone_for_context
+from nexus.server.api.v2.routers._index_on_write import (
+    REASON_EMPTY,
+    REASON_NON_TEXT,
+    STATUS_SKIPPED,
+    build_document,
+    decode_index_text,
+    index_zone_for,
+    read_written_bytes,
+    verdict_for_path,
+)
 from nexus.server.api.v2.routers._search_batch import (
     ParsedBatchSpec,
     parse_batch_query_spec,
     spec_query_text,
 )
 from nexus.server.api.v2.routers._search_deps import _get_search_daemon
-from nexus.server.dependencies import get_operation_context, require_auth
+from nexus.server.dependencies import get_auth_result, get_operation_context, require_auth
 from nexus.server.zone_execution import run_zone_scoped
 
 logger = logging.getLogger(__name__)
@@ -209,6 +219,7 @@ async def search_daemon_health(
 
 @router.get("/stats")
 async def search_daemon_stats(
+    auth_result: dict[str, Any] | None = Depends(get_auth_result),
     search_daemon: Any = Depends(_get_search_daemon),
 ) -> dict[str, Any]:
     """Get search daemon statistics.
@@ -218,10 +229,20 @@ async def search_daemon_stats(
     identity fields and the #4623 ``indexing_in_progress`` build
     signal), restore the pre-pivot ``initialized`` key stats
     consumers gate on.
+
+    #4736: scoped to the caller's token zone — the zone ``/search/query``
+    reads and every indexing call writes — so a tenant's ``fts_doc_count``
+    / ``last_index_seq`` describe ITS index.  Auth stays optional
+    (token-less pollers keep the pre-existing root-zone view); the zone
+    served is echoed as ``zone_id``.
     """
-    stats: dict[str, Any] = await search_daemon.get_stats()
+    from nexus.contracts.constants import ROOT_ZONE_ID
+
+    zone_id = index_zone_for(auth_result) if (auth_result or {}).get("authenticated") else None
+    stats: dict[str, Any] = await search_daemon.get_stats(zone_id=zone_id)
     stats["initialized"] = bool(getattr(search_daemon, "is_initialized", False))
     stats.setdefault("backend", "rust-plugin")
+    stats["zone_id"] = zone_id or ROOT_ZONE_ID
     return stats
 
 
@@ -1707,9 +1728,7 @@ async def search_index_documents(
     idempotent, so retrying the whole batch after a 409 is safe — documents
     indexed before the 409 stay indexed.
     """
-    from nexus.contracts.constants import ROOT_ZONE_ID
-
-    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
+    zone_id = index_zone_for(auth_result)
     body = await request.json()
     documents: list[dict[str, Any]] = body.get("documents", [])
     if not documents:
@@ -1761,10 +1780,14 @@ async def search_index_documents(
             count = result.get("indexed", 0)
             skipped = list(result.get("skipped") or [])
             skipped_count = int(result.get("skipped_count") or 0)
+            skipped_paths = list(result.get("skipped_paths") or [])
+            index_seq = result.get("index_seq")
         else:
             count = getattr(result, "indexed", result)
             skipped = list(getattr(result, "skipped", []) or [])
             skipped_count = int(getattr(result, "skipped_count", 0) or 0)
+            skipped_paths = list(getattr(result, "skipped_paths", []) or [])
+            index_seq = getattr(result, "index_seq", None)
         if skipped:
             raise HTTPException(
                 status_code=409,
@@ -1783,10 +1806,16 @@ async def search_index_documents(
         # skips (empty/whitespace/chunkless docs) were previously
         # invisible behind a bare 200, so a caller couldn't tell
         # "all indexed" from "half the batch was empty".
+        # #4736: ``skippedPaths`` names the content-skipped documents
+        # behind ``skippedCount``; ``indexSeq`` is the plugin sequence
+        # stamped after this batch's commit — ``/search/stats``
+        # ``last_index_seq >= indexSeq`` means the batch is served.
         return {
             "status": "indexed",
             "count": int(count),
             "skippedCount": skipped_count,
+            "skippedPaths": skipped_paths,
+            "indexSeq": int(index_seq) if index_seq is not None else None,
             "zoneId": zone_id,
         }
 
@@ -1801,38 +1830,106 @@ async def search_refresh_notify(
     auth_result: dict[str, Any] = Depends(require_auth),
     search_daemon: Any = Depends(_get_search_daemon),
 ) -> dict[str, Any]:
-    """Notify the search daemon of a file change for index refresh.
+    """Make ONE path searchable, or evict it — synchronously (#4736).
 
-    ``delete`` is a real index MUTATION in the plugin (drops the
-    path's chunks + records a tombstone), so this route enforces the
-    same admin-or-path-WRITE gate as ``/search/index`` (review R4) —
-    a read-only principal must not be able to evict indexed paths.
-    The authorized zone is stamped onto the notification explicitly;
-    pre-fix it was dropped and every notification mutated the ROOT
-    zone's index regardless of the caller's zone.
+    Post-P12 a plain ``files/write`` does NOT index: the plugin's
+    ``NotifyFileChange`` carries no text and answers ``skipped`` for
+    ``create`` / ``update``.  This route used to relay that ack as
+    ``{"status": "accepted"}``, so a caller saw write 200 → refresh
+    "accepted" → query empty, with nothing telling it why.  Now:
+
+    * ``create`` / ``update`` — the server reads ``path`` through the
+      VFS with the caller's context and indexes the text via
+      ``IndexDocuments``.  200 ``{"status": "indexed", "index_seq": N}``
+      once the plugin has committed; 404 when the path does not exist;
+      409 ``{"status": "skipped", "reason": …}`` when there is nothing
+      to index (empty / whitespace-only / non-UTF-8 content).  The
+      plugin indexes synchronously, so there is no 202 "queued" outcome
+      and no result is ever reported before it is served.
+    * ``delete`` — ``NotifyFileChange`` drops the path's chunks and
+      records a tombstone; 200 ``{"status": "deleted", "index_seq": N}``.
+
+    ``delete`` is a real index MUTATION and ``update`` REPLACES the
+    searchable text other readers see, so both arms enforce the same
+    admin-or-path-WRITE gate as ``/search/index`` (review R4) — a
+    read-only principal must not evict or poison indexed paths.  Every
+    plugin call is stamped with the token's zone — the zone
+    ``/search/query`` reads and ``/search/index`` writes — so what
+    refresh indexes is what the caller's queries hit; pre-fix the zone
+    was dropped and every notification mutated the ROOT zone's index
+    regardless of the caller's zone.
     """
-    from nexus.server.dependencies import get_operation_context
-
     if change_type not in ("create", "update", "delete"):
         raise HTTPException(status_code=400, detail=f"invalid change_type {change_type!r}")
 
     op_context = get_operation_context(auth_result)
+    # Zone RUNNER key (path-aware, matches the files routes) …
     target_zone = target_zone_for_context(op_context, {"path": path})
+    # … vs the PLUGIN zone: the token's zone, shared with /search/index,
+    # /search/query and write+index so the four surfaces cannot drift.
+    index_zone = index_zone_for(auth_result)
 
     from nexus.server.api.v2.routers._search_indexed_dirs import _require_admin_or_path_write
 
     await _require_admin_or_path_write(request, auth_result, target_zone or "", path or "/")
 
+    def _skipped(reason: str) -> HTTPException:
+        # 409 rather than 200: "nothing to index" must be distinguishable
+        # from "indexed" without the caller diffing a follow-up query.
+        return HTTPException(
+            status_code=409,
+            detail={
+                "status": STATUS_SKIPPED,
+                "path": path,
+                "change_type": change_type,
+                "reason": reason,
+            },
+        )
+
     async def _work() -> dict[str, Any]:
+        if change_type == "delete":
+            try:
+                outcome = await search_daemon.notify_file_change(path, "delete", zone_id=index_zone)
+            except Exception as exc:
+                logger.error("notify_file_change failed: %s", exc, exc_info=True)
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Index refresh notification failed: {type(exc).__name__}: {exc}",
+                ) from exc
+            index_seq = outcome.get("index_seq") if isinstance(outcome, dict) else None
+            return {
+                "status": "deleted",
+                "path": path,
+                "change_type": change_type,
+                "index_seq": index_seq,
+            }
+
+        nexus_fs = getattr(request.app.state, "nexus_fs", None)
+        if nexus_fs is None:
+            raise HTTPException(status_code=503, detail="NexusFS not initialized")
+        content, mtime_ms = await read_written_bytes(nexus_fs, path, op_context)
+        text = decode_index_text(content)
+        if text is None:
+            raise _skipped(REASON_NON_TEXT)
         try:
-            await search_daemon.notify_file_change(path, change_type, zone_id=target_zone)
+            result = await search_daemon.index_documents(
+                [build_document(path, text, mtime_ms=mtime_ms)], zone_id=index_zone
+            )
         except Exception as exc:
-            logger.error("notify_file_change failed: %s", exc, exc_info=True)
+            logger.error("refresh index_documents failed: %s", exc, exc_info=True)
             raise HTTPException(
                 status_code=500,
-                detail=f"Index refresh notification failed: {type(exc).__name__}: {exc}",
+                detail=f"Index refresh failed: {type(exc).__name__}: {exc}",
             ) from exc
-        return {"status": "accepted", "path": path, "change_type": change_type}
+        verdict = verdict_for_path(result, path)
+        if verdict.status == STATUS_SKIPPED:
+            raise _skipped(verdict.reason or REASON_EMPTY)
+        return {
+            "status": "indexed",
+            "path": path,
+            "change_type": change_type,
+            "index_seq": verdict.index_seq,
+        }
 
     return await run_zone_scoped(_get_zone_registry(request), target_zone, _work)
 

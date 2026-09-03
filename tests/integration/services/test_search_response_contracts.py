@@ -1,4 +1,4 @@
-"""Wire-contract tests for /search/index, /search/health, /search/stats.
+"""Wire-contract tests for /search/index, /search/health, /search/stats, /search/refresh.
 
 #4617: these three response shapes drifted across the P12 pivot
 (``count`` int → dict, ``zoneId`` → ``zone_id``, health/stats identity
@@ -41,7 +41,20 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _build_app(daemon):
+# Admin principal: /search/index enforces admin-or-path-WRITE (review
+# R3); the read-only case is pinned by test_read_only_principal_cannot_index
+# below.
+_ADMIN_AUTH = {
+    "authenticated": True,
+    "user_id": "u",
+    "zone_id": "eng",
+    "zone_set": ["eng"],
+    "zone_perms": [["eng", "r"], ["eng", "w"]],
+    "is_admin": True,
+}
+
+
+def _build_app(daemon, auth=None):
     from nexus.server.api.v2.routers.search import router
 
     app = FastAPI()
@@ -52,19 +65,13 @@ def _build_app(daemon):
     app.state.async_session_factory = MagicMock()
     app.state.async_read_session_factory = MagicMock()
 
-    from nexus.server.dependencies import require_auth
+    from nexus.server.dependencies import get_auth_result, require_auth
 
-    # Admin principal: /search/index enforces admin-or-path-WRITE
-    # (review R3); the read-only case is pinned by
-    # test_read_only_principal_cannot_index below.
-    app.dependency_overrides[require_auth] = lambda: {
-        "authenticated": True,
-        "user_id": "u",
-        "zone_id": "eng",
-        "zone_set": ["eng"],
-        "zone_perms": [["eng", "r"], ["eng", "w"]],
-        "is_admin": True,
-    }
+    principal = dict(auth or _ADMIN_AUTH)
+    app.dependency_overrides[require_auth] = lambda: principal
+    # /search/stats takes OPTIONAL auth via get_auth_result directly
+    # (#4736 zone scoping), so override that dependency too.
+    app.dependency_overrides[get_auth_result] = lambda: principal
     return app
 
 
@@ -121,7 +128,16 @@ class TestIndexResponseContract:
         # zone_id — strict SDK parsers threw on every successful index.
         # ``skippedCount`` is additive (review R2): content-level skips
         # are no longer invisible behind a bare 200.
-        assert body == {"status": "indexed", "count": 2, "skippedCount": 0, "zoneId": "eng"}
+        # #4736 adds ``skippedPaths`` + ``indexSeq`` (0 here: the stub
+        # reports no sequence) — additive next to the #4617 keys.
+        assert body == {
+            "status": "indexed",
+            "count": 2,
+            "skippedCount": 0,
+            "skippedPaths": [],
+            "indexSeq": 0,
+            "zoneId": "eng",
+        }
         assert isinstance(body["count"], int)
 
     def test_content_skips_surface_in_response(self):
@@ -370,3 +386,259 @@ class TestStatsResponseContract:
         assert "vector_backend" in body
         assert body["vector_backend"] is None
         assert body["indexing_in_progress"] == 0
+
+
+# =============================================================================
+# #4736 — write-to-searchable contract
+# =============================================================================
+
+
+class _FakeFS:
+    """Just enough VFS for /search/refresh: ``read`` + ``sys_stat``."""
+
+    def __init__(self, files: dict[str, bytes]):
+        self.files = files
+
+    def read(self, path, *, context=None, **_):
+        from nexus.contracts.exceptions import NexusFileNotFoundError
+
+        if path not in self.files:
+            raise NexusFileNotFoundError(path)
+        return self.files[path]
+
+    def sys_stat(self, path, *, context=None, **_):
+        return {"modified_at_ms": 1_700_000_000_000}
+
+
+class TestRefreshResponseContract:
+    """/search/refresh says what it DID — never a bare "accepted" ack."""
+
+    def test_update_reads_the_file_and_indexes_it_synchronously(self):
+        from nexus.grpc.search.v1 import search_pb2
+
+        daemon, stub = _daemon_with_stub(
+            IndexDocuments=search_pb2.IndexDocumentsResponse(indexed_count=1, index_seq=9)
+        )
+        app = _build_app(daemon)
+        app.state.nexus_fs = _FakeFS({"/docs/a.md": b"needle in the doc"})
+
+        resp = TestClient(app).post(
+            "/api/v2/search/refresh", params={"path": "/docs/a.md", "change_type": "update"}
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "status": "indexed",
+            "path": "/docs/a.md",
+            "change_type": "update",
+            "index_seq": 9,
+        }
+        ((method, req),) = stub.requests
+        assert method == "IndexDocuments"
+        # The TOKEN zone is stamped on the call — the zone /search/query
+        # reads and /search/index writes — even for this principal whose
+        # two zone_perms rows make get_operation_context collapse the
+        # OperationContext zone to ROOT (#4736).  The doc carries the
+        # stat mtime so a later Refresh walk verdicts it Unchanged.
+        assert req.zone_id == "eng"
+        assert [(d.path, d.text, d.mtime_ms, d.zone_id) for d in req.documents] == [
+            ("/docs/a.md", "needle in the doc", 1_700_000_000_000, "eng")
+        ]
+
+    def test_update_on_a_missing_path_is_404_not_accepted(self):
+        from nexus.grpc.search.v1 import search_pb2
+
+        daemon, stub = _daemon_with_stub(
+            IndexDocuments=search_pb2.IndexDocumentsResponse(indexed_count=1, index_seq=1),
+            NotifyFileChange=search_pb2.NotifyFileChangeResponse(status="skipped"),
+        )
+        app = _build_app(daemon)
+        app.state.nexus_fs = _FakeFS({})
+
+        resp = TestClient(app).post(
+            "/api/v2/search/refresh", params={"path": "/docs/nope.md", "change_type": "update"}
+        )
+
+        assert resp.status_code == 404
+        assert "accepted" not in resp.text
+        assert stub.requests == [], "nothing to index ⇒ the plugin is not called"
+
+    def test_update_with_empty_content_is_409_skipped(self):
+        from nexus.grpc.search.v1 import search_pb2
+
+        daemon, _ = _daemon_with_stub(
+            IndexDocuments=search_pb2.IndexDocumentsResponse(
+                indexed_count=0, skipped_count=1, skipped_paths=["/docs/empty.md"], index_seq=4
+            )
+        )
+        app = _build_app(daemon)
+        app.state.nexus_fs = _FakeFS({"/docs/empty.md": b"   \n"})
+
+        resp = TestClient(app).post(
+            "/api/v2/search/refresh", params={"path": "/docs/empty.md", "change_type": "update"}
+        )
+
+        assert resp.status_code == 409
+        detail = resp.json()["detail"]
+        assert detail["status"] == "skipped"
+        assert detail["path"] == "/docs/empty.md"
+        assert "empty" in detail["reason"]
+
+    def test_update_with_binary_content_is_409_without_reaching_the_plugin(self):
+        from nexus.grpc.search.v1 import search_pb2
+
+        daemon, stub = _daemon_with_stub(
+            IndexDocuments=search_pb2.IndexDocumentsResponse(indexed_count=1, index_seq=1)
+        )
+        app = _build_app(daemon)
+        app.state.nexus_fs = _FakeFS({"/bin/blob": b"\xff\xfe\x00"})
+
+        resp = TestClient(app).post(
+            "/api/v2/search/refresh", params={"path": "/bin/blob", "change_type": "create"}
+        )
+
+        assert resp.status_code == 409
+        assert resp.json()["detail"]["status"] == "skipped"
+        assert "UTF-8" in resp.json()["detail"]["reason"]
+        assert stub.requests == []
+
+    def test_delete_evicts_and_reports_deleted_with_seq(self):
+        from nexus.grpc.search.v1 import search_pb2
+
+        daemon, stub = _daemon_with_stub(
+            NotifyFileChange=search_pb2.NotifyFileChangeResponse(status="accepted", index_seq=4)
+        )
+        app = _build_app(daemon)
+        app.state.nexus_fs = _FakeFS({})  # delete never reads the file
+
+        resp = TestClient(app).post(
+            "/api/v2/search/refresh", params={"path": "/docs/gone.md", "change_type": "delete"}
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "status": "deleted",
+            "path": "/docs/gone.md",
+            "change_type": "delete",
+            "index_seq": 4,
+        }
+        ((method, req),) = stub.requests
+        assert method == "NotifyFileChange"
+        assert (req.path, req.change_type, req.zone_id) == ("/docs/gone.md", "delete", "eng")
+
+    def test_delete_plugin_error_fails_closed_500(self):
+        from nexus.grpc.search.v1 import search_pb2
+
+        daemon, _ = _daemon_with_stub(
+            NotifyFileChange=search_pb2.NotifyFileChangeResponse(
+                status="", error="delete tombstone persist failed"
+            )
+        )
+        app = _build_app(daemon)
+
+        resp = TestClient(app).post(
+            "/api/v2/search/refresh", params={"path": "/docs/gone.md", "change_type": "delete"}
+        )
+
+        assert resp.status_code == 500
+        assert "tombstone" in resp.json()["detail"]
+
+    def test_invalid_change_type_is_400(self):
+        from nexus.grpc.search.v1 import search_pb2
+
+        daemon, _ = _daemon_with_stub(
+            NotifyFileChange=search_pb2.NotifyFileChangeResponse(status="skipped")
+        )
+        resp = TestClient(_build_app(daemon)).post(
+            "/api/v2/search/refresh", params={"path": "/x", "change_type": "touch"}
+        )
+        assert resp.status_code == 400
+
+
+class TestIndexSeqContract:
+    def test_index_seq_and_skipped_paths_surface_on_search_index(self):
+        from nexus.grpc.search.v1 import search_pb2
+
+        daemon, _ = _daemon_with_stub(
+            IndexDocuments=search_pb2.IndexDocumentsResponse(
+                indexed_count=2, skipped_count=1, skipped_paths=["/e.md"], index_seq=7
+            )
+        )
+        app = _build_app(daemon)
+
+        resp = TestClient(app).post(
+            "/api/v2/search/index",
+            json={
+                "documents": [
+                    {"path": "/a.md", "text": "alpha"},
+                    {"path": "/b.md", "text": "bravo"},
+                    {"path": "/e.md", "text": ""},
+                ]
+            },
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["count"] == 2
+        assert body["skippedCount"] == 1
+        assert body["skippedPaths"] == ["/e.md"]
+        assert body["indexSeq"] == 7
+
+
+class TestStatsStallDetectionContract:
+    def test_seq_pending_and_clock_surface(self):
+        from nexus.grpc.search.v1 import search_pb2
+
+        daemon, stub = _daemon_with_stub(
+            Stats=search_pb2.StatsResponse(
+                fts_doc_count=1,
+                backend="rust-plugin",
+                embedding_model="",
+                indexing_in_progress=1,
+                last_index_seq=42,
+                pending=3,
+                last_successful_index_at_ms=1_700_000_000_000,
+            )
+        )
+        body = TestClient(_build_app(daemon)).get("/api/v2/search/stats").json()
+
+        assert body["last_index_seq"] == 42
+        assert body["pending"] == 3
+        assert body["last_successful_index_at"] == "2023-11-14T22:13:20+00:00"
+        # Pre-P12 pollers keyed on float epoch seconds — same instant.
+        assert body["last_index_refresh"] == 1_700_000_000.0
+        # #4736: scoped to (and echoing) the token zone — the same zone
+        # /search/query reads and every indexing call writes.
+        ((method, req),) = stub.requests
+        assert method == "Stats"
+        assert req.zone_id == "eng"
+        assert body["zone_id"] == "eng"
+
+    def test_token_less_poller_keeps_root_zone_view(self):
+        from nexus.contracts.constants import ROOT_ZONE_ID
+        from nexus.grpc.search.v1 import search_pb2
+
+        daemon, stub = _daemon_with_stub(
+            Stats=search_pb2.StatsResponse(backend="rust-plugin", embedding_model="")
+        )
+        app = _build_app(daemon, auth={"authenticated": False})
+
+        resp = TestClient(app).get("/api/v2/search/stats")
+
+        assert resp.status_code == 200, "stats auth stays optional"
+        ((_, req),) = stub.requests
+        assert req.zone_id == "", "empty on the wire ⇒ plugin ROOT zone"
+        assert resp.json()["zone_id"] == ROOT_ZONE_ID
+
+    def test_never_indexed_reports_zero_and_none_not_epoch(self):
+        from nexus.grpc.search.v1 import search_pb2
+
+        daemon, _ = _daemon_with_stub(
+            Stats=search_pb2.StatsResponse(backend="rust-plugin", embedding_model="")
+        )
+        body = TestClient(_build_app(daemon)).get("/api/v2/search/stats").json()
+
+        assert body["last_index_seq"] == 0
+        assert body["pending"] == 0
+        assert body["last_successful_index_at"] is None
+        assert body["last_index_refresh"] is None

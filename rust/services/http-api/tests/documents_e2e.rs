@@ -77,6 +77,8 @@ impl Default for MockConfig {
                 skipped_count: 0,
                 parked_paths: vec![],
                 error: None,
+                index_seq: 11,
+                skipped_paths: vec![],
             },
             stats_resp: StatsResponse {
                 fts_doc_count: 1234,
@@ -87,6 +89,9 @@ impl Default for MockConfig {
                 backend: "rust-plugin".into(),
                 embedding_model: "mE5-small-v1".into(),
                 indexing_in_progress: 0,
+                last_index_seq: 11,
+                pending: 0,
+                last_successful_index_at_ms: 1_700_000_000_000,
             },
             rpc_err: None,
         }
@@ -464,6 +469,9 @@ async fn batch_happy_path_round_trips_documents_list() {
     assert_eq!(parsed["indexed_count"], 7);
     assert_eq!(parsed["skipped_count"], 0);
     assert_eq!(parsed["parked_paths"].as_array().unwrap().len(), 0);
+    // #4736: the plugin's sequence + per-path skips ride along.
+    assert_eq!(parsed["index_seq"], 11);
+    assert_eq!(parsed["skipped_paths"].as_array().unwrap().len(), 0);
 
     let r = &h.log.index_documents.lock().unwrap()[0];
     assert_eq!(r.documents.len(), 2);
@@ -494,6 +502,8 @@ async fn batch_parked_paths_survive_round_trip() {
             skipped_count: 0,
             parked_paths: vec!["/notes/a.md".into(), "/notes/c.md".into()],
             error: None,
+            index_seq: 12,
+            skipped_paths: vec![],
         },
         ..MockConfig::default()
     })
@@ -556,6 +566,10 @@ async fn stats_happy_path_surfaces_backend_identity_and_counters() {
     assert_eq!(parsed["backend"], "rust-plugin");
     assert_eq!(parsed["embedding_model"], "mE5-small-v1");
     assert_eq!(parsed["indexing_in_progress"], 0);
+    // #4736 stall-detection triple.
+    assert_eq!(parsed["last_index_seq"], 11);
+    assert_eq!(parsed["pending"], 0);
+    assert_eq!(parsed["last_successful_index_at_ms"], 1_700_000_000_000u64);
 
     let r = &h.log.stats.lock().unwrap()[0];
     assert_eq!(r.zone_id, "root");

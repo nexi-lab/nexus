@@ -97,20 +97,27 @@ class ReindexResponse(ApiModel):
     errors: int = 0
     last_sequence: int = 0
     dry_run: bool = False
-    # Issue #4241: surface that the search-daemon refresh was *enqueued*
-    # for these paths. Round-1 review (codex finding MEDIUM): the consumer
-    # loop drains asynchronously, so a non-zero count means "queued", not
-    # "completed". Operators who need a hard barrier should poll
-    # /api/v2/search/stats for ``last_index_refresh`` advancing past
-    # ``search_refresh_enqueued_at``, or sleep until BM25 returns the
-    # expected hits before declaring success.
-    search_paths_enqueued: int = 0
-    search_refresh_enqueued_at: float | None = None
-    # Round-4 review (codex MEDIUM): explicit signal when one or more
-    # enqueue calls failed (backend down, queue full, etc.). Without
-    # this, a partial failure returned processed=N, errors=0, and only
-    # a lower enqueued count — operators could miss that part of the
-    # replay never reached the search index. ``failed_paths`` is
-    # capped at 25 entries to bound response size.
-    search_enqueue_errors: int = 0
-    search_enqueue_failed_paths: list[str] = []
+    # #4241 / #4736: for ``target`` in {all, search} the route drives the
+    # search plugin SYNCHRONOUSLY — deletes evict, updates are read and
+    # indexed in bounded IndexDocuments batches — so these are completion
+    # counts, not queue depths (the pre-P12 ``search_paths_enqueued`` /
+    # ``search_refresh_enqueued_at`` / ``search_enqueue_*`` fields described
+    # a consumer queue that no longer exists).  Every replayed path lands in
+    # exactly one of indexed / deleted / skipped / failed; the path lists
+    # are capped at 25 entries to bound the response body.
+    search_paths_indexed: int = 0
+    search_paths_deleted: int = 0
+    search_paths_skipped: int = 0
+    # Histogram of skip kinds: empty | non_text | oversize.
+    search_skip_reasons: dict[str, int] = {}
+    search_skipped_paths: list[str] = []
+    search_index_errors: int = 0
+    search_index_failed_paths: list[str] = []
+    # First failure text — a down plugin shows up here, not just as a count.
+    search_index_error: str | None = None
+    # Highest plugin ``index_seq`` this pass produced; ``/search/stats``
+    # ``last_index_seq >= search_index_seq`` ⇒ everything indexed is served.
+    search_index_seq: int | None = None
+    # Epoch seconds when the last plugin call RETURNED (a completion time,
+    # unlike the old enqueue timestamp).
+    search_indexed_at: float | None = None

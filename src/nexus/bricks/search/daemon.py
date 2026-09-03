@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import grpc
@@ -357,6 +358,13 @@ class SearchDaemon:
             # docs) — distinct from the projection-wait ``skipped``
             # paths above, which drive the route's 409.
             "skipped_count": resp.skipped_count,
+            # #4736: WHICH paths were content-skipped, so write+index
+            # can answer per document, and the plugin-wide sequence
+            # stamped after the commit that made this batch visible
+            # (``/search/stats`` ``last_index_seq >= index_seq`` ⇒
+            # served).
+            "skipped_paths": list(resp.skipped_paths),
+            "index_seq": int(resp.index_seq),
         }
 
     async def notify_file_change(
@@ -365,7 +373,15 @@ class SearchDaemon:
         change_type: str = "update",
         *,
         zone_id: str | None = None,
-    ) -> None:
+    ) -> dict[str, Any]:
+        """Relay a per-file change event to the plugin.
+
+        Returns the plugin's verdict: ``status`` is ``"accepted"`` when
+        the index was MUTATED (``delete``) and ``"skipped"`` when the
+        event was a pure ack.  Post-P12 ``create`` / ``update`` are
+        ALWAYS ``"skipped"`` — no text travels on this RPC, so making a
+        written file searchable takes ``index_documents`` (#4736).
+        """
         req = search_pb2.NotifyFileChangeRequest(
             path=path,
             change_type=change_type,
@@ -377,6 +393,7 @@ class SearchDaemon:
         # here would leave orphaned vectors behind an HTTP 200.
         if resp.HasField("error"):
             raise RuntimeError(f"plugin notify_file_change failed: {resp.error}")
+        return {"status": resp.status, "index_seq": int(resp.index_seq)}
 
     # ── Indexed-directories registry ──────────────────────────
 
@@ -424,8 +441,13 @@ class SearchDaemon:
         resp = await self._get_stub().Health(search_pb2.HealthRequest())
         return {"status": resp.status, "detail": resp.detail}
 
-    async def get_stats(self) -> dict[str, Any]:
-        resp = await self._get_stub().Stats(search_pb2.StatsRequest())
+    async def get_stats(self, zone_id: str | None = None) -> dict[str, Any]:
+        """Plugin counters for ``zone_id`` (empty / None ⇒ the plugin's ROOT zone).
+
+        #4736: the HTTP route passes the caller's token zone so a tenant's
+        ``fts_doc_count`` / ``last_index_seq`` describe ITS index.
+        """
+        resp = await self._get_stub().Stats(search_pb2.StatsRequest(zone_id=zone_id or ""))
         return {
             "fts_doc_count": resp.fts_doc_count,
             "fts_path_count": resp.fts_path_count,
@@ -448,7 +470,29 @@ class SearchDaemon:
             # "empty results" then mean "still building", not "no
             # matches".
             "indexing_in_progress": resp.indexing_in_progress,
+            # #4736 stall detection: a tenant compares the ``index_seq``
+            # an indexing call returned against ``last_index_seq``, and
+            # reads ``pending`` > 0 with ``last_successful_index_at``
+            # frozen as "acknowledged but never served" (#4725).
+            "last_index_seq": int(resp.last_index_seq),
+            "pending": int(resp.pending),
+            "last_successful_index_at": _ms_to_iso(resp.last_successful_index_at_ms),
+            # Pre-P12 stats carried ``last_index_refresh`` as float epoch
+            # seconds (None when nothing was ever indexed); the same
+            # clock, same shape, so old pollers keep an honest value.
+            "last_index_refresh": (
+                resp.last_successful_index_at_ms / 1000.0
+                if resp.last_successful_index_at_ms
+                else None
+            ),
         }
+
+
+def _ms_to_iso(ms: int) -> str | None:
+    """Epoch milliseconds → ISO-8601 UTC; ``None`` for the plugin's 0 = never."""
+    if not ms:
+        return None
+    return datetime.fromtimestamp(ms / 1000.0, tz=UTC).isoformat()
 
 
 def _request_to_pb(request: "SearchRequest", *, chunks_per_page: int) -> search_pb2.QueryRequest:

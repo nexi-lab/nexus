@@ -715,7 +715,10 @@ jobs:
       # hold.  This step needs only HTTP, so it always runs: it FAILS
       # the workflow when /search/health is not healthy/degraded (the
       # server→plugin gRPC link end-to-end) or when the /index,
-      # /stats, and /query/batch response shapes drift.
+      # /stats, and /query/batch response shapes drift.  #4736 adds the
+      # write-to-searchable contract: one files/write with index:true
+      # must be served by /query, /stats must carry the stall-detection
+      # triple, and refresh on a missing path must NOT be "accepted".
       # ---------------------------------------------------------------
       - name: Search HTTP contract smoke
         run: |
@@ -723,7 +726,7 @@ jobs:
             -e NEXUS_URL=http://127.0.0.1:2026 \
             -e NEXUS_API_KEY="${NEXUS_API_KEY}" \
             -i nexus-e2e python3 - <<'PY'
-          import json, os, urllib.request
+          import json, os, urllib.error, urllib.request
 
           url, key = os.environ["NEXUS_URL"], os.environ["NEXUS_API_KEY"]
 
@@ -774,12 +777,43 @@ jobs:
               if "error" not in entries[1]:
                   failures.append(f"batch invalid spec missing per-entry error: {entries[1]}")
 
+          # 5. Write-to-searchable (#4736): ONE write+index call, then the
+          #    document is served and /stats has caught up to its seq.
+          smoke_path = "/workspace/demo/contract-smoke-4736.md"
+          st, wr = http("POST", "/api/v2/files/write",
+                        {"path": smoke_path,
+                         "content": "zebrafish write-to-searchable sentinel",
+                         "index": True})
+          verdict = (wr.get("index") or {}) if st == 200 else {}
+          if st != 200 or verdict.get("status") != "indexed" or not isinstance(verdict.get("index_seq"), int):
+              failures.append(f"write+index contract drift (want index.status=indexed + int index_seq): status={st} body={wr}")
+          else:
+              st, stats = http("GET", "/api/v2/search/stats")
+              for k in ("last_index_seq", "pending", "last_successful_index_at"):
+                  if k not in stats:
+                      failures.append(f"stats missing stall-detection key {k!r}: {stats}")
+              if (stats.get("last_index_seq") or -1) < verdict["index_seq"]:
+                  failures.append(f"stats last_index_seq behind the write's index_seq: {stats} vs {verdict}")
+              st, q = http("GET", "/api/v2/search/query?q=zebrafish&type=keyword&limit=5")
+              hit_paths = [r.get("path") for r in q.get("results", [])]
+              if smoke_path not in hit_paths:
+                  failures.append(f"write+index document not served by /query: status={st} body={q}")
+
+          # 6. refresh on a path that does not exist must be a 404, never
+          #    an "accepted" ack the caller cannot distinguish from success.
+          try:
+              st, body = http("POST", "/api/v2/search/refresh?path=/workspace/demo/missing-4736.md&change_type=update")
+              failures.append(f"refresh on a missing path must not succeed: status={st} body={body}")
+          except urllib.error.HTTPError as exc:
+              if exc.code != 404:
+                  failures.append(f"refresh on a missing path: want 404, got {exc.code}")
+
           if failures:
               print("SEARCH CONTRACT SMOKE FAILED:")
               for f in failures:
                   print(f"  - {f}")
               raise SystemExit(1)
-          print("search contract smoke OK (health/index/stats/batch)")
+          print("search contract smoke OK (health/index/stats/batch/write+index/refresh)")
           PY
 
       - name: Run build perf e2e

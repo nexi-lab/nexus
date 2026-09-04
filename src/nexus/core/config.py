@@ -64,7 +64,16 @@ class PermissionConfig:
     # batched, but the creating subject's ``direct_owner`` grant is written
     # synchronously so the writer's own list/search/check see the new file
     # immediately. Set False to defer the owner grant as well (pre-#4739).
+    # Env: NEXUS_SYNC_OWNER_GRANT.
     sync_owner_grant: bool = True
+    # Whether an admin writer ALSO gets a creator ``direct_owner`` tuple when
+    # ``allow_admin_bypass`` is on. Off by default: under bypass the tuple
+    # never takes part in a decision, while writing it costs a rebac_write,
+    # three Tiger write-throughs and a zone-graph invalidation per new file
+    # (measured 130–190 ms per write on a remote Postgres). Ignored when
+    # ``allow_admin_bypass`` is False — admins without bypass need the tuple.
+    # Env: NEXUS_OWNER_GRANT_ADMIN_BYPASS.
+    owner_grant_admin_bypass: bool = False
 
 
 @dataclass(frozen=True)

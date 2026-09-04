@@ -45,6 +45,15 @@ had to call ``flush_write_observer``.  #4738 replaces the debounce with a
   the rows in flight (the kernel is authoritative and already durable).
   ``storage/projection_reconcile.py`` — ``POST /api/v2/admin/reconcile-
   projections`` — repairs the projection from the kernel afterwards.
+* ``write_through=False`` (``NEXUS_PROJECTION_MODE=async``) keeps everything
+  above except the wait: the writer returns as soon as its ticket is queued
+  and reports ``projection_seq: null``, and the committer coalesces tickets
+  for ``debounce_seconds`` (0.2 s) before each group commit so a burst costs
+  one transaction instead of one per write.  For tenants that keep their own
+  version history and never fence on ``projection_seq`` this takes the
+  projection transaction (round-trips + fsync + ORM CPU) off the write path;
+  the crash window grows from "rows in flight" to "rows queued", still
+  bounded and still repairable with reconcile.
 """
 
 import logging
@@ -146,6 +155,7 @@ class RecordStoreWriteObserver:
         event_signal: "Any | None" = None,
         debounce_seconds: float = _DEBOUNCE_S,
         write_through_timeout_s: float = _WRITE_THROUGH_TIMEOUT_S,
+        write_through: bool = True,
     ) -> None:
         self._session_factory = record_store.session_factory
         self._strict_mode = strict_mode
@@ -154,6 +164,13 @@ class RecordStoreWriteObserver:
         # driven by writers waiting on their ticket, not by a timer.
         self._debounce = debounce_seconds
         self._timeout = write_through_timeout_s
+        # ``write_through=False`` (NEXUS_PROJECTION_MODE=async): the writer
+        # submits its ticket and returns without waiting for the commit, and
+        # the committer coalesces tickets for ``debounce_seconds`` before each
+        # transaction.  The group-commit thread, bounded queues, retry/salvage,
+        # metrics and reconcile stay exactly the same; only read-your-projection
+        # and the ``projection_seq`` fence are given up (writes report ``None``).
+        self._write_through_enabled = write_through
 
         # Pending tickets (events accepted, not yet committed) — under _cond.
         self._lock = threading.Lock()
@@ -344,8 +361,15 @@ class RecordStoreWriteObserver:
         ``operation_log.sequence_number`` among its events) or ``None`` when
         the commit is not confirmed and ``strict_mode`` is off.  Raises
         ``AuditLogError`` in strict mode when the commit failed or timed out.
+
+        In async mode (``write_through=False``) the ticket is queued and the
+        writer returns ``None`` at once; the commit thread still lands the
+        row and a failure is still logged at ERROR + counted, it just cannot
+        be reported to this caller.
         """
         ticket = self._submit(events)
+        if not self._write_through_enabled:
+            return None
         if not ticket.done.wait(self._timeout):
             self._total_timeouts += 1
             io_metrics.record_projection_write_through_timeout()
@@ -470,6 +494,14 @@ class RecordStoreWriteObserver:
                     self._cond.wait()
                 if self._stop and not self._pending:
                     return
+                if not self._write_through_enabled and self._debounce > 0 and not self._stop:
+                    # Async mode: nobody is waiting on these tickets, so
+                    # coalesce the ones that arrive within the debounce window
+                    # into ONE transaction (the pre-#4738 batching).  Per-write
+                    # commits would otherwise cost a session + ORM flush + fsync
+                    # each, and that CPU competes with request threads for
+                    # the GIL right after every write.
+                    self._cond.wait_for(lambda: self._stop, timeout=self._debounce)
             with self._commit_lock:
                 with self._cond:
                     tickets = self._drain_locked(_MAX_BATCH_DRAIN)

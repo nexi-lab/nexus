@@ -576,9 +576,29 @@ impl FtsIndex {
         let searcher = self.reader.searcher();
 
         let parser = QueryParser::for_index(&self.index, vec![self.fields.chunk_text]);
-        let parsed = parser
-            .parse_query(query)
-            .map_err(|e| IndexError::ParseQuery(query.to_string(), e.to_string()))?;
+        // Natural-language queries routinely contain tantivy syntax by
+        // accident ("confirm - what did ...", an unbalanced quote, a
+        // stray ':' or '[').  The strict parser rejects the whole query,
+        // and because the hybrid path joins this leg with the semantic
+        // leg, one dash used to fail the entire hybrid RPC with
+        // "parse query ...: Syntax Error" even though the ANN leg had
+        // the answer (LongMemEval 58470ed2).  Try strict first so
+        // deliberate operator syntax keeps its exact semantics; on a
+        // syntax error fall back to tantivy's lenient parser, which
+        // drops the offending tokens and keeps the rest of the terms.
+        let parsed = match parser.parse_query(query) {
+            Ok(parsed) => parsed,
+            Err(strict_err) => {
+                let (lenient, lenient_errors) = parser.parse_query_lenient(query);
+                tracing::debug!(
+                    query,
+                    strict_error = %strict_err,
+                    lenient_errors = lenient_errors.len(),
+                    "fts query did not parse strictly; using lenient parse"
+                );
+                lenient
+            }
+        };
 
         // Over-fetch when a path prefix is set: the prefix filter is
         // applied post-scoring in P1, so we grab a wider window to
@@ -815,6 +835,52 @@ mod tests {
         assert_eq!(hits[0].chunk_index, 0);
         assert_eq!(hits[0].mtime_ms, Some(1_700_000_000_000));
         assert!(hits[0].score > 0.0);
+    }
+
+    #[test]
+    fn natural_language_syntax_falls_back_to_lenient_parse() {
+        // A dash surrounded by spaces, an unbalanced quote, a stray
+        // colon: all strict-parser syntax errors that a user question
+        // carries by accident.  They must not fail the query (and, via
+        // the hybrid join, the whole hybrid RPC) — the remaining terms
+        // still search.  Deliberate, well-formed syntax keeps working.
+        let dir = tempdir().join("fts");
+        let idx = FtsIndex::open_or_create(dir).expect("open");
+        idx.add_document(
+            "/lme/borges.md",
+            0,
+            "Borges wrote that the Library is a sphere whose exact center is any hexagon",
+            Some(1),
+        )
+        .expect("add");
+        idx.add_document(
+            "/lme/other.md",
+            0,
+            "an unrelated note about gardening",
+            Some(2),
+        )
+        .expect("add");
+        idx.commit().expect("commit");
+
+        for query in [
+            "I wanted to confirm - what did Borges say about the center of the Library?",
+            "what did Borges say about the \"center of the Library",
+            "Borges: center of the Library [sphere]",
+        ] {
+            let hits = idx
+                .search(query, 10, None)
+                .expect("lenient search must not fail");
+            assert!(
+                hits.iter().any(|h| h.path == "/lme/borges.md"),
+                "query {query:?}: expected the Borges doc, got {hits:?}"
+            );
+        }
+        // Well-formed operator syntax is still honoured strictly.
+        let hits = idx
+            .search("Borges -gardening", 10, None)
+            .expect("strict search");
+        assert_eq!(hits.len(), 1, "{hits:?}");
+        assert_eq!(hits[0].path, "/lme/borges.md");
     }
 
     #[test]

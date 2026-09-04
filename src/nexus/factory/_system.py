@@ -25,6 +25,32 @@ from nexus.factory._helpers import _make_gate
 
 logger = logging.getLogger(__name__)
 
+_PROJECTION_MODES = ("write_through", "async")
+
+
+def resolve_projection_write_through(raw: str | None) -> bool:
+    """Map ``NEXUS_PROJECTION_MODE`` to the observer's ``write_through`` flag.
+
+    ``write_through`` (default) — a write returns after its operation_log /
+    file_paths / version_history rows are committed and carries
+    ``projection_seq`` (#4738).  ``async`` — the write returns as soon as the
+    event is queued (``projection_seq: null``); the group-commit thread,
+    bounded queues, retry/salvage, metrics and reconcile are unchanged.
+    Unknown values fall back to ``write_through`` with a warning so a typo
+    can never silently weaken the projection contract.
+    """
+    mode = (raw or "").strip().lower()
+    if not mode or mode == "write_through":
+        return True
+    if mode == "async":
+        return False
+    logger.warning(
+        "NEXUS_PROJECTION_MODE=%r is not one of %s; using write_through",
+        raw,
+        "/".join(_PROJECTION_MODES),
+    )
+    return True
+
 
 def _boot_pre_kernel_services(
     ctx: _BootContext,
@@ -163,6 +189,9 @@ def _boot_pre_kernel_services(
                     strict_mode=ctx.audit.strict_mode,
                     event_signal=ctx.event_signal,
                     write_through_timeout_s=_projection_timeout,
+                    write_through=resolve_projection_write_through(
+                        os.environ.get("NEXUS_PROJECTION_MODE")
+                    ),
                 )
             else:
                 from nexus.storage.record_store_write_observer import RecordStoreWriteObserver

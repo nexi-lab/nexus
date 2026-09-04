@@ -124,6 +124,14 @@ services:
       NEXUS_SKIP_PERMISSIONS: ${NEXUS_SKIP_PERMISSIONS:-false}
       NEXUS_ENFORCE_PERMISSIONS: ${NEXUS_ENFORCE_PERMISSIONS:-true}
       NEXUS_ALLOW_ADMIN_BYPASS: ${NEXUS_ALLOW_ADMIN_BYPASS:-true}
+      # Write-path knobs (docs/architecture/rebac.md, record-store-projections.md).
+      # Empty = server default: sync owner grant on, admin-bypass writers get
+      # no creator grant, projections write-through. Set
+      # NEXUS_PROJECTION_MODE=async to take the projection commit off the
+      # write path when nothing fences on projection_seq.
+      NEXUS_SYNC_OWNER_GRANT: ${NEXUS_SYNC_OWNER_GRANT:-}
+      NEXUS_OWNER_GRANT_ADMIN_BYPASS: ${NEXUS_OWNER_GRANT_ADMIN_BYPASS:-}
+      NEXUS_PROJECTION_MODE: ${NEXUS_PROJECTION_MODE:-}
       # Admin-bootstrap token (dev-only). When unset, the admin-bootstrap
       # endpoint is NOT registered even if NEXUS_ALLOW_ADMIN_BYPASS=true.
       # `nexus up --with-daemon` injects a fresh random token.

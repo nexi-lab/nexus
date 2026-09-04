@@ -18,6 +18,16 @@ Issue #4739 — sync owner grant:
     queued alongside the hierarchy tuples, flushed every
     ``deferred_flush_interval`` seconds).
 
+    ``skip_admin_owner_grant=True`` (the orchestrator sets it when
+    ``PermissionConfig.allow_admin_bypass`` is on and
+    ``owner_grant_admin_bypass`` is off) writes NO creator grant for an admin
+    subject: under admin bypass the tuple never takes part in a decision, but
+    writing it costs a ``rebac_write`` plus three Tiger write-throughs and a
+    zone-graph invalidation per new file.  Before #4739 the subprocess-kernel
+    deployment never wrote these grants at all (``is_new`` was hard-coded
+    False), so an admin-key tenant would otherwise see every write slow down
+    and its tuple tables grow by three rows per file.
+
 Data mapping:
     ctx.path          → path
     ctx.zone_id       → zone_id (default "root")
@@ -52,7 +62,7 @@ class DeferredPermissionHook:
     """Post-write/mkdir/write_batch/rename hook: deferred hierarchy + sync owner grant."""
 
     name = "deferred_permission"
-    __slots__ = ("_buf", "_rebac", "_sync_owner_grant")
+    __slots__ = ("_buf", "_rebac", "_skip_admin_owner_grant", "_sync_owner_grant")
 
     # ── Hook spec (duck-typed) (Issue #1773) ──────────────────────────
 
@@ -72,12 +82,16 @@ class DeferredPermissionHook:
         rebac_manager: Any | None = None,
         *,
         sync_owner_grant: bool = True,
+        skip_admin_owner_grant: bool = False,
     ) -> None:
         self._buf = deferred_buffer
         self._rebac = rebac_manager
         # Issue #4739: write the creator's owner grant synchronously.  Only
         # possible when a rebac_manager is wired; otherwise fall back to queue.
         self._sync_owner_grant = sync_owner_grant
+        # Admin-bypass deployments: the creator tuple is redundant for an
+        # admin subject, so skip it (sync AND deferred) — see module docstring.
+        self._skip_admin_owner_grant = skip_admin_owner_grant
 
     # ── Shared helpers ────────────────────────────────────────────────
 
@@ -91,10 +105,16 @@ class DeferredPermissionHook:
             )
         )
 
-    @staticmethod
-    def _grant_user(context: Any) -> str | None:
-        """Return the user to grant ownership to, or ``None`` for system/anonymous."""
+    def _grant_user(self, context: Any) -> str | None:
+        """Return the user to grant ownership to, or ``None`` for system/anonymous.
+
+        Also ``None`` for an admin subject when ``skip_admin_owner_grant`` is
+        set: the deployment runs with admin bypass, so the tuple would never be
+        consulted and only costs write latency + tuple growth.
+        """
         if context is None:
+            return None
+        if self._skip_admin_owner_grant and getattr(context, "is_admin", False):
             return None
         user = getattr(context, "user_id", None)
         if user and not getattr(context, "is_system", False):

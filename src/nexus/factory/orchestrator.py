@@ -670,12 +670,20 @@ def _register_vfs_hooks(
 
         # Issue #4739: hierarchy tuples stay deferred; the creator's owner
         # grant is written synchronously unless PermissionConfig opts out.
+        # Under allow_admin_bypass an admin subject's creator tuple is
+        # redundant (never consulted) and only costs write latency, so it is
+        # skipped unless PermissionConfig.owner_grant_admin_bypass asks for it.
+        _perm_cfg = nx._perm_config
+        _skip_admin_grant = bool(getattr(_perm_cfg, "allow_admin_bypass", False)) and not bool(
+            getattr(_perm_cfg, "owner_grant_admin_bypass", False)
+        )
         _enlist(
             "deferred_permission",
             DeferredPermissionHook(
                 _dpb,
                 rebac_manager=_rebac_for_perm,
-                sync_owner_grant=getattr(nx._perm_config, "sync_owner_grant", True),
+                sync_owner_grant=getattr(_perm_cfg, "sync_owner_grant", True),
+                skip_admin_owner_grant=_skip_admin_grant,
             ),
         )
     else:

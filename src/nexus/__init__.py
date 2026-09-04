@@ -562,11 +562,27 @@ def connect(
             ttl_seconds=cfg.cache_ttl_seconds,
         )
 
+        # Creator owner grant (Issue #4739): NEXUS_SYNC_OWNER_GRANT=false defers
+        # it with the hierarchy tuples; NEXUS_OWNER_GRANT_ADMIN_BYPASS=true also
+        # writes it for admin subjects under allow_admin_bypass (skipped by
+        # default — redundant under bypass, ~3 Tiger write-throughs per file).
+        # An EMPTY value means "server default" (compose templates pass
+        # ${VAR:-} through), so fall back explicitly rather than reading "" as false.
+        _truthy = ("true", "1", "yes")
+        sync_owner_grant = (
+            os.getenv("NEXUS_SYNC_OWNER_GRANT", "").strip().lower() or "true"
+        ) in _truthy
+        owner_grant_admin_bypass = (
+            os.getenv("NEXUS_OWNER_GRANT_ADMIN_BYPASS", "").strip().lower() or "false"
+        ) in _truthy
+
         perm_cfg = PermissionConfig(
             enforce=enforce_permissions,
             allow_admin_bypass=cfg.allow_admin_bypass,
             enforce_zone_isolation=enforce_zone_isolation,
             enable_tiger_cache=enable_tiger_cache,
+            sync_owner_grant=sync_owner_grant,
+            owner_grant_admin_bypass=owner_grant_admin_bypass,
         )
 
         dist_cfg = DistributedConfig(

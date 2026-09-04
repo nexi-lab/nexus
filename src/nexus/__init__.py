@@ -562,11 +562,23 @@ def connect(
             ttl_seconds=cfg.cache_ttl_seconds,
         )
 
+        # Creator owner grant (Issue #4739): NEXUS_SYNC_OWNER_GRANT=false defers
+        # it with the hierarchy tuples; NEXUS_OWNER_GRANT_ADMIN_BYPASS=true also
+        # writes it for admin subjects under allow_admin_bypass (skipped by
+        # default — redundant under bypass, ~3 Tiger write-throughs per file).
+        _truthy = ("true", "1", "yes")
+        sync_owner_grant = os.getenv("NEXUS_SYNC_OWNER_GRANT", "true").lower() in _truthy
+        owner_grant_admin_bypass = (
+            os.getenv("NEXUS_OWNER_GRANT_ADMIN_BYPASS", "false").lower() in _truthy
+        )
+
         perm_cfg = PermissionConfig(
             enforce=enforce_permissions,
             allow_admin_bypass=cfg.allow_admin_bypass,
             enforce_zone_isolation=enforce_zone_isolation,
             enable_tiger_cache=enable_tiger_cache,
+            sync_owner_grant=sync_owner_grant,
+            owner_grant_admin_bypass=owner_grant_admin_bypass,
         )
 
         dist_cfg = DistributedConfig(

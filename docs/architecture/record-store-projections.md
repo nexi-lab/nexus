@@ -153,7 +153,30 @@ Configuration:
 |---------|---------|--------|
 | `AuditConfig.strict_mode` / `audit_strict_mode` | `true` | Fail the write (`AuditLogError`) when its projection is not confirmed. |
 | `NEXUS_PROJECTION_TIMEOUT_S` | `5.0` | How long a write waits for its commit before the strict/non-strict policy applies. |
+| `NEXUS_PROJECTION_MODE` | `write_through` | `async` returns from the write as soon as the event is queued (`projection_seq: null`, no wait). Everything else in this document — group commit thread, bounded queues, retry/salvage, metrics, reconcile — is unchanged. Unknown values log a warning and behave as `write_through`. |
 | `NEXUS_ENABLE_WRITE_BUFFER` | `true` | `false` selects the legacy fully synchronous observer (inline MCL, `/__sys__/versioning` snapshots, no `projection_seq`). |
+
+### Async mode (`NEXUS_PROJECTION_MODE=async`)
+
+The write-through wait costs one projection transaction per write on the
+request path: `SELECT max(sequence_number)+1`, the `operation_log` insert,
+the `file_paths` lookup + tombstone delete + insert (or update) and the
+`version_history` insert, then the commit's fsync — about ten round-trips.
+Measured on a remote Postgres in the same region this added 80–100 ms to a
+write that previously spent ~25 ms server-side. Tenants that keep their own
+version history and never fence on `projection_seq` or `/operations/wait`
+can opt out: the writer submits its ticket and returns `projection_seq: null`
+immediately, and the commit thread coalesces the tickets that arrive within
+`debounce_seconds` (0.2 s, the pre-#4738 window) into one transaction before
+landing the rows exactly as before — a burst costs one session, one ORM flush
+and one fsync instead of one per write, which also keeps that CPU from
+competing with request threads for the GIL right after every write. What
+changes: `list_versions` right after a write may briefly miss the new row
+(the old #809 behaviour), a strict-mode commit failure can no longer be
+reported to the writer (it is still logged at ERROR and counted in
+`nexus_projection_events_failed_total`), and the crash window grows from
+"rows in flight" to "rows queued" — still bounded by the pending queue and
+still repairable with `POST /api/v2/admin/reconcile-projections`.
 
 Crash window: the kernel commit precedes the projection commit, so a
 `kill -9` between them leaves the kernel ahead by the rows in flight (at

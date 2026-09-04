@@ -282,10 +282,27 @@ the write returns; no flush or cache expiry is involved. If the synchronous
 write fails, the grant falls back to the deferred queue and the write result
 carries a `degraded` warning (`component=deferred_permission`).
 
-`PermissionConfig.sync_owner_grant=False` restores the pre-#4739 behaviour
-(owner grant deferred with the hierarchy tuples, up to `deferred_flush_interval`
-plus a possible 60 s cached denial before the writer's `list`/`search` see the
-file).
+`PermissionConfig.sync_owner_grant=False` (`NEXUS_SYNC_OWNER_GRANT=false`)
+restores the pre-#4739 behaviour (owner grant deferred with the hierarchy
+tuples, up to `deferred_flush_interval` plus a possible 60 s cached denial
+before the writer's `list`/`search` see the file).
+
+**Admin-bypass writers get no creator grant.** With
+`PermissionConfig.allow_admin_bypass=True` an admin subject bypasses every
+check, so its `direct_owner` tuple is never consulted — but writing it costs a
+`rebac_write`, three Tiger write-throughs (`read`/`write`/`execute` bitmaps)
+and a zone-graph invalidation per new file: measured at 130–190 ms per
+`files/write` against a remote Postgres, plus three tuple rows per file for a
+tenant that writes everything with an admin key. Before #4739 the
+subprocess-kernel deployment never wrote these grants (`is_new` was hard-coded
+False), so the orchestrator now constructs `DeferredPermissionHook` with
+`skip_admin_owner_grant=True` whenever `allow_admin_bypass` is on. Hierarchy
+tuples and non-admin writers are unchanged. Set
+`PermissionConfig.owner_grant_admin_bypass=True`
+(`NEXUS_OWNER_GRANT_ADMIN_BYPASS=true`) to keep writing the admin tuple under
+bypass — for example when bypass may later be switched off and admins must
+keep access to what they created. Without `allow_admin_bypass` the flag is
+inert: an admin is an ordinary subject and needs the tuple.
 
 The hook keys the grant on `WriteHookContext.is_new_file`. Over the kernel
 RPC the `WriteResponse` proto carries no `is_new`, so the Python kernel client

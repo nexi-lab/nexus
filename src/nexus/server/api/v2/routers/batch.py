@@ -21,6 +21,7 @@ from typing import Any, cast
 from fastapi import APIRouter, Depends, HTTPException
 
 from nexus.contracts.types import OperationContext
+from nexus.server.api.v2._zone_scoped_fs import zone_scoped_fs
 from nexus.server.batch_executor import BatchExecutor, BatchRequest, BatchResponse
 
 logger = logging.getLogger(__name__)
@@ -109,7 +110,9 @@ def create_batch_router(
         - 30-second timeout per operation
         """
         fs = await _get_fs()
-        executor = BatchExecutor(fs=fs, zone_registry=_get_zone_registry())
+        # #4740: zone-scoped callers operate on their /zone/<id>/ namespace,
+        # exactly like the RPC path; root-zone callers get the raw filesystem.
+        executor = BatchExecutor(fs=zone_scoped_fs(fs, context), zone_registry=_get_zone_registry())
 
         logger.info(
             "Batch request: %d operations, stop_on_error=%s",

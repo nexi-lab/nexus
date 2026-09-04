@@ -32,6 +32,7 @@ from nexus.core.readdir_rebac_filter import readdir_visible_paths
 from nexus.kernel_helpers import metastore_list_iter
 from nexus.lib.rpc_decorator import rpc_expose
 from nexus.lib.zone_revision import revision_token
+from nexus.lib.zone_visibility import audit_all_zones, resolve_zone_view
 
 if TYPE_CHECKING:
     pass
@@ -1762,8 +1763,14 @@ class MetadataMixin:
         *,
         details: bool,
         context: OperationContext | None,
+        all_zones: bool = False,
     ) -> builtins.list[Any]:
-        """Expand explicit child directories that live behind their own metastore route."""
+        """Expand explicit child directories that live behind their own metastore route.
+
+        ``all_zones`` is forwarded to the nested ``sys_readdir`` calls so an
+        admin's explicit cross-zone listing (#4740) keeps the same view while
+        descending into child routes.
+        """
         from collections import deque
 
         by_path: dict[str, Any] = {}
@@ -1789,6 +1796,7 @@ class MetadataMixin:
                     recursive=True,
                     details=details,
                     context=context,
+                    all_zones=all_zones,
                 )
             except Exception as exc:
                 logger.debug("recursive sys_readdir expansion skipped for %s: %s", directory, exc)
@@ -1825,9 +1833,30 @@ class MetadataMixin:
         context: OperationContext | None = None,
         limit: int | None = None,
         cursor: str | None = None,
+        all_zones: bool = False,
     ) -> builtins.list[str] | builtins.list[dict[str, Any]] | Any:
         _list_start = time.perf_counter()
         _, _list_agent_id, _ = self._get_context_identity(context)
+
+        # Issue #4740: resolve the caller's zone view FIRST and fail closed.
+        # A zone-less non-admin caller is refused (PermissionDeniedError →
+        # 403) instead of receiving the root/global view; root-tagged entries
+        # are visible only to callers that can read the root zone; admins
+        # see across zones only with an explicit ``all_zones=True``, which is
+        # audited.  ``context=None`` (kernel / internal callers), zone-less
+        # ``is_system`` contexts and the kernel's own init credential passed
+        # explicitly (embedded operator, e.g. the MCP tools in sandbox mode)
+        # keep the unrestricted view.
+        _view = resolve_zone_view(
+            context,
+            all_zones=all_zones,
+            operation="list",
+            init_cred=getattr(self, "_init_cred", None),
+        )
+        if _view.all_zones:
+            # Deduplicated per request_id, so the nested calls made by the
+            # paginated branch and _expand_recursive_readdir log once.
+            audit_all_zones(context, operation="list", path=path)
 
         def _emit_list() -> None:
             emit_op_completed(
@@ -1896,39 +1925,38 @@ class MetadataMixin:
                     and not self._is_internal_path(child)
                     and _etype not in (DT_DIR, DT_MOUNT)
                 ]
-                # Issue #4739: ReBAC post-filter (non-admin callers only).
+                # Issue #4740 (supersedes the #3786 federation tripwire): the
+                # kernel readdir is called with the ENGINE zone, so it does
+                # not apply the caller's zone predicate, and it returns
+                # (path, entry_type) only.  For a restricted view, fetch the
+                # zone column of each child in one batched stat and drop
+                # everything outside the caller's readable zones — including
+                # root-tagged entries, which are no longer visible from
+                # other zones.  A child with no stat row fails closed unless
+                # its path carries a readable zone.
+                if not _view.unrestricted and _children:
+                    try:
+                        _child_stats = self._kernel.stat_batch(_children, ROOT_ZONE_ID)
+                    except (OSError, ValueError) as exc:
+                        logger.debug("kernel.stat_batch failed for %s: %s", path, exc)
+                        _child_stats = []
+                    _stats_by_path = dict(zip(_children, _child_stats, strict=False))
+                    _children = [
+                        _child
+                        for _child in _children
+                        if _view.allows(
+                            _stats_by_path[_child].get("zone_id")
+                            if isinstance(_stats_by_path.get(_child), dict)
+                            else None,
+                            _child,
+                        )
+                    ]
+                # Issue #4739: ReBAC post-filter (non-admin callers only),
+                # applied after the zone predicate so only in-zone names
+                # reach the permission enforcer.
                 _visible = readdir_visible_paths(self, [(c, False) for c in _children], context)
                 if _visible is not None:
                     _children = [c for c in _children if c in _visible]
-                # Issue #3786 / Codex Round 7 finding #1: federation tokens
-                # land here as zone_id="root", so without an explicit zone_perms
-                # filter they would receive every name the kernel returns,
-                # including paths under zones outside their allow-list.
-                _ctx_zp = (
-                    getattr(context, "zone_perms", ())
-                    if context is not None and not isinstance(context, dict)
-                    else (
-                        tuple(tuple(zp) for zp in (context.get("zone_perms") or ()) if len(zp) == 2)
-                        if isinstance(context, dict)
-                        else ()
-                    )
-                )
-                _real_zp = tuple((z, p) for z, p in (_ctx_zp or ()) if z != ROOT_ZONE_ID)
-                if not _is_admin and _real_zp:
-                    _allowed_zones = {z for z, p in _real_zp if "r" in p or "x" in p}
-                    _filtered: builtins.list[str] = []
-                    for _child in _children:
-                        if _child.startswith("/zone/"):
-                            _parts = _child[6:].split("/", 1)
-                            if _parts and _parts[0] in _allowed_zones:
-                                _filtered.append(_child)
-                            # else: drop — outside token's allow-list
-                        else:
-                            # Non-zone paths (root namespace) — keep; they
-                            # are not the federation tenant data.
-                            _filtered.append(_child)
-                    _emit_list()
-                    return _filtered
                 _emit_list()
                 return _children
 
@@ -1936,61 +1964,17 @@ class MetadataMixin:
         if prefix and not prefix.endswith("/"):
             prefix = prefix + "/"
 
-        # Issue #3779 follow-up: filter list results by the caller's zone_id.
-        # The metastore is a single store shared across zones (each row carries
-        # a zone_id column). Without this filter, V2 API callers see every
-        # zone's files. Admins and root-zone callers keep the global view.
-        # Handle OperationContext, dict, and None uniformly — missing zone
-        # falls open to ROOT (admin-equivalent view) by design: a caller
-        # without a zone claim is either the kernel or an unauthenticated
-        # path, neither of which should be zone-restricted here.
-        if isinstance(context, dict):
-            caller_zone = context.get("zone_id") or ROOT_ZONE_ID
-            caller_is_admin = bool(context.get("is_admin", False))
-            _ctx_zp = tuple(tuple(zp) for zp in (context.get("zone_perms") or ()) if len(zp) == 2)
-        elif context is not None:
-            caller_zone = getattr(context, "zone_id", None) or ROOT_ZONE_ID
-            caller_is_admin = bool(getattr(context, "is_admin", False))
-            _ctx_zp = tuple(getattr(context, "zone_perms", ()) or ())
-        else:
-            caller_zone = ROOT_ZONE_ID
-            caller_is_admin = False
-            _ctx_zp = ()
-
-        # Issue #3786 / Codex Round 8 finding #2: federation token allow-list
-        # for the recursive / detail / paginated path.  Multi-zone tokens land
-        # here as caller_zone==root (so the original _zone_allowed shortcut
-        # would let them enumerate every zone).  Build the allow-list once.
-        _real_zp = tuple((z, p) for z, p in _ctx_zp if z != ROOT_ZONE_ID)
-        _fed_allowed_zones = {z for z, p in _real_zp if "r" in p or "x" in p}
-
+        # Issue #3779 follow-up / #4740: the metastore is a single store
+        # shared across zones (each row carries a zone_id column), so the
+        # recursive / detail / paginated path is a Python post-filter over
+        # the prefix scan.  The predicate is the caller's ZoneView resolved
+        # above: an entry is visible when the zone embedded in its internal
+        # path (``/zone/<id>/…``) is readable, else when its zone column is
+        # (``None`` == root).  Root-tagged entries are no longer visible from
+        # every zone, and admins no longer bypass the predicate unless they
+        # asked for ``all_zones``.
         def _zone_allowed(entry: Any) -> bool:
-            if caller_is_admin:
-                return True
-            # Federation token tripwire — restrict /zone/<id>/ entries to
-            # the allow-list even when caller_zone==root.  Root-namespace
-            # entries (no /zone/ prefix) stay visible.
-            if _real_zp:
-                _ep = getattr(entry, "path", "") or ""
-                if _ep.startswith("/zone/"):
-                    _parts = _ep[6:].split("/", 1)
-                    return bool(_parts) and _parts[0] in _fed_allowed_zones
-                return True
-            if caller_zone == ROOT_ZONE_ID:
-                return True
-            entry_zone = getattr(entry, "zone_id", None) or ROOT_ZONE_ID
-            # Root zone is the global namespace, not any user's private zone:
-            # standalone NexusFS tags every file as zone_id=root, and
-            # federation-root-mounted files are visible from every zone by
-            # design. Filtering them out would break sys_readdir in
-            # standalone mode entirely (surface-level cost: the
-            # test_embedded_namespaces_rebac tests that write under
-            # /workspace/acme/ and fail to readdir them). Per-zone isolation
-            # continues to work because non-root entry_zone still has to
-            # match caller_zone below.
-            if entry_zone == ROOT_ZONE_ID:
-                return True
-            return entry_zone == caller_zone
+            return _view.allows(getattr(entry, "zone_id", None), getattr(entry, "path", None))
 
         if limit is not None:
             if recursive:
@@ -2001,6 +1985,7 @@ class MetadataMixin:
                     recursive=True,
                     details=details,
                     context=context,
+                    all_zones=all_zones,
                 )
                 expanded_items = sorted(
                     expanded_items,
@@ -2086,6 +2071,7 @@ class MetadataMixin:
                     _result,
                     details=True,
                     context=context,
+                    all_zones=all_zones,
                 )
             _emit_list()
             return _result
@@ -2102,6 +2088,7 @@ class MetadataMixin:
                 _result,
                 details=False,
                 context=context,
+                all_zones=all_zones,
             )
         _emit_list()
         return _result

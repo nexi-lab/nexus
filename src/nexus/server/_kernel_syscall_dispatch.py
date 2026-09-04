@@ -230,30 +230,37 @@ def _apply_result_adapter(
     if method == "lock_acquire":
         return {"acquired": raw_result is not None, "lock_id": raw_result}
     if method in ("sys_readdir", "list"):
+        # Issue #4740: an admin's explicit cross-zone listing
+        # (``all_zones=true``) spans several tenants' namespaces, so the
+        # internal ``/zone/<id>/...`` prefix IS the information — stripping
+        # it would collapse ``/zone/ta/a.txt`` and ``/zone/tb/a.txt`` into
+        # one ambiguous ``/a.txt``.  Keep the zone-qualified form there;
+        # single-zone callers still get user-facing paths.
+        _keep_zone_prefix = bool(params.get("all_zones"))
+
+        def _wire_entry(f: Any) -> Any:
+            if _keep_zone_prefix:
+                return f
+            if isinstance(f, dict):
+                return unscope_internal_dict(f, ["path", "virtual_path"])
+            return unscope_internal_path(f)
+
         # PaginatedResult (from limit kwarg) → wire dict; bare list →
         # wire dict with has_more=False / next_cursor=None.
         if hasattr(raw_result, "to_dict"):
             paginated = raw_result.to_dict()
-            items = [
-                unscope_internal_dict(f, ["path", "virtual_path"])
-                if isinstance(f, dict)
-                else unscope_internal_path(f)
-                for f in paginated["items"]
-            ]
             return {
-                "files": items,
+                "files": [_wire_entry(f) for f in paginated["items"]],
                 "next_cursor": paginated["next_cursor"],
                 "has_more": paginated["has_more"],
                 "total_count": paginated.get("total_count"),
             }
         raw_entries = raw_result if isinstance(raw_result, list) else []
-        entries = [
-            unscope_internal_dict(f, ["path", "virtual_path"])
-            if isinstance(f, dict)
-            else unscope_internal_path(f)
-            for f in raw_entries
-        ]
-        return {"files": entries, "has_more": False, "next_cursor": None}
+        return {
+            "files": [_wire_entry(f) for f in raw_entries],
+            "has_more": False,
+            "next_cursor": None,
+        }
     return raw_result
 
 

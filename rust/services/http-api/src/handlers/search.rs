@@ -4,13 +4,17 @@
 //! through the cached [`SearchBackend`] client, and serialises the
 //! response as JSON.
 //!
-//! # Auth / ReBAC
+//! # Auth / zone / ReBAC
 //!
-//! Deliberately absent from this crate — sits in the middleware
-//! layer above once the auth port lands (see the epic issue for
-//! the sequence).  Handlers here operate on the callable
-//! contract only; a caller with tokenised access is presumed
-//! already granted.
+//! Authentication happens in [`crate::middleware::auth`], which stamps
+//! the resolved `OperationContext` into request extensions.  Handlers
+//! derive the **zone** from that context via [`crate::zone`]
+//! (nexi-lab/nexus#4740): a non-admin caller searches its own zone
+//! only, an explicit `zone_id` that differs is refused, a credential
+//! with no zone claim is refused rather than routed to ROOT, and
+//! `root_path` is scoped into the zone namespace like the Python RPC
+//! layer does.  File-level ReBAC post-filtering is still the R10 epic's
+//! separate step (#4674).
 //!
 //! # Error shape (shared)
 //!
@@ -25,12 +29,17 @@ use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
+use contracts::operation_context::OperationContext;
 use serde::{Deserialize, Serialize};
 
 use crate::search_proto::{
     FusionMethod, GlobRequest, GrepRequest, QueryRequest, QueryResult as ProtoQueryResult,
     QueryType,
+};
+use crate::zone::{
+    effective_zone, is_privileged, present_paths, scope_request_path, unscope_path,
+    visible_in_zone, ZoneError,
 };
 use crate::{AppState, BackendError};
 
@@ -61,6 +70,11 @@ pub struct GlobQuery {
     /// Sort results by most-recent-mtime first when `true`.
     #[serde(default)]
     pub sort_recency: bool,
+    /// Zone to search.  Admin / system callers may name any zone;
+    /// everyone else gets their own zone and a differing value is a
+    /// 403 (#4740).  Empty ⇒ the caller's zone.
+    #[serde(default)]
+    pub zone_id: String,
 }
 
 fn default_root() -> String {
@@ -85,11 +99,14 @@ pub struct GlobResponse {
 /// Handler for `GET /v2/search/glob`.
 pub async fn glob(
     State(state): State<AppState>,
+    Extension(ctx): Extension<OperationContext>,
     Query(params): Query<GlobQuery>,
 ) -> Result<Json<GlobResponse>, SearchError> {
+    let zone = effective_zone(&ctx, &params.zone_id)?;
+    let root_path = scope_request_path(&ctx, &zone, &params.root_path)?;
     let mut client = state.search.client().await?;
     let req = GlobRequest {
-        root_path: params.root_path,
+        root_path,
         pattern: params.pattern,
         max_results: params.max_results,
         auth_token: params.auth_token,
@@ -101,7 +118,7 @@ pub async fn glob(
         .map_err(SearchError::Rpc)?
         .into_inner();
     Ok(Json(GlobResponse {
-        paths: resp.paths,
+        paths: present_paths(&ctx, &zone, resp.paths),
         truncated: resp.truncated,
         error: resp.error,
     }))
@@ -147,6 +164,9 @@ pub struct GrepQuery {
     /// Sort matches by containing-file mtime descending.
     #[serde(default)]
     pub sort_recency: bool,
+    /// Zone to search — same contract as [`GlobQuery::zone_id`] (#4740).
+    #[serde(default)]
+    pub zone_id: String,
 }
 
 /// One match row in [`GrepResponse::matches`].  Same field names as
@@ -175,11 +195,15 @@ pub struct GrepResponse {
 /// Handler for `GET /v2/search/grep`.
 pub async fn grep(
     State(state): State<AppState>,
+    Extension(ctx): Extension<OperationContext>,
     Query(params): Query<GrepQuery>,
 ) -> Result<Json<GrepResponse>, SearchError> {
+    let zone = effective_zone(&ctx, &params.zone_id)?;
+    let root_path = scope_request_path(&ctx, &zone, &params.root_path)?;
+    let privileged = is_privileged(&ctx);
     let mut client = state.search.client().await?;
     let req = GrepRequest {
-        root_path: params.root_path,
+        root_path,
         pattern: params.pattern,
         file_pattern: params.file_pattern,
         ignore_case: params.ignore_case,
@@ -199,8 +223,9 @@ pub async fn grep(
         matches: resp
             .matches
             .into_iter()
+            .filter(|m| privileged || visible_in_zone(&zone, &m.path))
             .map(|m| GrepMatch {
-                path: m.path,
+                path: unscope_path(&zone, &m.path),
                 line_number: m.line_number,
                 line: m.line,
                 before: m.before,
@@ -401,15 +426,19 @@ fn hit_from_proto(r: ProtoQueryResult) -> QueryHit {
 /// so a POST body keeps the wire honest.
 pub async fn query(
     State(state): State<AppState>,
+    Extension(ctx): Extension<OperationContext>,
     Json(body): Json<QueryBody>,
 ) -> Result<Json<QueryResponseBody>, SearchError> {
     let query_type = parse_query_type(&body.query_type).map_err(SearchError::BadRequest)?;
     let fusion_method =
         parse_fusion_method(&body.fusion_method).map_err(SearchError::BadRequest)?;
+    // #4740: the index zone is the caller's zone, never a wire-supplied
+    // one (admins may still name a zone explicitly).
+    let zone_id = effective_zone(&ctx, &body.zone_id)?;
     let mut client = state.search.client().await?;
     let req = QueryRequest {
         q: body.q,
-        zone_id: body.zone_id,
+        zone_id,
         limit: body.limit,
         path_filter: body.path_filter,
         query_type: query_type as i32,
@@ -467,6 +496,11 @@ pub enum SearchError {
     BackendUnavailable(#[from] BackendError),
     #[error("bad request: {0}")]
     BadRequest(String),
+    /// #4740: zone refusal — zone-less non-admin caller, an explicit
+    /// `zone_id` that is not the caller's, or a path naming another
+    /// zone.  403, matching the Python surface.
+    #[error("forbidden: {0}")]
+    Forbidden(#[from] ZoneError),
     #[error("rpc failed: {0}")]
     Rpc(tonic::Status),
 }
@@ -476,6 +510,7 @@ impl IntoResponse for SearchError {
         let (status, message) = match self {
             SearchError::BackendUnavailable(e) => (StatusCode::SERVICE_UNAVAILABLE, e.to_string()),
             SearchError::BadRequest(m) => (StatusCode::BAD_REQUEST, m),
+            SearchError::Forbidden(e) => (StatusCode::FORBIDDEN, e.to_string()),
             SearchError::Rpc(s) => (grpc_status_to_http(s.code()), s.message().to_string()),
         };
         (status, Json(serde_json::json!({ "error": message }))).into_response()

@@ -54,6 +54,7 @@ use transport::auth::AuthProvider;
 pub mod handlers;
 pub mod middleware;
 pub mod search_backend;
+pub mod zone;
 
 /// Client stubs for the workspace's `nexus.search.v1` proto SSOT
 /// — generated at build time by `build.rs` from

@@ -44,6 +44,7 @@ from nexus.contracts.search_types import (
 from nexus.contracts.types import Permission
 from nexus.kernel_helpers import metastore_get_searchable_text_bulk
 from nexus.lib.rpc_decorator import rpc_expose
+from nexus.lib.zone_visibility import audit_all_zones, resolve_zone_view
 
 # List directory traversal thresholds (Issue #901)
 # Issue #2071: LIST_PARALLEL_WORKERS now sourced from ProfileTuning.search.list_parallel_workers
@@ -488,6 +489,7 @@ class SearchService:
         context: Any = None,
         limit: int | None = None,
         cursor: str | None = None,
+        all_zones: bool = False,
     ) -> builtins.list[str] | builtins.list[dict[str, Any]] | Any:
         """List files in a directory.
 
@@ -502,7 +504,25 @@ class SearchService:
             context: Operation context for permission filtering
             limit: Max items per page (enables pagination mode)
             cursor: Continuation token from previous page
+            all_zones: Admin only — enumerate across every zone instead of
+                the caller's zone; audited (#4740). Non-admins get
+                PermissionDeniedError.
         """
+        # Issue #4740: resolve the caller's zone view first and fail closed —
+        # a zone-less non-admin caller is refused instead of receiving the
+        # root/global view, and admins only cross zones with an explicit,
+        # audited ``all_zones=True``.  The service's default context is the
+        # kernel's own init credential (embedded operator): passed explicitly
+        # it keeps the unrestricted view ``context=None`` would get.
+        _zone_view = resolve_zone_view(
+            context,
+            all_zones=all_zones,
+            operation="search.list",
+            init_cred=self._default_context,
+        )
+        if _zone_view.all_zones:
+            audit_all_zones(context, operation="search.list", path=path)
+
         # Issue #937: Pagination mode
         if limit is not None:
             return self._list_paginated(
@@ -512,6 +532,7 @@ class SearchService:
                 limit=limit,
                 cursor=cursor,
                 context=context,
+                zone_view=_zone_view,
             )
         # Check if path routes to a dynamic API-backed connector.
         # Detect via mount root metadata is_external_storage flag (§12d).
@@ -571,25 +592,13 @@ class SearchService:
             path = path + "/"
         list_prefix = path if path != "/" else ""
 
-        # Issue #3779 follow-up: in standalone mode, files are stored flat
-        # (``/marker.txt``) with zone_id as a metadata column — NOT under
-        # ``/zone/<id>/`` in the key. The RPC layer's
-        # ``scope_params_for_zone`` prefixes incoming paths with
-        # ``/zone/<id>/`` anyway (for federation mode). Strip that prefix
-        # here when the backing store is not zone-partitioned so the
-        # metastore query finds the flat-stored entries; the zone-column
-        # post-filter below enforces isolation.
-        # list_prefix is either "" or ends with "/" (set above), so only the
-        # trailing-slash case can match.
-        _engine_zone_id: str | None = getattr(self.metadata, "_zone_id", None)
-        _standalone_flat_paths = _engine_zone_id is None
-        if (
-            _standalone_flat_paths
-            and list_zone_id
-            and list_zone_id != ROOT_ZONE_ID
-            and list_prefix.startswith(f"/zone/{list_zone_id}/")
-        ):
-            list_prefix = list_prefix[len(f"/zone/{list_zone_id}") :]
+        # #4740: the scan runs on the path exactly as scoped by the caller's
+        # layer.  An earlier "#3779 follow-up" stripped the caller's
+        # ``/zone/<id>`` prefix here on the assumption that standalone rows
+        # were stored flat with a zone column; the kernel stores them under
+        # ``/zone/<id>/…`` (verified against the pinned kernel), so that
+        # strip made every zone-scoped list/glob/grep scan the ROOT namespace
+        # and return nothing for tenants whenever permissions were enforced.
 
         # OPTIMIZATION: For non-recursive, try sparse directory index + Tiger bitmap
         _use_fast_path = False
@@ -630,16 +639,15 @@ class SearchService:
             sample_paths = [m["path"] for m in all_files[:5]]
             logger.info(f"[LIST-DEBUG] FALLBACK all_files sample: {sample_paths}")
 
-        # Issue #3779 follow-up: when the caller is in a specific zone, drop
-        # rows whose zone_id column doesn't match. The metastore is shared
-        # across zones (each row carries a zone_id) and filtering here is
-        # the cheapest place to enforce isolation without changing the
-        # engine-level list API. Admins and root-zone callers see everything;
-        # cross-zone shared files are re-added below via
-        # _get_cross_zone_shared_paths.
-        _is_admin_caller = bool(getattr(context, "is_admin", False)) if context else False
-        if list_zone_id and list_zone_id != ROOT_ZONE_ID and not _is_admin_caller:
-            all_files = [m for m in all_files if (m.get("zone_id") or ROOT_ZONE_ID) == list_zone_id]
+        # Issue #3779 follow-up / #4740: the metastore is shared across zones
+        # (each row carries a zone_id), so the zone predicate is applied to
+        # the candidate set here.  The predicate is the caller's ZoneView:
+        # root-tagged rows are visible only to callers that can read the
+        # root zone, and admins no longer skip the filter unless they asked
+        # for ``all_zones``.  Cross-zone shared files (explicit ReBAC shares)
+        # are re-added below via _get_cross_zone_shared_paths.
+        if not _zone_view.unrestricted:
+            all_files = [m for m in all_files if _zone_view.allows(m.get("zone_id"), m.get("path"))]
 
         # Issue #904: Fetch cross-zone shared files
         if list_zone_id and subject_type and subject_id:
@@ -1396,30 +1404,12 @@ class SearchService:
         # Single permission filter call
         filter_start = time.time()
         if _accessible_int_ids is not None:
+            # ``all_files`` reached us already narrowed to the caller's
+            # ZoneView in ``list()`` (#4740), which subsumes the former
+            # #3786 federation-token allow-list intersection: predicate-
+            # pushdown paths outside the token's readable zones were
+            # dropped upstream, root-tagged rows included.
             allowed_set = {meta["path"] for meta in all_files}
-            # Issue #3786 / Codex Round 9 finding #3: predicate-pushdown
-            # via _accessible_int_ids reflects ReBAC visibility for the
-            # subject — but multi-zone federation tokens can scope to a
-            # subset of those zones.  Intersect with the token's
-            # zone_perms allow-list so list/glob/grep cannot leak paths
-            # outside the active token scope.
-            try:
-                _eff_zp = self._permission_enforcer._effective_zone_perms(ctx)
-            except Exception:
-                _eff_zp = getattr(ctx, "zone_perms", ()) or ()
-            _real_zp = tuple((z, p) for z, p in (_eff_zp or ()) if z != ROOT_ZONE_ID)
-            if (
-                getattr(ctx, "zone_id", ROOT_ZONE_ID) == ROOT_ZONE_ID
-                and _real_zp
-                and not getattr(ctx, "is_admin", False)
-            ):
-                _allowed_zones = {z for z, p in _real_zp if "r" in p or "x" in p}
-                allowed_set = {
-                    p
-                    for p in allowed_set
-                    if not p.startswith("/zone/")
-                    or (len(p[6:].split("/", 1)) > 0 and p[6:].split("/", 1)[0] in _allowed_zones)
-                }
             logger.info(
                 f"[PREDICATE-PUSHDOWN] Skipped filter_list() - "
                 f"using {len(allowed_set)} pre-filtered paths"
@@ -1657,14 +1647,23 @@ class SearchService:
         limit: int,
         cursor: str | None,
         context: Any,
+        zone_view: Any = None,
     ) -> Any:
-        """Paginated list with over-fetch strategy for permission filtering (Issue #937)."""
+        """Paginated list with over-fetch strategy for permission filtering (Issue #937).
+
+        ``zone_view`` is the caller's resolved ZoneView (#4740); when omitted
+        it is resolved from *context* here so direct callers stay fail-closed.
+        """
         from nexus.contracts.constants import SYSTEM_PATH_PREFIX
         from nexus.contracts.metadata import DT_DIR
         from nexus.contracts.types import OperationContext
         from nexus.core.pagination import PaginatedResult
         from nexus.lib.pagination import encode_cursor
 
+        if zone_view is None:
+            zone_view = resolve_zone_view(
+                context, operation="search.list", init_cred=self._default_context
+            )
         context = context or self._default_context
         import time as _time
 
@@ -1719,6 +1718,9 @@ class SearchService:
                 # (e.g. ns:rebac:*) whose paths are not valid virtual paths.
                 if str(item.get("path", "")).startswith("/")
                 and not str(item.get("path", "")).startswith(SYSTEM_PATH_PREFIX)
+                # Issue #4740: the scan runs under is_system (unrestricted), so
+                # the caller's zone predicate has to be applied to each page.
+                and zone_view.allows(item.get("zone_id"), item.get("path"))
             ]
 
             if self._enforce_permissions and context:
@@ -1848,21 +1850,11 @@ class SearchService:
         if path and path != "/":
             path = self._validate_path(path)
 
-        # Issue #3779 follow-up: when the caller's zone has been applied by
-        # the RPC layer's scope_params_for_zone, the incoming path is
-        # ``/zone/<id>/...`` even though files are stored flat in standalone
-        # mode. Strip that prefix here so pattern assembly and list() see
-        # the flat path universe; the zone-column post-filter in list()
-        # enforces isolation.
+        # #4740: keep the caller's ``/zone/<id>/…`` path as scoped — rows live
+        # under that prefix in the kernel (see the matching note in ``list``).
+        # ``_engine_zone_id`` still gates the scoped/unscoped candidate
+        # fallbacks further down for stores that expose a zone id.
         _engine_zone_id: str | None = getattr(self.metadata, "_zone_id", None)
-        if _engine_zone_id is None and context is not None:
-            _caller_zone = getattr(context, "zone_id", None)
-            if _caller_zone and _caller_zone != ROOT_ZONE_ID and isinstance(path, str):
-                _zone_prefix = f"/zone/{_caller_zone}"
-                if path == _zone_prefix or path == f"{_zone_prefix}/":
-                    path = "/"
-                elif path.startswith(f"{_zone_prefix}/"):
-                    path = path[len(_zone_prefix) :]
 
         import time
 

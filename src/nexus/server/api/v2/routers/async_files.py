@@ -40,6 +40,7 @@ from nexus.server.api.v2._revision_fence import (
     get_revision_fence,
     stamp_revision,
 )
+from nexus.server.api.v2._zone_scoped_fs import zone_scoped_fs
 from nexus.server.api.v2.routers._index_on_write import (
     IndexOnWrite,
     WriteIndexResult,
@@ -50,7 +51,7 @@ from nexus.server.api.v2.routers._index_on_write import (
     index_zone_for,
     require_search_daemon,
 )
-from nexus.server.zone_execution import run_zone_scoped
+from nexus.server.zone_execution import context_for_target_zone, run_zone_scoped
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
@@ -121,6 +122,12 @@ def _apply_zone_override(
         _gate_zone(auth_result, target, required_perm=required_perm)
     if zone is None:
         return context
+    if getattr(context, "is_admin", False):
+        # #4740: an admin's zone_perms name the root zone; retarget them along
+        # with zone_id (as the RPC path does via context_for_target_zone) or
+        # the zone visibility predicate keeps following the stale root grant
+        # and the override lists nothing.
+        return context_for_target_zone(context, zone)
     return _dc.replace(context, zone_id=zone)
 
 
@@ -696,18 +703,26 @@ def create_async_files_router(
         require_auth,
     )
 
-    async def _get_fs() -> Any:
-        """Get NexusFS, supporting both direct and lazy modes."""
+    async def _get_fs(context: Any = None) -> Any:
+        """Get NexusFS, supporting both direct and lazy modes.
+
+        #4740: when *context* is scoped to a concrete non-root zone the
+        caller receives a :class:`ZoneScopedFS` view, so every path in the
+        request is prefixed with ``/zone/<id>/`` and every path in the
+        result is unscoped again — the same contract the RPC and gRPC
+        paths already apply.  Root-zone callers get the raw filesystem.
+        """
+        fs: Any = None
         if nexus_fs is not None:
-            return nexus_fs
-        if get_fs is not None:
+            fs = nexus_fs
+        elif get_fs is not None:
             fs = get_fs()
-            if fs is not None:
-                return cast(Any, fs)
-        raise HTTPException(
-            status_code=503,
-            detail="NexusFS not initialized. Server may still be starting up.",
-        )
+        if fs is None:
+            raise HTTPException(
+                status_code=503,
+                detail="NexusFS not initialized. Server may still be starting up.",
+            )
+        return zone_scoped_fs(cast(Any, fs), context)
 
     def _get_zone_registry() -> Any | None:
         return get_zone_registry() if get_zone_registry is not None else None
@@ -771,7 +786,7 @@ def create_async_files_router(
         try:
 
             async def _work() -> Any:
-                fs = await _get_fs()
+                fs = await _get_fs(context)
                 # #4736 write+index: resolve the daemon BEFORE writing so a
                 # request that asked for indexing never half-succeeds.
                 index_daemon = (
@@ -1027,7 +1042,7 @@ def create_async_files_router(
         try:
 
             async def _work() -> Any:
-                fs = await _get_fs()
+                fs = await _get_fs(context)
                 await revision_fence.enforce(fs, context=context)
 
                 # Fast path: content-hash (content_id) lookup — used by the diff viewer
@@ -1383,7 +1398,7 @@ def create_async_files_router(
         context = _apply_zone_override(context, zone, auth_result, required_perm="r")
 
         async def _work() -> Response:
-            fs = await _get_fs()
+            fs = await _get_fs(context)
             meta = await _call_sync_or_async(
                 fs.sys_stat, path, context=context
             )  # raises -> 403 if denied
@@ -1518,7 +1533,7 @@ def create_async_files_router(
         try:
 
             async def _work() -> Response:
-                fs = await _get_fs()
+                fs = await _get_fs(context)
                 accessible = await fs.access(path, context=context)
                 if not accessible:
                     raise NexusFileNotFoundError(path)
@@ -1623,7 +1638,7 @@ def create_async_files_router(
         try:
 
             async def _work() -> DeleteResponse:
-                fs = await _get_fs()
+                fs = await _get_fs(context)
 
                 _ss = None
                 _norm_path: str | None = None
@@ -1706,7 +1721,7 @@ def create_async_files_router(
         try:
 
             async def _work() -> ExistsResponse:
-                fs = await _get_fs()
+                fs = await _get_fs(context)
                 await revision_fence.enforce(fs, context=context)
                 exists = fs.access(path, context=context)
                 return ExistsResponse(exists=exists)
@@ -1740,6 +1755,13 @@ def create_async_files_router(
             None,
             description="Override zone (must be in token's zone_set).",
         ),
+        all_zones: bool = Query(
+            False,
+            description=(
+                "Admin only: enumerate across every zone instead of the caller's "
+                "zone. Audited (#4740). Non-admin callers get 403."
+            ),
+        ),
         context: Any = Depends(get_context),
         auth_result: dict[str, Any] = Depends(require_auth),
         revision_fence: RevisionFence = Depends(get_revision_fence),
@@ -1757,7 +1779,7 @@ def create_async_files_router(
         try:
 
             async def _work() -> Any:
-                fs = await _get_fs()
+                fs = await _get_fs(context)
                 await revision_fence.enforce(fs, context=context)
 
                 # Decode opaque cursor (base64-encoded path)
@@ -1782,6 +1804,7 @@ def create_async_files_router(
                         context=context,
                         limit=limit,
                         cursor=cursor_path,
+                        all_zones=all_zones,
                     )
                 )
 
@@ -1986,7 +2009,7 @@ def create_async_files_router(
         try:
 
             async def _work() -> dict[str, Any]:
-                fs = await _get_fs()
+                fs = await _get_fs(context)
                 _made = fs.mkdir(request.path, parents=request.parents, context=context)
                 return {
                     "created": True,
@@ -2030,7 +2053,7 @@ def create_async_files_router(
         try:
 
             async def _work() -> MetadataResponse:
-                fs = await _get_fs()
+                fs = await _get_fs(context)
                 await revision_fence.enforce(fs, context=context)
                 meta = fs.sys_stat(path, context=context)
                 if meta is None:
@@ -2080,7 +2103,7 @@ def create_async_files_router(
         try:
 
             async def _work() -> dict[str, Any]:
-                fs = await _get_fs()
+                fs = await _get_fs(context)
                 await revision_fence.enforce(fs, context=context)
                 results = await asyncio.to_thread(fs.read_bulk, request.paths, context=context)
 
@@ -2147,7 +2170,7 @@ def create_async_files_router(
         try:
 
             async def _work() -> BatchWriteResponse:
-                fs = await _get_fs()
+                fs = await _get_fs(context)
                 index_daemon = (
                     require_search_daemon(http_request.app.state)
                     if any(
@@ -2223,7 +2246,7 @@ def create_async_files_router(
         try:
 
             async def _work() -> BatchReadResponse:
-                fs = await _get_fs()
+                fs = await _get_fs(context)
                 await revision_fence.enforce(fs, context=context)
                 raw_results = await _maybe_await(
                     fs.read_batch(request.paths, partial=request.partial, context=context)
@@ -2302,7 +2325,7 @@ def create_async_files_router(
         try:
 
             async def _work() -> Response | StreamingResponse:
-                fs = await _get_fs()
+                fs = await _get_fs(context)
                 await revision_fence.enforce(fs, context=context)
                 meta = fs.sys_stat(path, context=context)
                 if meta is None:
@@ -2368,7 +2391,7 @@ def create_async_files_router(
         try:
 
             async def _work() -> RenameResponse:
-                fs = await _get_fs()
+                fs = await _get_fs(context)
                 rename_result = await _maybe_await(
                     fs.sys_rename(request.source, request.destination, context=context)
                 )
@@ -2413,7 +2436,7 @@ def create_async_files_router(
         try:
 
             async def _work() -> CopyResponse:
-                fs = await _get_fs()
+                fs = await _get_fs(context)
 
                 # Check source exists and get size
                 meta = await _maybe_await(fs.sys_stat(request.source, context=context))
@@ -2477,7 +2500,7 @@ def create_async_files_router(
         try:
 
             async def _work() -> RenameBatchResponse:
-                fs = await _get_fs()
+                fs = await _get_fs(context)
                 renames = [(op.source, op.destination) for op in request.operations]
                 raw_results = await _maybe_await(fs.rename_batch(renames, context=context))
 
@@ -2521,7 +2544,7 @@ def create_async_files_router(
         try:
 
             async def _work() -> CopyBulkResponse:
-                fs = await _get_fs()
+                fs = await _get_fs(context)
                 results: list[BulkCopyResult] = []
 
                 for op in request.operations:
@@ -2601,7 +2624,7 @@ def create_async_files_router(
         try:
 
             async def _work() -> GlobResponse:
-                fs = await _get_fs()
+                fs = await _get_fs(context)
                 await revision_fence.enforce(fs, context=context)
 
                 # List all files without blocking the zone runner when a
@@ -2663,7 +2686,7 @@ def create_async_files_router(
         try:
 
             async def _work() -> GrepResponse:
-                fs = await _get_fs()
+                fs = await _get_fs(context)
                 await revision_fence.enforce(fs, context=context)
 
                 flags = re.IGNORECASE if ignore_case else 0

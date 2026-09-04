@@ -45,6 +45,7 @@ from nexus.lib.rebac_filter import compute_rebac_fetch_limit as _compute_rebac_f
 from nexus.lib.rebac_filter import rebac_denial_stats as _rebac_denial_stats
 from nexus.runtime.zone_resolution import target_zone_for_context
 from nexus.server.api.v2._revision_fence import RevisionFence, get_revision_fence
+from nexus.server.api.v2._zone_scoped_fs import scope_rest_path
 from nexus.server.api.v2.routers._index_on_write import (
     REASON_EMPTY,
     REASON_NON_TEXT,
@@ -1153,7 +1154,7 @@ async def _do_grep_operation(
     response envelope.
     """
     from nexus.contracts.constants import ROOT_ZONE_ID
-    from nexus.contracts.exceptions import InvalidPathError
+    from nexus.contracts.exceptions import InvalidPathError, NexusPermissionError
     from nexus.server.dependencies import get_operation_context
 
     start_time = time.perf_counter()
@@ -1182,6 +1183,11 @@ async def _do_grep_operation(
         sentinel_window, has_enforcer=permission_enforcer is not None
     )
 
+    # #4740: scope the caller's path and files into its zone namespace, as the
+    # RPC layer does for every syscall; a path naming another zone is a 403.
+    path = scope_rest_path(path, op_context)
+    if files:
+        files = [scope_rest_path(f, op_context) for f in files]
     target_zone = target_zone_for_context(op_context, {"path": path, "files": files})
 
     async def _work() -> dict[str, Any]:
@@ -1208,6 +1214,10 @@ async def _do_grep_operation(
             #  * ValueError — invalid regex, size cap exceeded, cross-zone entry
             #  * InvalidPathError — path traversal segment in ``path`` or ``files``
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except NexusPermissionError as exc:
+            # #4740: zone-less non-admin callers are refused by the zone
+            # visibility predicate — surface it as 403, not a 500.
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except Exception as exc:
             logger.error("grep failed: %s", exc, exc_info=True)
             raise HTTPException(
@@ -1316,7 +1326,7 @@ async def _do_glob_operation(
     Shared by ``GET /glob`` (query params) and ``POST /glob`` (JSON body).
     """
     from nexus.contracts.constants import ROOT_ZONE_ID
-    from nexus.contracts.exceptions import InvalidPathError
+    from nexus.contracts.exceptions import InvalidPathError, NexusPermissionError
     from nexus.server.dependencies import get_operation_context
 
     start_time = time.perf_counter()
@@ -1330,6 +1340,11 @@ async def _do_glob_operation(
     op_context = get_operation_context(auth_result)
     permission_enforcer = getattr(request.app.state, "permission_enforcer", None)
 
+    # #4740: scope the caller's path and files into its zone namespace, as the
+    # RPC layer does for every syscall; a path naming another zone is a 403.
+    path = scope_rest_path(path, op_context)
+    if files:
+        files = [scope_rest_path(f, op_context) for f in files]
     target_zone = target_zone_for_context(op_context, {"path": path, "files": files})
 
     async def _work() -> dict[str, Any]:
@@ -1339,6 +1354,10 @@ async def _do_glob_operation(
             )
         except (ValueError, InvalidPathError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except NexusPermissionError as exc:
+            # #4740: zone-less non-admin callers are refused by the zone
+            # visibility predicate — surface it as 403, not a 500.
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except Exception as exc:
             logger.error("glob failed: %s", exc, exc_info=True)
             raise HTTPException(

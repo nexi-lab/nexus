@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from nexus import CASLocalBackend
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
@@ -61,9 +62,15 @@ def test_workspace_namespace_operations():
         # Check existence
         assert nx.access("/workspace/acme/agent1/code.py", context=ctx)
 
-        # List files
-        files = nx.sys_readdir("/workspace/acme/agent1", context=ctx)
+        # List files. #4740: a standalone kernel stamps every row with the
+        # route zone (root), and root-namespace rows are visible only to
+        # root-zone callers — a zone-scoped context enumerates its own
+        # ``/zone/acme/…`` namespace, not the legacy ``/workspace/acme/``
+        # layout. The row is there for a root-zone caller.
+        root_ctx = OperationContext(user_id="operator", groups=[], zone_id=ROOT_ZONE_ID)
+        files = nx.sys_readdir("/workspace/acme/agent1", context=root_ctx)
         assert "/workspace/acme/agent1/code.py" in files
+        assert nx.sys_readdir("/workspace/acme/agent1", context=ctx) == []
 
         # Delete
         nx.sys_unlink("/workspace/acme/agent1/code.py", context=ctx)
@@ -101,8 +108,10 @@ def test_shared_namespace_operations():
         content = nx.sys_read("/shared/acme/models/model.pkl", context=ctx)
         assert content == b"model data"
 
-        # List files
-        files = nx.sys_readdir("/shared/acme/models", context=ctx)
+        # List files — see test_workspace_namespace_operations for why a
+        # root-zone context is needed to enumerate this legacy layout (#4740).
+        root_ctx = OperationContext(user_id="operator", groups=[], zone_id=ROOT_ZONE_ID)
+        files = nx.sys_readdir("/shared/acme/models", context=root_ctx)
         assert "/shared/acme/models/model.pkl" in files
 
         # Delete
@@ -130,8 +139,11 @@ def test_external_namespace_operations():
             subject_type="user",
             subject_id="anonymous",
             groups=[],
+            # #4740: a zone-less non-admin context is refused on list; the
+            # external namespace lives in the root zone, so claim it.
+            zone_id=ROOT_ZONE_ID,
             is_admin=False,
-        )  # External namespace doesn't require zone_id
+        )
 
         # Write to external namespace
         nx.write("/external/s3/bucket/file.txt", b"external data", context=ctx)

@@ -533,6 +533,7 @@ class ListParams:
     context: Any = None
     limit: int | None = None
     cursor: str | None = None
+    all_zones: bool = False
 
 
 @dataclass

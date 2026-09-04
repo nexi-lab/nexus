@@ -89,7 +89,13 @@ def token_zone_filter_from_auth(
         return None
     raw_zone_set = tuple(auth_result.get("zone_set") or ())
     if not raw_zone_set:
-        return None
+        # Issue #4740: an empty scope is "unbounded" only for a credential
+        # that at least carries a zone claim (a root-zone operator key).  A
+        # non-admin credential with NO zone claim at all used to fall through
+        # to the root index here; it now fails closed (empty set → the
+        # router's existing 403), matching sys_readdir's refusal of
+        # zone-less callers.
+        return None if auth_result.get("zone_id") else frozenset()
     if set(raw_zone_set) == {root_zone_id}:
         root_letters = "".join(
             zp[1]

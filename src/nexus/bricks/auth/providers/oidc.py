@@ -231,6 +231,17 @@ class OIDCAuth(AuthProvider):
                 )
                 return AuthResult(authenticated=False)
 
+            if not zone_id:
+                # Issue #4740: the server no longer coerces a missing zone to
+                # ROOT — zone-less non-admin contexts are refused on list /
+                # search.  When this provider is configured to tolerate a
+                # missing claim (``require_zone=False`` or
+                # ``allow_default_zone=True``), "the default zone" IS the
+                # root zone, so claim it explicitly here.
+                from nexus.contracts.constants import ROOT_ZONE_ID
+
+                zone_id = ROOT_ZONE_ID
+
             email = claims.get("email")
             is_admin = email in self.admin_emails if email else False
 

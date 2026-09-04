@@ -109,8 +109,22 @@ class TestTokenZoneFilterFromAuthRootGrant:
         auth = {"zone_set": ["root"], "zone_perms": [None, ["root"], [1, "w"]]}
         assert token_zone_filter_from_auth(auth, root_zone_id=ROOT) is None
 
-    def test_unconstrained_credential_stays_unbounded(self) -> None:
-        assert token_zone_filter_from_auth({"zone_set": []}, root_zone_id=ROOT) is None
+    def test_zone_less_non_admin_fails_closed(self) -> None:
+        """#4740: an empty scope with NO zone claim is a zone-less non-admin
+        credential — it used to be treated as unbounded and searched the root
+        index.  It now fails closed (empty set → router 403)."""
+        assert token_zone_filter_from_auth({"zone_set": []}, root_zone_id=ROOT) == frozenset()
+        assert token_zone_filter_from_auth({}, root_zone_id=ROOT) == frozenset()
+
+    def test_root_zone_claim_with_empty_scope_stays_unbounded(self) -> None:
+        """A credential that carries an explicit zone claim but no allow-list
+        (open-access root callers, static keys with ``zone_id``) keeps the
+        pre-#4740 unbounded semantics."""
+        auth = {"zone_set": [], "zone_id": ROOT}
+        assert token_zone_filter_from_auth(auth, root_zone_id=ROOT) is None
+
+    def test_zone_less_admin_stays_unbounded(self) -> None:
+        assert token_zone_filter_from_auth({"is_admin": True}, root_zone_id=ROOT) is None
 
     def test_non_root_zone_set_uses_readable_zone_filter(self) -> None:
         auth = {"zone_set": ["eng"], "zone_perms": [["eng", "w"]]}

@@ -76,24 +76,27 @@ def scope_single_path(path: str, prefix: str, caller_zone_id: str) -> str:
     return f"{prefix}/{canonical}"
 
 
-def scope_params_for_zone(params: Any, zone_id: str) -> None:
+def scope_params_for_zone(params: Any, zone_id: str | None) -> None:
     """Prefix path attributes with ``/zone/{zone_id}/`` for zone isolation.
 
-    Mutates the params object in place.  Only applies when *zone_id*
-    differs from ROOT_ZONE_ID — the root zone sees the full tree.
+    Mutates the params object in place.  Only applies when *zone_id* is a
+    concrete zone other than ROOT_ZONE_ID — the root zone sees the full
+    tree, and a zone-less context (``None``, #4740) has no namespace to
+    prefix; its enumeration calls are refused downstream instead.
 
     Works with both dataclass-style params (RPC) and protobuf request
     objects (gRPC).
 
     Args:
         params: The params/request object with path attributes.
-        zone_id: The caller's authenticated zone ID.
+        zone_id: The caller's authenticated zone ID (``None`` when the
+            credential carries no zone claim).
 
     Raises:
         ZoneScopingError: If any path has a zone prefix that doesn't match
             the caller's zone.
     """
-    if zone_id == ROOT_ZONE_ID:
+    if not zone_id or zone_id == ROOT_ZONE_ID:
         return
 
     prefix = f"/zone/{zone_id}"

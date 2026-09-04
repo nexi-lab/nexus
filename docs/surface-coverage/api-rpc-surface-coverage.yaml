@@ -1775,7 +1775,7 @@ operations:
   transports:
     grpc_expose:
       name: backfill_directory_index
-      source: src/nexus/core/nexus_fs_metadata.py:2089
+      source: src/nexus/core/nexus_fs_metadata.py:2096
     sdk:
       name: MCPClient.backfill_directory_index
       source: src/nexus/remote/domain/mcp.py:91
@@ -3868,7 +3868,7 @@ operations:
   transports:
     grpc_expose:
       name: flush_write_observer
-      source: src/nexus/core/nexus_fs_metadata.py:2119
+      source: src/nexus/core/nexus_fs_metadata.py:2126
   profiles:
     lite: supported
     sandbox: supported
@@ -4601,7 +4601,7 @@ operations:
   transports:
     grpc_expose:
       name: glob_batch
-      source: src/nexus/bricks/search/search_service.py:2059
+      source: src/nexus/bricks/search/search_service.py:2068
   profiles:
     lite: supported
     sandbox: supported
@@ -5012,7 +5012,7 @@ operations:
   transports:
     grpc_expose:
       name: initialize_semantic_search
-      source: src/nexus/bricks/search/search_service.py:4940
+      source: src/nexus/bricks/search/search_service.py:4949
   profiles:
     lite: supported
     sandbox: supported
@@ -7747,7 +7747,7 @@ operations:
       source: src/nexus/cli/commands/search.py:1
     grpc_expose:
       name: glob
-      source: src/nexus/bricks/search/search_service.py:1816
+      source: src/nexus/bricks/search/search_service.py:1825
     http:
       name: POST /api/v2/search/glob
       source: src/nexus/server/api/v2/routers/search.py:1713
@@ -7774,7 +7774,7 @@ operations:
       source: src/nexus/cli/commands/search.py:1
     grpc_expose:
       name: grep
-      source: src/nexus/bricks/search/search_service.py:2116
+      source: src/nexus/bricks/search/search_service.py:2125
     http:
       name: POST /api/v2/search/grep
       source: src/nexus/server/api/v2/routers/search.py:1574
@@ -7968,7 +7968,7 @@ operations:
   transports:
     grpc_expose:
       name: semantic_search
-      source: src/nexus/bricks/search/search_service.py:4447
+      source: src/nexus/bricks/search/search_service.py:4456
     mcp:
       name: nexus_semantic_search
       source: src/nexus/config/tool_profiles.yaml:1
@@ -7989,7 +7989,7 @@ operations:
   transports:
     grpc_expose:
       name: semantic_search_index
-      source: src/nexus/bricks/search/search_service.py:4798
+      source: src/nexus/bricks/search/search_service.py:4807
   profiles:
     lite: supported
     sandbox: supported
@@ -8006,7 +8006,7 @@ operations:
   transports:
     grpc_expose:
       name: semantic_search_stats
-      source: src/nexus/bricks/search/search_service.py:4892
+      source: src/nexus/bricks/search/search_service.py:4901
   profiles:
     lite: supported
     sandbox: supported

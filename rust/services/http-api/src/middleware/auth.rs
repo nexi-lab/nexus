@@ -197,6 +197,35 @@ pub fn default_no_auth_provider() -> Arc<dyn AuthProvider> {
     Arc::new(transport::auth::NoAuth)
 }
 
+/// A `Send + Sync` empty `AuthKeyStore` for tests + probes that
+/// wire an `AppState` without a real raft-backed store — the
+/// `/v2/auth/keys` list handler returns an empty array, revoke
+/// returns `existed=false`.  Never a real deployment (the mint
+/// plane wouldn't work; the composition root in `nexusd` binds
+/// the raft-backed store via `kernel.auth_key_store()`).
+pub fn empty_auth_key_store_for_tests() -> impl kernel::hal::auth_key_store::AuthKeyStore + 'static
+{
+    use kernel::hal::auth_key_store::{AuthKeyStore, AuthKeyStoreError};
+
+    #[derive(Default)]
+    struct EmptyStore;
+    impl AuthKeyStore for EmptyStore {
+        fn get(&self, _key_hash: &str) -> Result<Option<Vec<u8>>, AuthKeyStoreError> {
+            Ok(None)
+        }
+        fn put(&self, _key_hash: &str, _record: &[u8]) -> Result<(), AuthKeyStoreError> {
+            Ok(())
+        }
+        fn delete(&self, _key_hash: &str) -> Result<bool, AuthKeyStoreError> {
+            Ok(false)
+        }
+        fn list(&self) -> Result<Vec<(String, Vec<u8>)>, AuthKeyStoreError> {
+            Ok(Vec::new())
+        }
+    }
+    EmptyStore
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

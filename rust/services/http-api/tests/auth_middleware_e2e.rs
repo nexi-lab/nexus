@@ -192,6 +192,11 @@ impl Harness {
         let state = AppState {
             search: SearchBackend::new(grpc_target),
             auth,
+            // Empty in-memory `AuthKeyStore` — this middleware
+            // suite never hits `/v2/auth/keys`, so any store is fine.
+            auth_key_store: std::sync::Arc::new(
+                nexus_http_api::middleware::auth::empty_auth_key_store_for_tests(),
+            ),
             // Under `--features rebac` (nexusd's `full` build path
             // exercises this harness transitively via CI), AppState
             // gains a `rebac_store` field.  Use the same in-memory

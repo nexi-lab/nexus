@@ -34,6 +34,16 @@ tonic-prost = { workspace = true }
 # sibling search-plugin peer-fanout uses (search-plugin/Cargo.toml).
 dashmap = "6.1"
 
+# `auth::record::AuthKeyRecord` + `SubjectType` decode for the
+# `/v2/auth/keys` list handler.  The store's value bytes are the
+# authoritative serialised record shape; this crate owns the
+# decode so the wire body mirrors the Python nexus-server response
+# 1:1 (an ops script that scrapes /api/v2/auth/keys on Python
+# reads /v2/auth/keys on Rust unchanged).  Pinned to the same
+# nexus-vfs rev the workspace does (no `auth` workspace-dep entry
+# yet — the `kernel` + `transport` neighbors are the precedent).
+auth = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "b5b969a060c322835be67ff9b1e6e02f7c97abd1" }
+
 # Bearer-token → `OperationContext` SSOT.
 #
 # The `AuthProvider` trait + `AuthCredentials` + kernel-default
@@ -97,6 +107,11 @@ protoc-bin-vendored = "3"
 # `tower::ServiceExt::oneshot`).
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
+# Auth-keys E2E hand-rolls an in-memory `AuthKeyStore` behind a
+# `parking_lot::Mutex<BTreeMap>` (same shape auth's own mint tests
+# use).  parking_lot is already a normal dep of `nexus-rebac`; the
+# dev-dep entry here keeps the auth_keys_e2e test self-contained.
+parking_lot = "0.12"
 # Real-TCP integration cover — `tests/serve_e2e.rs` binds an
 # ephemeral port with `axum::serve` and hits it via `reqwest` so the
 # hyper listener + tower service composition is exercised end-to-end

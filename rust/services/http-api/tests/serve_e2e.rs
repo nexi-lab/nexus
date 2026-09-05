@@ -110,6 +110,9 @@ async fn service_decl_install_body_runs_under_a_tokio_runtime() {
         "http://127.0.0.1:1".to_string(),
         default_no_auth_provider(),
         handle,
+        // Empty in-memory `AuthKeyStore` — this test hits only
+        // `/v2/status`, so any store is fine.
+        std::sync::Arc::new(nexus_http_api::middleware::auth::empty_auth_key_store_for_tests()),
         // The `--features rebac` build widens `install_impl` with a
         // tuple-store arg — use the same in-memory default the
         // `AppState::for_tests` helper wires (this test never hits
@@ -152,6 +155,7 @@ async fn service_decl_install_body_returns_err_on_bind_failure() {
         "http://127.0.0.1:1".to_string(),
         default_no_auth_provider(),
         handle.clone(),
+        std::sync::Arc::new(nexus_http_api::middleware::auth::empty_auth_key_store_for_tests()),
         #[cfg(feature = "rebac")]
         std::sync::Arc::new(nexus_rebac::InMemoryReBACTupleStore::new()),
     );
@@ -164,6 +168,7 @@ async fn service_decl_install_body_returns_err_on_bind_failure() {
         "http://127.0.0.1:1".to_string(),
         default_no_auth_provider(),
         handle,
+        std::sync::Arc::new(nexus_http_api::middleware::auth::empty_auth_key_store_for_tests()),
         #[cfg(feature = "rebac")]
         std::sync::Arc::new(nexus_rebac::InMemoryReBACTupleStore::new()),
     );

@@ -85,6 +85,12 @@ pub use search_backend::{BackendError, SearchBackend};
 pub struct AppState {
     pub search: SearchBackend,
     pub auth: Arc<dyn AuthProvider>,
+    /// The kernel-adjacent `AuthKeyStore` — list / revoke backend
+    /// for `/v2/auth/keys`.  Threaded from the same
+    /// `RaftAuthKeyStore` the kernel's gRPC bearer-auth path reads
+    /// (via `kernel.auth_key_store()` at install time).  One SSOT,
+    /// two surfaces (gRPC + HTTP).
+    pub auth_key_store: Arc<dyn kernel::hal::auth_key_store::AuthKeyStore>,
     /// The kernel-adjacent ReBAC tuple store — grant / list / revoke
     /// backend for `/v2/rebac/tuples`.  Present iff this crate was
     /// built `--features rebac`; the composition root in `nexusd`
@@ -116,6 +122,10 @@ impl AppState {
         Self {
             search: SearchBackend::new(grpc_target),
             auth: middleware::auth::default_no_auth_provider(),
+            // Empty in-memory store for `/v2/auth/keys` tests.  The
+            // real composition root pulls the raft-backed store from
+            // `kernel.auth_key_store()` at install time.
+            auth_key_store: Arc::new(middleware::auth::empty_auth_key_store_for_tests()),
             #[cfg(feature = "rebac")]
             rebac_store: Arc::new(nexus_rebac::InMemoryReBACTupleStore::new()),
         }
@@ -150,7 +160,8 @@ pub fn router(state: AppState) -> Router {
     let protected_router = {
         let r = Router::new()
             .merge(handlers::search::router())
-            .merge(handlers::documents::router());
+            .merge(handlers::documents::router())
+            .merge(handlers::auth::router());
         #[cfg(feature = "rebac")]
         let r = r.merge(handlers::rebac::router());
         r.layer(from_fn_with_state(
@@ -252,6 +263,10 @@ pub async fn bind_and_serve(
 /// half-served request), but the "listener is up" invariant is
 /// established synchronously — matches `a2a::install_a2a_stamp_hook`
 /// which also fails install synchronously if setup errors.
+/// `AuthKeyStore` for the `/v2/auth/keys` handlers comes from the
+/// live kernel — [`kernel::Kernel::auth_key_store`] surfaces the
+/// same `RaftAuthKeyStore` the gRPC bearer-auth path already
+/// reads.  One SSOT, two surfaces (gRPC + HTTP).
 #[cfg(not(feature = "rebac"))]
 pub fn service_decl(
     addr: SocketAddr,
@@ -261,7 +276,10 @@ pub fn service_decl(
 ) -> kernel::kernel::ServiceDecl {
     kernel::kernel::ServiceDecl {
         name: "http_api".to_string(),
-        install: Box::new(move |_kernel| install_impl(addr, upstream_grpc, auth, runtime)),
+        install: Box::new(move |kernel| {
+            let auth_key_store = kernel.auth_key_store();
+            install_impl(addr, upstream_grpc, auth, runtime, auth_key_store)
+        }),
     }
 }
 
@@ -281,8 +299,16 @@ pub fn service_decl(
 ) -> kernel::kernel::ServiceDecl {
     kernel::kernel::ServiceDecl {
         name: "http_api".to_string(),
-        install: Box::new(move |_kernel| {
-            install_impl(addr, upstream_grpc, auth, runtime, rebac_store)
+        install: Box::new(move |kernel| {
+            let auth_key_store = kernel.auth_key_store();
+            install_impl(
+                addr,
+                upstream_grpc,
+                auth,
+                runtime,
+                auth_key_store,
+                rebac_store,
+            )
         }),
     }
 }
@@ -303,11 +329,13 @@ pub fn install_impl(
     upstream_grpc: String,
     auth: Arc<dyn AuthProvider>,
     runtime: tokio::runtime::Handle,
+    auth_key_store: Arc<dyn kernel::hal::auth_key_store::AuthKeyStore>,
     #[cfg(feature = "rebac")] rebac_store: Arc<dyn nexus_rebac::ReBACTupleStore>,
 ) -> Result<(), String> {
     let state = AppState {
         search: SearchBackend::new(upstream_grpc),
         auth,
+        auth_key_store,
         #[cfg(feature = "rebac")]
         rebac_store,
     };

@@ -3050,6 +3050,7 @@ dependencies = [
 name = "nexus-http-api"
 version = "0.1.0"
 dependencies = [
+ "auth",
  "axum",
  "contracts",
  "dashmap",
@@ -3057,6 +3058,7 @@ dependencies = [
  "kernel",
  "lib",
  "nexus-rebac",
+ "parking_lot",
  "prost 0.14.4",
  "protoc-bin-vendored",
  "reqwest 0.12.28",

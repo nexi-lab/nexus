@@ -566,9 +566,16 @@ class RecordStoreWriteObserver:
                     self._flush_batch_sync([event])
                     salvaged.append(event)
                 except Exception as event_err:
-                    self._total_failed += 1
-                    io_metrics.record_projection_failed(1)
                     first_error = first_error or event_err
+                    # Emit the ERROR log BEFORE bumping the counter so a
+                    # caller polling ``metrics["total_failed"]`` observes a
+                    # consistent "log-fired AND counter-went-up" state.
+                    # Prior order (counter first, log second) let a poller
+                    # win the race between the two — the counter said "1
+                    # dropped" but ``caplog.records`` was still empty by
+                    # the time the polling loop exited, flaking
+                    # ``test_async_commit_failure_is_logged_and_counted_not_raised``
+                    # on Py3.14 CI + reproducible ~40% locally.
                     logger.error(
                         "RecordStoreWriteObserver dropping audit event: op=%s path=%s error=%s — %s",
                         event.get("op"),
@@ -576,6 +583,8 @@ class RecordStoreWriteObserver:
                         event_err,
                         _RECONCILE_HINT,
                     )
+                    self._total_failed += 1
+                    io_metrics.record_projection_failed(1)
             ticket.finish(first_error)
         if salvaged:
             self._after_commit(salvaged)

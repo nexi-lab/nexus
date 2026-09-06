@@ -91,6 +91,15 @@ pub struct AppState {
     /// (via `kernel.auth_key_store()` at install time).  One SSOT,
     /// two surfaces (gRPC + HTTP).
     pub auth_key_store: Arc<dyn kernel::hal::auth_key_store::AuthKeyStore>,
+    /// The daemon's HMAC secret for sk- key material — `Some(_)`
+    /// under API-key auth, `None` under `--no-tls` (mint returns
+    /// 503).  Threaded from `ServiceBootCtx.api_key_secret` (the
+    /// same secret `DaemonKeyMinter` uses on the gRPC side) so the
+    /// HTTP mint plane hashes with the identical secret.  Never
+    /// exposed in logs / Debug output — the mint layer's own
+    /// `auth::mint::mint_key` takes it as `&str` and consumes it
+    /// only for HMAC.
+    pub api_key_secret: Option<Arc<str>>,
     /// The kernel-adjacent ReBAC tuple store — grant / list / revoke
     /// backend for `/v2/rebac/tuples`.  Present iff this crate was
     /// built `--features rebac`; the composition root in `nexusd`
@@ -126,6 +135,8 @@ impl AppState {
             // real composition root pulls the raft-backed store from
             // `kernel.auth_key_store()` at install time.
             auth_key_store: Arc::new(middleware::auth::empty_auth_key_store_for_tests()),
+            // No secret by default — mint tests set it explicitly.
+            api_key_secret: None,
             #[cfg(feature = "rebac")]
             rebac_store: Arc::new(nexus_rebac::InMemoryReBACTupleStore::new()),
         }
@@ -273,12 +284,20 @@ pub fn service_decl(
     upstream_grpc: String,
     auth: Arc<dyn AuthProvider>,
     runtime: tokio::runtime::Handle,
+    api_key_secret: Option<Arc<str>>,
 ) -> kernel::kernel::ServiceDecl {
     kernel::kernel::ServiceDecl {
         name: "http_api".to_string(),
         install: Box::new(move |kernel| {
             let auth_key_store = kernel.auth_key_store();
-            install_impl(addr, upstream_grpc, auth, runtime, auth_key_store)
+            install_impl(
+                addr,
+                upstream_grpc,
+                auth,
+                runtime,
+                auth_key_store,
+                api_key_secret,
+            )
         }),
     }
 }
@@ -295,6 +314,7 @@ pub fn service_decl(
     upstream_grpc: String,
     auth: Arc<dyn AuthProvider>,
     runtime: tokio::runtime::Handle,
+    api_key_secret: Option<Arc<str>>,
     rebac_store: Arc<dyn nexus_rebac::ReBACTupleStore>,
 ) -> kernel::kernel::ServiceDecl {
     kernel::kernel::ServiceDecl {
@@ -307,6 +327,7 @@ pub fn service_decl(
                 auth,
                 runtime,
                 auth_key_store,
+                api_key_secret,
                 rebac_store,
             )
         }),
@@ -330,12 +351,14 @@ pub fn install_impl(
     auth: Arc<dyn AuthProvider>,
     runtime: tokio::runtime::Handle,
     auth_key_store: Arc<dyn kernel::hal::auth_key_store::AuthKeyStore>,
+    api_key_secret: Option<Arc<str>>,
     #[cfg(feature = "rebac")] rebac_store: Arc<dyn nexus_rebac::ReBACTupleStore>,
 ) -> Result<(), String> {
     let state = AppState {
         search: SearchBackend::new(upstream_grpc),
         auth,
         auth_key_store,
+        api_key_secret,
         #[cfg(feature = "rebac")]
         rebac_store,
     };

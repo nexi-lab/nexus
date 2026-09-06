@@ -197,6 +197,7 @@ impl Harness {
             auth_key_store: std::sync::Arc::new(
                 nexus_http_api::middleware::auth::empty_auth_key_store_for_tests(),
             ),
+            api_key_secret: None,
             // Under `--features rebac` (nexusd's `full` build path
             // exercises this harness transitively via CI), AppState
             // gains a `rebac_store` field.  Use the same in-memory

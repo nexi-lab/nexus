@@ -211,6 +211,7 @@ fn http_api_decl_from(
         cfg.upstream_grpc.clone(),
         Arc::clone(&ctx.auth),
         ctx.runtime.clone(),
+        ctx.api_key_secret.as_deref().map(Arc::<str>::from),
     ))
 }
 
@@ -236,6 +237,7 @@ fn http_api_decl_from(
         cfg.upstream_grpc.clone(),
         Arc::clone(&ctx.auth),
         ctx.runtime.clone(),
+        ctx.api_key_secret.as_deref().map(Arc::<str>::from),
         rebac_store,
     ))
 }

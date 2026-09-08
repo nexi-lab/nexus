@@ -107,7 +107,7 @@ The box is a *client*, not a provisioner: when it needs a public control plane i
 
 ### The VM
 
-* Host `sudowork-saas` · Tencent Cloud **Beijing** · Ubuntu 24.04 x86_64 · 4c/8G/60G. Public IP `152.136.139.254`; overlay IP `100.64.0.1`. Provisioned by Hu Xuetao. It joins the **same headscale overlay** as every other node — enroll it per **Part 1 §1h** (the overlay and its gotchas are documented once, there).
+* Host `sudocloud` (renamed 2026-09-09 with the Sudo SaaS → Sudo Cloud product rename; was `sudowork-saas`) · Tencent Cloud **Beijing** · Ubuntu 24.04 x86_64 · 4c/8G/60G. Public IP `152.136.139.254`; overlay IP `100.64.0.1`. Provisioned by Hu Xuetao. It joins the **same headscale overlay** as every other node — enroll it per **Part 1 §1h** (the overlay and its gotchas are documented once, there).
 * **Access rides the overlay**: `ssh ubuntu@100.64.0.1`.  The public interface serves traffic — `80/443` (moss web, `agent.sudoprivacy.com`) and `8443` (broker, `broker.sudoprivacy.com`).  Credentials live in the password vault (`SSH - sudowork SaaS VM`, `Headscale overlay (nexus mesh) enrollment`).
 
 ### Bring up the cross-org broker (`nexusd-cluster` founder)
@@ -167,11 +167,13 @@ Wants=network-online.target
 User=ubuntu
 WorkingDirectory=/home/ubuntu/nexus-broker
 EnvironmentFile=/home/ubuntu/nexus-broker/broker.env   # NEXUS_API_KEY_SECRET=…  RUST_LOG=info
-ExecStart=/home/ubuntu/nexusd-cluster --cluster-init saas --hostname sudowork-saas --advertise-addr 100.64.0.1:8443 --data-dir /home/ubuntu/nexus-broker/data --identity-dir /home/ubuntu/nexus-broker/identity --accept-enrollments
+ExecStart=/home/ubuntu/nexusd-cluster-main --cluster-init saas --hostname sudowork-saas --advertise-addr 100.64.0.1:8443 --data-dir /home/ubuntu/nexus-broker/data --identity-dir /home/ubuntu/nexus-broker/identity --accept-enrollments
 Restart=always
 [Install]
 WantedBy=multi-user.target
 ```
+
+`--cluster-init saas` and `--hostname sudowork-saas` are **deliberately left at their original values** even though the product and the OS hostname are now `sudocloud`. Both are baked into the broker's persisted `--data-dir` / `--identity-dir` state and into every node's enrollment record, so changing them is a cluster re-initialisation, not a rename. Verified against the live unit 2026-09-09.
 
 ### What cross-org authN does on connect
 

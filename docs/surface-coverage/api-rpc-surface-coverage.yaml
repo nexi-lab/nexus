@@ -7853,8 +7853,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: GET /api/v2/search/query?q=database%20migration&type=hybrid&limit=5
-  correctness_test: tests/integration/services/test_search_router.py; tests/integration/bricks/search/test_fusion.py; tests/unit/bricks/search/test_sandbox_hybrid_rrf.py
-    tests/e2e/self_contained/test_search_surface_live_e2e.py
+  correctness_test: tests/integration/services/test_search_router.py; tests/integration/bricks/search/test_fusion.py tests/e2e/self_contained/test_search_surface_live_e2e.py
   perf_class: hot
   perf_link: tests/benchmarks/test_search_protocol_benchmark.py; docs/benchmarks/2026-04-18-sandbox-vs-gbrain.md; tests/e2e/self_contained/test_search_surface_live_e2e.py
   gap_issue: null

@@ -185,77 +185,16 @@ def _resolve_search_service(nx: object) -> object | None:
     return nx.service("search") if hasattr(nx, "service") else None
 
 
-@pytest.mark.asyncio
-async def test_sandbox_default_wires_sqlite_vec_backend_when_extra_installed(
-    tmp_path: Path,
-) -> None:
-    """SANDBOX default config wires local vector search when deps exist."""
-    pytest.importorskip("sqlite_vec")
-    pytest.importorskip("fastembed")
-
-    nx = await _connect_sandbox(tmp_path)
-    try:
-        svc = _resolve_search_service(nx)
-        assert svc is not None
-        assert getattr(svc, "_sqlite_vec_backend", None) is not None
-    finally:
-        nx.close()
-
-
-@pytest.mark.asyncio
-async def test_sandbox_with_vector_search_disabled_does_not_wire_backend(
-    tmp_path: Path,
-) -> None:
-    """Explicit opt-out keeps SANDBOX keyword-only even with deps installed."""
-    cfg = _sandbox_config(tmp_path)
-    cfg["enable_vector_search"] = False
-
-    nx = await _connect_sandbox(tmp_path, config=cfg)
-    try:
-        svc = _resolve_search_service(nx)
-        assert svc is not None
-        assert getattr(svc, "_sqlite_vec_backend", None) is None
-    finally:
-        nx.close()
-
-
-@pytest.mark.asyncio
-async def test_sandbox_with_vector_search_enabled_wires_backend(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Opt-in path: with enable_vector_search=True (and the optional deps
-    importable), the SqliteVecBackend is constructed and attached to
-    SearchService.
-    """
-    pytest.importorskip("sqlite_vec")
-    pytest.importorskip("litellm")
-    pytest.importorskip("fastembed")
-
-    cfg = _sandbox_config(tmp_path)
-    cfg["enable_vector_search"] = True
-
-    # Patch litellm.aembedding so any accidental call doesn't go to a real
-    # provider (the backend is lazy — no embedding call at construction).
-    async def _fake_aembedding(**_kwargs: object) -> object:
-        class _R:
-            data = [{"embedding": [0.0]}]
-
-        return _R()
-
-    monkeypatch.setattr("litellm.aembedding", _fake_aembedding, raising=False)
-
-    nx = await _connect_sandbox(tmp_path, config=cfg)
-    try:
-        svc = _resolve_search_service(nx)
-        assert svc is not None
-        backend = getattr(svc, "_sqlite_vec_backend", None)
-        assert backend is not None, (
-            "SqliteVecBackend should be wired when enable_vector_search=True"
-        )
-        # Sanity: profile threading is intact.
-        assert svc._deployment_profile == "sandbox"
-    finally:
-        nx.close()
+# The three SqliteVec wiring tests here (default-wires / disabled-does-
+# not-wire / enabled-wires) were deleted as part of the R10 arc SANDBOX
+# deprecation: the Rust search-plugin is now the sole semantic-search
+# backend and `SqliteVecBackend` was removed alongside its factory
+# wiring.  `SearchService._sqlite_vec_backend` is now always `None`,
+# so these three assertions would tautologically pass or fail.  The
+# other SANDBOX-boot tests below still exercise "boots without
+# external services / never starts federation / restricted HTTP
+# surface / features endpoint" — the parts of the profile that
+# survive the vec-backend removal.
 
 
 @pytest.mark.asyncio

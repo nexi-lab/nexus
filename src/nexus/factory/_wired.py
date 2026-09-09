@@ -217,97 +217,22 @@ def _boot_post_kernel_services(
         #
         # If both ``sqlite-vec`` and an embedder (fastembed OR a remote
         # API key for litellm) are reachable, we wire the backend.
-        # Missing pieces degrade silently (with a clear WARNING) to the
-        # federation/BM25S chain.
-        #
-        # Note: ``nx._config`` is only attached AFTER ``create_nexus_fs()``
-        # returns (see nexus/__init__.py), so at this point in the boot we
-        # rely on env-var signalling. ``connect()`` propagates the config
-        # dict's ``enable_vector_search`` to ``NEXUS_ENABLE_VECTOR_SEARCH``
-        # before invoking the factory (Issue #3778).
+        # The SANDBOX in-process `SqliteVecBackend` init block was
+        # deleted as part of the R10 arc (task #41): the Rust search-
+        # plugin is now the sole semantic-search backend, and no live
+        # SANDBOX deployment depends on the Python in-process path.
+        # `SearchService.sqlite_vec_backend=None` disables the dead
+        # `_try_sqlite_vec_sandbox` / `_hybrid_search_sandbox` fast-
+        # paths — those method bodies are unreachable but left in
+        # `search_service.py` for a follow-up strip PR to remove
+        # cleanly alongside the rest of the SANDBOX chain
+        # (indexing.py / indexing_service.py / pipeline_indexer.py /
+        # chunking.py / chunk_store.py / factory/_semantic_search.py).
+        # Env vars `NEXUS_ENABLE_VECTOR_SEARCH` /
+        # `NEXUS_DISABLE_VECTOR_SEARCH` are no-ops as a result — the
+        # `connect()` helper still forwards them for back-compat, but
+        # nothing here reads them.
         _sqlite_vec_backend: Any = None
-
-        def _env_truthy(name: str) -> bool:
-            return (_os.environ.get(name) or "").strip().lower() in (
-                "1",
-                "true",
-                "yes",
-                "on",
-            )
-
-        def _env_falsy(name: str) -> bool:
-            return (_os.environ.get(name) or "").strip().lower() in (
-                "0",
-                "false",
-                "no",
-                "off",
-            )
-
-        if _profile == "sandbox":
-            # SANDBOX: vector search ON by default. Two opt-outs honored,
-            # in priority order:
-            #   1. ``NEXUS_DISABLE_VECTOR_SEARCH=1`` — new explicit knob.
-            #   2. ``NEXUS_ENABLE_VECTOR_SEARCH=false`` — preserves the
-            #      legacy ``config.enable_vector_search=False`` opt-out
-            #      that ``connect()`` propagates to this env var. Without
-            #      this branch, deployments that previously turned vec
-            #      OFF via config would silently get it back on after the
-            #      default flip (Codex review, high).
-            if _env_truthy("NEXUS_DISABLE_VECTOR_SEARCH") or _env_falsy(
-                "NEXUS_ENABLE_VECTOR_SEARCH"
-            ):
-                _enable_vec = False
-            else:
-                _enable_vec = True
-        else:
-            _enable_vec = _env_truthy("NEXUS_ENABLE_VECTOR_SEARCH")
-
-        if _profile == "sandbox" and _enable_vec:
-            try:
-                from nexus.bricks.search.sqlite_vec_backend import SqliteVecBackend
-
-                # Derive db path. Prefer NEXUS_DB_PATH; otherwise pull from
-                # the record_store's SQLAlchemy engine URL (only valid when
-                # the record store is SQLite-backed, which is the SANDBOX
-                # case by construction).
-                _vec_db_path: str | None = _os.environ.get("NEXUS_DB_PATH") or None
-                if not _vec_db_path:
-                    _rs = getattr(nx, "_record_store", None)
-                    _eng = getattr(_rs, "engine", None) if _rs is not None else None
-                    if _eng is not None:
-                        _url = str(_eng.url)
-                        # SQLAlchemy SQLite URL: sqlite:////absolute/path.db
-                        if _url.startswith("sqlite:///"):
-                            _vec_db_path = _url[len("sqlite:///") :]
-                            # Restore leading slash for absolute paths
-                            # (SQLAlchemy uses 4 slashes: sqlite:////abs).
-                            if _url.startswith("sqlite:////"):
-                                _vec_db_path = "/" + _vec_db_path.lstrip("/")
-
-                if _vec_db_path:
-                    _sqlite_vec_backend = SqliteVecBackend(db_path=str(_vec_db_path))
-                    logger.info(
-                        "[BOOT:WIRED] SqliteVecBackend created (db=%s) — SANDBOX local vector search enabled",
-                        _vec_db_path,
-                    )
-                else:
-                    logger.warning(
-                        "[BOOT:WIRED] SANDBOX enable_vector_search=true but no db_path resolved; "
-                        "skipping local vector backend"
-                    )
-            except ImportError as exc:
-                logger.warning(
-                    "[BOOT:WIRED] SANDBOX vector search disabled — optional dep missing (%s). "
-                    "Install with: pip install 'nexus-ai-fs[sandbox]' (bundles sqlite-vec + "
-                    "fastembed for offline embeddings). Falling back to keyword-only search.",
-                    exc,
-                )
-            except Exception as exc:
-                logger.warning(
-                    "[BOOT:WIRED] SqliteVecBackend init failed: %s — "
-                    "falling back to keyword-only search.",
-                    exc,
-                )
 
         # Issue #3778 (R2 review): look up an already-constructed federation
         # dispatcher on the ServiceRegistry / NexusFS if one is available, so

@@ -671,7 +671,9 @@ class PgFtsBackend:
         ]
 
     # -------------------------------------------------------------------------
-    # Semantic search — no-op (lives in PgVectorBackend, T6)
+    # Semantic search — no-op (this backend is FTS-only; the Rust
+    # search-plugin owns the semantic path in production, and the SANDBOX
+    # Python `PgVectorBackend` sibling was deleted as part of the R10 arc).
     # -------------------------------------------------------------------------
 
     async def semantic_search(
@@ -681,5 +683,5 @@ class PgFtsBackend:
         k: int,  # noqa: ARG002
         zone_id: str,  # noqa: ARG002
     ) -> list[BaseSearchResult]:
-        """Not implemented in this backend — semantic search lives in PgVectorBackend (T6)."""
+        """Not implemented in this backend — semantic search lives in the Rust plugin."""
         return []

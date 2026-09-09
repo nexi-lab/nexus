@@ -2,8 +2,17 @@
 //!
 //! Loaded by `nexusd-cluster` at startup via `--plugin-dir`. Registers
 //! as a driver named `"local-connector"` through the plugin ABI's
-//! [`declare_driver_plugin!`] macro.  Operators mount it at a VFS path
-//! with `--mount-driver local-connector:<vfs-path>:<config-json>`.
+//! [`declare_driver_plugin!`] macro.
+//!
+//! ## Mounting is a syscall — boot OR runtime, not operator-boot-only
+//!
+//! A mount of this driver is a `sys_setattr(DT_MOUNT, backend_name =
+//! "local-connector", …)` carrying the `local_root` config, so it can be
+//! created — and torn down — at **runtime** (e.g. a session launcher
+//! mounting a per-session workspace), not just at startup. The
+//! `--mount-driver local-connector:<zone>:<vfs-path>:<config-json>` boot
+//! flag is only a convenience that composes exactly that syscall at startup
+//! for the operator; it is NOT the only path to a mount.
 //!
 //! ## Config schema
 //!

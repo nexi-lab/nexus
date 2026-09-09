@@ -99,6 +99,15 @@ fn sample_record(name: &str, subject_id: &str, admin: bool, revoked: bool) -> Au
 async fn spawn_test_server(
     seed: Vec<(String, AuthKeyRecord)>,
 ) -> (String, Arc<MemStore>, tokio::task::JoinHandle<()>) {
+    spawn_test_server_with_secret(seed, None).await
+}
+
+/// Variant with an explicit HMAC secret — mint tests need one.  A
+/// server built with `None` returns 503 from POST /v2/auth/keys.
+async fn spawn_test_server_with_secret(
+    seed: Vec<(String, AuthKeyRecord)>,
+    secret: Option<&str>,
+) -> (String, Arc<MemStore>, tokio::task::JoinHandle<()>) {
     let store = Arc::new(MemStore::default());
     for (hash, record) in seed {
         let bytes = record.encode().expect("encode seed record");
@@ -107,6 +116,7 @@ async fn spawn_test_server(
     let mut state = AppState::for_tests("http://127.0.0.1:1");
     state.auth_key_store = Arc::clone(&store) as Arc<dyn AuthKeyStore>;
     state.auth = Arc::new(FixtureAuth);
+    state.api_key_secret = secret.map(Arc::<str>::from);
     let addr: std::net::SocketAddr = "127.0.0.1:0".parse().expect("parse addr");
     let (bound, fut) = bind_and_serve(addr, state).await.expect("bind + serve");
     let handle = tokio::spawn(async move {
@@ -427,4 +437,280 @@ async fn revoke_without_bearer_returns_401() {
         .await
         .expect("send");
     assert_eq!(resp.status().as_u16(), 401);
+}
+
+// ── POST /v2/auth/keys (mint) tests ──────────────────────────────
+
+/// Happy path: mint a `user` key with a zone grant.  Response
+/// includes the plaintext key + hash + key_id + record echo.  The
+/// store row is really present after mint.
+#[tokio::test]
+async fn mint_user_key_with_zone_grant_returns_key_and_persists_row() {
+    let (base, store, _h) = spawn_test_server_with_secret(vec![], Some("test-hmac-secret")).await;
+
+    let body = json!({
+        "name": "alice-laptop",
+        "subject_type": "user",
+        "subject_id": "alice",
+        "zones": ["root:rwx"],
+        "admin": false,
+    });
+    let resp: serde_json::Value = reqwest::Client::new()
+        .post(format!("{base}/v2/auth/keys"))
+        .bearer_auth("admin-token")
+        .json(&body)
+        .send()
+        .await
+        .expect("send")
+        .json()
+        .await
+        .expect("json");
+
+    let key = resp["key"].as_str().expect("key present");
+    let key_hash = resp["key_hash"].as_str().expect("key_hash present");
+    assert!(key.starts_with("sk-"), "plaintext key must be sk-prefixed");
+    assert!(
+        !key_hash.is_empty(),
+        "key_hash must be present for later revoke",
+    );
+    assert_eq!(resp["record"]["name"], "alice-laptop");
+    assert_eq!(resp["record"]["subject_type"], "user");
+    assert_eq!(resp["record"]["subject_id"], "alice");
+    assert_eq!(resp["record"]["is_admin"], false);
+    assert!(
+        store.get(key_hash).unwrap().is_some(),
+        "mint must persist the row at the returned hash",
+    );
+}
+
+/// Admin key with no zone grants — the zoneless-admin-only rule.
+#[tokio::test]
+async fn mint_admin_key_without_zones_is_allowed() {
+    let (base, _store, _h) = spawn_test_server_with_secret(vec![], Some("test-hmac-secret")).await;
+    let body = json!({
+        "name": "root-admin",
+        "subject_type": "user",
+        "subject_id": "root",
+        "admin": true,
+    });
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/v2/auth/keys"))
+        .bearer_auth("admin-token")
+        .json(&body)
+        .send()
+        .await
+        .expect("send");
+    assert_eq!(resp.status().as_u16(), 200);
+}
+
+/// Non-admin key with NO zone grants → 400 (a key with no grants
+/// reaches nothing; the mint layer refuses it).  Pin against a
+/// regression that silently mints an unreachable key.
+#[tokio::test]
+async fn mint_non_admin_without_zones_returns_400() {
+    let (base, _store, _h) = spawn_test_server_with_secret(vec![], Some("test-hmac-secret")).await;
+    let body = json!({
+        "name": "unreachable",
+        "subject_type": "user",
+        "subject_id": "alice",
+        "admin": false,
+    });
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/v2/auth/keys"))
+        .bearer_auth("admin-token")
+        .json(&body)
+        .send()
+        .await
+        .expect("send");
+    assert_eq!(
+        resp.status().as_u16(),
+        400,
+        "no-grants-no-admin must be 400 (client input error)",
+    );
+}
+
+/// A malformed zone grant → 400.  Message names the segment.
+#[tokio::test]
+async fn mint_malformed_zone_grant_returns_400() {
+    let (base, _store, _h) = spawn_test_server_with_secret(vec![], Some("test-hmac-secret")).await;
+    let body = json!({
+        "subject_type": "user",
+        "subject_id": "alice",
+        "zones": ["missing-colon-here"],
+    });
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/v2/auth/keys"))
+        .bearer_auth("admin-token")
+        .json(&body)
+        .send()
+        .await
+        .expect("send");
+    assert_eq!(resp.status().as_u16(), 400);
+}
+
+/// `subject_type=agent` is rejected — agents use the cert-anchored
+/// plane, not sk-.
+#[tokio::test]
+async fn mint_agent_subject_type_returns_400() {
+    let (base, _store, _h) = spawn_test_server_with_secret(vec![], Some("test-hmac-secret")).await;
+    let body = json!({
+        "subject_type": "agent",
+        "subject_id": "some-agent",
+        "zones": ["root:rwx"],
+    });
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/v2/auth/keys"))
+        .bearer_auth("admin-token")
+        .json(&body)
+        .send()
+        .await
+        .expect("send");
+    assert_eq!(resp.status().as_u16(), 400);
+}
+
+/// Repeat mint for the same `(subject_type, subject_id)` without
+/// `allow_existing` → 400 (uniqueness rejection reclassified from
+/// the mint layer's Backend error).
+#[tokio::test]
+async fn mint_repeat_same_subject_returns_400_without_allow_existing() {
+    let (base, _store, _h) = spawn_test_server_with_secret(vec![], Some("test-hmac-secret")).await;
+    let body = json!({
+        "subject_type": "user",
+        "subject_id": "alice",
+        "zones": ["root:rwx"],
+    });
+    // First mint succeeds.
+    let r1 = reqwest::Client::new()
+        .post(format!("{base}/v2/auth/keys"))
+        .bearer_auth("admin-token")
+        .json(&body)
+        .send()
+        .await
+        .expect("send1");
+    assert_eq!(r1.status().as_u16(), 200);
+    // Second without allow_existing → 400.
+    let r2 = reqwest::Client::new()
+        .post(format!("{base}/v2/auth/keys"))
+        .bearer_auth("admin-token")
+        .json(&body)
+        .send()
+        .await
+        .expect("send2");
+    assert_eq!(
+        r2.status().as_u16(),
+        400,
+        "duplicate subject without allow_existing must be 400 (input error), not 502",
+    );
+}
+
+/// `allow_existing=true` lets a rotation land — two keys for the
+/// same subject coexist (the audit path).
+#[tokio::test]
+async fn mint_allow_existing_true_allows_rotation() {
+    let (base, store, _h) = spawn_test_server_with_secret(vec![], Some("test-hmac-secret")).await;
+    let body = json!({
+        "subject_type": "user",
+        "subject_id": "alice",
+        "zones": ["root:rwx"],
+        "allow_existing": true,
+    });
+    reqwest::Client::new()
+        .post(format!("{base}/v2/auth/keys"))
+        .bearer_auth("admin-token")
+        .json(&body)
+        .send()
+        .await
+        .expect("mint1");
+    reqwest::Client::new()
+        .post(format!("{base}/v2/auth/keys"))
+        .bearer_auth("admin-token")
+        .json(&body)
+        .send()
+        .await
+        .expect("mint2");
+    assert_eq!(
+        store.list().unwrap().len(),
+        2,
+        "allow_existing=true must let two rows coexist for the same subject",
+    );
+}
+
+/// No HMAC secret configured → 503 (auth-off daemon; sk- plane
+/// unavailable).
+#[tokio::test]
+async fn mint_without_secret_returns_503() {
+    let (base, _store, _h) = spawn_test_server(vec![]).await; // secret=None
+    let body = json!({
+        "subject_type": "user",
+        "subject_id": "alice",
+        "zones": ["root:rwx"],
+    });
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/v2/auth/keys"))
+        .bearer_auth("admin-token")
+        .json(&body)
+        .send()
+        .await
+        .expect("send");
+    assert_eq!(
+        resp.status().as_u16(),
+        503,
+        "no secret → 503 (service unavailable), matches gRPC MintKey posture under NoAuth",
+    );
+}
+
+/// Non-admin bearer → 403 even with a valid secret + body.
+#[tokio::test]
+async fn mint_rejects_non_admin_with_403() {
+    let (base, _store, _h) = spawn_test_server_with_secret(vec![], Some("test-hmac-secret")).await;
+    let body = json!({
+        "subject_type": "user",
+        "subject_id": "alice",
+        "zones": ["root:rwx"],
+    });
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/v2/auth/keys"))
+        .bearer_auth("user-token")
+        .json(&body)
+        .send()
+        .await
+        .expect("send");
+    assert_eq!(resp.status().as_u16(), 403);
+}
+
+/// End-to-end mint → revoke: the minted key's hash from the
+/// response body is a valid revoke target.
+#[tokio::test]
+async fn minted_key_can_be_revoked_by_returned_hash() {
+    let (base, store, _h) = spawn_test_server_with_secret(vec![], Some("test-hmac-secret")).await;
+    let mint_body = json!({
+        "subject_type": "user",
+        "subject_id": "alice",
+        "zones": ["root:rwx"],
+    });
+    let mint_resp: serde_json::Value = reqwest::Client::new()
+        .post(format!("{base}/v2/auth/keys"))
+        .bearer_auth("admin-token")
+        .json(&mint_body)
+        .send()
+        .await
+        .expect("mint")
+        .json()
+        .await
+        .expect("mint json");
+    let hash = mint_resp["key_hash"].as_str().unwrap();
+    let revoke: serde_json::Value = reqwest::Client::new()
+        .delete(format!("{base}/v2/auth/keys/{hash}"))
+        .bearer_auth("admin-token")
+        .send()
+        .await
+        .expect("revoke")
+        .json()
+        .await
+        .expect("revoke json");
+    assert_eq!(revoke["existed"], true);
+    assert!(
+        store.get(hash).unwrap().is_none(),
+        "revoke of just-minted hash must actually remove the row",
+    );
 }

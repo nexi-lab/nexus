@@ -73,6 +73,21 @@ pub enum AuthKeysError {
     /// serving.  Preserves the store's message for the operator log.
     #[error("auth-key store backend error: {0}")]
     Backend(String),
+
+    /// POST-body validation error surfaced by the mint layer (invalid
+    /// zone grant syntax, subject-type not one of user/service,
+    /// zoneless non-admin key, subject already holds a key + no
+    /// `allow_existing`, unknown `subject_type`, etc.).  Maps to 400.
+    /// The mint layer's message names the exact problem.
+    #[error("mint request rejected: {0}")]
+    BadRequest(String),
+
+    /// The daemon was booted `--no-tls` and there is no sk- HMAC
+    /// secret to sign a new key with.  Maps to 503 — a valid request
+    /// against a valid endpoint, but the plane is not up.  Matches
+    /// the gRPC `MintKey` posture ("returns success=false").
+    #[error("mint unavailable: this daemon was booted without API-key auth (--no-tls)")]
+    Unavailable,
 }
 
 impl From<AuthKeyStoreError> for AuthKeysError {
@@ -91,6 +106,8 @@ impl IntoResponse for AuthKeysError {
         let status = match &self {
             Self::Forbidden => StatusCode::FORBIDDEN,
             Self::Backend(_) => StatusCode::BAD_GATEWAY,
+            Self::BadRequest(_) => StatusCode::BAD_REQUEST,
+            Self::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
         };
         (status, self.to_string()).into_response()
     }
@@ -299,11 +316,225 @@ pub async fn revoke(
     Ok(Json(RevokeResponse { existed, key_hash }))
 }
 
+// ── POST /v2/auth/keys (mint) ────────────────────────────────────
+
+/// JSON body for `POST /v2/auth/keys` — mint a fresh sk- key.
+///
+/// Field-shape mirrors Python nexus-server's `CreateKeyRequest`
+/// closely; a few Python-only fields (grants → ReBAC tuples,
+/// expires_days) are trimmed for a first cut and follow up.  In
+/// particular:
+///
+/// * `zones` — list of `"<zone_id>:<perms>"` strings (e.g. `"root:rwx"`).
+///   The mint layer parses them; an empty list is refused UNLESS
+///   `admin: true` (the only kind of principal allowed a zoneless
+///   key).
+/// * `expires_at_ms` — absolute ms-since-epoch cutoff; `0` / absent
+///   ⇒ never expires.  (Python uses `expires_days` relative; the
+///   Rust API takes absolute to avoid clock-drift ambiguity at the
+///   admin edge — an operator computes `now_ms + days*86400_000`.)
+/// * `allow_existing` — rotation escape.  Off by default; on when
+///   the caller is deliberately issuing a second key for an
+///   already-credentialed subject (rotation).
+#[derive(Debug, Clone, Deserialize)]
+pub struct MintBody {
+    /// Human label ("mac-ai laptop", "ci runner").  Optional; empty
+    /// string is preserved as the record's `name`.
+    #[serde(default)]
+    pub name: String,
+    /// `"user"` | `"service"`.  `"agent"` uses a separate mint plane
+    /// (agent identities are cert-anchored, not sk-token-anchored).
+    pub subject_type: String,
+    pub subject_id: String,
+    /// Zone grants as `"<zone_id>:<perms>"` strings.  Empty unless
+    /// `admin=true`.
+    #[serde(default)]
+    pub zones: Vec<String>,
+    /// Global admin flag.  Only zoneless keys are admin.
+    #[serde(default)]
+    pub admin: bool,
+    /// Absolute ms-since-epoch cutoff; `0` / absent ⇒ never expires.
+    #[serde(default)]
+    pub expires_at_ms: u64,
+    /// Rotation escape.
+    #[serde(default)]
+    pub allow_existing: bool,
+}
+
+/// Response body for [`mint`].  `key` is the one-time plaintext
+/// credential the caller MUST persist immediately — the daemon
+/// only stores its HMAC.  Response shape mirrors Python
+/// nexus-server's `create_key` return.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MintResponse {
+    /// One-time plaintext credential.  Present ONLY in the mint
+    /// response; never resurfaceable from the store afterwards.
+    pub key: String,
+    /// HMAC store key — the caller can revoke by this hash later.
+    pub key_hash: String,
+    /// Stable id for logs + audit tooling.
+    pub key_id: String,
+    /// Echo of the record (same shape as `list` entries; convenient
+    /// for a client that wants a single round-trip mint→display).
+    pub record: AuthKeyView,
+}
+
+/// Handler for `POST /v2/auth/keys` — mint a fresh sk- key.
+pub async fn mint(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OperationContext>,
+    Json(body): Json<MintBody>,
+) -> Result<Json<MintResponse>, AuthKeysError> {
+    require_admin(&ctx)?;
+
+    // Fail-loud when the daemon has no HMAC secret — matches the
+    // gRPC `MintKey` posture (returns success=false under NoAuth).
+    let secret = state
+        .api_key_secret
+        .as_ref()
+        .ok_or(AuthKeysError::Unavailable)?
+        .clone();
+    let store = Arc::clone(&state.auth_key_store);
+
+    // Parse + validate + mint on a blocking thread — `auth::mint_key`
+    // does a full `store.list()` scan for the uniqueness check + a
+    // `store.put` (both blocking on the raft layer).  Errors from
+    // parse (bad zone-grant syntax, unknown subject_type, empty
+    // zone list on a non-admin key) come back as `BadRequest`;
+    // storage failures come back as `Backend`.  The subject-already-
+    // holds-a-key case surfaces from `mint_key` as `Backend(msg)` —
+    // we peek the message to reclassify it to `BadRequest`, matching
+    // Python's 400 shape.
+    let minted = tokio::task::spawn_blocking(move || {
+        let record = build_record(&body).map_err(AuthKeysError::BadRequest)?;
+        auth::mint::mint_key(&store, &secret, record, body.allow_existing).map_err(|e| {
+            let msg = e.to_string();
+            // The mint layer's uniqueness rejection is a `Backend`
+            // variant carrying a message that starts with "subject
+            // ... already has an active key" — reclassify to 400
+            // (client input error, not a backend fault).
+            if msg.contains("already has an active key") {
+                AuthKeysError::BadRequest(msg)
+            } else {
+                AuthKeysError::from(e)
+            }
+        })
+    })
+    .await
+    .map_err(|e| AuthKeysError::Backend(format!("mint task panicked: {e}")))??;
+
+    let view = AuthKeyView::from_row(
+        minted.key_hash.clone(),
+        &minted.record.encode().map_err(|e| {
+            AuthKeysError::Backend(format!("encode fresh record for response: {e}"))
+        })?,
+    )
+    .ok_or_else(|| {
+        AuthKeysError::Backend(
+            "decoded-just-encoded record failed — schema roundtrip broken".to_string(),
+        )
+    })?;
+    Ok(Json(MintResponse {
+        key: minted.key,
+        key_hash: minted.key_hash,
+        key_id: minted.record.key_id,
+        record: view,
+    }))
+}
+
+/// Compose an `AuthKeyRecord` from the request body.  Owns:
+///
+///   * subject-type parsing (rejects `agent` — separate plane)
+///   * zone-grant syntax parsing (`"zone_id:perms"`)
+///   * zoneless-admin-only invariant
+///   * `key_id` synthesis (uuid v4-ish; delegated to `auth`'s helper
+///     if any, else a random hex string)
+///
+/// Errors are `String`s — the caller wraps them in
+/// `AuthKeysError::BadRequest`.
+fn build_record(body: &MintBody) -> Result<AuthKeyRecord, String> {
+    let subject_type = match body.subject_type.as_str() {
+        "user" => SubjectType::User,
+        "service" => SubjectType::Service,
+        "agent" => {
+            return Err(
+                "subject_type='agent' uses the cert-anchored mint plane, not sk-".to_string(),
+            )
+        }
+        other => {
+            return Err(format!(
+                "unknown subject_type={other:?} (allowed: user, service)"
+            ))
+        }
+    };
+    let zone_perms: Vec<(String, String)> = body
+        .zones
+        .iter()
+        .map(|z| {
+            z.split_once(':')
+                .map(|(zone, perms)| (zone.to_string(), perms.to_string()))
+                .ok_or_else(|| {
+                    format!(
+                        "zone grant {z:?} malformed — expected \"<zone_id>:<perms>\" \
+                         (e.g. \"root:rwx\")"
+                    )
+                })
+        })
+        .collect::<Result<_, _>>()?;
+    if zone_perms.is_empty() && !body.admin {
+        return Err(
+            "a key with no zone grants reaches nothing and is refused at authentication \
+             time.  Pass zones=[\"<zone>:<perms>\"], or admin=true for a global admin \
+             (the only principal allowed a zoneless key)."
+                .to_string(),
+        );
+    }
+    let expires_at_ms = if body.expires_at_ms == 0 {
+        None
+    } else {
+        Some(body.expires_at_ms)
+    };
+    Ok(AuthKeyRecord {
+        // Composed inline here — the `auth` crate's helper
+        // (`build_sk_record`) lives in `nexus-vfs/rust/profiles/
+        // cluster/src/lib.rs` alongside `DaemonKeyMinter` and is
+        // not `pub`; keep the record synthesis local to this
+        // handler until upstream ships a shared helper.
+        key_id: generate_key_id(),
+        name: body.name.clone(),
+        subject_type,
+        subject_id: body.subject_id.clone(),
+        is_admin: body.admin,
+        revoked: false,
+        expires_at_ms,
+        zone_perms,
+    })
+}
+
+/// Stable audit-log id for a fresh sk- record.  Not a secret; the
+/// mint layer's HMAC is what carries entropy — this id is a log
+/// handle only.  Uses `SystemTime::now()` nanoseconds + a process-
+/// local monotonically-increasing counter to avoid a `uuid` or
+/// `rand`/`getrandom` dep just for this one call site.  Collisions
+/// are effectively impossible: two calls in the same nanosecond
+/// still differ on the counter.
+fn generate_key_id() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("kid-{nanos:x}{counter:x}")
+}
+
 // ── Router ────────────────────────────────────────────────────────
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/v2/auth/keys", get(list))
+        .route("/v2/auth/keys", get(list).post(mint))
         .route("/v2/auth/keys/{key_hash}", delete(revoke))
 }
 

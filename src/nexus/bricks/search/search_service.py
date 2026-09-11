@@ -3895,7 +3895,7 @@ class SearchService:
         path: str,
         limit: int,
         context: "OperationContext | None",
-        search_mode: str = "semantic",
+        search_mode: str = "semantic",  # noqa: ARG002  advisory now — no in-process vec lane exists post-#4761
     ) -> builtins.list[dict[str, Any]]:
         """SANDBOX-profile semantic_search: federation → BM25S.
 

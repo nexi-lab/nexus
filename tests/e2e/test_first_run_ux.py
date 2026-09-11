@@ -499,8 +499,8 @@ class TestFullWorkflow:
 
             # Step 2d: Verify semantic search was initialized by demo init
             assert manifest.get("semantic_ready") is True, (
-                "semantic search not initialized — demo init should call "
-                "initialize_semantic_search + semantic_search_index"
+                "semantic search not initialized — demo init should have driven "
+                "semantic_search_index via the Rust search-plugin daemon"
             )
 
             # Step 2e: Verify semantic search query works against the live stack

@@ -170,41 +170,8 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from nexus.bricks.rebac.enforcer import PermissionEnforcer
     from nexus.bricks.rebac.manager import ReBACManager
-    from nexus.bricks.search.indexing_service import IndexingService
-    from nexus.bricks.search.pipeline_indexer import PipelineIndexer
-    from nexus.bricks.search.query_service import QueryService
     from nexus.contracts.types import OperationContext
     from nexus.core.nexus_fs import NexusFS
-
-
-def _result_to_dict(r: Any) -> dict[str, Any]:
-    """Convert a BaseSearchResult to a canonical dict."""
-    return {
-        "path": r.path,
-        "chunk_index": r.chunk_index,
-        "chunk_text": r.chunk_text,
-        "score": r.score,
-        "start_offset": r.start_offset,
-        "end_offset": r.end_offset,
-        "line_start": r.line_start,
-        "line_end": r.line_end,
-    }
-
-
-async def _collect_docs_for_plugin(
-    indexer: Any,
-    path: str,
-    recursive: bool,
-) -> list[dict[str, Any]]:
-    """Thin adapter around ``IndexingService.collect_plugin_documents``.
-
-    Kept as a module-level function so callers that hold an ``indexer``
-    reference don't need to know about the internal type; the actual
-    enumeration + read + binary-filter logic lives on the indexer per
-    issue #4130 review R6 (was reaching into private ``_file_reader`` +
-    ``_read_content`` here).
-    """
-    return await indexer.collect_plugin_documents(path, recursive)
 
 
 class SearchService:
@@ -275,12 +242,6 @@ class SearchService:
 
         # Direct NexusFS access (replaces NexusFSGateway, Issue #1287)
         self._nexus_fs = nexus_fs
-
-        # Semantic search (initialized later via ainitialize_semantic_search)
-        self._query_service: QueryService | None = None
-        self._indexing_service: IndexingService | None = None
-        self._indexing_pipeline: Any = None
-        self._pipeline_indexer: PipelineIndexer | None = None
 
         # Shared thread pool for parallel grep (Issue #929, fix #14)
         self._thread_pool: ThreadPoolExecutor | None = None
@@ -3753,66 +3714,6 @@ class SearchService:
     # Semantic Search (inlined from SemanticSearchMixin, Issue #1287, #2075)
     # =========================================================================
 
-    @property
-    def _has_search_engine(self) -> bool:
-        """Check if a search engine is available.
-
-        Since Issue #2663 (txtai migration), ``_query_service`` is always
-        ``None``; indexing uses ``_pipeline_indexer`` / ``_indexing_service``.
-        """
-        return (
-            self._query_service is not None
-            or self._pipeline_indexer is not None
-            or self._indexing_service is not None
-        )
-
-    def _require_search_engine(self) -> None:
-        """Raise ValueError if no search engine is initialized."""
-        if not self._has_search_engine:
-            raise ValueError(
-                "Semantic search is not initialized. "
-                "Initialize with: await search.initialize_semantic_search()"
-            )
-
-    async def ainitialize_semantic_search(
-        self,
-        *,
-        nx: Any,
-        record_store_engine: Any,  # noqa: ARG002
-        embedding_provider: str | None = None,
-        embedding_model: str | None = None,
-        api_key: str | None = None,
-        chunk_size: int = 1024,
-        chunk_strategy: str = "semantic",
-        async_mode: bool = True,  # noqa: ARG002
-        cache_url: str | None = None,
-        embedding_cache_ttl: int = 86400 * 3,
-    ) -> None:
-        """Initialize semantic search engine (NexusFS path).
-
-        Delegates to factory helper for component creation (Issue #2075, DRY).
-        """
-        from nexus.factory._semantic_search import create_semantic_search_components
-
-        if self._record_store is None:
-            raise RuntimeError("Semantic search requires RecordStore (SQL engine)")
-
-        components = await create_semantic_search_components(
-            record_store=self._record_store,
-            embedding_provider=embedding_provider,
-            embedding_model=embedding_model,
-            api_key=api_key,
-            chunk_size=chunk_size,
-            chunk_strategy=chunk_strategy,
-            cache_url=cache_url,
-            embedding_cache_ttl=embedding_cache_ttl,
-            nx=nx,
-        )
-        self._query_service = components.query_service
-        self._indexing_service = components.indexing_service
-        self._indexing_pipeline = components.indexing_pipeline
-        self._pipeline_indexer = components.pipeline_indexer
-
     async def _semantic_with_sandbox_fallback(
         self,
         federation_call: "Any",
@@ -4198,18 +4099,6 @@ class SearchService:
                 search_mode=search_mode,
             )
 
-        # Issue #2663: _query_service was removed (txtai handles search via
-        # SearchDaemon).  When available, delegate to it; otherwise fall back
-        # to a simple SQL ILIKE search on document_chunks.
-        if self._query_service is not None:
-            results = await self._query_service.search(
-                query=query,
-                path=path,
-                limit=limit,
-                search_mode=search_mode,
-            )
-            return [_result_to_dict(r) for r in results]
-
         # Delegate to SearchDaemon when wired (Issue #2965).
         # Pre-#3699 the daemon owned a single ``_backend`` (TxtaiBackend);
         # post-#3699 it owns ``_fts_backend`` + ``_vector_backend``. Accept
@@ -4317,7 +4206,7 @@ class SearchService:
     ) -> builtins.list[dict[str, Any]]:
         """Fallback search via SQL LIKE on document_chunks (Issue #2663).
 
-        Used when _query_service is None (txtai migration removed it).
+        Used when the Rust search-plugin daemon is unavailable.
 
         The *path* may arrive zone-scoped (``/zone/<id>/…``) from the gRPC
         dispatcher.  We strip the zone prefix and use the inner path for the
@@ -4450,100 +4339,6 @@ class SearchService:
                 hits = self._filter_hit_dicts_by_read_permission(hits, context)
         return hits
 
-    @rpc_expose(description="Index documents for semantic search")
-    async def semantic_search_index(
-        self,
-        path: str = "/",
-        recursive: bool = True,
-    ) -> dict[str, int]:
-        """Index documents for semantic search.
-
-        Args:
-            path: Path to index (file or directory)
-            recursive: If True, index directory recursively
-
-        Returns:
-            Dictionary mapping file paths to number of chunks indexed
-
-        Raises:
-            ValueError: If semantic search is not initialized
-        """
-        # Prefer the P12 plugin when a plugin-transport daemon is
-        # wired (#4628 residual — the shim gate at ``semantic_search``
-        # recognises ``_target`` for the QUERY path, but the INDEX
-        # path here stayed SANDBOX-only until now).  Without this arm
-        # the CLI ``nexus search index <dir>`` reports "Files indexed:
-        # N" from the SANDBOX in-process indexer while the plugin
-        # sees zero — an edge deployment's HERB gate hits hybrid on
-        # an unseeded plugin and returns 0/8 (Docker Publish HERB
-        # gate 2026-08-11..).
-        #
-        # We use the EXPLICIT-payload path (``IndexDocuments``), not
-        # the plugin's walker (``Index`` RPC).  In the sidecar edge
-        # topology the plugin runs in a separate container whose
-        # kernel VFS is disjoint from nexus-server's — a shared
-        # /workspace bind mount populates the OS FS but NOT the
-        # plugin's in-memory VFS, so the plugin's own walk finds
-        # nothing.  Reading files here (via ``_indexing_service``'s
-        # file_reader, which resolves from THIS container's VFS) and
-        # POSTing the bytes is topology-independent.
-        #
-        # Plugin-less deployments and SANDBOX-only builds are
-        # unaffected: they take the ``_indexing_service`` /
-        # ``_pipeline_indexer`` arms below unchanged.
-        daemon = getattr(self, "_search_daemon", None)
-        indexer = self._indexing_service
-        if (
-            daemon is not None
-            and getattr(daemon, "_target", None) is not None
-            and indexer is not None
-        ):
-            try:
-                docs = await _collect_docs_for_plugin(indexer, path, recursive)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "enumerate for plugin index at %s failed (%s); falling back to SANDBOX indexer",
-                    path,
-                    exc,
-                )
-                docs = None
-
-            if docs is not None:
-                if not docs:
-                    # Nothing indexable under ``path`` — SANDBOX would
-                    # also find nothing; short-circuit with a clean 0.
-                    return {path: 0}
-                try:
-                    resp = await daemon.index_documents(docs)
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "plugin index_documents at %s failed (%s); falling back to SANDBOX indexer",
-                        path,
-                        exc,
-                    )
-                else:
-                    indexed = int(resp.get("indexed", 0))
-                    return {path: indexed} if indexed >= 0 else {}
-
-        # Prefer IndexingService (Issue #2075)
-        if self._indexing_service is not None:
-            try:
-                num_chunks = await self._indexing_service.index_document(path)
-                return {path: num_chunks}
-            except ValueError:
-                # path is a directory or doesn't exist as single file
-                pass
-
-            if recursive:
-                idx_results = await self._indexing_service.index_directory(path)
-                return {p: r.chunks_indexed for p, r in idx_results.items()}
-            return {}
-
-        # Fallback: pipeline-based bulk indexing (RPC path without nx)
-        if self._pipeline_indexer is not None:
-            return await self._pipeline_indexer.index_path(path, recursive)
-        return {}
-
     @rpc_expose(description="Get semantic search indexing statistics")
     async def semantic_search_stats(self) -> dict[str, Any]:
         """Get semantic search indexing statistics."""
@@ -4553,16 +4348,11 @@ class SearchService:
             stats.setdefault("engine", stats.get("backend", "txtai"))
             return stats
 
-        if self._indexing_service is not None:
-            return await self._indexing_service.get_index_stats()
-
-        # SQL fallback when indexing_service is unavailable (Issue #2663)
+        # SQL fallback when the Rust search-plugin daemon is unavailable.
         if self._record_store is not None:
             return self._sql_chunk_stats()
 
-        raise ValueError(
-            "Semantic search is not available. No indexing service or record store configured."
-        )
+        raise ValueError("Semantic search is not available. No daemon or record store configured.")
 
     def _sql_chunk_stats(self) -> dict[str, Any]:
         """Basic stats from document_chunks table."""
@@ -4591,44 +4381,3 @@ class SearchService:
         except Exception as e:
             logger.warning("SQL chunk stats failed: %s", e)
             return {"total_chunks": 0, "total_files": 0, "engine": "sql_fallback"}
-
-    @rpc_expose(description="Initialize semantic search engine")
-    async def initialize_semantic_search(
-        self,
-        embedding_provider: str | None = None,
-        embedding_model: str | None = None,
-        api_key: str | None = None,
-        chunk_size: int = 1024,
-        chunk_strategy: str = "semantic",
-        async_mode: bool = True,  # noqa: ARG002
-        cache_url: str | None = None,
-        embedding_cache_ttl: int = 86400 * 3,
-    ) -> None:
-        """Initialize semantic search engine with embedding provider (RPC path).
-
-        Delegates to factory helper for component creation (Issue #2075, DRY).
-        """
-        from nexus.factory._semantic_search import create_semantic_search_components
-
-        if self._record_store is None:
-            raise RuntimeError("Semantic search requires RecordStore (SQL engine)")
-
-        components = await create_semantic_search_components(
-            record_store=self._record_store,
-            embedding_provider=embedding_provider,
-            embedding_model=embedding_model,
-            api_key=api_key,
-            chunk_size=chunk_size,
-            chunk_strategy=chunk_strategy,
-            cache_url=cache_url,
-            embedding_cache_ttl=embedding_cache_ttl,
-            # RPC-path extras for PipelineIndexer
-            session_factory=self._gw_session_factory,
-            metadata=self.metadata,
-            file_reader=self._read,
-            file_lister=self.list,
-        )
-        self._query_service = components.query_service
-        self._indexing_service = components.indexing_service
-        self._indexing_pipeline = components.indexing_pipeline
-        self._pipeline_indexer = components.pipeline_indexer

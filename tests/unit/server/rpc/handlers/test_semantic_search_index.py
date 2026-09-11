@@ -65,9 +65,6 @@ class _SearchService:
     def __init__(self, daemon: _Daemon) -> None:
         self._search_daemon = daemon
 
-    async def ainitialize_semantic_search(self, **_kwargs: Any) -> None:
-        raise AssertionError("current daemon indexing pipeline should be used")
-
 
 class _NexusFs:
     def __init__(self, search: _SearchService) -> None:
@@ -85,7 +82,7 @@ class _NexusFs:
 async def test_semantic_search_index_uses_daemon_pipeline_without_legacy_backend(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("nexus.factory._semantic_search._resolve_parse_fn", lambda _nx: None)
+    monkeypatch.setattr("nexus.factory.adapters._resolve_parse_fn", lambda _nx: None)
     monkeypatch.setattr(
         "nexus.factory.adapters._apply_parse_transform_with_status",
         lambda _nx, _path, raw, *, parse_fn, content_id: (raw.decode(), "plain"),
@@ -121,7 +118,7 @@ async def test_semantic_search_index_runs_daemon_work_on_owner_loop(
 ) -> None:
     from nexus.runtime.zone_runner import ZoneRunner
 
-    monkeypatch.setattr("nexus.factory._semantic_search._resolve_parse_fn", lambda _nx: None)
+    monkeypatch.setattr("nexus.factory.adapters._resolve_parse_fn", lambda _nx: None)
     monkeypatch.setattr(
         "nexus.factory.adapters._apply_parse_transform_with_status",
         lambda _nx, _path, raw, *, parse_fn, content_id: (raw.decode(), "plain"),

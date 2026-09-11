@@ -380,20 +380,10 @@ async def handle_semantic_search_index(
 
         return {"indexed": results, "total_files": len(documents), "total_chunks": total_chunks}
 
-    # Fallback: SearchService pipeline (when daemon is unavailable)
-    try:
-        await search.ainitialize_semantic_search(nx=nexus_fs, record_store_engine=None)
-    except Exception as e:
-        raise ValueError(f"Semantic search could not be initialized: {e}") from e
-
-    results = await search.semantic_search_index(path=path, recursive=recursive)
-    total_chunks = 0
-    for v in results.values():
-        if isinstance(v, int):
-            total_chunks += v
-        elif isinstance(v, dict) and "chunks" in v:
-            total_chunks += v["chunks"]
-    return {"indexed": results, "total_files": len(results), "total_chunks": total_chunks}
+    raise ValueError(
+        "Semantic search indexing requires the Rust search-plugin daemon. "
+        "Wire a search plugin (SEARCH_PLUGIN_TARGET) or ensure `search._search_daemon` is populated."
+    )
 
 
 async def handle_semantic_search(nexus_fs: "NexusFS", params: Any, _context: Any) -> dict[str, Any]:
@@ -412,34 +402,3 @@ async def handle_semantic_search(nexus_fs: "NexusFS", params: Any, _context: Any
     return {"results": results}
 
 
-async def handle_ainitialize_semantic_search(
-    nexus_fs: "NexusFS", params: Any, _context: Any
-) -> dict[str, Any]:
-    """Handle ``ainitialize_semantic_search`` — initialize the semantic pipeline.
-
-    The client side (``nexus search init``) calls
-    ``nx.service("search").ainitialize_semantic_search(nx=nx, ...)`` via the
-    RemoteServiceProxy, which attempts to dispatch the call as an RPC.  Before
-    this handler, no dispatch entry existed and the RPC died with
-    ``Unknown method: ainitialize_semantic_search``.
-
-    The server injects its own ``nexus_fs`` for the ``nx`` parameter since
-    the client's NexusFS instance cannot be serialized across the wire.
-    """
-    search = nexus_fs.service("search")
-    if search is None:
-        raise ValueError("SearchService not available")
-
-    await search.ainitialize_semantic_search(
-        nx=nexus_fs,
-        record_store_engine=None,
-        embedding_provider=getattr(params, "embedding_provider", None),
-        embedding_model=getattr(params, "embedding_model", None),
-        api_key=getattr(params, "api_key", None),
-        chunk_size=getattr(params, "chunk_size", 1024),
-        chunk_strategy=getattr(params, "chunk_strategy", "semantic"),
-        async_mode=getattr(params, "async_mode", True),
-        cache_url=getattr(params, "cache_url", None),
-        embedding_cache_ttl=getattr(params, "embedding_cache_ttl", 86400 * 3),
-    )
-    return {"initialized": True}

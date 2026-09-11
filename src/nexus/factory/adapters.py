@@ -10,6 +10,25 @@ from nexus.lib.virtual_views import is_parseable_path
 
 logger = logging.getLogger(__name__)
 
+
+def _resolve_parse_fn(nx: Any) -> Any:
+    """Extract the bare parse_fn callable from the nx service registry.
+
+    ``nx.service("parse_fn")`` returns the raw callable (Rust kernel
+    service_lookup). Returns None when the service isn't registered
+    (e.g. parsers brick disabled).
+    """
+    if not hasattr(nx, "service"):
+        return None
+    try:
+        ref = nx.service("parse_fn")
+    except Exception:
+        return None
+    if ref is None:
+        return None
+    return ref if callable(ref) else None
+
+
 # =========================================================================
 # Issue #1520: NexusFS → FileReaderProtocol adapter
 # =========================================================================

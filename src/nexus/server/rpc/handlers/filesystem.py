@@ -232,8 +232,10 @@ async def handle_semantic_search_index(
         # pure transform rather than calling ``_NexusFSFileReader.read_text``
         # because the reader constructs an admin context internally and
         # would bypass the caller's permission scope.
-        from nexus.factory._semantic_search import _resolve_parse_fn
-        from nexus.factory.adapters import _apply_parse_transform_with_status
+        from nexus.factory.adapters import (
+            _apply_parse_transform_with_status,
+            _resolve_parse_fn,
+        )
         from nexus.lib.virtual_views import is_parseable_path
 
         _parse_fn = _resolve_parse_fn(nexus_fs)

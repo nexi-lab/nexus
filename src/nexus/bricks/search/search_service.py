@@ -4352,9 +4352,7 @@ class SearchService:
         if self._record_store is not None:
             return self._sql_chunk_stats()
 
-        raise ValueError(
-            "Semantic search is not available. No daemon or record store configured."
-        )
+        raise ValueError("Semantic search is not available. No daemon or record store configured.")
 
     def _sql_chunk_stats(self) -> dict[str, Any]:
         """Basic stats from document_chunks table."""
@@ -4383,4 +4381,3 @@ class SearchService:
         except Exception as e:
             logger.warning("SQL chunk stats failed: %s", e)
             return {"total_chunks": 0, "total_files": 0, "engine": "sql_fallback"}
-

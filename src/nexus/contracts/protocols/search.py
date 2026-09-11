@@ -127,10 +127,4 @@ class SearchProtocol(Protocol):
         context: Any = None,
     ) -> builtins.list[dict[str, Any]]: ...
 
-    async def semantic_search_index(
-        self,
-        path: str = "/",
-        recursive: bool = True,
-    ) -> dict[str, int]: ...
-
     async def semantic_search_stats(self) -> dict[str, Any]: ...

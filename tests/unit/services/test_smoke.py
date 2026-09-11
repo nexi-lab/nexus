@@ -187,7 +187,6 @@ class TestSearchServiceSmoke:
             await service.semantic_search(query="test")
 
 
-
 # =============================================================================
 # MountService Smoke Tests
 # =============================================================================

@@ -400,5 +400,3 @@ async def handle_semantic_search(nexus_fs: "NexusFS", params: Any, _context: Any
         context=_context,
     )
     return {"results": results}
-
-

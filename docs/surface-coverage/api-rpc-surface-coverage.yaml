@@ -7818,9 +7818,9 @@ operations:
     sandbox: supported
     full: supported
   usage_example: POST /api/v2/search/index {"documents":[{"path":"/docs/a.md","content":"..."}]}
-  correctness_test: tests/integration/bricks/search/test_indexing_service.py tests/e2e/self_contained/test_search_surface_live_e2e.py
+  correctness_test: tests/e2e/self_contained/test_search_surface_live_e2e.py
   perf_class: setup
-  perf_link: tests/benchmarks/test_indexing_benchmarks.py; tests/e2e/self_contained/test_search_surface_live_e2e.py
+  perf_link: tests/e2e/self_contained/test_search_surface_live_e2e.py
   gap_issue: null
   owning_issue: 4135
 - id: search.query
@@ -7886,9 +7886,9 @@ operations:
     sandbox: supported
     full: supported
   usage_example: nexus reindex --zone-id root --limit 1000
-  correctness_test: tests/integration/bricks/search/test_indexing_pipeline.py
+  correctness_test: tests/e2e/self_contained/test_search_surface_live_e2e.py
   perf_class: setup
-  perf_link: tests/benchmarks/test_indexing_benchmarks.py
+  perf_link: tests/e2e/self_contained/test_search_surface_live_e2e.py
   gap_issue: null
   owning_issue: 4135
 - id: search.stats
@@ -7903,8 +7903,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: GET /api/v2/search/stats; nexus search stats
-  correctness_test: tests/integration/bricks/search/test_search_service.py::test_semantic_search_stats_prefers_search_daemon
-    tests/integration/services/test_search_semantic.py::TestSemanticSearchStats; tests/e2e/self_contained/test_search_surface_live_e2e.py
+  correctness_test: tests/e2e/self_contained/test_search_surface_live_e2e.py
   perf_class: not_perf_sensitive
   perf_link: stats endpoint; tests/e2e/self_contained/test_search_surface_live_e2e.py enforces live latency
   gap_issue: null
@@ -7958,8 +7957,8 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'MCP: nexus_semantic_search(query="auth flow", search_mode="hybrid", limit=5)'
-  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestSemanticSearchTool; tests/integration/services/test_search_semantic.py::TestSemanticSearch
-    tests/integration/bricks/search/test_federated_search.py::TestRemoteZoneSearch; tests/unit/bricks/search/test_federated_degraded.py::TestSearchServiceSandboxFallback
+  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestSemanticSearchTool; tests/integration/bricks/search/test_federated_search.py::TestRemoteZoneSearch;
+    tests/unit/bricks/search/test_federated_degraded.py::TestSearchServiceSandboxFallback
   perf_class: hot
   perf_link: tests/benchmarks/test_search_protocol_benchmark.py; docs/benchmarks/2026-04-18-sandbox-vs-gbrain.md; tests/benchmarks/bench_sandbox_federation_latency.py::TestFederatedSearchFanoutLatency
   gap_issue: null
@@ -7976,7 +7975,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'RPC: semantic_search_stats()'
-  correctness_test: tests/integration/services/test_search_semantic.py::TestSemanticSearchStats; tests/integration/bricks/search/test_search_service.py
+  correctness_test: tests/integration/bricks/search/test_search_service.py
   perf_class: not_perf_sensitive
   perf_link: stats/control endpoint; no dedicated latency benchmark is required
   gap_issue: null

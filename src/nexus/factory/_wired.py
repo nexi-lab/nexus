@@ -215,25 +215,6 @@ def _boot_post_kernel_services(
         # model download). On other profiles vector search remains opt-in
         # via ``NEXUS_ENABLE_VECTOR_SEARCH=1``.
         #
-        # If both ``sqlite-vec`` and an embedder (fastembed OR a remote
-        # API key for litellm) are reachable, we wire the backend.
-        # The SANDBOX in-process `SqliteVecBackend` init block was
-        # deleted as part of the R10 arc (task #41): the Rust search-
-        # plugin is now the sole semantic-search backend, and no live
-        # SANDBOX deployment depends on the Python in-process path.
-        # `SearchService.sqlite_vec_backend=None` disables the dead
-        # `_try_sqlite_vec_sandbox` / `_hybrid_search_sandbox` fast-
-        # paths — those method bodies are unreachable but left in
-        # `search_service.py` for a follow-up strip PR to remove
-        # cleanly alongside the rest of the SANDBOX chain
-        # (indexing.py / indexing_service.py / pipeline_indexer.py /
-        # chunking.py / chunk_store.py / factory/_semantic_search.py).
-        # Env vars `NEXUS_ENABLE_VECTOR_SEARCH` /
-        # `NEXUS_DISABLE_VECTOR_SEARCH` are no-ops as a result — the
-        # `connect()` helper still forwards them for back-compat, but
-        # nothing here reads them.
-        _sqlite_vec_backend: Any = None
-
         # Issue #3778 (R2 review): look up an already-constructed federation
         # dispatcher on the ServiceRegistry / NexusFS if one is available, so
         # the SANDBOX semantic path actually dispatches when the deployment
@@ -257,13 +238,11 @@ def _boot_post_kernel_services(
             record_store=getattr(nx, "_record_store", None),
             nexus_fs=nx,
             deployment_profile=_profile,
-            sqlite_vec_backend=_sqlite_vec_backend,
             federation_dispatcher=_federation_dispatcher,
         )
         logger.debug(
-            "[BOOT:WIRED] SearchService created (kernel-level, profile=%s, sqlite_vec=%s)",
+            "[BOOT:WIRED] SearchService created (kernel-level, profile=%s)",
             _profile,
-            _sqlite_vec_backend is not None,
         )
     except Exception as exc:
         logger.warning(

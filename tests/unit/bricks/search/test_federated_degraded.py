@@ -312,9 +312,13 @@ class TestWriteOnlyContextFailsClosedEverywhere:
         from nexus.contracts.types import OperationContext
 
         svc = _make_sandbox_service()
-        # Any retrieval work reaching these would be a leak.
-        svc._hybrid_search_sandbox = None  # type: ignore[assignment]
-        svc._try_sqlite_vec_sandbox = None  # type: ignore[assignment]
+        # `_hybrid_search_sandbox` and `_try_sqlite_vec_sandbox`
+        # were removed as part of the R10 SANDBOX cleanup — the
+        # `_semantic_search_sandbox` chain now goes federation →
+        # BM25S with no in-process vec lane.  The leak-check
+        # below (dispatched["called"] is False + out == []) still
+        # covers the invariant: an empty readable scope must not
+        # reach ANY retrieval lane.
 
         dispatched = {"called": False}
 

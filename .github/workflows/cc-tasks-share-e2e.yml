@@ -176,12 +176,24 @@ jobs:
 
       - name: Wait for founder + joiner healthy
         if: steps.changes.outputs.run == 'true'
+        # Readiness is "the shared zone can COMMIT", not "the port answers".
+        # The joiner rejoins `sharedzone` as a second voter and then restarts,
+        # so there is a window where the zone has two voters and one of them is
+        # down: writes correctly fail with `proposal dropped` until the group
+        # re-forms. A TCP probe cannot see that window — it passed while the
+        # first test's write took an I/O error — so gate on a real write
+        # through the federated mount instead, which is exactly the property
+        # every test below depends on.
         run: |
+          probe=/mnt/cc-tasks/founder/.e2e-readiness-probe
           deadline=$((SECONDS + 180))
           while [ $SECONDS -lt $deadline ]; do
             if docker exec nexus-cc-tasks-founder bash -c 'timeout 1 bash -c "</dev/tcp/localhost/2126" 2>/dev/null' && \
-               docker exec nexus-cc-tasks-joiner bash -c 'timeout 1 bash -c "</dev/tcp/localhost/2126" 2>/dev/null'; then
-              echo "Founder + joiner healthy (gRPC 2126 reachable on both) after ${SECONDS}s"
+               docker exec nexus-cc-tasks-joiner bash -c 'timeout 1 bash -c "</dev/tcp/localhost/2126" 2>/dev/null' && \
+               docker exec nexus-cc-tasks-founder bash -c "echo ready > $probe" 2>/dev/null; then
+              # Leave nothing behind: the tests list this directory.
+              docker exec nexus-cc-tasks-founder bash -c "rm -f $probe" 2>/dev/null || true
+              echo "Founder + joiner healthy and the shared zone commits, after ${SECONDS}s"
               exit 0
             fi
             sleep 2

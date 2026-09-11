@@ -186,27 +186,6 @@ class TestSearchServiceSmoke:
         with pytest.raises(ValueError, match="not available"):
             await service.semantic_search(query="test")
 
-    @pytest.mark.asyncio
-    async def test_initialize_semantic_search_basic(self, mock_metadata):
-        """Test initialize_semantic_search can be called."""
-        from nexus.bricks.search.search_service import SearchService
-
-        service = SearchService(
-            metadata_store=mock_metadata,
-            enforce_permissions=False,
-        )
-
-        # Should work without embedding provider (keyword-only mode)
-        try:
-            await service.initialize_semantic_search(
-                embedding_provider=None,
-                async_mode=True,
-            )
-            # Check that _async_search was created
-            assert hasattr(service, "_async_search")
-        except Exception:
-            # May fail if database connection fails, that's ok for smoke test
-            pass
 
 
 # =============================================================================

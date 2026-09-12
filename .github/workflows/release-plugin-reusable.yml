@@ -353,6 +353,11 @@ jobs:
     name: Package and upload
     needs: [build]
     runs-on: ubuntu-latest
+    # Surfaced for `create-release`, which runs in its own job and so cannot
+    # read this one's step outputs.
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
 
     steps:
       - name: Checkout code
@@ -716,12 +721,12 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           # Explicit, for the dispatch path: `github.ref` is a branch there.
-          tag_name: ${{ steps.version.outputs.tag }}
+          tag_name: ${{ needs.package-and-upload.outputs.tag }}
           body_path: release-body/release_body.md
           files: release-assets/*
           draft: false
           # Read the pre-release marker off the resolved version for the same
           # reason — `github.ref` does not carry it on a dispatch.
-          prerelease: ${{ contains(steps.version.outputs.version, 'alpha') || contains(steps.version.outputs.version, 'beta') || contains(steps.version.outputs.version, 'rc') }}
+          prerelease: ${{ contains(needs.package-and-upload.outputs.version, 'alpha') || contains(needs.package-and-upload.outputs.version, 'beta') || contains(needs.package-and-upload.outputs.version, 'rc') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

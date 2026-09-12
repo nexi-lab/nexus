@@ -139,7 +139,7 @@ class TestFeaturesInfoComputationIntegration:
         app = FastAPI()
         profile = DeploymentProfile.FULL
         app.state.deployment_profile = profile.value
-        app.state.enabled_bricks = profile.default_bricks()
+        app.state.enabled_services = profile.default_services()
         app.state.profile_tuning = profile.tuning()
         app.state.deployment_mode = "standalone"
 
@@ -167,7 +167,7 @@ class TestFeaturesInfoComputationIntegration:
         for p in [DeploymentProfile.EMBEDDED, DeploymentProfile.CLOUD]:
             app = FastAPI()
             app.state.deployment_profile = p.value
-            app.state.enabled_bricks = p.default_bricks()
+            app.state.enabled_services = p.default_services()
             app.state.profile_tuning = p.tuning()
             app.state.deployment_mode = "standalone"
             _compute_features_info(app)

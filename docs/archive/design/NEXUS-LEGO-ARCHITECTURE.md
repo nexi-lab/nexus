@@ -1,4 +1,4 @@
-# NEXUS LEGO ARCHITECTURE: Feature Bricks on a Microkernel Baseplate
+# NEXUS LEGO ARCHITECTURE: Feature Services on a Microkernel Baseplate
 
 ### A Design Document for the Modular Agent OS
 
@@ -12,8 +12,8 @@
 
 1. [Vision: Nexus as a Lego System](#part-1-vision-nexus-as-a-lego-system)
 2. [The Four-Tier Architecture](#part-2-the-four-tier-architecture)
-3. [Feature Bricks Catalog](#part-3-feature-bricks-catalog)
-4. [Brick Composition Patterns](#part-4-brick-composition--kiss--recursive)
+3. [Feature Services Catalog](#part-3-feature-bricks-catalog)
+4. [Service Composition Patterns](#part-4-brick-composition--kiss--recursive)
 5. [Design Decisions — Trade-Offs](#part-5-design-decisions--trade-offs)
 6. [Technology Strategy](#part-6-technology-strategy)
 7. [Linux Kernel Lessons](#part-7-linux-kernel-lessons)
@@ -29,7 +29,7 @@
 
 ### 1.1 The Metaphor
 
-Lego works because of **a universal baseplate** and **bricks that snap together through a standard interface**. Nexus follows the same principle:
+Lego works because of **a universal baseplate** and **services that snap together through a standard interface**. Nexus follows the same principle:
 
 ```
 ┌───────────────────────────────────────────────────────────┐
@@ -69,9 +69,9 @@ ConnectorProtocol sits **between** the kernel and storage pillars as a boundary 
 
 | # | Principle | Lego Analogy | Equivalent |
 |---|-----------|-------------|------------|
-| 1 | **Minimal kernel, maximal bricks** | Small baseplate, unlimited bricks | Microkernel: 2 kernel protocols + 5 system services |
+| 1 | **Minimal kernel, maximal services** | Small baseplate, unlimited bricks | Microkernel: 2 kernel protocols + 5 system services |
 | 2 | **Standard interface** | Studs are always 8mm apart | `Protocol` classes define every boundary |
-| 3 | **Bricks don't know about each other** | Red brick doesn't know blue | No import between feature modules |
+| 3 | **Services don.t know about each other** | Red brick doesn't know blue | No import between feature modules |
 | 4 | **Hot-swappable** | Pull off, put another on | `register_connector()` / plugin registry |
 | 5 | **Composition over inheritance** | Stack bricks, don't mold shapes | `file_operations` vtable, not class trees |
 | 6 | **Namespace is security** | Each builder gets own baseplate view | Plan 9: unmounted = invisible |
@@ -86,12 +86,12 @@ ConnectorProtocol sits **between** the kernel and storage pillars as a boundary 
   - `core/protocols/`: 2 kernel (VFSRouter, FileMetadata) + 8 boundary contracts (ConnectorProtocol × 7 sub-protocols + CachingConnectorContract)
   - `services/protocols/`: 35+ Protocols across 20+ domain files
   - `workflows/protocol.py`: 5 Protocols | `ipc/protocols.py`: 3 Protocols | `governance/protocols.py`: 4 Protocols
-- `pay/` module (2,635 LOC) = exemplary brick with zero core imports
+- `pay/` module (2,635 LOC) = exemplary service with zero core imports
 - Zones deeply integrated across 20+ core files
 
 **Target:**
 - 4-tier separation: Storage Pillars → Kernel (~1K LOC) → System Services (~1K LOC) → Bricks
-- Brick registry: `register_brick("search", SearchBrick)` — generalizing `ParserRegistry`
+- Brick registry: `register_service("search", SearchService)` — generalizing `ParserRegistry`
 - Agent sees only mounted bricks — unmounted = invisible, not forbidden
 - `factory.py` stays as explicit Composition Root (Seemann pattern)
 
@@ -181,9 +181,9 @@ Critical, always-started, but CAN run outside the kernel (no hardware privilege 
 | `HookEngineProtocol` | Intercept & transform, pre/post | `services/protocols/hook_engine.py` |
 | `SchedulerProtocol` | Who goes next, fair-share | `services/protocols/scheduler.py` |
 
-**35+ additional service-level Protocols** exist in `services/protocols/` for domain bricks: LLM, Memory, Trajectory, Reputation, Payment, ReBAC, OAuth, Delegation, Parse, MCP, Skills, ContextManifest, Version, APIKeyCreator, Search, Events, Mount, ShareLink, and more. These are brick interfaces, not kernel code.
+**35+ additional service-level Protocols** exist in `services/protocols/` for domain services: LLM, Memory, Trajectory, Reputation, Payment, ReBAC, OAuth, Delegation, Parse, MCP, Skills, ContextManifest, Version, APIKeyCreator, Search, Events, Mount, ShareLink, and more. These are brick interfaces, not kernel code.
 
-Everything else — search, memory, payments, connectors, ReBAC — is a **brick**.
+Everything else — search, memory, payments, connectors, ReBAC — is a **service**.
 
 ### 2.5 Storage Pillars
 
@@ -206,7 +206,7 @@ A Zone is the fundamental isolation and consensus unit. 1 Zone = 1 Raft group = 
 
 ### 3.1 Brick Catalog
 
-Brick readiness = **core imports**. Zero core imports = brick-ready (like `pay/`).
+Brick readiness = **core imports**. Zero core imports = service-ready (like `pay/`).
 
 | Brick | Protocol | LOC | Core Imports | Ready? |
 |-------|----------|-----|-------------|--------|
@@ -229,8 +229,8 @@ Brick readiness = **core imports**. Zero core imports = brick-ready (like `pay/`
 ### 3.2 Brick Lifecycle
 
 ```
-1. REGISTER   →  brick declares its Protocol implementation
-2. MOUNT      →  namespace manager makes brick visible to agent
+1. REGISTER   →  service declares its Protocol implementation
+2. MOUNT      →  namespace manager makes service visible to agent
 3. USE        →  VFS router dispatches to brick
 4. HOOK       →  hook engine intercepts brick I/O
 5. LOG        →  event log records brick activity
@@ -734,7 +734,7 @@ nexus/
 
 ### 11.3 Proven Patterns to Copy
 
-**`pay/` module** — the exemplary brick:
+**`pay/` module** — the exemplary service:
 - Clean `__init__.py` exports (`CreditsService`, `NexusPay`, `X402Client`)
 - Zero imports from `core/`, `server/`, or other modules
 - Independent database (TigerBeetle)

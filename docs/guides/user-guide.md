@@ -206,9 +206,9 @@ profile](../deployment/sandbox-profile.md).
 
 > **Not to be confused with the sandbox-provisioning brick.** The
 > `sandbox` *deployment profile* is *how Nexus runs* (a lightweight
-> runtime). `BRICK_SANDBOX` is a *feature* — provisioning code-execution
+> runtime). `SERVICE_SANDBOX` is a *feature* — provisioning code-execution
 > sandboxes (E2B/Docker). They are orthogonal: the `sandbox` profile has
-> `BRICK_SANDBOX` **disabled** by default. A `full`/`cloud` profile can
+> `SERVICE_SANDBOX` **disabled** by default. A `full`/`cloud` profile can
 > provision sandboxes; a `sandbox`-profile runtime cannot.
 
 **Start it (from a source checkout or a package install):**
@@ -277,7 +277,7 @@ curl -s http://127.0.0.1:2026/api/v2/features
 **Expected behavior:**
 
 - **Success:** `/health` returns `200`; `/api/v2/features` reports
-  `"profile": "sandbox"` with `enabled_bricks` ⊇ `{search, mcp, parsers,
+  `"profile": "sandbox"` with `enabled_services` ⊇ `{search, mcp, parsers,
   eventlog, namespace, permissions}` and `llm`/`pay`/`observability`/
   `federation` **absent**.
 - **Denied (usage error, exit 64):** `--workspace`, `--hub-url`, or
@@ -298,7 +298,7 @@ curl -s http://127.0.0.1:2026/api/v2/features
   sandbox because no VFS gRPC server exists there; it is the **triage
   issue** for this surface (close-recommended / reclassify as a cluster-only
   feature request). Sandbox-provisioning RPCs/CLI are absent
-  (`BRICK_SANDBOX` disabled).
+  (`SERVICE_SANDBOX` disabled).
 
 **Correctness assertion you can run:** with the daemon up,
 `curl -s http://127.0.0.1:2026/api/v2/features | jq -r .profile` prints

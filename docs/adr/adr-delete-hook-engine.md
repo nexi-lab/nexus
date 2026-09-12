@@ -65,7 +65,7 @@ notification mechanism.**
    - `register_intercept(op)` — when you need sync veto/validation
    - `register_observe(op)` — when you need async fire-and-forget
 
-2. **Simple callback lists** are acceptable for brick-internal
+2. **Simple callback lists** are acceptable for service-internal
    observer patterns that don't need kernel-level dispatch (e.g.,
    artifact indexing uses `list[ArtifactCallback]` on TaskManager).
 
@@ -122,16 +122,16 @@ dispatch.register_observe("write", on_write_callback)
 dispatch.register_intercept("delete", permission_check)
 ```
 
-### What about brick lifecycle events?
+### What about service lifecycle events?
 
 BrickLifecycleManager previously fired 6 hook phases (PRE_MOUNT,
 POST_MOUNT, etc.) but no code ever registered handlers for them.
 They were pure dead fires.
 
-If future brick lifecycle notifications are needed:
-- Use `dispatch.register_observe("brick.mounted")` for async
+If future service lifecycle notifications are needed:
+- Use `dispatch.register_observe("service.mounted")` for async
   notification
-- Use `dispatch.register_intercept("brick.mounting")` if veto
+- Use `dispatch.register_intercept("service.mounting")` if veto
   capability is required
 - Do **not** rebuild a hook engine for this
 

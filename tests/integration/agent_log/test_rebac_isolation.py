@@ -4,7 +4,7 @@ Phase B (runtime wiring of /.activity/ mount + ReBAC + agent onboarding) is
 deferred to a follow-up. These tests exercise what the Phase A building
 blocks guarantee:
 
-- AgentLogBrick issues grants that, when honored by the ReBAC evaluator,
+- AgentLogService issues grants that, when honored by the ReBAC evaluator,
   isolate each agent to their own log file.
 - The store's read_path returns only the bytes for the agent whose id is
   in the path, regardless of which agent_id was used during writes by other
@@ -20,7 +20,7 @@ import json
 
 import pytest
 
-from nexus.bricks.agent_log.brick import AgentLogBrick
+from nexus.bricks.agent_log.brick import AgentLogService
 from nexus.contracts.protocols.activity import (
     EventKind,
     Result,
@@ -54,7 +54,7 @@ async def test_brick_grant_template_isolates_agents():
     def fake_grant(*, subject, relation, object):  # noqa: A002
         grants.append((subject, relation, object))
 
-    brick = AgentLogBrick(add_mount=_noop_mount, add_rebac_grant=fake_grant, store=object())
+    brick = AgentLogService(add_mount=_noop_mount, add_rebac_grant=fake_grant, store=object())
     await brick.startup(agent_ids=["alice", "bob"])
 
     # Verify by simulating ReBAC's path-glob match: alice's grant must NOT

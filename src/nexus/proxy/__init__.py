@@ -1,4 +1,4 @@
-"""Proxy brick — transparent edge-to-cloud forwarding with offline queue.
+"""Proxy service — transparent edge-to-cloud forwarding with offline queue.
 
 Public API
 ----------
@@ -6,7 +6,7 @@ Public API
 - ``ProxyVFSBrick``        — proxy for VFSOperations protocol
 - ``ProxySchedulerBrick``  — proxy for SchedulerProtocol
 - ``ProxyBrickConfig``     — immutable configuration dataclass
-- ``create_proxy_brick()`` — convenience factory
+- ``create_proxy_service()`` — convenience factory
 
 Errors
 ------
@@ -49,7 +49,7 @@ __all__ = [
     "OfflineQueueProtocol",
     "QueuedOperation",
     "ReplayEngine",
-    "create_proxy_brick",
+    "create_proxy_service",
 ]
 
 _PROTOCOL_MAP: dict[str, type[ProxyBrick]] = {
@@ -58,7 +58,7 @@ _PROTOCOL_MAP: dict[str, type[ProxyBrick]] = {
 }
 
 
-def create_proxy_brick(
+def create_proxy_service(
     protocol: str,
     config: ProxyBrickConfig,
 ) -> ProxyBrick:

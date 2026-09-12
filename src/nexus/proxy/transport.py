@@ -1,4 +1,4 @@
-"""HTTP transport for proxy brick.
+"""HTTP transport for proxy service.
 
 Wraps ``httpx.AsyncClient`` with connection pooling, HTTP/2, and
 per-call retry via ``tenacity``.

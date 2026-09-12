@@ -12,7 +12,7 @@ CacheStore is NOT required by the Kernel. When absent, consumers degrade gracefu
 - TigerCache: O(n) permission checks (no pre-materialized bitmaps)
 
 Canonical home for CacheStoreABC (Issue #2055). Lives in contracts/ because it is
-a multi-layer type used by kernel, services, and bricks — per §3.1 Placement
+a multi-layer type used by kernel, services, and services — per §3.1 Placement
 Decision Tree: "Multi-layer types → contracts/".
 
 Usage:

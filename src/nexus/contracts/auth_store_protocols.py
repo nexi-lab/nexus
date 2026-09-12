@@ -1,10 +1,10 @@
-"""Store Protocol interfaces for auth brick decoupling.
+"""Store Protocol interfaces for auth service decoupling.
 
 These ``@runtime_checkable`` Protocols define the boundary between the
-auth brick and the persistence layer.  The auth brick depends only on
+auth service and the persistence layer.  The auth service depends only on
 these interfaces — never on SQLAlchemy models directly.
 
-Issue #2436: Move auth/ to bricks/auth/ with Protocol DI.
+Issue #2436: Move auth/ to services/auth/ with Protocol DI.
 """
 
 from datetime import datetime

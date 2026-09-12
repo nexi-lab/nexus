@@ -526,7 +526,7 @@ In Linux, `vfsmount` (kernel) has two layers: `lookup_slow()` is the hot-path re
 - Delegation creates child agent with narrowed permissions (coordinator→worker pattern)
 - Uses `derivation.py` for namespace path narrowing, not lifecycle management
 
-**Decision: Keep as separate domain — Agent Delegation.** It's a peer-to-peer coordination model with narrowed permissions, complementary to lifecycle management. (Note: the A2A protocol brick was removed in #2979 — delegation now operates purely through namespace derivation + ReBAC.)
+**Decision: Keep as separate domain — Agent Delegation.** It's a peer-to-peer coordination model with narrowed permissions, complementary to lifecycle management. (Note: the A2A protocol service was removed in #2979 — delegation now operates purely through namespace derivation + ReBAC.)
 
 ### 1.28 Operations Undo
 
@@ -697,7 +697,7 @@ In Linux, `vfsmount` (kernel) has two layers: `lookup_slow()` is the hot-path re
 | P4 | **ConnectorProtocol** | `core/protocols/connector.py` | Kernel | Sync | 13 (Medium) | Composed (P2+P3) | storage driver | Full storage backend interface (ContentStore + DirectoryOps + lifecycle) |
 | P5 | **VFSRouterProtocol** | `core/protocols/vfs_router.py` | Kernel | Async | 1 (Micro) | Standalone | VFS `lookup_slow()` | Route virtual path → backend + physical path. Mount CRUD moved to P10 MountProtocol. |
 | P6 | **SearchProtocol** | `services/protocols/search.py` | Service | Mixed | 6 (Small) | Standalone | `readdir` + custom | Unified find interface (glob/grep/semantic) |
-| P7 | **SearchBrickProtocol** | `services/protocols/search.py` | Service | Mixed | 5 (Small) | Standalone | search daemon | Per-brick search with indexing lifecycle |
+| P7 | **SearchServiceProtocol** | `services/protocols/search.py` | Service | Mixed | 5 (Small) | Standalone | search daemon | Per-brick search with indexing lifecycle |
 | P8 | **PermissionProtocol** | `services/protocols/permission.py` | Service | Sync | 6 (Small) | Standalone | SELinux / Zanzibar | ReBAC check/write/delete/expand |
 | P9a | **WatchProtocol** | `services/protocols/watch.py` | Service | Async | 2 (Micro) | Standalone | `inotify` | File change long-poll (split from EventsProtocol) |
 | P9b | **LockProtocol** | `services/protocols/lock.py` | Service | Async | 3 (Micro) | Standalone | `flock` | Advisory lock lifecycle (split from EventsProtocol) |
@@ -719,7 +719,7 @@ In Linux, `vfsmount` (kernel) has two layers: `lookup_slow()` is the hot-path re
 
 | # | Protocol | File | Tier | Sync | Methods | Notes |
 |---|----------|------|------|------|---------|-------|
-| I1 | **VFSOperations** | `ipc/protocols.py` | IPC | Async | 8 | Subset of P1+P5 for IPC brick inbox/outbox |
+| I1 | **VFSOperations** | `ipc/protocols.py` | IPC | Async | 8 | Subset of P1+P5 for IPC service inbox/outbox |
 | I2 | **EventPublisher** | `ipc/protocols.py` | IPC | Async | 1 | Minimal publish for IPC isolation |
 | I3 | **EventSubscriber** | `ipc/protocols.py` | IPC | Async | 1 | Minimal subscribe for IPC isolation |
 
@@ -750,7 +750,7 @@ In Linux, `vfsmount` (kernel) has two layers: `lookup_slow()` is the hot-path re
 | Issue | Protocols | Problem | Recommendation |
 |-------|-----------|---------|----------------|
 | ~~**BUNDLE**~~ | ~~P9 (Events)~~ | ~~Bundles file watching + advisory locking~~ | **DONE (#546)** — split into WatchProtocol + LockProtocol |
-| **TWO LEVELS** | P6 (Search) + P7 (SearchBrick) | Both cover Content Discovery; P7 is per-brick, P6 is aggregate | Keep both — P7 is driver-level, P6 is service-level |
+| **TWO LEVELS** | P6 (Search) + P7 (SearchBrick) | Both cover Content Discovery; P7 is per-service, P6 is aggregate | Keep both — P7 is driver-level, P6 is service-level |
 | **COMPOSITION** | P2 (ContentStore) + P3 (DirOps) → P4 (Connector) | P4 is the union of P2 + P3 + lifecycle | Keep all three — ISP compliance (callers needing only read don't depend on mkdir) |
 | **OVERLAP** | P19 (EventLog service) ↔ P17 (HookEngine) | Both fire on operations; hooks are sync pre/post, event log is async durable append | Keep both — different timing (inline vs async) and durability (ephemeral vs durable) |
 | **TINY** | P20 (AnomalyDetector) | 1 method — too small for an ABC? | Keep as-is — strategy pattern for swappable detection algorithms |
@@ -867,7 +867,7 @@ Tier assignment per [KERNEL-ARCHITECTURE](https://github.com/nexi-lab/nexus-vfs/
 | Tier | Swap | Protocols | Scenarios |
 |------|------|-----------|-----------|
 | **Static Kernel** (never swap) | Compile-time | P1 (FileMetadata), P5 (VFSRouter) | S1 (File I/O metadata), S19 (VFS Routing) |
-| **Drivers** (config-time DI) | Restart required | P2 (ContentStore), P3 (DirOps), P4 (Connector), P7 (SearchBrick) | S20 (Storage Connector), S2 (Search per-brick) |
+| **Drivers** (config-time DI) | Restart required | P2 (ContentStore), P3 (DirOps), P4 (Connector), P7 (SearchBrick) | S20 (Storage Connector), S2 (Search per-service) |
 | **Services** (runtime load/unload) | Hot-swap via ServiceRegistry | All others (P6, P8-P22, new Protocols) | S2-S18, S21-S28 |
 
 ### 3.4 Findings and Recommendations
@@ -903,7 +903,7 @@ Tier assignment per [KERNEL-ARCHITECTURE](https://github.com/nexi-lab/nexus-vfs/
 
 **Non-Actions:**
 - P22 (ContextManifestProtocol): keep as convenience interface but do NOT count as Ops ABC — it's orchestration
-- IPC Protocols (I1-I3): keep as brick-local subsets — not primary Ops ABCs
+- IPC Protocols (I1-I3): keep as service-local subsets — not primary Ops ABCs
 - NexusFilesystem (F1): keep as composite facade for skills runtime — verified by protocol compat test
 - P2 + P3 + P4 composition: correct ISP pattern — keep all three levels
 

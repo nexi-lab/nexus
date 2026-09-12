@@ -11,7 +11,7 @@ import sys
 import pytest
 
 # Brick modules to test
-_BRICK_MODULES = [
+_SERVICE_MODULES = [
     "nexus.bricks.delegation.models",
     "nexus.bricks.delegation.errors",
     "nexus.bricks.delegation.derivation",
@@ -36,7 +36,7 @@ _FORBIDDEN_MODULES = [
 ]
 
 
-@pytest.mark.parametrize("brick_module", _BRICK_MODULES)
+@pytest.mark.parametrize("brick_module", _SERVICE_MODULES)
 def test_brick_does_not_import_forbidden_modules(brick_module: str) -> None:
     """Verify that importing a brick module does not pull in forbidden core modules."""
     # Snapshot sys.modules before import

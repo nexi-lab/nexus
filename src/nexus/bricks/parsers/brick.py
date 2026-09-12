@@ -1,4 +1,4 @@
-"""ParsersBrick — single entry point for document parsing (Issue #1523).
+"""ParsersService — single entry point for document parsing (Issue #1523).
 
 Follows the ``pay/`` exemplary brick pattern:
 - Zero runtime imports from ``nexus.core``
@@ -21,7 +21,7 @@ from nexus.bricks.parsers.registry import ParserRegistry
 logger = logging.getLogger(__name__)
 
 
-class ParsersBrick:
+class ParsersService:
     """Facade for document parsing — owns both registries.
 
     Following the ``pay/`` exemplary brick pattern:
@@ -31,7 +31,7 @@ class ParsersBrick:
 
     Example::
 
-        brick = ParsersBrick()
+        brick = ParsersService()
         parse_fn = brick.create_parse_fn()
         result = parse_fn(raw_bytes, "document.pdf")
     """
@@ -40,7 +40,7 @@ class ParsersBrick:
         self,
         parsing_config: Any | None = None,
     ) -> None:
-        """Initialize the ParsersBrick.
+        """Initialize the ParsersService.
 
         Args:
             parsing_config: Optional ParseConfig (or duck-typed equivalent)

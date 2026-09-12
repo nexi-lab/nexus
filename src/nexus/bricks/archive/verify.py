@@ -7,7 +7,7 @@ embedded ``signer_pubkey_b64``.
 
 Cross-brick note: this module imports ``ArchiveSigner`` and
 ``canonical_json_bytes`` from ``nexus.bricks.portability.signer``; that
-dependency is listed in ``KNOWN_CROSS_BRICK_EXCEPTIONS`` in
+dependency is listed in ``KNOWN_CROSS_SERVICE_EXCEPTIONS`` in
 ``.pre-commit-hooks/check_brick_imports.py`` under the
 ``("archive", "portability")`` key.
 """

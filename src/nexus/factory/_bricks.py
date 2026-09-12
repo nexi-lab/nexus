@@ -1,4 +1,4 @@
-"""Boot Tier 2 (BRICK) — optional, silent on failure.
+"""Boot Tier 2 (SERVICE) — optional, silent on failure.
 
 Includes brick auto-discovery via ``brick_factory.py`` convention.
 """
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
-class BrickFactoryDescriptor:
+class ServiceFactoryDescriptor:
     """Descriptor for a discoverable brick factory."""
 
     name: str | None  # Profile gate name (None = always enabled)
@@ -30,11 +30,11 @@ class BrickFactoryDescriptor:
     manifest: Any | None = None  # Optional BrickManifest instance
 
 
-def _discover_brick_factories(tier: str = "independent") -> list[BrickFactoryDescriptor]:
+def _discover_service_factories(tier: str = "independent") -> list[ServiceFactoryDescriptor]:
     """Scan ``nexus/bricks/*/brick_factory.py`` for factory functions.
 
     Each discoverable brick provides a ``brick_factory.py`` module with:
-    - ``BRICK_NAME``: Maps to deployment profile gate name (None = always on)
+    - ``SERVICE_NAME``: Maps to deployment profile gate name (None = always on)
     - ``TIER``: ``"independent"`` or ``"dependent"``
     - ``RESULT_KEY``: Key in the result dict
     - ``MANIFEST``: Optional ``BrickManifest`` instance for import verification
@@ -43,7 +43,7 @@ def _discover_brick_factories(tier: str = "independent") -> list[BrickFactoryDes
     import importlib
     import pkgutil
 
-    factories: list[BrickFactoryDescriptor] = []
+    factories: list[ServiceFactoryDescriptor] = []
     try:
         bricks_pkg = importlib.import_module("nexus.bricks")
     except ImportError:
@@ -62,8 +62,8 @@ def _discover_brick_factories(tier: str = "independent") -> list[BrickFactoryDes
             continue
 
         factories.append(
-            BrickFactoryDescriptor(
-                name=getattr(mod, "BRICK_NAME", name),
+            ServiceFactoryDescriptor(
+                name=getattr(mod, "SERVICE_NAME", name),
                 result_key=mod.RESULT_KEY,
                 create_fn=mod.create,
                 manifest=getattr(mod, "MANIFEST", None),
@@ -83,7 +83,7 @@ def _boot_independent_bricks(
     system: dict[str, Any],
     svc_on: Callable[[str], bool] | None = None,
 ) -> dict[str, Any]:
-    """Boot Tier 2 (BRICK) — optional, silent on failure.
+    """Boot Tier 2 (SERVICE) — optional, silent on failure.
 
     Creates Search/Zoekt wiring, Wallet, Manifest, ToolNamespace,
     ChunkedUpload, Distributed infra, Workflow engine, API key creator.
@@ -104,7 +104,7 @@ def _boot_independent_bricks(
 
     # === Auto-discovered bricks ===
     auto_results: dict[str, Any] = {}
-    for desc in _discover_brick_factories("independent"):
+    for desc in _discover_service_factories("independent"):
         # Manifest pre-check: verify imports once, skip if required modules missing
         _manifest_status: dict[str, bool] | None = None
         if desc.manifest is not None:
@@ -187,7 +187,7 @@ def _boot_independent_bricks(
         except ImportError:
             logger.debug("[BOOT:BRICK] Zoekt not available, skipping callback wiring")
     else:
-        logger.debug("[BOOT:BRICK] Search brick disabled by profile")
+        logger.debug("[BOOT:BRICK] Search service disabled by profile")
 
     # --- Task Manager Brick ---
     if _on("task_manager"):
@@ -502,7 +502,7 @@ def _boot_dependent_bricks(
     Cross-brick factories (ToolInfo, GraphStore) are constructed here in the
     factory layer and injected into brick factories to respect LEGO Principle 3.
     """
-    # Build cross-brick factories in the factory layer (not inside bricks)
+    # Build cross-service factories in the factory layer (not inside bricks)
     tool_info_factory: Callable[..., Any] | None = None
     graph_store_factory: Callable[..., Any] | None = None
 
@@ -518,7 +518,7 @@ def _boot_dependent_bricks(
         # graph_store module was deleted; graph_store_factory stays None.
         logger.debug("[BOOT:BRICK:DEP] GraphStore not available (deleted, Issue #2663)")
 
-    def _create_dependent(descriptor: BrickFactoryDescriptor) -> Any:
+    def _create_dependent(descriptor: ServiceFactoryDescriptor) -> Any:
         return descriptor.create_fn(
             ctx,
             system,
@@ -529,7 +529,7 @@ def _boot_dependent_bricks(
 
     artifact_observers: list[Any] = []
 
-    for desc in _discover_brick_factories("dependent"):
+    for desc in _discover_service_factories("dependent"):
         result = _safe_create(
             desc.result_key,
             partial(_create_dependent, desc),

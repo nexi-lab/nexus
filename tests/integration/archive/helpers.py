@@ -65,7 +65,7 @@ def boot_lightweight_nexus(db_path: Path) -> Any:
             enable_workflows=False,
         ),
         is_admin=True,
-        enabled_bricks=frozenset(),
+        enabled_services=frozenset(),
         init_cred=TEST_ADMIN_CONTEXT,
     )
     fs._register_runtime_closeable(kernel)

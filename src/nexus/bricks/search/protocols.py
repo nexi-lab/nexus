@@ -1,4 +1,4 @@
-"""Search brick protocols for dependency inversion (Issue #1520, #2075, #2663).
+"""Search service protocols for dependency inversion (Issue #1520, #2075, #2663).
 
 Defines SearchableProtocol (daemon-facing facade) and SearchBackend
 (backend-facing primitive). Re-exports FileReaderProtocol for backward compat

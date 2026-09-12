@@ -1,6 +1,6 @@
 """Factory adapter for context manifest MCP tool (Issue #2984).
 
-Builds a callable that the MCP tool invokes without cross-brick imports.
+Builds a callable that the MCP tool invokes without cross-service imports.
 All context_manifest imports are contained in this factory module (not a brick).
 """
 

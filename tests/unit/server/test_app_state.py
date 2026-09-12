@@ -36,9 +36,9 @@ class TestNexusAppState:
         assert state.thread_pool_size == 40
         assert state.operation_timeout == 30.0
 
-    def test_enabled_bricks_defaults_to_empty_frozenset(self) -> None:
+    def test_enabled_services_defaults_to_empty_frozenset(self) -> None:
         state = NexusAppState()
-        assert state.enabled_bricks == frozenset()
+        assert state.enabled_services == frozenset()
 
     def test_exposed_methods_defaults_to_empty_dict(self) -> None:
         state = NexusAppState()

@@ -96,17 +96,17 @@ external services (SQLite + in-mem LRU + BM25S), exposes only MCP +
 import pytest
 
 from nexus.contracts.deployment_profile import (
-    BRICK_EVENTLOG,
-    BRICK_LLM,
-    BRICK_MCP,
-    BRICK_NAMESPACE,
-    BRICK_OBSERVABILITY,
-    BRICK_PARSERS,
-    BRICK_PAY,
-    BRICK_PERMISSIONS,
-    BRICK_SANDBOX,
-    BRICK_SEARCH,
-    BRICK_WORKFLOWS,
+    SERVICE_EVENTLOG,
+    SERVICE_LLM,
+    SERVICE_MCP,
+    SERVICE_NAMESPACE,
+    SERVICE_OBSERVABILITY,
+    SERVICE_PARSERS,
+    SERVICE_PAY,
+    SERVICE_PERMISSIONS,
+    SERVICE_SANDBOX,
+    SERVICE_SEARCH,
+    SERVICE_WORKFLOWS,
     DeploymentProfile,
 )
 
@@ -116,36 +116,36 @@ class TestSandboxProfileEnum:
         assert DeploymentProfile.SANDBOX == "sandbox"
         assert DeploymentProfile("sandbox") is DeploymentProfile.SANDBOX
 
-    def test_default_bricks_includes_core(self) -> None:
-        bricks = DeploymentProfile.SANDBOX.default_bricks()
-        assert BRICK_EVENTLOG in bricks
-        assert BRICK_NAMESPACE in bricks
-        assert BRICK_PERMISSIONS in bricks
-        assert BRICK_SEARCH in bricks
-        assert BRICK_MCP in bricks
-        assert BRICK_PARSERS in bricks
+    def test_default_services_includes_core(self) -> None:
+        bricks = DeploymentProfile.SANDBOX.default_services()
+        assert SERVICE_EVENTLOG in bricks
+        assert SERVICE_NAMESPACE in bricks
+        assert SERVICE_PERMISSIONS in bricks
+        assert SERVICE_SEARCH in bricks
+        assert SERVICE_MCP in bricks
+        assert SERVICE_PARSERS in bricks
 
-    def test_default_bricks_excludes_heavy(self) -> None:
-        bricks = DeploymentProfile.SANDBOX.default_bricks()
-        assert BRICK_LLM not in bricks
-        assert BRICK_PAY not in bricks
-        assert BRICK_SANDBOX not in bricks  # sandbox provisioning brick
-        assert BRICK_WORKFLOWS not in bricks
-        assert BRICK_OBSERVABILITY not in bricks
+    def test_default_services_excludes_heavy(self) -> None:
+        bricks = DeploymentProfile.SANDBOX.default_services()
+        assert SERVICE_LLM not in bricks
+        assert SERVICE_PAY not in bricks
+        assert SERVICE_SANDBOX not in bricks  # sandbox provisioning brick
+        assert SERVICE_WORKFLOWS not in bricks
+        assert SERVICE_OBSERVABILITY not in bricks
 
     def test_sandbox_superset_of_lite(self) -> None:
-        sandbox = DeploymentProfile.SANDBOX.default_bricks()
-        lite = DeploymentProfile.LITE.default_bricks()
+        sandbox = DeploymentProfile.SANDBOX.default_services()
+        lite = DeploymentProfile.LITE.default_services()
         assert lite.issubset(sandbox)
 
     def test_sandbox_subset_of_full(self) -> None:
-        sandbox = DeploymentProfile.SANDBOX.default_bricks()
-        full = DeploymentProfile.FULL.default_bricks()
+        sandbox = DeploymentProfile.SANDBOX.default_services()
+        full = DeploymentProfile.FULL.default_services()
         assert sandbox.issubset(full)
 
     def test_sandbox_size(self) -> None:
         """SANDBOX = LITE (6) + 3 adds (SEARCH, MCP, PARSERS) = 9 bricks."""
-        assert len(DeploymentProfile.SANDBOX.default_bricks()) == 9
+        assert len(DeploymentProfile.SANDBOX.default_services()) == 9
 ```
 
 - [ ] **Step 2: Run test, verify fail**
@@ -184,14 +184,14 @@ After the `_LITE_BRICKS` definition (around line 182), add:
 ```python
 _SANDBOX_BRICKS: frozenset[str] = _LITE_BRICKS | frozenset(
     {
-        BRICK_SEARCH,
-        BRICK_MCP,
-        BRICK_PARSERS,
+        SERVICE_SEARCH,
+        SERVICE_MCP,
+        SERVICE_PARSERS,
     }
 )
 ```
 
-Note: `BRICK_FEDERATION` is intentionally excluded. Federation is auto-detected from ZoneManager (same as FULL); no brick flag is needed or checked at boot.
+Note: `SERVICE_FEDERATION` is intentionally excluded. Federation is auto-detected from ZoneManager (same as FULL); no brick flag is needed or checked at boot.
 
 In the `_PROFILE_BRICKS` dict (around line 217), add:
 
@@ -1489,7 +1489,7 @@ async def test_sandbox_http_surface_is_restricted(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_sandbox_features_endpoint_reports_enabled_bricks(tmp_path: Path) -> None:
+async def test_sandbox_features_endpoint_reports_enabled_services(tmp_path: Path) -> None:
     from nexus.server.fastapi_server import build_app
 
     import os
@@ -1502,7 +1502,7 @@ async def test_sandbox_features_endpoint_reports_enabled_bricks(tmp_path: Path) 
             r = await client.get("/api/v2/features")
             body = r.json()
             assert body["profile"] == "sandbox"
-            enabled = set(body["enabled_bricks"])
+            enabled = set(body["enabled_services"])
             assert {
                 "search",
                 "mcp",

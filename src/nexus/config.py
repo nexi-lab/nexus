@@ -50,12 +50,12 @@ class DockerTemplateConfig(BaseModel):
 
 
 class FeaturesConfig(BaseModel):
-    """Per-brick feature flag overrides.
+    """Per-service feature flag overrides.
 
     These override the deployment profile defaults. When a flag is None,
     the profile default is used. When explicitly True/False, it overrides.
 
-    Issue #1389: Expanded from 6 hard-coded flags to per-brick overrides.
+    Issue #1389: Expanded from 6 hard-coded flags to per-service overrides.
     """
 
     # Services
@@ -64,39 +64,39 @@ class FeaturesConfig(BaseModel):
     permissions: bool | None = Field(default=None, description="Enable permission enforcement")
     scheduler: bool | None = Field(default=None, description="Enable task scheduler")
 
-    # Infrastructure bricks
+    # Infrastructure services
     cache: bool | None = Field(default=None, description="Enable cache subsystem")
     observability: bool | None = Field(default=None, description="Enable observability (OTEL)")
     uploads: bool | None = Field(default=None, description="Enable chunked uploads")
     resiliency: bool | None = Field(default=None, description="Enable resiliency manager")
 
-    # Feature bricks
-    search: bool | None = Field(default=None, description="Enable search brick")
+    # Feature services
+    search: bool | None = Field(default=None, description="Enable search service")
     semantic_search: bool | None = Field(
         default=None,
         description="Enable semantic search initialization/config wiring",
     )
-    pay: bool | None = Field(default=None, description="Enable payment brick")
-    llm: bool | None = Field(default=None, description="Enable LLM brick")
-    skills: bool | None = Field(default=None, description="Enable skills brick")
-    sandbox: bool | None = Field(default=None, description="Enable sandbox brick")
-    workflows: bool | None = Field(default=None, description="Enable workflow brick")
+    pay: bool | None = Field(default=None, description="Enable payment service")
+    llm: bool | None = Field(default=None, description="Enable LLM service")
+    skills: bool | None = Field(default=None, description="Enable skills service")
+    sandbox: bool | None = Field(default=None, description="Enable sandbox service")
+    workflows: bool | None = Field(default=None, description="Enable workflow service")
     discovery: bool | None = Field(default=None, description="Enable agent discovery")
-    mcp: bool | None = Field(default=None, description="Enable MCP server brick")
+    mcp: bool | None = Field(default=None, description="Enable MCP server service")
     memory: bool | None = Field(default=None, description="Enable agent memory")
-    federation: bool | None = Field(default=None, description="Enable federation brick")
+    federation: bool | None = Field(default=None, description="Enable federation service")
 
     # Deprecated — accepted but ignored to avoid startup failures on upgrade.
-    # The A2A brick was removed in #2979; MCP covers the use case.
-    a2a: bool | None = Field(default=None, description="Deprecated: A2A brick removed in #2979")
+    # The A2A service was removed in #2979; MCP covers the use case.
+    a2a: bool | None = Field(default=None, description="Deprecated: A2A service removed in #2979")
 
     model_config = ConfigDict(extra="forbid")
 
     def to_overrides(self) -> dict[str, bool]:
-        """Convert non-None fields to a brick override dict.
+        """Convert non-None fields to a service override dict.
 
         Returns:
-            Dict of brick_name -> enabled for fields that are explicitly set.
+            Dict of service_name -> enabled for fields that are explicitly set.
         """
         _skip = {"semantic_search", "a2a"}
         overrides: dict[str, bool] = {}
@@ -183,9 +183,9 @@ class NexusConfig(BaseModel):
     profile: str = Field(
         default="full",
         description=(
-            "Deployment profile controlling which bricks are enabled: "
+            "Deployment profile controlling which services are enabled: "
             "kernel (bare VFS, storage only), embedded (storage+eventlog), "
-            "lite (core services), full (all bricks), cloud (all + federation)"
+            "lite (core services), full (all services), cloud (all + federation)"
         ),
     )
 

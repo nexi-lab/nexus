@@ -18,7 +18,7 @@ Routing model:
 Cross-brick note: this module imports from ``nexus.bricks.portability.*``
 at call time. It is CLI glue (not a brick module) but lives in the
 archive brick. The ``("archive", "portability")`` entry in
-``KNOWN_CROSS_BRICK_EXCEPTIONS`` covers all files in
+``KNOWN_CROSS_SERVICE_EXCEPTIONS`` covers all files in
 ``nexus.bricks.archive`` (non-test).
 """
 

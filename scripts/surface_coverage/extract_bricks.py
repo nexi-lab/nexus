@@ -1,7 +1,7 @@
 """Discover bricks by scanning src/nexus/bricks/*/brick_factory.py.
 
 Each brick_factory.py module declares (as module-level constants):
-    BRICK_NAME: str | None  - profile gate name (None = always on)
+    SERVICE_NAME: str | None  - profile gate name (None = always on)
     TIER: str               - "independent" | "dependent"
     RESULT_KEY: str         - key in result dict
     def create(ctx, system) -> result
@@ -19,13 +19,13 @@ from pathlib import Path
 @dataclass(frozen=True)
 class RawBrick:
     id: str  # directory name, e.g. "rebac"
-    brick_name: str | None  # profile gate, e.g. "BRICK_REBAC"
+    brick_name: str | None  # profile gate, e.g. "SERVICE_REBAC"
     tier: str | None  # "independent" | "dependent"
     result_key: str | None
     source: str  # "path:line"
 
 
-def extract_bricks(bricks_root: Path) -> list[RawBrick]:
+def extract_services(bricks_root: Path) -> list[RawBrick]:
     """Walk bricks_root, find each <brick>/brick_factory.py, extract metadata."""
     out: list[RawBrick] = []
     if not bricks_root.exists():
@@ -40,7 +40,7 @@ def extract_bricks(bricks_root: Path) -> list[RawBrick]:
         out.append(
             RawBrick(
                 id=brick_dir.name,
-                brick_name=meta.get("BRICK_NAME"),
+                brick_name=meta.get("SERVICE_NAME"),
                 tier=meta.get("TIER"),
                 result_key=meta.get("RESULT_KEY"),
                 source=f"{factory_py}:1",
@@ -60,7 +60,7 @@ def _parse_brick_factory(py_path: Path) -> dict[str, str | None]:
         if isinstance(node, ast.Assign):
             for target in node.targets:
                 if isinstance(target, ast.Name) and target.id in {
-                    "BRICK_NAME",
+                    "SERVICE_NAME",
                     "TIER",
                     "RESULT_KEY",
                 }:
@@ -68,7 +68,7 @@ def _parse_brick_factory(py_path: Path) -> dict[str, str | None]:
         elif (
             isinstance(node, ast.AnnAssign)
             and isinstance(node.target, ast.Name)
-            and node.target.id in {"BRICK_NAME", "TIER", "RESULT_KEY"}
+            and node.target.id in {"SERVICE_NAME", "TIER", "RESULT_KEY"}
             and node.value is not None
         ):
             out[node.target.id] = _literal_value(node.value)

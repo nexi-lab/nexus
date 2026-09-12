@@ -5,7 +5,7 @@ Provides ``KeyService`` for cryptographic agent identity management.
 
 from typing import Any
 
-BRICK_NAME: str | None = None  # No deployment profile gate (always enabled)
+SERVICE_NAME: str | None = None  # No deployment profile gate (always enabled)
 TIER = "independent"
 RESULT_KEY = "identity_service"
 

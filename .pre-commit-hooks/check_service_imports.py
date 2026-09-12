@@ -7,7 +7,7 @@ and bricks must never import from nexus.core (the kernel).
 
 Bricks communicate with the kernel exclusively through protocols defined
 in core/protocols/ and contracts/protocols/. Direct imports from nexus.core
-or nexus.services are architectural violations. Cross-brick
+or nexus.services are architectural violations. Cross-service
 imports (bricks/<X>/ importing from nexus.bricks.<Y>) are also forbidden.
 
 Reference: docs/design/NEXUS-LEGO-ARCHITECTURE.md §1.2, Principle 3
@@ -54,14 +54,14 @@ FORBIDDEN_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 ]
 
 # Regex to extract the target brick name from a brick import line
-CROSS_BRICK_IMPORT_RE = re.compile(r"^\s*(?:from|import)\s+nexus\.bricks\.(\w+)")
+CROSS_SERVICE_IMPORT_RE = re.compile(r"^\s*(?:from|import)\s+nexus\.bricks\.(\w+)")
 
-# Known cross-brick exceptions — temporary allowlist for imports that require
+# Known cross-service exceptions — temporary allowlist for imports that require
 # DI refactoring to fix properly. Each entry maps (source_brick, target_brick)
 # to a list of importing modules. Remove entries as fixes land.
 # TODO(#2286): Fix memory->search via DI refactoring.
 # TODO(#2364): Fix search->cache via DI refactoring for EmbeddingCache/Dragonfly.
-KNOWN_CROSS_BRICK_EXCEPTIONS: dict[tuple[str, str], list[str]] = {
+KNOWN_CROSS_SERVICE_EXCEPTIONS: dict[tuple[str, str], list[str]] = {
     ("memory", "search"): [
         "nexus.bricks.memory.enrichment",
         "nexus.bricks.memory.memory_with_paging",
@@ -218,8 +218,8 @@ def _module_name_from_path(file_path: Path) -> str | None:
 
 
 def _is_cross_brick_exception(source_brick: str, target_brick: str, file_path: Path) -> bool:
-    """Check if a cross-brick import is in the known exceptions allowlist."""
-    allowed_modules = KNOWN_CROSS_BRICK_EXCEPTIONS.get((source_brick, target_brick))
+    """Check if a cross-service import is in the known exceptions allowlist."""
+    allowed_modules = KNOWN_CROSS_SERVICE_EXCEPTIONS.get((source_brick, target_brick))
     if allowed_modules is None:
         return False
     module_name = _module_name_from_path(file_path)
@@ -231,8 +231,8 @@ def check_file(file_path: Path, brick_name: str | None = None) -> list[tuple[int
 
     Args:
         file_path: Path to the Python file to check.
-        brick_name: Name of the brick this file belongs to (for cross-brick checks).
-            If None, cross-brick checks are skipped.
+        brick_name: Name of the brick this file belongs to (for cross-service checks).
+            If None, cross-service checks are skipped.
 
     Returns:
         List of (line_number, line_content, matched_pattern_description) tuples.
@@ -259,9 +259,9 @@ def check_file(file_path: Path, brick_name: str | None = None) -> list[tuple[int
                 if found:
                     continue
 
-                # Check cross-brick imports
+                # Check cross-service imports
                 if brick_name:
-                    m = CROSS_BRICK_IMPORT_RE.match(line)
+                    m = CROSS_SERVICE_IMPORT_RE.match(line)
                     if m:
                         target_brick = m.group(1)
                         if target_brick != brick_name and not _is_cross_brick_exception(
@@ -271,7 +271,7 @@ def check_file(file_path: Path, brick_name: str | None = None) -> list[tuple[int
                                 (
                                     line_num,
                                     line.rstrip(),
-                                    f"nexus.bricks.{target_brick} (cross-brick import)",
+                                    f"nexus.bricks.{target_brick} (cross-service import)",
                                 )
                             )
     except Exception as e:
@@ -293,10 +293,10 @@ def main() -> int:
 
     Usage:
         # CI mode: scan all bricks/ files automatically
-        python check_brick_imports.py
+        python check_service_imports.py
 
         # Pre-commit mode: check specific files
-        python check_brick_imports.py <file1> [file2] ...
+        python check_service_imports.py <file1> [file2] ...
     """
     if len(sys.argv) > 1:
         # Pre-commit mode: check specified files, filter to src/bricks/ only

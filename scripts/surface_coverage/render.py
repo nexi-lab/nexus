@@ -16,9 +16,9 @@ import jinja2
 from scripts.surface_coverage.paths import VENDOR_MERMAID
 from scripts.surface_coverage.schema import SurfaceCoverage
 from scripts.surface_coverage.taxonomy import (
-    BRICK_CATEGORIES,
     LAYER_LABELS,
     LAYERS,
+    SERVICE_CATEGORIES,
     bricks_by_category,
     get_module,
     modules_by_layer,
@@ -56,7 +56,7 @@ def _build_mermaid(modules) -> str:
         layer_modules = [m for m in modules if m.layer == layer]
         if layer == "brick":
             # Group bricks by category inside the brick layer
-            for category, ids in BRICK_CATEGORIES.items():
+            for category, ids in SERVICE_CATEGORIES.items():
                 cat_id = "cat_" + category.lower().replace(" ", "_").replace("&", "and")
                 cat_modules = [by_id[i] for i in ids if i in by_id]
                 if not cat_modules:

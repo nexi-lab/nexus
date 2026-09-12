@@ -222,7 +222,7 @@ async def pool_metrics(request: Request) -> dict[str, Any]:
     # metastore is redb-backed, not pgsql, so pool stats don't apply here.
     metrics["postgres"] = {"status": "not_available"}
 
-    # Redis/Dragonfly pool stats from CacheBrick (Issue #1524)
+    # Redis/Dragonfly pool stats from CacheService (Issue #1524)
     try:
         cache_brick = getattr(state, "cache_brick", None)
         if cache_brick is not None and cache_brick.has_cache_store:

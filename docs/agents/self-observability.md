@@ -75,5 +75,5 @@ Replace `me.jsonl` with your own `agent_id`.
 - No on-disk archive.
 - Mount + ReBAC runtime wiring is in progress; the JSONL records are
   generated and stored, but exposing them through the FS namespace
-  requires the agent_log brick to be wired into mount_service + rebac
+  requires the agent_log service to be wired into mount_service + rebac
   (tracked separately).

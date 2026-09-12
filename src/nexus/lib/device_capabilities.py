@@ -60,7 +60,7 @@ class BrickRequirement:
     requires_network: bool = False
 
 
-BRICK_REQUIREMENTS: dict[str, BrickRequirement] = {
+SERVICE_REQUIREMENTS: dict[str, BrickRequirement] = {
     # Feature bricks (Tier 2) — gated by capabilities
     "search": BrickRequirement(min_memory_mb=512),
     "llm": BrickRequirement(min_memory_mb=1024),
@@ -282,12 +282,12 @@ def suggest_profile(caps: DeviceCapabilities) -> "DeploymentProfile":
 
 
 def bricks_for_device(caps: DeviceCapabilities) -> frozenset[str]:
-    """Filter BRICK_REQUIREMENTS by device capabilities.
+    """Filter SERVICE_REQUIREMENTS by device capabilities.
 
     Returns the set of brick names whose requirements are met by *caps*.
     """
     result: set[str] = set()
-    for brick_name, req in BRICK_REQUIREMENTS.items():
+    for brick_name, req in SERVICE_REQUIREMENTS.items():
         if caps.memory_mb < req.min_memory_mb:
             continue
         if req.requires_gpu and not caps.has_gpu:

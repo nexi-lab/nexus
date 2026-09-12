@@ -14,7 +14,7 @@ async def test_verify_bricks_allows_records_without_capabilities() -> None:
         agent_id="admin,agent",
         agent_record=SimpleNamespace(),
         agent_registry=object(),
-        enabled_bricks=frozenset({"search"}),
+        enabled_services=frozenset({"search"}),
     )
 
     assert await verify_bricks(ctx) is True

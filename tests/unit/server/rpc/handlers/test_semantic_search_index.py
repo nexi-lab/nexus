@@ -112,6 +112,47 @@ async def test_semantic_search_index_uses_daemon_pipeline_without_legacy_backend
     ]
 
 
+class _SearchServiceNoDaemon:
+    """SearchService shape with no ``_search_daemon`` wired.
+
+    Matches the runtime shape when the Rust search-plugin cdylib is not
+    loaded — ``getattr(search, '_search_daemon', None)`` returns None
+    and the handler's plugin-daemon branch must not fire.
+    """
+
+
+class _NexusFsNoDaemon:
+    def __init__(self) -> None:
+        self._search = _SearchServiceNoDaemon()
+
+    def service(self, name: str) -> _SearchServiceNoDaemon | None:
+        return self._search if name == "search" else None
+
+
+@pytest.mark.asyncio
+async def test_semantic_search_index_fails_loud_without_daemon() -> None:
+    """Regression guard for the R10 SANDBOX chain delete (PR #4764).
+
+    Before the delete, ``handle_semantic_search_index`` had a Python
+    IndexingPipeline fallback that quietly rebuilt an in-process
+    embedding chain when the Rust search-plugin daemon was absent.
+    The delete removed that fallback: the handler must now raise
+    ValueError with a message pointing at ``SEARCH_PLUGIN_TARGET``
+    so an operator can wire the plugin instead of silently getting
+    empty search results.
+    """
+    with pytest.raises(ValueError) as exc_info:
+        await handle_semantic_search_index(
+            _NexusFsNoDaemon(),
+            SimpleNamespace(path="/workspace/demo", recursive=True),
+            SimpleNamespace(zone_id="root"),
+        )
+
+    msg = str(exc_info.value)
+    assert "search-plugin daemon" in msg, msg
+    assert "SEARCH_PLUGIN_TARGET" in msg, msg
+
+
 @pytest.mark.asyncio
 async def test_semantic_search_index_runs_daemon_work_on_owner_loop(
     monkeypatch: pytest.MonkeyPatch,

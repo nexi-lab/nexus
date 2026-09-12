@@ -105,14 +105,17 @@ jobs:
 
           # Fuse + local-connector + search can go together (all use dogfood
           # signing which fetches the latest vault-v* release — vault must
-          # be released first, but the tag push triggers are async so there
-          # is a race.  The release-plugin-reusable workflow retries vault
-          # fetch, so in practice this works. If it doesn't, workflow_dispatch
-          # retry is available.)
+          # be released first, which the dispatch step below orders).
           git tag -a "$FUSE_TAG" HEAD -m "fuse-plugin ${FUSE_TAG#fuse-v} — $MSG"
           git tag -a "$LC_TAG" HEAD -m "local-connector ${LC_TAG#local-connector-v} — $MSG"
           git tag -a "$SEARCH_TAG" HEAD -m "search-plugin ${SEARCH_TAG#search-v} — $MSG"
           git push origin "$FUSE_TAG" "$LC_TAG" "$SEARCH_TAG"
+
+          {
+            echo "fuse_tag=$FUSE_TAG"
+            echo "lc_tag=$LC_TAG"
+            echo "search_tag=$SEARCH_TAG"
+          } >> "$GITHUB_ENV"
 
           echo "### Auto Plugin Release" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
@@ -124,3 +127,53 @@ jobs:
           echo "| fuse | $FUSE_TAG |" >> "$GITHUB_STEP_SUMMARY"
           echo "| local-connector | $LC_TAG |" >> "$GITHUB_STEP_SUMMARY"
           echo "| search-plugin | $SEARCH_TAG |" >> "$GITHUB_STEP_SUMMARY"
+
+      # Cutting the tag is NOT what releases the plugin — this step is.
+      #
+      # GitHub does not start a workflow from an event raised with the
+      # default `GITHUB_TOKEN`, so the `on: push: tags:` trigger in each
+      # release wrapper never fired for a tag pushed above. The tags landed,
+      # the releases did not, and every downstream that pins a plugin version
+      # (sudowork pins nexus-vault by version + SHA256) was stuck on the last
+      # hand-released build while the daemon's ABI moved underneath it —
+      # ten rev bumps' worth, silently.
+      #
+      # `workflow_dispatch` is the documented exception: it may be triggered
+      # with `GITHUB_TOKEN`. Each wrapper already accepts the tag as an input
+      # for exactly this kind of retry, so dispatch them explicitly rather
+      # than hoping for a trigger that cannot fire.
+      #
+      # Vault goes first and we WAIT for it: every other plugin dogfoods its
+      # signing key out of the newest vault-v* release, so releasing them
+      # against a stale vault is how a signature ends up covering the wrong
+      # key. Ordering it here also retires the race the old comment described.
+      - name: Dispatch the release workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          dispatch() { # workflow-file tag
+            echo "dispatching $1 for $2"
+            gh workflow run "$1" --ref "${{ github.ref_name }}" -f "tag=$2"
+          }
+
+          dispatch release-vault-plugin.yml "$vault_tag"
+
+          # Wait for the vault release to exist before the dogfooding
+          # plugins go, rather than letting them race it.
+          deadline=$((SECONDS + 1500))
+          until gh release view "$vault_tag" --json tagName >/dev/null 2>&1; do
+            if [ $SECONDS -ge $deadline ]; then
+              echo "::error::vault release $vault_tag did not appear within 25m; \
+          the dogfooding plugins were NOT dispatched. Re-run them by hand once \
+          vault is published."
+              exit 1
+            fi
+            sleep 20
+          done
+          echo "vault release $vault_tag is published"
+
+          dispatch release-fuse-plugin.yml "$fuse_tag"
+          dispatch release-local-connector-plugin.yml "$lc_tag"
+          dispatch release-search-plugin.yml "$search_tag"

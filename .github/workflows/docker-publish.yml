@@ -405,6 +405,8 @@ jobs:
           key: nexus-embedder-ort-1.28.0-me5small-onnx-v1
 
       - name: Provision embedder assets for the search-plugin sidecar
+        env:
+          COS_BUCKET: ${{ secrets.COS_BUCKET }}
         run: |
           set -euo pipefail
           ORT_VERSION=1.28.0   # ort 2.0.0-rc.13 (Cargo.lock) is built for ONNX Runtime 1.28
@@ -421,14 +423,32 @@ jobs:
               "$ASSETS/ort/libonnxruntime.so"
           fi
 
+          # The model comes from our own COS mirror, never from
+          # huggingface.co.  HF rate-limits GitHub's runner IP ranges and
+          # answers 429 to every retry while it does; that failed this step,
+          # which meant the cache above never got written, which meant the
+          # next run missed the cache and hit the same 429 — a loop with no
+          # exit once the cache expired.  `mirror-embedder-assets.yml` puts
+          # the bytes somewhere we control; refresh it when the model moves.
+          if [ -z "$COS_BUCKET" ]; then
+            echo "::error::COS_BUCKET is not configured; the embedder mirror is unreachable."
+            exit 1
+          fi
+          MIRROR="https://${COS_BUCKET}.cos.accelerate.myqcloud.com/nexus/embedder/intfloat-multilingual-e5-small/onnx"
+
           # Layout contract from FastEmbedder::load (embedder.rs): the
           # five files of the HF onnx/ export, flat in the model dir.
-          HF=https://huggingface.co/intfloat/multilingual-e5-small/resolve/main/onnx
           for f in model.onnx tokenizer.json config.json special_tokens_map.json tokenizer_config.json; do
             if [ ! -s "$ASSETS/model/$f" ]; then
-              curl -fL --retry 5 --retry-delay 2 -o "$ASSETS/model/$f" "$HF/$f"
+              curl -fL --retry 5 --retry-delay 2 -o "$ASSETS/model/$f" "$MIRROR/$f"
             fi
           done
+
+          # Verify the bytes, cached or freshly pulled: a truncated model
+          # fails at inference time as a scoring regression, which reads as
+          # a product bug rather than a bad download.
+          curl -fsSL --retry 5 -o /tmp/embedder-SHA256SUMS.txt "$MIRROR/SHA256SUMS.txt"
+          (cd "$ASSETS/model" && sha256sum -c /tmp/embedder-SHA256SUMS.txt)
 
           # Sidecar runs as nexus (UID 1000) — must be able to read.
           chmod -R a+rX "$ASSETS"

@@ -1,0 +1,114 @@
+name: Mirror embedder assets to COS
+
+# One-off mirror of the search-plugin's embedding model into the COS bucket
+# this org already uses for every other binary artifact.
+#
+# Why a mirror exists at all: CI used to pull the five `onnx/` files straight
+# from huggingface.co. Hugging Face rate-limits GitHub's runner IP ranges, and
+# when it does it answers `429` to every retry — the edge smoke's asset step
+# then fails, which means the `actions/cache` entry never gets written, which
+# means the next run misses the cache and hits the same 429. Once the cache
+# expires (7 days unused) that loop has no exit: the model is unreachable
+# from CI until Hugging Face decides otherwise.
+#
+# So the bytes live somewhere we control. Run this by hand when the model or
+# its revision changes; the consumers read from COS and verify SHA256.
+#
+# The model is `intfloat/multilingual-e5-small` (MIT). Mirroring is a copy of
+# licensed-permissive weights, not a fork — `model_revision` pins which commit
+# was copied so the mirror can always be traced back.
+
+on:
+  workflow_dispatch:
+    inputs:
+      model_revision:
+        description: 'Hugging Face revision to copy (branch, tag or commit sha)'
+        required: false
+        default: 'main'
+
+permissions:
+  contents: read
+
+env:
+  MODEL_REPO: intfloat/multilingual-e5-small
+  # Layout contract from `FastEmbedder::load` (embedder.rs): the five files of
+  # the HF onnx/ export, flat in one directory.
+  COS_PREFIX: nexus/embedder/intfloat-multilingual-e5-small/onnx
+
+jobs:
+  mirror:
+    name: Copy the ONNX export to COS
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      COS_SECRET_ID: ${{ secrets.COS_SECRET_ID }}
+      COS_SECRET_KEY: ${{ secrets.COS_SECRET_KEY }}
+      COS_BUCKET: ${{ secrets.COS_BUCKET }}
+      COS_REGION: ${{ secrets.COS_REGION }}
+    steps:
+      - name: Require the COS credentials
+        run: |
+          set -euo pipefail
+          if [ -z "$COS_SECRET_ID" ] || [ -z "$COS_SECRET_KEY" ] || [ -z "$COS_BUCKET" ] || [ -z "$COS_REGION" ]; then
+            echo "::error::COS secrets are not configured; there is nowhere to mirror to."
+            exit 1
+          fi
+
+      - name: Download the ONNX export from Hugging Face
+        env:
+          REVISION: ${{ inputs.model_revision }}
+        run: |
+          set -euo pipefail
+          mkdir -p assets
+          base="https://huggingface.co/${MODEL_REPO}/resolve/${REVISION}/onnx"
+
+          # Hugging Face answers 429 to runner IPs in bursts that last minutes,
+          # not seconds, so back off far longer than a default retry would.
+          fetch() { # url dest
+            for attempt in $(seq 1 12); do
+              if curl -fL --retry 2 --retry-delay 5 -o "$2" "$1"; then
+                return 0
+              fi
+              echo "attempt $attempt for $(basename "$2") failed; sleeping 45s"
+              sleep 45
+            done
+            echo "::error::could not download $1 — Hugging Face is refusing this runner."
+            return 1
+          }
+
+          for f in model.onnx tokenizer.json config.json special_tokens_map.json tokenizer_config.json; do
+            fetch "$base/$f" "assets/$f"
+          done
+
+          # Name the five explicitly — a glob would fold SHA256SUMS.txt into
+          # its own manifest, and consumers verify from a directory that does
+          # not contain it.
+          cd assets
+          sha256sum model.onnx tokenizer.json config.json special_tokens_map.json tokenizer_config.json > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          ls -la
+
+      - name: Install + configure coscmd (acceleration endpoint)
+        run: |
+          pip install --quiet coscmd
+          coscmd config -a "$COS_SECRET_ID" -s "$COS_SECRET_KEY" -b "$COS_BUCKET" -e cos.accelerate.myqcloud.com
+
+      - name: Upload
+        run: |
+          set -euo pipefail
+          for file in assets/*; do
+            echo "  -> $(basename "$file")"
+            coscmd upload "$file" "${COS_PREFIX}/$(basename "$file")"
+          done
+          echo "::notice::Mirrored to https://${COS_BUCKET}.cos.accelerate.myqcloud.com/${COS_PREFIX}/"
+
+      - name: Verify the mirror serves what we uploaded
+        run: |
+          set -euo pipefail
+          base="https://${COS_BUCKET}.cos.accelerate.myqcloud.com/${COS_PREFIX}"
+          mkdir -p verify && cd verify
+          curl -fsSL --retry 5 -o SHA256SUMS.txt "$base/SHA256SUMS.txt"
+          for f in model.onnx tokenizer.json config.json special_tokens_map.json tokenizer_config.json; do
+            curl -fsSL --retry 5 -o "./$f" "$base/$f"
+          done
+          sha256sum -c SHA256SUMS.txt

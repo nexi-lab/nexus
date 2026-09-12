@@ -372,6 +372,12 @@ jobs:
             exit 1
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          # The release step needs the tag NAME, not just the version: on a
+          # workflow_dispatch run `github.ref` is the branch, so the release
+          # action has no tag to attach to and fails with "GitHub Releases
+          # requires a tag". Emit it from the same effective ref the version
+          # came from, so both paths agree by construction.
+          echo "tag=${{ inputs.version_tag_prefix }}${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Download all build artifacts
         uses: actions/download-artifact@v4
@@ -709,9 +715,13 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          # Explicit, for the dispatch path: `github.ref` is a branch there.
+          tag_name: ${{ steps.version.outputs.tag }}
           body_path: release-body/release_body.md
           files: release-assets/*
           draft: false
-          prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
+          # Read the pre-release marker off the resolved version for the same
+          # reason — `github.ref` does not carry it on a dispatch.
+          prerelease: ${{ contains(steps.version.outputs.version, 'alpha') || contains(steps.version.outputs.version, 'beta') || contains(steps.version.outputs.version, 'rc') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

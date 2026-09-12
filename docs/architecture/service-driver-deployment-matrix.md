@@ -113,3 +113,40 @@ Runtime surface: `plugin.load` / `plugin.unload` / `plugin.list` gRPC
 RPCs, `--plugin-dir` CLI flag for directory auto-load.
 
 See KERNEL-ARCHITECTURE.md (nexus-vfs) §10 for the full plugin architecture.
+
+### 5.1 The daemon and EVERY dylib in `--plugin-dir` move as one set
+
+A plugin dylib and the daemon that loads it are one unit, not independent
+versions:
+
+- `PLUGIN_API_VERSION` is compiled into both. The loader compares them and
+  refuses a mismatch (`plugin API version mismatch: plugin=N, kernel=M`).
+- `load_plugin_dir` **fails boot** on a plugin it cannot load — it does not
+  skip it. A silently-skipped plugin is how a daemon comes up looking healthy
+  and serving nothing, so the failure is deliberate and loud.
+
+The consequence is the part that is easy to get wrong: it is not enough to
+upgrade *the* plugin you were thinking about. Every dylib in `--plugin-dir`
+must be built against the same nexus-vfs rev as the daemon, or the daemon
+does not start at all. A deployment carrying `nexus-vault` + `fuse` +
+`local-connector` has to bump four pins — daemon plus three dylibs — in one
+release. Half a bump is a daemon that will not boot.
+
+`Auto Plugin Release` exists for this: when develop's nexus-vfs pin moves it
+cuts a tag for every plugin off the same commit, so a consumer can pin the
+set by resolving each tag to its commit and checking they agree. That check
+is worth doing — it is the property that actually matters, and it is cheap:
+
+```
+git rev-list -n1 vault-v<x> && git rev-list -n1 fuse-v<y> && git rev-list -n1 local-connector-v<z>
+# all three -> the same commit, whose Cargo.toml pins the daemon's nexus-vfs rev
+```
+
+Note also that two different binaries are named `nexusd-cluster`: the pure
+nexus-vfs cluster daemon (released from nexus-vfs, tags `v*`) and this repo's
+ASSEMBLY (that boot composed with the managed_agent control plane, tags
+`nexusd-cluster-v*`, published under the separate `nexusd-cluster/` COS
+prefix). A consumer that needs the managed_agent RPCs — an ACP tunnel dialing
+`managed_agent` on the daemon port — must ship the assembly; the nexus-vfs
+binary answers the VFS surface but not those RPCs, and a tunnel that falls
+back to spawning a local agent will hide that from you.

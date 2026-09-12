@@ -21,7 +21,14 @@ on:
       - "Cargo.toml"
 
 permissions:
+  # Push the tags.
   contents: write
+  # Dispatch the release workflows. `workflow_dispatch` via the API is an
+  # `actions` write, not a `contents` one — without this the dispatch step
+  # gets HTTP 403 "Resource not accessible by integration" and the tags land
+  # with no releases behind them, which is the exact failure this workflow's
+  # dispatch step exists to prevent.
+  actions: write
 
 jobs:
   check-rev-change:

@@ -33,8 +33,8 @@ http-api = ["dep:nexus-http-api", "dep:tracing"]
 # carries `SudoCodeSpawnAdapter` next to the loop it wraps) and injects it
 # via `install_managed_agent_with_spawn`, so a minted agent runs a real LLM
 # loop doing in-process `KernelSyscall` calls (no gRPC on its fs path).
-# The kernel rev MUST match the workspace pin (both at nexus-vfs `5f7e0a9`)
-# so `SpawnTask<Kernel>` is one type across the seam.
+# `sudocode-tools` MUST reach the kernel at the same nexus-vfs rev this
+# workspace pins, so `SpawnTask<Kernel>` is one type across the seam.
 cohost-sudocode = ["dep:sudocode-tools"]
 # Opt-in ReBAC enforcer — Rust replacement for the Python
 # `bricks/rebac/` (part of the R10 pure-Rust `nexus-server`
@@ -93,15 +93,16 @@ anyhow = "1"
 
 # ── Co-host (opt-in `cohost-sudocode`) ──────────────────────────────────
 # The real sudocode agent runtime, linked ONLY when co-hosting. `sudocode-
-# tools` reaches `kernel` at the SAME nexus-vfs rev the workspace pins
-# (`5f7e0a9`), so `Kernel` / `AgentDescriptor` / `KernelSyscall` / `AgentState`
-# unify across the seam and `SpawnTask<Kernel>` is a single monomorphised
-# type. `sudocode-tools` carries BOTH the `spawn_managed_agent` factory and
-# the `SudoCodeSpawnAdapter` this binary injects at boot — there is no
+# tools` reaches `kernel` at the SAME nexus-vfs rev the workspace pins, so
+# `Kernel` / `AgentDescriptor` / `KernelSyscall` / `AgentState` unify across
+# the seam and `SpawnTask<Kernel>` is a single monomorphised type.
+# `sudocode-tools` carries BOTH the `spawn_managed_agent` factory and the
+# `SudoCodeSpawnAdapter` this binary injects at boot — there is no
 # nexus-side co-host glue and no runtime enum to map (the adapter reports
-# `kernel::AgentState` directly). Pinned to the sudocode main merge that carries the same nexus-vfs
-# rev (zone-cost release v0.7.3).
-sudocode-tools = { package = "tools", git = "https://github.com/sudoprivacy/sudocode", rev = "59549a4ed40989f7cc5ed25b7fe84f8a75b016c8", optional = true }
+# `kernel::AgentState` directly). Pinned to the sudocode main merge that
+# carries that same rev: bumping the workspace pin means bumping this one
+# in the same commit, or the co-host build fails to compile.
+sudocode-tools = { package = "tools", git = "https://github.com/sudoprivacy/sudocode", rev = "66abb4af508a1be96af64b082a691a5085c9cbb4", optional = true }
 # Named directly to spell `kernel::kernel::{ServiceDecl, Kernel}` — the
 # managed-agent boot decl's return type (both builds) and the co-host
 # adapter's `SpawnTask<Kernel>` (cohost build). Already present transitively

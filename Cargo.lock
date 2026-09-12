@@ -5,7 +5,7 @@ version = 4
 [[package]]
 name = "a2a"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=5f7e0a925ce1e8e796bcd004a61d7fbd23a5a712#5f7e0a925ce1e8e796bcd004a61d7fbd23a5a712"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=35df753583d15aa26c14b5ac4885ec1a210eb2d4#35df753583d15aa26c14b5ac4885ec1a210eb2d4"
 dependencies = [
  "contracts",
  "kernel",
@@ -234,7 +234,7 @@ checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
 [[package]]
 name = "api"
 version = "0.2.7"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=59549a4ed40989f7cc5ed25b7fe84f8a75b016c8#59549a4ed40989f7cc5ed25b7fe84f8a75b016c8"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=66abb4af508a1be96af64b082a691a5085c9cbb4#66abb4af508a1be96af64b082a691a5085c9cbb4"
 dependencies = [
  "base64 0.22.1",
  "httpdate",
@@ -327,7 +327,7 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 [[package]]
 name = "auth"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=5f7e0a925ce1e8e796bcd004a61d7fbd23a5a712#5f7e0a925ce1e8e796bcd004a61d7fbd23a5a712"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=35df753583d15aa26c14b5ac4885ec1a210eb2d4#35df753583d15aa26c14b5ac4885ec1a210eb2d4"
 dependencies = [
  "contracts",
  "dashmap",
@@ -430,7 +430,7 @@ dependencies = [
 [[package]]
 name = "backends"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=5f7e0a925ce1e8e796bcd004a61d7fbd23a5a712#5f7e0a925ce1e8e796bcd004a61d7fbd23a5a712"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=35df753583d15aa26c14b5ac4885ec1a210eb2d4#35df753583d15aa26c14b5ac4885ec1a210eb2d4"
 dependencies = [
  "ahash",
  "base64 0.22.1",
@@ -848,7 +848,7 @@ dependencies = [
 [[package]]
 name = "commands"
 version = "0.2.7"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=59549a4ed40989f7cc5ed25b7fe84f8a75b016c8#59549a4ed40989f7cc5ed25b7fe84f8a75b016c8"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=66abb4af508a1be96af64b082a691a5085c9cbb4#66abb4af508a1be96af64b082a691a5085c9cbb4"
 dependencies = [
  "api",
  "plugins",
@@ -918,7 +918,7 @@ checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 [[package]]
 name = "contracts"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=5f7e0a925ce1e8e796bcd004a61d7fbd23a5a712#5f7e0a925ce1e8e796bcd004a61d7fbd23a5a712"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=35df753583d15aa26c14b5ac4885ec1a210eb2d4#35df753583d15aa26c14b5ac4885ec1a210eb2d4"
 dependencies = [
  "parking_lot",
  "serde",
@@ -2541,7 +2541,7 @@ dependencies = [
 [[package]]
 name = "kernel"
 version = "0.10.1"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=5f7e0a925ce1e8e796bcd004a61d7fbd23a5a712#5f7e0a925ce1e8e796bcd004a61d7fbd23a5a712"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=35df753583d15aa26c14b5ac4885ec1a210eb2d4#35df753583d15aa26c14b5ac4885ec1a210eb2d4"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -2609,7 +2609,7 @@ checksum = "0c2cdeb66e45e9f36bfad5bbdb4d2384e70936afbee843c6f6543f0c551ebb25"
 [[package]]
 name = "lib"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=5f7e0a925ce1e8e796bcd004a61d7fbd23a5a712#5f7e0a925ce1e8e796bcd004a61d7fbd23a5a712"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=35df753583d15aa26c14b5ac4885ec1a210eb2d4#35df753583d15aa26c14b5ac4885ec1a210eb2d4"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -2814,7 +2814,7 @@ checksum = "fc04a4c58212d57930a24bf47d3fa87485264a3a054e9c10e042eb373573ad3c"
 [[package]]
 name = "managed-agent"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=5f7e0a925ce1e8e796bcd004a61d7fbd23a5a712#5f7e0a925ce1e8e796bcd004a61d7fbd23a5a712"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=35df753583d15aa26c14b5ac4885ec1a210eb2d4#35df753583d15aa26c14b5ac4885ec1a210eb2d4"
 dependencies = [
  "a2a",
  "contracts",
@@ -3009,7 +3009,7 @@ dependencies = [
 [[package]]
 name = "nexus-cluster"
 version = "0.1.1"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=5f7e0a925ce1e8e796bcd004a61d7fbd23a5a712#5f7e0a925ce1e8e796bcd004a61d7fbd23a5a712"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=35df753583d15aa26c14b5ac4885ec1a210eb2d4#35df753583d15aa26c14b5ac4885ec1a210eb2d4"
 dependencies = [
  "a2a",
  "anyhow",
@@ -3091,7 +3091,7 @@ dependencies = [
 [[package]]
 name = "nexus-plugin-abi"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=5f7e0a925ce1e8e796bcd004a61d7fbd23a5a712#5f7e0a925ce1e8e796bcd004a61d7fbd23a5a712"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=35df753583d15aa26c14b5ac4885ec1a210eb2d4#35df753583d15aa26c14b5ac4885ec1a210eb2d4"
 
 [[package]]
 name = "nexus-rebac"
@@ -3164,7 +3164,7 @@ dependencies = [
 [[package]]
 name = "nexus-vfs-client"
 version = "0.2.7"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=59549a4ed40989f7cc5ed25b7fe84f8a75b016c8#59549a4ed40989f7cc5ed25b7fe84f8a75b016c8"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=66abb4af508a1be96af64b082a691a5085c9cbb4#66abb4af508a1be96af64b082a691a5085c9cbb4"
 dependencies = [
  "prost 0.13.5",
  "protoc-bin-vendored",
@@ -3623,7 +3623,7 @@ checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 [[package]]
 name = "plugins"
 version = "0.2.7"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=59549a4ed40989f7cc5ed25b7fe84f8a75b016c8#59549a4ed40989f7cc5ed25b7fe84f8a75b016c8"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=66abb4af508a1be96af64b082a691a5085c9cbb4#66abb4af508a1be96af64b082a691a5085c9cbb4"
 dependencies = [
  "serde",
  "serde_json",
@@ -4037,7 +4037,7 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 [[package]]
 name = "raft"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=5f7e0a925ce1e8e796bcd004a61d7fbd23a5a712#5f7e0a925ce1e8e796bcd004a61d7fbd23a5a712"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=35df753583d15aa26c14b5ac4885ec1a210eb2d4#35df753583d15aa26c14b5ac4885ec1a210eb2d4"
 dependencies = [
  "base64 0.22.1",
  "bincode",
@@ -4467,7 +4467,7 @@ dependencies = [
 [[package]]
 name = "runtime"
 version = "0.2.7"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=59549a4ed40989f7cc5ed25b7fe84f8a75b016c8#59549a4ed40989f7cc5ed25b7fe84f8a75b016c8"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=66abb4af508a1be96af64b082a691a5085c9cbb4#66abb4af508a1be96af64b082a691a5085c9cbb4"
 dependencies = [
  "a2a",
  "agent-client-protocol",
@@ -5167,7 +5167,7 @@ dependencies = [
 [[package]]
 name = "subprocess"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=5f7e0a925ce1e8e796bcd004a61d7fbd23a5a712#5f7e0a925ce1e8e796bcd004a61d7fbd23a5a712"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=35df753583d15aa26c14b5ac4885ec1a210eb2d4#35df753583d15aa26c14b5ac4885ec1a210eb2d4"
 dependencies = [
  "kernel",
  "libc",
@@ -5386,7 +5386,7 @@ dependencies = [
 [[package]]
 name = "telemetry"
 version = "0.2.7"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=59549a4ed40989f7cc5ed25b7fe84f8a75b016c8#59549a4ed40989f7cc5ed25b7fe84f8a75b016c8"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=66abb4af508a1be96af64b082a691a5085c9cbb4#66abb4af508a1be96af64b082a691a5085c9cbb4"
 dependencies = [
  "chrono",
  "dirs",
@@ -5778,7 +5778,7 @@ dependencies = [
 [[package]]
 name = "tools"
 version = "0.2.7"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=59549a4ed40989f7cc5ed25b7fe84f8a75b016c8#59549a4ed40989f7cc5ed25b7fe84f8a75b016c8"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=66abb4af508a1be96af64b082a691a5085c9cbb4#66abb4af508a1be96af64b082a691a5085c9cbb4"
 dependencies = [
  "api",
  "async-trait",
@@ -5923,7 +5923,7 @@ dependencies = [
 [[package]]
 name = "transport"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=5f7e0a925ce1e8e796bcd004a61d7fbd23a5a712#5f7e0a925ce1e8e796bcd004a61d7fbd23a5a712"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=35df753583d15aa26c14b5ac4885ec1a210eb2d4#35df753583d15aa26c14b5ac4885ec1a210eb2d4"
 dependencies = [
  "axum",
  "backends",

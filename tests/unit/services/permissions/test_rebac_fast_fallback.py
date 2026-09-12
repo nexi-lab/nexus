@@ -278,15 +278,42 @@ def test_python_fallback_conditioned_tuple_excluded_from_direct_index() -> None:
     assert results[("user", "alice", "read", "file", "/doc.txt")] is False
 
 
-def test_python_fallback_memo_reuses_answers_across_checks() -> None:
-    """A single bulk call asking the same (subject, permission, obj) twice
-    must compute once. We can't easily count internal calls without
-    monkeypatching, so we assert the wall-clock cost of N duplicate checks
-    is barely worse than 1 check on a large tuple set.
-    """
-    import time
+def test_python_fallback_memo_reuses_answers_across_checks(monkeypatch) -> None:
+    """A single bulk call asking the same (subject, permission, obj) N times
+    must compute it once.
 
+    Counted, not timed. This used to assert `elapsed_ms < 500` for 50
+    duplicate checks, which says nothing on its own: a runner slow enough to
+    blow the budget failed a working memo, and a runner fast enough passed a
+    broken one. Wrapping the evaluator and counting the calls that found no
+    memo entry states the property directly.
+    """
+    from nexus.bricks.rebac.graph import bulk_evaluator
     from nexus.bricks.rebac.utils import fast
+
+    real_compute = bulk_evaluator.compute_permission
+    computed: list[tuple[str, str, str, str, str]] = []
+
+    def counting_compute(*args, **kwargs):
+        # The bulk driver calls in by keyword; the evaluator recurses into
+        # itself positionally. Only the driver's calls are "a check being
+        # asked", so only those are counted — and one is counted only when
+        # the shared memo has no answer for it yet.
+        if not args:
+            memo = kwargs.get("bulk_memo_cache")
+            subject, obj = kwargs["subject"], kwargs["obj"]
+            key = (
+                subject.entity_type,
+                subject.entity_id,
+                kwargs["permission"],
+                obj.entity_type,
+                obj.entity_id,
+            )
+            if memo is None or key not in memo:
+                computed.append(key)
+        return real_compute(*args, **kwargs)
+
+    monkeypatch.setattr(bulk_evaluator, "compute_permission", counting_compute)
 
     tuples = [
         {
@@ -313,15 +340,14 @@ def test_python_fallback_memo_reuses_answers_across_checks() -> None:
 
     duplicate_checks = [(("user", "alice"), "read", ("file", "/doc.txt")) for _ in range(50)]
 
-    start = time.perf_counter()
     results = fast.check_permissions_bulk_with_fallback(
         duplicate_checks, tuples, {}, force_python=True
     )
-    elapsed_ms = (time.perf_counter() - start) * 1000
 
     assert all(results.values())
-    # 50 identical checks should be essentially free post-index.
-    assert elapsed_ms < 500, f"50 duplicate checks took {elapsed_ms:.1f}ms"
+    assert computed == [("user", "alice", "read", "file", "/doc.txt")], (
+        f"50 identical checks computed {len(computed)} times, expected 1"
+    )
 
 
 # ---------------------------------------------------------------------------

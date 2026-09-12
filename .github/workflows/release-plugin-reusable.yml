@@ -129,7 +129,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          # 22.04, not `ubuntu-latest`. A dylib's glibc floor is whatever the
+          # runner it was linked on provides, and `nexusd-cluster` is released
+          # from ubuntu-22.04 (glibc 2.34). On `ubuntu-latest` (24.04) the
+          # plugins came out needing 2.38-2.39 — so on Debian 12 or Ubuntu
+          # 22.04 the daemon starts fine on its own and then refuses to boot
+          # the moment one of these is in `--plugin-dir`, because a dylib that
+          # fails to load fails BOOT rather than being skipped. Matching the
+          # daemon's runner keeps the whole set loadable wherever the daemon
+          # runs.
+          - os: ubuntu-22.04
             artifact_name_suffix: linux-x86_64
             dylib_ext: .so
             strip_lib_prefix: false

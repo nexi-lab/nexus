@@ -135,6 +135,15 @@ jobs:
       # Default features -> managed_agent ON, cohost-sudocode OFF (the slim
       # production profile). Do NOT add --features cohost-sudocode here.
       - name: Build release binary (assembly, managed_agent on / cohost off)
+        env:
+          # Stamp the assembly tag into `--version` and the `Ping` RPC
+          # (nexus-vfs reads NEXUSD_BUILD_VERSION; see its cluster profile).
+          # Without it the binary reports the version of the crate that owns
+          # the clap derive — nexus-vfs's `nexus-cluster` — which is the SAME
+          # number the pure nexus-vfs daemon prints and does not move when
+          # this assembly is re-tagged. Downstream confirming an upgrade read
+          # 0.1.1 before and after v0.1.2.
+          NEXUSD_BUILD_VERSION: ${{ inputs.tag || github.ref_name }}
         run: cargo build --locked --release -p nexusd --bin nexusd-cluster ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
 
       - name: Stage release payload

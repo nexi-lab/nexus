@@ -142,9 +142,7 @@ impl AccessibleZonesCache {
         // stored value is identical either way).
         let zones = list_accessible_zones(store, subject)?;
         let expiry = now + self.ttl;
-        self.entries
-            .write()
-            .insert(key, (zones.clone(), expiry));
+        self.entries.write().insert(key, (zones.clone(), expiry));
         Ok(zones)
     }
 
@@ -196,14 +194,25 @@ mod tests {
     fn lists_zones_the_subject_has_read_relations_on() {
         let s = InMemoryReBACTupleStore::new();
         seed(&s, "root", &tuple("zone", "eng", "member", "user", "alice"));
-        seed(&s, "root", &tuple("zone", "legal", "viewer", "user", "alice"));
+        seed(
+            &s,
+            "root",
+            &tuple("zone", "legal", "viewer", "user", "alice"),
+        );
         seed(&s, "root", &tuple("zone", "ops", "admin", "user", "alice"));
         // Noise: a doc-level relation, and a zone relation for a
         // different subject — both must be filtered out.
         seed(&s, "root", &tuple("doc", "/x", "editor", "user", "alice"));
-        seed(&s, "root", &tuple("zone", "finance", "owner", "user", "bob"));
+        seed(
+            &s,
+            "root",
+            &tuple("zone", "finance", "owner", "user", "bob"),
+        );
         let out = list_accessible_zones(&s, ("user", "alice")).unwrap();
-        assert_eq!(out, vec!["eng".to_string(), "legal".to_string(), "ops".to_string()]);
+        assert_eq!(
+            out,
+            vec!["eng".to_string(), "legal".to_string(), "ops".to_string()]
+        );
     }
 
     #[test]
@@ -217,7 +226,9 @@ mod tests {
         // members of `READ_GRANTING_RELATIONS` count as read.
         let s = InMemoryReBACTupleStore::new();
         seed(&s, "root", &tuple("zone", "eng", "editor", "user", "alice"));
-        assert!(list_accessible_zones(&s, ("user", "alice")).unwrap().is_empty());
+        assert!(list_accessible_zones(&s, ("user", "alice"))
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -254,7 +265,9 @@ mod tests {
     #[test]
     fn empty_store_returns_empty_list() {
         let s = InMemoryReBACTupleStore::new();
-        assert!(list_accessible_zones(&s, ("user", "alice")).unwrap().is_empty());
+        assert!(list_accessible_zones(&s, ("user", "alice"))
+            .unwrap()
+            .is_empty());
     }
 
     // ── Cache ─────────────────────────────────────────────────────
@@ -270,9 +283,17 @@ mod tests {
         let cache = AccessibleZonesCache::new();
         let first = cache.lookup(&s, ("user", "alice")).unwrap();
         assert_eq!(first, vec!["eng".to_string()]);
-        seed(&s, "root", &tuple("zone", "legal", "member", "user", "alice"));
+        seed(
+            &s,
+            "root",
+            &tuple("zone", "legal", "member", "user", "alice"),
+        );
         let cached = cache.lookup(&s, ("user", "alice")).unwrap();
-        assert_eq!(cached, vec!["eng".to_string()], "cache must NOT see the fresh row");
+        assert_eq!(
+            cached,
+            vec!["eng".to_string()],
+            "cache must NOT see the fresh row"
+        );
     }
 
     #[test]
@@ -281,7 +302,11 @@ mod tests {
         seed(&s, "root", &tuple("zone", "eng", "member", "user", "alice"));
         let cache = AccessibleZonesCache::with_ttl(Duration::from_millis(1));
         let _ = cache.lookup(&s, ("user", "alice")).unwrap();
-        seed(&s, "root", &tuple("zone", "legal", "member", "user", "alice"));
+        seed(
+            &s,
+            "root",
+            &tuple("zone", "legal", "member", "user", "alice"),
+        );
         std::thread::sleep(Duration::from_millis(5));
         let out = cache.lookup(&s, ("user", "alice")).unwrap();
         assert_eq!(out, vec!["eng".to_string(), "legal".to_string()]);
@@ -304,7 +329,11 @@ mod tests {
         seed(&s, "root", &tuple("zone", "eng", "member", "user", "alice"));
         let cache = AccessibleZonesCache::new();
         let _ = cache.lookup(&s, ("user", "alice")).unwrap();
-        seed(&s, "root", &tuple("zone", "legal", "member", "user", "alice"));
+        seed(
+            &s,
+            "root",
+            &tuple("zone", "legal", "member", "user", "alice"),
+        );
         cache.clear();
         let out = cache.lookup(&s, ("user", "alice")).unwrap();
         assert_eq!(out, vec!["eng".to_string(), "legal".to_string()]);

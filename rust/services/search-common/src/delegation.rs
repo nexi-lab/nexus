@@ -232,7 +232,8 @@ mod tests {
 
     #[test]
     fn is_expired_is_false_immediately_after_mint() {
-        let d = SearchDelegation::new_from_now("sd_x", "eng", ["eng".to_string()], subject("alice"));
+        let d =
+            SearchDelegation::new_from_now("sd_x", "eng", ["eng".to_string()], subject("alice"));
         assert!(!d.is_expired());
     }
 
@@ -263,14 +264,16 @@ mod tests {
 
     #[test]
     fn validate_refuses_disallowed_method() {
-        let d = SearchDelegation::new_from_now("sd_x", "eng", ["eng".to_string()], subject("alice"));
+        let d =
+            SearchDelegation::new_from_now("sd_x", "eng", ["eng".to_string()], subject("alice"));
         let err = d.validate("write", "eng").unwrap_err();
         assert!(matches!(err, DelegationError::MethodNotPermitted { .. }));
     }
 
     #[test]
     fn validate_refuses_zone_not_in_scope() {
-        let d = SearchDelegation::new_from_now("sd_x", "eng", ["eng".to_string()], subject("alice"));
+        let d =
+            SearchDelegation::new_from_now("sd_x", "eng", ["eng".to_string()], subject("alice"));
         let err = d.validate("search", "finance").unwrap_err();
         match err {
             DelegationError::ZoneNotPermitted { zone_id, permitted } => {
@@ -283,13 +286,8 @@ mod tests {
 
     #[test]
     fn validate_refuses_expired_delegation() {
-        let d = SearchDelegation::new_with_ttl(
-            "sd_x",
-            "eng",
-            ["eng".to_string()],
-            subject("alice"),
-            0,
-        );
+        let d =
+            SearchDelegation::new_with_ttl("sd_x", "eng", ["eng".to_string()], subject("alice"), 0);
         std::thread::sleep(Duration::from_millis(2));
         let err = d.validate("search", "eng").unwrap_err();
         assert!(matches!(err, DelegationError::Expired { .. }));

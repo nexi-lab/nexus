@@ -67,7 +67,10 @@ impl InMemoryZoneSearchRegistry {
     /// Convenience: register the SAME target for every zone in
     /// `zones`.  Matches the current-production "one plugin, all
     /// zones" wiring so a caller does not have to loop insert.
-    pub fn shared_for_all(zones: impl IntoIterator<Item = String>, target: impl Into<Arc<str>>) -> Self {
+    pub fn shared_for_all(
+        zones: impl IntoIterator<Item = String>,
+        target: impl Into<Arc<str>>,
+    ) -> Self {
         let target = target.into();
         let mut r = Self::new();
         for zone in zones {
@@ -99,10 +102,7 @@ mod tests {
         let mut r = InMemoryZoneSearchRegistry::new();
         r.insert("eng", "http://plugin-eng:2126");
         r.insert("legal", "http://plugin-legal:2126");
-        assert_eq!(
-            r.resolve("eng").as_deref(),
-            Some("http://plugin-eng:2126"),
-        );
+        assert_eq!(r.resolve("eng").as_deref(), Some("http://plugin-eng:2126"),);
         assert_eq!(
             r.resolve("legal").as_deref(),
             Some("http://plugin-legal:2126"),

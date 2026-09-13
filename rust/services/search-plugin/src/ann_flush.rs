@@ -53,6 +53,14 @@ pub const DEFAULT_EMBED_CONCURRENCY: usize = 4;
 pub const ANN_FLUSH_SECONDS_ENV: &str = "NEXUS_SEARCH_ANN_FLUSH_SECONDS";
 pub const DEFAULT_ANN_FLUSH_SECONDS: u64 = 30;
 
+/// Zones with at least this many live ANN chunks defer their dump even
+/// when no sibling batch is in flight, so a large index is rewritten at
+/// most once per [`ANN_FLUSH_SECONDS_ENV`] instead of once per call.
+/// Below it, a lone batch dumps inline (immediate durability, no flusher
+/// thread).  `0` = always defer.
+pub const ANN_DEFER_MIN_CHUNKS_ENV: &str = "NEXUS_SEARCH_ANN_DEFER_MIN_CHUNKS";
+pub const DEFAULT_ANN_DEFER_MIN_CHUNKS: usize = 10_000;
+
 fn env_usize(name: &str, default: usize) -> usize {
     match std::env::var(name) {
         Ok(raw) if !raw.trim().is_empty() => raw.trim().parse().unwrap_or_else(|_| {
@@ -215,6 +223,9 @@ pub struct AnnFlushCoordinator {
     zones: Mutex<HashMap<String, ZoneState>>,
     /// `None` ⇒ deferral disabled; every batch dumps inline.
     flush_delay: Option<Duration>,
+    /// Live-chunk count from which a zone's dump is deferred even when no
+    /// sibling batch is in flight — see [`ANN_DEFER_MIN_CHUNKS_ENV`].
+    defer_min_chunks: usize,
 }
 
 impl AnnFlushCoordinator {
@@ -222,12 +233,21 @@ impl AnnFlushCoordinator {
         Self {
             zones: Mutex::new(HashMap::new()),
             flush_delay,
+            defer_min_chunks: DEFAULT_ANN_DEFER_MIN_CHUNKS,
         }
     }
 
     pub fn from_env() -> Self {
         let secs = env_usize(ANN_FLUSH_SECONDS_ENV, DEFAULT_ANN_FLUSH_SECONDS as usize);
-        Self::new((secs > 0).then(|| Duration::from_secs(secs as u64)))
+        Self::new((secs > 0).then(|| Duration::from_secs(secs as u64))).with_defer_min_chunks(
+            env_usize(ANN_DEFER_MIN_CHUNKS_ENV, DEFAULT_ANN_DEFER_MIN_CHUNKS),
+        )
+    }
+
+    /// Override the large-index threshold (tests; `0` = every batch defers).
+    pub fn with_defer_min_chunks(mut self, n: usize) -> Self {
+        self.defer_min_chunks = n;
+        self
     }
 
     pub fn deferral_enabled(&self) -> bool {
@@ -236,6 +256,22 @@ impl AnnFlushCoordinator {
 
     pub fn flush_delay(&self) -> Option<Duration> {
         self.flush_delay
+    }
+
+    pub fn defer_min_chunks(&self) -> usize {
+        self.defer_min_chunks
+    }
+
+    /// Should this batch leave its hnsw dump to the flusher?  Yes when
+    /// deferral is on AND either a sibling batch is in flight (it will
+    /// dump for both) or the index is large enough that an inline dump
+    /// would stall the node's disk for seconds (#4777: 1.5 GB at 210 k
+    /// chunks, every single-document call, on the volume the kernel
+    /// fsyncs to).  Small indexes keep dumping inline so a quiet
+    /// deployment stays durable immediately and never wakes a flusher.
+    pub fn should_defer(&self, zone_id: &str, live_chunks: usize) -> bool {
+        self.deferral_enabled()
+            && (self.others_in_flight(zone_id) || live_chunks >= self.defer_min_chunks)
     }
 
     // ── epoch tracking ──

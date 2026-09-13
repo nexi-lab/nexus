@@ -159,6 +159,7 @@ env directly.
 | `NEXUS_SEARCH_EMBED_TIMEOUT_SECONDS` | `30` | Per-request timeout |
 | `NEXUS_SEARCH_EMBED_CONCURRENCY` | `4` | Max concurrent embedding calls across `IndexDocuments` batches (#4777). Embedding runs OUTSIDE the per-zone write lock, so concurrent batches overlap their provider round-trips instead of serialising. `0` = unlimited. |
 | `NEXUS_SEARCH_ANN_FLUSH_SECONDS` | `30` | While sibling `IndexDocuments` batches are in flight for a zone, the full HNSW dump is left to the last one, and while siblings are queued on the zone lock the tantivy commit is coalesced into the last queued batch too; this is the fallback delay after which a deferred dump (and any coalesced commit) is forced to disk if the stream never pauses (#4777). `0` disables both (every batch commits and dumps, pre-#4777 behaviour). Deferred vectors are served from memory immediately and recorded as retry-me until the dump lands, so a crash costs a re-embed, never a hole. |
+| `NEXUS_SEARCH_ANN_DEFER_MIN_CHUNKS` | `10000` | Zones with at least this many live ANN chunks defer their HNSW dump even when no sibling batch is in flight, so a large index is rewritten at most once per `NEXUS_SEARCH_ANN_FLUSH_SECONDS` rather than once per `IndexDocuments` call (a 210k-chunk index is a ~1.5 GB dump; inline it stalled every co-located `files/write` for seconds). Smaller zones keep the inline dump. `0` = always defer. |
 | `NEXUS_SEARCH_PHASE_TRACE` | *(unset)* | Set to any value to print a per-batch phase trace for `IndexDocuments` (lock acquired / FTS committed or coalesced / embedded / dump deferred) on the plugin host's stderr. The plugin's `tracing` events do not reach the host log, so this is the way to see where a batch spends its time live. |
 
 And on the **server**:
@@ -173,6 +174,7 @@ And on the **server**:
 | `NEXUS_SEARCH_PLUGIN_ALLOW_INSECURE` | *(unset)* | Explicit opt-in for **plaintext to a non-loopback** target (trusted network only) — without it the server refuses the channel and boots with search disabled |
 | `NEXUS_SEARCH_INDEX_MAX_INFLIGHT` | `8` | Per-process cap on concurrent `POST /search/index` requests (#4777). The plugin serializes index batches per zone, so requests past the cap are shed with `503` + `Retry-After: 5` instead of parking on the zone mutex for minutes. `0` disables the cap. |
 | `NEXUS_SLOW_REQUEST_MS` | `10000` | Any HTTP request slower than this logs `request_completed` at WARNING with `slow_request=true`, regardless of status. `0` disables. |
+| `NEXUS_AUTH_CACHE_DEBUG` | *(unset)* | `1` logs every auth-cache get/set outcome (`[AUTH-CACHE] get hit/miss`, `set ok`, store class, payload size) at INFO — one line per request, for diagnosing a live miss rate. Cache backend errors are always fail-open (logged at WARNING, request re-authenticates against the provider). |
 | `NEXUS_AUTH_CACHE_MAX_ENTRIES` | `10000` | Size of the process-local auth-result cache used when no shared cache store (Dragonfly) is configured. Auth results are cached 15 min; key revocation flushes the cache. |
 
 **Backpressure**: a `503` from `/search/index` carries `detail.inflight`,

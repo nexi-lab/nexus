@@ -7,7 +7,7 @@ responses so transports (MCP, HTTP) emit the same shape.
 Kernel pagination primitives (PaginatedResult, paginate_iter) live in
 ``nexus.core.pagination``.
 
-This module must stay cross-brick safe (zero imports from
+This module must stay cross-service safe (zero imports from
 ``nexus.bricks.*``) because MCP, search, and HTTP routers all depend
 on it.
 """

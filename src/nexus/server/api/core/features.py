@@ -39,7 +39,7 @@ class FeaturesResponse(BaseModel):
 
     profile: str = Field(description="Active deployment profile (embedded/lite/full/cloud)")
     mode: str = Field(description="Deployment topology (standalone/remote/federation)")
-    enabled_bricks: list[str] = Field(description="List of enabled brick names")
+    enabled_services: list[str] = Field(description="List of enabled brick names")
     disabled_bricks: list[str] = Field(description="List of disabled brick names")
     version: str | None = Field(default=None, description="Nexus version")
     performance_tuning: PerformanceTuningInfo | None = Field(
@@ -66,7 +66,7 @@ async def get_features(request: Request) -> FeaturesResponse:
     return FeaturesResponse(
         profile="full",
         mode="standalone",
-        enabled_bricks=[],
+        enabled_services=[],
         disabled_bricks=[],
         version=None,
     )

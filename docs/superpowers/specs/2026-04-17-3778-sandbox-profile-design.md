@@ -75,7 +75,7 @@ One Nexus process per agent sandbox. Zero external services required to boot.
 **File**: `src/nexus/contracts/deployment_profile.py`
 
 - Add `SANDBOX = "sandbox"` to the `StrEnum`.
-- Add `_SANDBOX_BRICKS = _LITE_BRICKS | frozenset({SEARCH, MCP, PARSERS})`. Federation is auto-detected from ZoneManager (not brick-gated); no `BRICK_FEDERATION` entry in `_SANDBOX_BRICKS`.
+- Add `_SANDBOX_BRICKS = _LITE_BRICKS | frozenset({SEARCH, MCP, PARSERS})`. Federation is auto-detected from ZoneManager (not brick-gated); no `SERVICE_FEDERATION` entry in `_SANDBOX_BRICKS`.
 - Register in `_PROFILE_BRICKS` dict.
 - Update module docstring hierarchy: `sandbox` sits as a distinct tier — it is a superset of `lite` but a proper subset of `full`.
 - Add to `lib/performance_tuning.py`: `SANDBOX` tuning entry with `thread_pool_size=4`, `default_workers=2`, `db_pool_size=2`, `asyncpg_max_size=0`, `search_max_concurrency=2`.
@@ -98,7 +98,7 @@ Explicit off-by-default bricks (not in `_SANDBOX_BRICKS`): `LLM`, `PAY`, `SANDBO
 ### 3. Factory boot path
 **Files**: `src/nexus/factory/orchestrator.py`, `src/nexus/factory/_wired.py`, `src/nexus/factory/_bricks.py`
 
-- `enabled_bricks` resolution reuses existing path — no change needed once `DeploymentProfile.SANDBOX.default_bricks()` returns the right set.
+- `enabled_services` resolution reuses existing path — no change needed once `DeploymentProfile.SANDBOX.default_services()` returns the right set.
 - Cache store selection: `_BootContext` gains `cache_store_kind = "inmem" | "dragonfly" | ...`. When profile is `sandbox` (or cache URL unset), pick `InMemoryLRUCache`.
 - New tiny adapter: `src/nexus/storage/cache_in_mem.py` wrapping `cachetools.LRUCache` behind the existing `CacheStore` protocol.
 
@@ -161,7 +161,7 @@ sandbox = [
 NEXUS_PROFILE=sandbox nexus serve
   → _load_from_environment()            # config.py
   → _apply_sandbox_defaults(cfg)        # new
-  → resolve_enabled_bricks(SANDBOX, overrides)   # contracts
+  → resolve_enabled_services(SANDBOX, overrides)   # contracts
   → SQLite metastore/record_store       # existing factory
   → InMemoryLRUCache                    # new selection
   → _boot_pre_kernel_services + _boot_independent_bricks    # orchestrator
@@ -219,7 +219,7 @@ MCP tool call: search(mode="keyword")
 ### Unit
 - `tests/unit/core/test_sandbox_profile.py`:
   - Enum membership; `_SANDBOX_BRICKS` correct; superset of `LITE`; subset of `FULL`.
-  - `resolve_enabled_bricks(SANDBOX)` matches expected set.
+  - `resolve_enabled_services(SANDBOX)` matches expected set.
   - Off-by-default set excludes LLM/PAY/SANDBOX-brick/OBSERVABILITY/etc.
 - Extend `tests/unit/core/test_deployment_profile.py::test_valid_profiles` to include `"sandbox"`.
 - `tests/unit/test_config_sandbox.py`:
@@ -231,7 +231,7 @@ MCP tool call: search(mode="keyword")
 - `tests/integration/test_sandbox_boot.py`:
   - Boots with no PG/Dragonfly/Zoekt running.
   - `/health` → 200.
-  - `/api/v2/features` → 200, `profile="sandbox"`, correct `enabled_bricks`.
+  - `/api/v2/features` → 200, `profile="sandbox"`, correct `enabled_services`.
   - Disabled router (e.g. `/api/v2/skills/*`) → 404.
   - Boot wall-clock asserted `< 5s`.
 

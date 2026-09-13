@@ -5,9 +5,9 @@ Caching contracts:
 - ``CacheConfigContract`` — the 3-attribute contract for cache configuration
   (session_factory, zone_id, l1_only).
 
-- ``TigerCacheProtocol`` — protocol for Tiger bitmap cache backends (cross-brick).
+- ``TigerCacheProtocol`` — protocol for Tiger bitmap cache backends (cross-service).
 
-- ``EmbeddingCacheProtocol`` — protocol for embedding vector caches (cross-brick).
+- ``EmbeddingCacheProtocol`` — protocol for embedding vector caches (cross-service).
 
 References:
     - Issue #1628: Cache protocol contracts
@@ -39,14 +39,14 @@ class CacheConfigContract(Protocol):
 
 @runtime_checkable
 class TigerCacheProtocol(Protocol):
-    """Protocol for Tiger cache backends (cross-brick contract).
+    """Protocol for Tiger cache backends (cross-service contract).
 
     Tiger cache stores pre-materialized permission bitmaps for O(1) list filtering.
     Each bitmap represents all resources a subject can access with a given permission.
 
     Canonical implementation lives in ``nexus.cache``; this protocol is
     defined here so that ``nexus.bricks.rebac`` can type-reference it without
-    a cross-brick import.
+    a cross-service import.
     """
 
     async def get_bitmap(
@@ -90,14 +90,14 @@ class TigerCacheProtocol(Protocol):
 
 @runtime_checkable
 class EmbeddingCacheProtocol(Protocol):
-    """Protocol for embedding vector caches (cross-brick contract).
+    """Protocol for embedding vector caches (cross-service contract).
 
     Caches embedding vectors by content hash to avoid redundant API calls.
     Supports batch operations with deduplication for efficiency.
 
     Canonical implementation lives in ``nexus.cache``; this protocol is
     defined here so that ``nexus.bricks.search`` can type-reference it without
-    a cross-brick import.
+    a cross-service import.
     """
 
     async def get(self, text: str, model: str) -> list[float] | None:

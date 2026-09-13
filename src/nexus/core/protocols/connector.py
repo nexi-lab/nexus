@@ -1,10 +1,10 @@
 """Storage connector protocol interfaces (Issue #1601, #1703, #2367).
 
-Defines the Storage Brick boundary as composable protocols:
+Defines the Storage Service boundary as composable protocols:
 
 - ``ContentStoreProtocol`` — Minimal CAS interface (most consumers need only this)
 - ``DirectoryOpsProtocol`` — Directory operations (VFS Router, mount services)
-- ``ConnectorProtocol`` — Full connector interface (Storage Brick boundary)
+- ``ConnectorProtocol`` — Full connector interface (Storage Service boundary)
 - ``OAuthCapableProtocol`` — OAuth token management capability
 - ``StreamingProtocol`` — Memory-efficient large file I/O (stream/range)
 - ``BatchContentProtocol`` — Bulk content read optimization
@@ -12,14 +12,14 @@ Defines the Storage Brick boundary as composable protocols:
 - ``SearchableConnector`` — Thin search capability for searchable connectors
 
 Design decisions:
-    - Protocol for brick interfaces, ABC for internal implementations (§11.3)
+    - Protocol for service interfaces, ABC for internal implementations (§11.3)
     - Protocols in ``core/protocols/``, implementations stay in ``backends/`` (§11.4)
     - Modeled after the kernel-protocol pattern (§5.1)
     - Layered protocols: consumers import only the capability they need (§5.6)
 
 References:
     - docs/design/NEXUS-LEGO-ARCHITECTURE.md §5.1, §5.6, §11.3, §11.4
-    - Issue #1601: ConnectorProtocol + Storage Brick Extraction
+    - Issue #1601: ConnectorProtocol + Storage Service Extraction
     - Issue #1703: Make backends implement ConnectorProtocol
 """
 
@@ -41,9 +41,9 @@ if TYPE_CHECKING:
 class SearchableConnector(Protocol):
     """Thin search capability for connectors that support content/metadata search.
 
-    Heavy search logic stays in the Search brick. This protocol just
+    Heavy search logic stays in the Search service. This protocol just
     advertises "I support search" at the connector level, enabling the
-    Search brick to discover searchable connectors via isinstance().
+    Search service to discover searchable connectors via isinstance().
 
     References:
         - NEXUS-LEGO-ARCHITECTURE.md §2.3, §4.3
@@ -149,7 +149,7 @@ class CapabilityAwareProtocol(Protocol):
 class ConnectorProtocol(
     ContentStoreProtocol, DirectoryOpsProtocol, CapabilityAwareProtocol, Protocol
 ):
-    """Full connector interface — the Storage Brick boundary.
+    """Full connector interface — the Storage Service boundary.
 
     Combines CAS content operations, directory operations, and connection
     lifecycle management with capability flags for polymorphic dispatch.

@@ -1,6 +1,6 @@
-"""Protocol interfaces for Cache brick external dependencies.
+"""Protocol interfaces for Cache service external dependencies.
 
-Defines the minimal contract the Cache brick requires from the
+Defines the minimal contract the Cache service requires from the
 relational storage pillar. Only ``engine`` and ``async_engine``
 properties are needed for PostgreSQL cache operations.
 
@@ -13,7 +13,7 @@ from typing import Any, Protocol
 class RecordStoreProtocol(Protocol):
     """Slim protocol for relational storage engine access.
 
-    The Cache brick only needs synchronous and asynchronous SQLAlchemy
+    The Cache service only needs synchronous and asynchronous SQLAlchemy
     engine handles for running raw SQL queries. This avoids importing
     the full ``RecordStoreABC`` from ``nexus.storage``.
     """

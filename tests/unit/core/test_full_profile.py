@@ -1,24 +1,24 @@
 """Characterization tests for DeploymentProfile.FULL (Issue #4132).
 
 These lock the FULL contract that docs/deployment/full-profile.md cites.
-FULL = LITE bricks + the full feature set, EXCLUDING federation
+FULL = LITE services + the full feature set, EXCLUDING federation
 (federation is cloud = full ∪ {federation}).
 """
 
 from nexus.contracts.deployment_profile import (
-    BRICK_ACCESS_MANIFEST,
-    BRICK_FEDERATION,
-    BRICK_LLM,
-    BRICK_MCP,
-    BRICK_PAY,
-    BRICK_SEARCH,
-    BRICK_SNAPSHOT,
-    BRICK_VERSIONING,
-    BRICK_WORKSPACE,
     DRIVER_GCS,
     DRIVER_GDRIVE,
     DRIVER_REMOTE,
     DRIVER_S3,
+    SERVICE_ACCESS_MANIFEST,
+    SERVICE_FEDERATION,
+    SERVICE_LLM,
+    SERVICE_MCP,
+    SERVICE_PAY,
+    SERVICE_SEARCH,
+    SERVICE_SNAPSHOT,
+    SERVICE_VERSIONING,
+    SERVICE_WORKSPACE,
     DeploymentProfile,
 )
 
@@ -29,33 +29,33 @@ class TestFullProfileContract:
         assert DeploymentProfile("full") is DeploymentProfile.FULL
 
     def test_superset_over_lite(self) -> None:
-        full = DeploymentProfile.FULL.default_bricks()
-        lite = DeploymentProfile.LITE.default_bricks()
+        full = DeploymentProfile.FULL.default_services()
+        lite = DeploymentProfile.LITE.default_services()
         assert lite.issubset(full)
 
-    def test_includes_feature_bricks(self) -> None:
-        bricks = DeploymentProfile.FULL.default_bricks()
+    def test_includes_feature_services(self) -> None:
+        services = DeploymentProfile.FULL.default_services()
         for b in (
-            BRICK_SEARCH,
-            BRICK_PAY,
-            BRICK_LLM,
-            BRICK_MCP,
-            BRICK_WORKSPACE,
-            BRICK_SNAPSHOT,
-            BRICK_VERSIONING,
-            BRICK_ACCESS_MANIFEST,
+            SERVICE_SEARCH,
+            SERVICE_PAY,
+            SERVICE_LLM,
+            SERVICE_MCP,
+            SERVICE_WORKSPACE,
+            SERVICE_SNAPSHOT,
+            SERVICE_VERSIONING,
+            SERVICE_ACCESS_MANIFEST,
         ):
-            assert b in bricks, f"{b} must be enabled in FULL"
+            assert b in services, f"{b} must be enabled in FULL"
 
     def test_excludes_federation(self) -> None:
         # FULL excludes federation; CLOUD = FULL ∪ {federation}
-        assert BRICK_FEDERATION not in DeploymentProfile.FULL.default_bricks()
-        assert BRICK_FEDERATION in DeploymentProfile.CLOUD.default_bricks()
+        assert SERVICE_FEDERATION not in DeploymentProfile.FULL.default_services()
+        assert SERVICE_FEDERATION in DeploymentProfile.CLOUD.default_services()
 
     def test_cloud_is_full_plus_federation(self) -> None:
-        full = DeploymentProfile.FULL.default_bricks()
-        cloud = DeploymentProfile.CLOUD.default_bricks()
-        assert cloud == full | {BRICK_FEDERATION}
+        full = DeploymentProfile.FULL.default_services()
+        cloud = DeploymentProfile.CLOUD.default_services()
+        assert cloud == full | {SERVICE_FEDERATION}
 
     def test_drivers_include_cloud_storage(self) -> None:
         drivers = DeploymentProfile.FULL.default_drivers()

@@ -1,7 +1,7 @@
 """Nexus Cache Layer — Tier 2 BRICK for pluggable caching backends.
 
 All domain caches are driver-agnostic, built on CacheStoreABC primitives.
-CacheBrick is the single entry point for all cache domain services.
+CacheService is the single entry point for all cache domain services.
 
 Configuration:
     Set NEXUS_DRAGONFLY_URL to enable Dragonfly backend:
@@ -11,13 +11,13 @@ Configuration:
     If not set, NullCacheStore provides graceful degradation (Tier 2 = silent).
 
 Usage:
-    from nexus.cache import CacheBrick
+    from nexus.cache import CacheService
 
-    brick = CacheBrick(cache_store=my_store)
-    await brick.start()
+    service = CacheService(cache_store=my_store)
+    await service.start()
 
-    perm_cache = brick.permission_cache
-    tiger_cache = brick.tiger_cache
+    perm_cache = service.permission_cache
+    tiger_cache = service.tiger_cache
 
 Note:
     DragonflyCacheStore is lazily imported to avoid pulling in the ``redis``
@@ -34,7 +34,7 @@ from nexus.cache.base import (
     ResourceMapCacheProtocol,
     TigerCacheProtocol,
 )
-from nexus.cache.brick import CacheBrick
+from nexus.cache.brick import CacheService
 from nexus.cache.factory import CacheFactory
 from nexus.cache.file_store import FileKey, MemoryFileCache
 from nexus.cache.index_store import IndexKey, MemoryIndexCache
@@ -46,8 +46,8 @@ from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
 
 __all__ = [
     # Brick facade (Issue #1524)
-    "CacheBrick",
-    # Factory + config (deprecated — use CacheBrick instead)
+    "CacheService",
+    # Factory + config (deprecated — use CacheService instead)
     "CacheFactory",
     "CacheSettings",
     # Consumer-facing protocols (what you program against)
@@ -66,7 +66,7 @@ __all__ = [
     # Fourth Pillar ABC — canonical home is nexus.contracts.cache_store (Issue #2055)
     "CacheStoreABC",
     "NullCacheStore",
-    # CacheStoreABC drivers (for DI into CacheBrick/NexusFS)
+    # CacheStoreABC drivers (for DI into CacheService/NexusFS)
     # DragonflyCacheStore — lazy import (use: from nexus.cache.dragonfly import ...)
     "InMemoryCacheStore",
 ]

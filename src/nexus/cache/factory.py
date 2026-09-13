@@ -61,7 +61,7 @@ class CacheFactory:
     """Factory for creating cache instances based on configuration.
 
     .. deprecated:: Issue #1524
-        Use ``CacheBrick`` instead. CacheBrick now provides CacheFactory-compatible
+        Use ``CacheService`` instead. CacheService now provides CacheFactory-compatible
         methods (``initialize()``, ``shutdown()``, ``get_*_cache()``).
 
     Owns a CacheStoreABC driver and builds domain caches on top.
@@ -89,7 +89,7 @@ class CacheFactory:
         import warnings
 
         warnings.warn(
-            "CacheFactory is deprecated (Issue #1524). Use CacheBrick instead.",
+            "CacheFactory is deprecated (Issue #1524). Use CacheService instead.",
             DeprecationWarning,
             stacklevel=2,
         )

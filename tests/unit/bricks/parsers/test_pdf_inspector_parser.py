@@ -1,4 +1,4 @@
-"""Tests for PdfInspectorParser (brick-level adapter)."""
+"""Tests for PdfInspectorParser (service-level adapter)."""
 
 import pathlib
 import sys
@@ -77,8 +77,8 @@ async def test_parse_invalid_bytes_raises_parser_error():
     assert exc_info.value.parser == "pdf-inspector"
 
 
-# Regression: ensure ParsersBrick's create_parse_fn routes PDFs to
-# pdf-inspector on a default install.  Confirms the brick wires pdf-inspector
+# Regression: ensure ParsersService's create_parse_fn routes PDFs to
+# pdf-inspector on a default install.  Confirms the service wires pdf-inspector
 # into the auto-parse-on-write pipeline (``create_parse_fn`` /
 # ``AutoParseWriteHook``) so PDFs flow to the indexer.
 
@@ -86,14 +86,14 @@ async def test_parse_invalid_bytes_raises_parser_error():
 def test_brick_create_parse_fn_handles_pdf():
     """Regression test for auto-parse-on-write path (issue #3757).
 
-    ``ParsersBrick.create_parse_fn`` resolves parsers via ``ParserRegistry``
+    ``ParsersService.create_parse_fn`` resolves parsers via ``ParserRegistry``
     (not ``ProviderRegistry``). Confirms that PdfInspectorParser is wired
     into the auto-parse pipeline so PDFs are parsed on write.
     """
     pytest.importorskip("pdf_inspector")
-    from nexus.bricks.parsers.brick import ParsersBrick
+    from nexus.bricks.parsers.brick import ParsersService
 
-    brick = ParsersBrick()
+    brick = ParsersService()
     parse = brick.create_parse_fn()
     content = (FIXTURES / "hello_text.pdf").read_bytes()
 

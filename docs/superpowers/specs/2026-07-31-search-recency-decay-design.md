@@ -157,7 +157,7 @@ Following the #4541 (`alpha`/`fusion`/`rrf_k`) and #4398 (`expand`) patterns:
 - `BaseSearchResult` (`bricks/search/results.py`) gains
   `recency_boost: float | None = None` — the only new dataclass field. No
   `mtime` field on results (YAGNI; attribution only, per acceptance criteria).
-- `SearchBrickProtocol.search` (`contracts/protocols/search.py:48-59`) gains
+- `SearchServiceProtocol.search` (`contracts/protocols/search.py:48-59`) gains
   the three params.
 - Surface-coverage YAML regenerated
   (`uv run python scripts/gen_api_surface_coverage.py`) since the `/query`

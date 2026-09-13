@@ -103,8 +103,8 @@ async def _startup_async_rebac(app: "FastAPI", svc: "LifespanServices") -> None:
 async def _startup_cache_brick(app: "FastAPI", svc: "LifespanServices") -> None:
     """Initialize cache for Dragonfly/Redis or NullCacheStore fallback (Issue #1075, #1251, #1524).
 
-    Prefers CacheBrick from ServiceRegistry (injected by factory). Falls back to
-    creating a CacheBrick from environment settings if not available.
+    Prefers CacheService from ServiceRegistry (injected by factory). Falls back to
+    creating a CacheService from environment settings if not available.
     """
     try:
         cache_brick = app.state.cache_brick
@@ -120,8 +120,8 @@ async def _startup_cache_brick(app: "FastAPI", svc: "LifespanServices") -> None:
             needs_env_cache_brick = cache_settings.should_use_dragonfly()
 
         if needs_env_cache_brick:
-            # Fallback: create CacheBrick from env settings (standalone mode)
-            from nexus.cache.brick import CacheBrick
+            # Fallback: create CacheService from env settings (standalone mode)
+            from nexus.cache.brick import CacheService
             from nexus.cache.dragonfly import DragonflyCacheStore, DragonflyClient
 
             record_store = svc.record_store
@@ -138,7 +138,7 @@ async def _startup_cache_brick(app: "FastAPI", svc: "LifespanServices") -> None:
                 )
                 await client.connect()
                 cache_store = DragonflyCacheStore(client)
-            cache_brick = CacheBrick(
+            cache_brick = CacheService(
                 cache_store=cache_store,
                 settings=cache_settings,
                 record_store=record_store,
@@ -148,7 +148,7 @@ async def _startup_cache_brick(app: "FastAPI", svc: "LifespanServices") -> None:
         if not getattr(svc, "_bootstrapped", False):
             await cache_brick.start()
         app.state.cache_brick = cache_brick
-        logger.info("CacheBrick initialized with %s backend", cache_brick.backend_name)
+        logger.info("CacheService initialized with %s backend", cache_brick.backend_name)
 
         # Wire up CacheStoreABC L2 cache to TigerCache (Issue #1106)
         if cache_brick.has_cache_store:
@@ -159,7 +159,7 @@ async def _startup_cache_brick(app: "FastAPI", svc: "LifespanServices") -> None:
                 tiger_cache.set_dragonfly_cache(dragonfly_tiger)
                 logger.info(
                     "[TIGER] Dragonfly L2 cache wired up - "
-                    "L1 (memory) -> L2 (CacheBrick) -> L3 (PostgreSQL)"
+                    "L1 (memory) -> L2 (CacheService) -> L3 (PostgreSQL)"
                 )
     except Exception as e:
         logger.warning("Failed to initialize cache: %s", e, exc_info=True)
@@ -168,7 +168,7 @@ async def _startup_cache_brick(app: "FastAPI", svc: "LifespanServices") -> None:
 async def _startup_durable_invalidation(app: "FastAPI", svc: "LifespanServices") -> None:
     """Initialize cross-zone durable invalidation stream and read fence (Issue #3396).
 
-    Creates DurableInvalidationStream + ReadFence backed by the CacheBrick's
+    Creates DurableInvalidationStream + ReadFence backed by the CacheService's
     Dragonfly client, wires them into the ReBACManager's CacheCoordinator,
     and registers a consumer-side handler that triggers local cache invalidation
     when cross-zone events arrive.
@@ -215,7 +215,7 @@ async def _startup_durable_invalidation(app: "FastAPI", svc: "LifespanServices")
             return
 
         # Get a raw redis.asyncio.Redis client for Streams API.
-        # CacheBrick wraps Dragonfly in a DragonflyClient that exposes only
+        # CacheService wraps Dragonfly in a DragonflyClient that exposes only
         # high-level methods (get/set/publish).  We need the raw Redis client
         # for XADD/XREADGROUP/XACK.  Create one from the existing connection pool.
         cache_store = cache_brick.cache_store

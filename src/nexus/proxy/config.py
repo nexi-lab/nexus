@@ -1,4 +1,4 @@
-"""Proxy brick configuration."""
+"""Proxy service configuration."""
 
 import dataclasses
 from dataclasses import dataclass

@@ -192,10 +192,10 @@ class TestFromAppDefaults:
         svc = LifespanServices.from_app(app)
         assert svc.thread_pool_size == 40
 
-    def test_enabled_bricks_defaults_to_empty_frozenset(self) -> None:
+    def test_enabled_services_defaults_to_empty_frozenset(self) -> None:
         app = _make_app()
         svc = LifespanServices.from_app(app)
-        assert svc.enabled_bricks == frozenset()
+        assert svc.enabled_services == frozenset()
 
 
 class TestFromAppEdgeCases:

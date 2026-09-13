@@ -20,8 +20,8 @@ Boot sequence (4 phases):
        Tier 1 (Services):  critical services (ReBAC, permissions) → BootError
        Tier 2 (Bricks):    optional (search, LLM, sandbox) → graceful degrade
 
-    2. _wire_services()        — pure memory, no I/O.  Creates ParsersBrick,
-       CacheBrick; boots post-kernel services; binds onto NexusFS; creates
+    2. _wire_services()        — pure memory, no I/O.  Creates ParsersService,
+       CacheService; boots post-kernel services; binds onto NexusFS; creates
        PermissionChecker.  Returns _InitContext.
 
     3. _initialize_services()  — one-time side effects (VFS hook registration,
@@ -86,7 +86,7 @@ def create_nexus_services(
     agent_id: str | None = None,
     enable_write_buffer: bool | None = None,
     resiliency_raw: dict[str, Any] | None = None,
-    enabled_bricks: frozenset[str] | None = None,
+    enabled_services: frozenset[str] | None = None,
     nexus_fs: "Any" = None,
 ) -> "dict[str, Any]":
     """Create default services for NexusFS dependency injection.
@@ -116,7 +116,7 @@ def create_nexus_services(
         agent_id: Default agent ID (embedded mode only).
         enable_write_buffer: Use async DT_PIPE observer for PG sync (Issue #809).
         resiliency_raw: Raw resiliency policy dict from YAML config.
-        enabled_bricks: Set of brick names to enable. When None, all bricks
+        enabled_services: Set of brick names to enable. When None, all bricks
             are enabled (backward-compatible default = FULL profile).
         nexus_fs: NexusFS handle, when services are booted from
             ``create_nexus_fs``. Service-tier boot code uses it to reach the
@@ -135,19 +135,19 @@ def create_nexus_services(
     from nexus.factory._bricks import _boot_dependent_bricks, _boot_independent_bricks
     from nexus.factory._system import _boot_pre_kernel_services
 
-    if enabled_bricks is None:
-        enabled_bricks = DeploymentProfile.FULL.default_bricks()
+    if enabled_services is None:
+        enabled_services = DeploymentProfile.FULL.default_services()
 
     def svc_on(name: str) -> bool:
-        return name in enabled_bricks
+        return name in enabled_services
 
-    from nexus.contracts.deployment_profile import ALL_BRICK_NAMES as _ALL_BRICKS
+    from nexus.contracts.deployment_profile import ALL_SERVICE_NAMES as _ALL_BRICKS
 
     logger.info(
-        "Factory: enabled_bricks=%d/%d %s",
-        len(enabled_bricks),
+        "Factory: enabled_services=%d/%d %s",
+        len(enabled_services),
         len(_ALL_BRICKS),
-        sorted(enabled_bricks),
+        sorted(enabled_services),
     )
 
     # --- Performance tuning (Issue #2071) ---
@@ -253,7 +253,7 @@ def create_nexus_fs(
     parsing: Any = None,
     services: "dict[str, Any] | None" = None,
     enable_write_buffer: bool | None = None,
-    enabled_bricks: frozenset[str] | None = None,
+    enabled_services: frozenset[str] | None = None,
     zone_id: str | None = None,
     agent_id: str | None = None,
     workflow_engine: "WorkflowProtocol | None" = None,
@@ -282,7 +282,7 @@ def create_nexus_fs(
         services: Pre-built services dict. When None and record_store is
             provided, create_nexus_services() is called automatically.
         enable_write_buffer: Use async DT_PIPE observer for PG sync.
-        enabled_bricks: Set of brick names to enable.
+        enabled_services: Set of brick names to enable.
         zone_id: Default zone ID (embedded mode).
         agent_id: Default agent ID (embedded mode).
         workflow_engine: Pre-built workflow engine override.
@@ -369,7 +369,7 @@ def create_nexus_fs(
             zone_id=zone_id,
             agent_id=agent_id,
             enable_write_buffer=enable_write_buffer,
-            enabled_bricks=enabled_bricks,
+            enabled_services=enabled_services,
             nexus_fs=nx,
         )
 
@@ -382,7 +382,7 @@ def create_nexus_fs(
         nx,
         services=services,
         zone_id=zone_id,
-        enabled_bricks=enabled_bricks,
+        enabled_services=enabled_services,
         parsing=parsing,
         workflow_engine=workflow_engine,
         federation=federation,

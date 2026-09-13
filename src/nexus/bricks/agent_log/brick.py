@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any, Protocol
 
-__all__ = ["AgentLogBrick"]
+__all__ = ["AgentLogService"]
 
 
 class _AddMount(Protocol):
@@ -29,7 +29,7 @@ def _grant_for(agent_id: str) -> tuple[str, str, str]:
     return (f"agent:{agent_id}", "can-read", f"path:/.activity/*/{agent_id}.jsonl")
 
 
-class AgentLogBrick:
+class AgentLogService:
     def __init__(
         self,
         *,

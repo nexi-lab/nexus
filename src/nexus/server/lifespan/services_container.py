@@ -45,7 +45,7 @@ class LifespanServices:
     # --- Configuration ---------------------------------------------------
     deployment_profile: str = "full"
     deployment_mode: str = "standalone"
-    enabled_bricks: frozenset[str] = field(default_factory=frozenset)
+    enabled_services: frozenset[str] = field(default_factory=frozenset)
     profile_tuning: Any = None
     thread_pool_size: int = 40
 
@@ -123,7 +123,7 @@ class LifespanServices:
             # Configuration
             deployment_profile=getattr(app.state, "deployment_profile", "full"),
             deployment_mode=getattr(app.state, "deployment_mode", "standalone"),
-            enabled_bricks=getattr(app.state, "enabled_bricks", frozenset()),
+            enabled_services=getattr(app.state, "enabled_services", frozenset()),
             profile_tuning=getattr(app.state, "profile_tuning", None),
             thread_pool_size=getattr(app.state, "thread_pool_size", 40),
             # All services from ServiceRegistry

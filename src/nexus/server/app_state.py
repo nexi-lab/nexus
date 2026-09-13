@@ -46,7 +46,7 @@ class NexusAppState:
     # === Deployment config ===
     deployment_profile: str = "full"
     deployment_mode: str = "standalone"
-    enabled_bricks: frozenset[str] = field(default_factory=frozenset)
+    enabled_services: frozenset[str] = field(default_factory=frozenset)
     profile_tuning: Any = None
     features_info: Any = None
 

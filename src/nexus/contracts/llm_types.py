@@ -1,4 +1,4 @@
-"""Tier-neutral LLM message types for cross-brick use (Issue #2190).
+"""Tier-neutral LLM message types for cross-service use (Issue #2190).
 
 Canonical home for ``Message``, ``MessageRole``, and related types used by
 LLM document reader and any future brick that constructs LLM prompts.

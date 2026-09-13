@@ -214,7 +214,7 @@ class ConnectorRegistry:
 
 **Brick factory** (`nexus/factory/_bricks.py`):
 
-`_discover_brick_factories(tier)` becomes `store.list(kind="brick")` filtered by tier. Module-level `BRICK_NAME`/`TIER`/`MANIFEST` constants in `brick_factory.py` are read by a transitional reader that synthesizes a `BrickManifest` when no sibling `_manifest.py` exists. The manual wiring section in `_bricks.py` (search/zoekt observer callbacks, task dispatch pipe consumer, wallet/manifest-resolver/tool-namespace conditional blocks, governance services, ReBAC circuit breaker, snapshot/delegation/IPC/version/auth bricks) stays in place; it is runtime composition, not metadata. Promotion of `produces`/`consumes` declarations into automatic wiring is a follow-up.
+`_discover_brick_factories(tier)` becomes `store.list(kind="brick")` filtered by tier. Module-level `SERVICE_NAME`/`TIER`/`MANIFEST` constants in `brick_factory.py` are read by a transitional reader that synthesizes a `BrickManifest` when no sibling `_manifest.py` exists. The manual wiring section in `_bricks.py` (search/zoekt observer callbacks, task dispatch pipe consumer, wallet/manifest-resolver/tool-namespace conditional blocks, governance services, ReBAC circuit breaker, snapshot/delegation/IPC/version/auth bricks) stays in place; it is runtime composition, not metadata. Promotion of `produces`/`consumes` declarations into automatic wiring is a follow-up.
 
 **`PluginRegistry`** (`nexus/plugins/registry.py`):
 

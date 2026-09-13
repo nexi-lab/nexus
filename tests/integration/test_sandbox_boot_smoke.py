@@ -217,7 +217,7 @@ def test_sandbox_uses_no_external_service_drivers(sandbox_daemon) -> None:
         body = r.json()
 
     assert body["profile"] == "sandbox", body
-    enabled = set(body["enabled_bricks"])
+    enabled = set(body["enabled_services"])
     # No external-service-implying brick is enabled in sandbox: pay/llm/
     # observability/federation each pull a postgres/dragonfly/zoekt-class
     # dependency in non-sandbox profiles.
@@ -291,7 +291,7 @@ def test_sandbox_http_surface_over_real_socket(sandbox_daemon) -> None:
         body = r.json()
         assert body["profile"] == "sandbox", body
 
-        enabled = set(body["enabled_bricks"])
+        enabled = set(body["enabled_services"])
         expected_subset = {
             "search",
             "mcp",

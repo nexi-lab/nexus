@@ -322,7 +322,7 @@ def create_app(
     # the SANDBOX route allowlist is enforced even when the caller selected
     # sandbox via the config object/CLI without exporting NEXUS_PROFILE into
     # env. Env is used only as a fallback when no config is attached.
-    from nexus.contracts.deployment_profile import DeploymentProfile, resolve_enabled_bricks
+    from nexus.contracts.deployment_profile import DeploymentProfile, resolve_enabled_services
 
     _cfg_profile = None
     _nx_cfg_for_profile = getattr(nexus_fs, "config", None)
@@ -368,7 +368,7 @@ def create_app(
         _features_overrides = _nx_config.features.to_overrides()
 
     app.state.deployment_profile = _profile.value
-    app.state.enabled_bricks = resolve_enabled_bricks(_profile, overrides=_features_overrides)
+    app.state.enabled_services = resolve_enabled_services(_profile, overrides=_features_overrides)
 
     # Performance tuning (Issue #2071): resolve per-profile thresholds
     app.state.profile_tuning = _profile.tuning()

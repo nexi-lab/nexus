@@ -415,7 +415,7 @@ class TransactionalSnapshotService:
         """Build a FileMetadata from a JSON snapshot (used during rollback).
 
         Uses the injected ``metadata_factory`` to avoid importing ``nexus.contracts.metadata``
-        directly (LEGO Architecture Principle 3: bricks don't import from kernel).
+        directly (LEGO Architecture Principle 3: services don't import from kernel).
         """
         if self._metadata_factory is None:
             msg = "metadata_factory not set — cannot restore metadata during rollback"

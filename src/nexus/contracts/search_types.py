@@ -1,11 +1,11 @@
-"""Tier-neutral search strategy types for cross-brick use (Issue #2190).
+"""Tier-neutral search strategy types for cross-service use (Issue #2190).
 
 Canonical home for adaptive algorithm selection enums and threshold constants
 used by search service, grep mixin, and query router.
 
 This module has **zero** runtime imports from ``nexus.*`` --- only stdlib ---
-so bricks, services, and backends can depend on it without pulling in the
-search brick.
+so services, and backends can depend on it without pulling in the
+search service.
 
 Backward-compat shim: ``nexus.search.strategies`` re-exports everything.
 
@@ -124,7 +124,7 @@ class BatchQueryFailure:
 # degraded to BM25S (Issue #3778 R2 review). Response-envelope builders
 # (MCP, HTTP routers) can read this after awaiting semantic_search so the
 # degradation flag surfaces even when the fallback returned zero results.
-# Living in contracts (not the search brick) keeps cross-brick callers
+# Living in contracts (not the search service) keeps cross-service callers
 # legal under the LEGO architecture principle.
 LAST_SEMANTIC_DEGRADED: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "nexus_last_semantic_degraded", default=False

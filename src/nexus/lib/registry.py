@@ -2,7 +2,7 @@
 
 Provides ``BaseRegistry[T]``, a generic, thread-safe registry that
 eliminates the duplicated register/get/list/clear/discover boilerplate
-found across the codebase.  ``BrickRegistry`` adds mandatory Protocol
+found across the codebase.  ``ServiceModuleRegistry`` adds mandatory Protocol
 compliance checking on top.
 
 **Intentionally excluded registries:**
@@ -177,12 +177,12 @@ class BaseRegistry(Generic[T]):
 
 
 # ---------------------------------------------------------------------------
-# BrickRegistry -- BaseRegistry + mandatory Protocol validation
+# ServiceModuleRegistry -- BaseRegistry + mandatory Protocol validation
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
-class BrickInfo:
+class ServiceInfo:
     """Immutable descriptor for a registered brick."""
 
     name: str
@@ -191,7 +191,7 @@ class BrickInfo:
     metadata: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
 
 
-class BrickRegistry(BaseRegistry[BrickInfo]):
+class ServiceModuleRegistry(BaseRegistry[ServiceInfo]):
     """Registry that enforces runtime Protocol compliance.
 
     Every registered brick **must** satisfy a ``@runtime_checkable`` Protocol.
@@ -211,7 +211,7 @@ class BrickRegistry(BaseRegistry[BrickInfo]):
     ) -> None:
         """Register a brick class with mandatory Protocol validation."""
         _validate_protocol_compliance(brick_cls, protocol)
-        info = BrickInfo(
+        info = ServiceInfo(
             name=name,
             brick_cls=brick_cls,
             protocol=protocol,
@@ -219,7 +219,7 @@ class BrickRegistry(BaseRegistry[BrickInfo]):
         )
         self.register(name, info, allow_overwrite=allow_overwrite)
 
-    def list_by_protocol(self, protocol: type) -> list[BrickInfo]:
+    def list_by_protocol(self, protocol: type) -> list[ServiceInfo]:
         """Return all bricks that were registered under *protocol*."""
         return [info for info in self.list_all() if info.protocol is protocol]
 

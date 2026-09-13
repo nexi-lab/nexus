@@ -67,7 +67,7 @@ class Ability(StrEnum):
     Attributes:
         READ: Read access to the resource.
         WRITE: Write/mutate access to the resource.
-        EXECUTE: Execute/invoke access (e.g. run a brick action).
+        EXECUTE: Execute/invoke access (e.g. run a service action).
         DELEGATE: Permission to delegate this capability to others.
         ADMIN: Wildcard — superset of all abilities.
     """
@@ -89,8 +89,8 @@ class Capability:
     """A single capability: what an agent can do to a resource.
 
     Resources use URI-style identifiers:
-        - ``nexus:brick:search`` — the search brick
-        - ``nexus:brick:cache`` — the cache brick
+        - ``nexus:service:search`` — the search service
+        - ``nexus:service:cache`` — the cache service
         - ``nexus:zone:acme`` — the "acme" zone
         - ``*`` — wildcard (all resources)
 

@@ -16,7 +16,7 @@
 - Readiness file: `Path.home() / ".nexus" / "nexusd.ready"` — written at `src/nexus/daemon/main.py:514` with content `f"{host}:{port}\n"`, removed at `:530`. `Path.home()` follows the `HOME` env var on POSIX, so a per-test `HOME` isolates and parallelizes it.
 - gRPC port = HTTP `--port` + 2 (HTTP 2026 → gRPC 2028), per `src/nexus/daemon/main.py:297-304`.
 - gRPC Ping client: `vfs_pb2.PingRequest(auth_token=...)` against `nexus.grpc.vfs.vfs_pb2_grpc.VfsServiceStub`; reference usage `src/nexus/remote/rpc_transport.py:392-398`. Generated stub: `src/nexus/grpc/vfs/vfs_pb2_grpc.py`.
-- `/api/v2/features` returns `FeaturesResponse{profile, mode, enabled_bricks, disabled_bricks, version,...}` (`src/nexus/server/api/core/features.py`).
+- `/api/v2/features` returns `FeaturesResponse{profile, mode, enabled_services, disabled_bricks, version,...}` (`src/nexus/server/api/core/features.py`).
 - Sandbox bricks (`src/nexus/contracts/deployment_profile.py`): `_LITE_BRICKS` (eventlog, namespace, permissions, cache, ipc, scheduler) + `search`, `mcp`, `parsers`. Must NOT enable `llm`, `pay`, `observability`, `federation`.
 - Existing in-process test `tests/integration/test_sandbox_boot.py` already asserts in-process `nexus.connect(profile=sandbox)` boot, HTTP allowlist via ASGI, features brick set. **Do not duplicate it.** The new test exercises the real *daemon subprocess* + real socket + readiness file + gRPC + RSS.
 - pytest markers available: `slow`, `integration` (`pyproject.toml:459-461`). xdist serialization pattern: `pytestmark = pytest.mark.xdist_group(name="...")`.
@@ -238,7 +238,7 @@ def test_sandbox_http_surface_over_real_socket(sandbox_daemon) -> None:
         body = r.json()
         assert body["profile"] == "sandbox", body
 
-        enabled = set(body["enabled_bricks"])
+        enabled = set(body["enabled_services"])
         expected_subset = {
             "search",
             "mcp",
@@ -501,9 +501,9 @@ profile](../deployment/sandbox-profile.md).
 
 > **Not to be confused with the sandbox-provisioning brick.** The
 > `sandbox` *deployment profile* is *how Nexus runs* (a lightweight
-> runtime). `BRICK_SANDBOX` is a *feature* — provisioning code-execution
+> runtime). `SERVICE_SANDBOX` is a *feature* — provisioning code-execution
 > sandboxes (E2B/Docker). They are orthogonal: the `sandbox` profile has
-> `BRICK_SANDBOX` **disabled** by default. A `full`/`cloud` profile can
+> `SERVICE_SANDBOX` **disabled** by default. A `full`/`cloud` profile can
 > provision sandboxes; a `sandbox`-profile runtime cannot.
 
 **Start it (CLI):**
@@ -529,14 +529,14 @@ curl -s http://127.0.0.1:2026/api/v2/features
 **Expected behavior:**
 
 - **Success:** `/health` returns `200`; `/api/v2/features` reports
-  `"profile": "sandbox"` with `enabled_bricks` ⊇ `{search, mcp, parsers,
+  `"profile": "sandbox"` with `enabled_services` ⊇ `{search, mcp, parsers,
   eventlog, namespace, permissions}` and `llm`/`pay`/`observability`/
   `federation` **absent**.
 - **Denied (usage error):** `--workspace`, `--hub-url`, or `--hub-token`
   without `--profile sandbox` exits non-zero; `--hub-url` without
   `--hub-token` exits non-zero.
 - **Unavailable (by design):** sandbox-provisioning RPCs/CLI are absent —
-  `BRICK_SANDBOX` is disabled in this profile.
+  `SERVICE_SANDBOX` is disabled in this profile.
 
 **Correctness assertion you can run:** with the daemon up,
 `curl -s http://127.0.0.1:2026/api/v2/features | jq -r .profile` prints
@@ -603,7 +603,7 @@ Insert this block after the intro:
 > **Sandbox profile vs. the sandbox-provisioning brick.** This page is
 > about the `sandbox` **deployment profile** — a lightweight runtime
 > (SQLite, in-process cache, BM25S, no Postgres/Redis/Zoekt). It is *not*
-> the `BRICK_SANDBOX` sandbox-provisioning feature, which manages
+> the `SERVICE_SANDBOX` sandbox-provisioning feature, which manages
 > code-execution sandboxes (E2B/Docker) and is **disabled by default in
 > this profile**. The two are orthogonal: the profile controls *how Nexus
 > runs*; the brick controls *whether Nexus can provision execution
@@ -661,7 +661,7 @@ only the bare `~/.nexus/nexusd.ready` file (content: `host:port`).
 ## Expected response shape
 
 `{ "ready": true, "profile": "sandbox", "endpoint": "127.0.0.1:2026",
-   "health": "healthy", "enabled_bricks": [...] }` (and a human table).
+   "health": "healthy", "enabled_services": [...] }` (and a human table).
 
 ## Tests required before docs can claim support
 

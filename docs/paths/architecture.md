@@ -20,4 +20,4 @@ Choose this path when you need to understand how the kernel, storage pillars, se
 
 ## Why This Path Exists
 
-Nexus has several layers: storage pillars, a VFS-style kernel, system services, and optional bricks. If you are changing those boundaries or explaining the product externally, read the design docs before editing behavior or docs copy.
+Nexus has several layers: storage pillars, a VFS-style kernel, system services, and optional services. If you are changing those boundaries or explaining the product externally, read the design docs before editing behavior or docs copy.

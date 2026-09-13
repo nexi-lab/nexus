@@ -581,7 +581,7 @@ disable_error_code = ["no-any-return"]
 
 [[tool.mypy.overrides]]
 module = "nexus.bricks.*.tests.*"
-# Brick-internal test files (moved from tests/ to src/nexus/bricks/*/tests/).
+# Service-internal test files (moved from tests/ to src/nexus/bricks/*/tests/).
 # Relax strict typing for test code — fixture parameters are injected by pytest
 # and don't need type annotations.
 disallow_untyped_defs = false
@@ -589,7 +589,7 @@ disallow_incomplete_defs = false
 
 [[tool.mypy.overrides]]
 module = ["tests.testkit", "tests.testkit.*"]
-# Test helper modules can be followed by mypy when brick-internal tests import
+# Test helper modules can be followed by mypy when service-internal tests import
 # them from under src/nexus. Keep them out of production strictness.
 disallow_untyped_defs = false
 disallow_incomplete_defs = false
@@ -787,6 +787,10 @@ module = [
     "nexus.grpc.approvals.approvals_pb2",
     "nexus.grpc.approvals.approvals_pb2_grpc",
     "nexus.grpc.approvals",
+    "nexus.grpc.search.v1.search_pb2",
+    "nexus.grpc.search.v1.search_pb2_grpc",
+    "nexus.grpc.search.v1",
+    "nexus.grpc.search",
 ]
 # Generated gRPC/protobuf stubs — no type info available
 follow_imports = "skip"
@@ -887,6 +891,8 @@ exclude = [
     "src/nexus/grpc/vfs/vfs_pb2_grpc.py",      # Generated gRPC stub
     "src/nexus/grpc/approvals/approvals_pb2.py",       # Generated gRPC stub
     "src/nexus/grpc/approvals/approvals_pb2_grpc.py",  # Generated gRPC stub
+    "src/nexus/grpc/search/v1/search_pb2.py",          # Generated gRPC stub
+    "src/nexus/grpc/search/v1/search_pb2_grpc.py",     # Generated gRPC stub
 ]
 
 [tool.ruff.lint]

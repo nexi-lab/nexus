@@ -30,7 +30,7 @@ Most product surface already exists:
 - HTTP `/health` (public) and `/health/detailed` (admin) —
   `src/nexus/server/api/core/health.py`.
 - HTTP `/api/v2/features` — `src/nexus/server/api/core/features.py` returns
-  `profile`, `enabled_bricks`, `disabled_bricks`, `version`.
+  `profile`, `enabled_services`, `disabled_bricks`, `version`.
 - gRPC `Ping` — `proto/nexus/grpc/vfs/vfs.proto`.
 - `nexus status` (`status.py`, Docker/HTTP oriented), `nexus env` (`env_cmd.py`).
 - `tests/unit/cli/test_stack_sandbox.py` — already comprehensive CLI flag
@@ -67,7 +67,7 @@ subsection under "Pick The Right Mode":
 ### 2. Profile-vs-brick clarification
 Short "Not to be confused with" callout in both `docs/guides/user-guide.md` and
 `docs/deployment/sandbox-profile.md`: the `sandbox` *deployment profile* (how
-Nexus runs) vs `BRICK_SANDBOX` *sandbox-provisioning brick* (code-execution
+Nexus runs) vs `SERVICE_SANDBOX` *sandbox-provisioning brick* (code-execution
 feature, disabled in this profile). Orthogonal concepts.
 
 ### 3. Story coverage table

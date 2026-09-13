@@ -8,7 +8,7 @@ Six layers (bottom-up):
     cross        -> auth middleware, profile gates
     transport    -> CLI / HTTP / gRPC / MCP / SDK exposures
 
-Bricks are first-class. Each declares its profile gate (e.g. BRICK_REBAC) and
+Bricks are first-class. Each declares its profile gate (e.g. SERVICE_REBAC) and
 category for visual grouping. Ops classify into the brick (or kernel/transport)
 they belong to.
 """
@@ -36,13 +36,13 @@ class CuratedModule:
     description: str
     layer: str  # one of LAYERS
     category: str = ""  # within layer, e.g. "access", "discovery"
-    brick_gate: str | None = None  # e.g. "BRICK_REBAC" for brick-layer modules
+    service_gate: str | None = None  # e.g. "SERVICE_REBAC" for brick-layer modules
     tier: str | None = None  # "independent" | "dependent" for bricks
     depends_on: tuple[str, ...] = ()
 
 
 # Brick categories — purely for grouping in UI
-BRICK_CATEGORIES: dict[str, list[str]] = {
+SERVICE_CATEGORIES: dict[str, list[str]] = {
     "Access control": ["rebac", "auth", "identity", "secrets", "delegation", "access_manifest"],
     "Storage & layout": [
         "filesystem",
@@ -121,7 +121,7 @@ MODULES: list[CuratedModule] = [
         "OAuth providers + identity tokens.",
         layer="brick",
         category="Access control",
-        brick_gate="BRICK_AUTH",
+        service_gate="SERVICE_AUTH",
         tier="independent",
     ),
     CuratedModule(
@@ -218,7 +218,7 @@ MODULES: list[CuratedModule] = [
         "NexusPay credits + X402 payment rails.",
         layer="brick",
         category="Commerce",
-        brick_gate="BRICK_PAY",
+        service_gate="SERVICE_PAY",
         tier="independent",
     ),
     CuratedModule(
@@ -236,7 +236,7 @@ MODULES: list[CuratedModule] = [
         "Zanzibar-style relation-based access control.",
         layer="brick",
         category="Access control",
-        brick_gate="BRICK_REBAC",
+        service_gate="SERVICE_REBAC",
         tier="independent",
     ),
     CuratedModule(
@@ -245,7 +245,7 @@ MODULES: list[CuratedModule] = [
         "Docker/E2B/Monty code execution.",
         layer="brick",
         category="Agent runtime",
-        brick_gate="BRICK_SANDBOX",
+        service_gate="SERVICE_SANDBOX",
         tier="independent",
     ),
     CuratedModule(
@@ -254,7 +254,7 @@ MODULES: list[CuratedModule] = [
         "Zoekt / BM25 / semantic search daemon.",
         layer="brick",
         category="Discovery",
-        brick_gate="BRICK_SEARCH",
+        service_gate="SERVICE_SEARCH",
         tier="independent",
     ),
     CuratedModule(
@@ -315,7 +315,7 @@ MODULES: list[CuratedModule] = [
         "Event-driven workflow engine.",
         layer="brick",
         category="Process & policy",
-        brick_gate="BRICK_WORKFLOWS",
+        service_gate="SERVICE_WORKFLOWS",
         depends_on=("task_manager",),
         tier="dependent",
     ),
@@ -495,10 +495,10 @@ def modules_by_layer() -> dict[str, list[CuratedModule]]:
 
 
 def bricks_by_category() -> dict[str, list[CuratedModule]]:
-    """Return brick-layer modules grouped by BRICK_CATEGORIES."""
+    """Return brick-layer modules grouped by SERVICE_CATEGORIES."""
     by_id = {m.id: m for m in MODULES if m.layer == "brick"}
     out: dict[str, list[CuratedModule]] = {}
-    for category, ids in BRICK_CATEGORIES.items():
+    for category, ids in SERVICE_CATEGORIES.items():
         cat_mods = [by_id[i] for i in ids if i in by_id]
         if cat_mods:
             out[category] = cat_mods
@@ -513,7 +513,7 @@ def bricks_by_category() -> dict[str, list[CuratedModule]]:
 # CATEGORIES: maps display-category name -> list of module ids in that category.
 # For v3 we expose all brick categories + transport/cross/kernel groups.
 CATEGORIES: dict[str, list[str]] = {
-    **dict(BRICK_CATEGORIES),
+    **dict(SERVICE_CATEGORIES),
     "Infrastructure": ["rust_kernel", "nexus_fs"],
     "Cross-cutting": ["auth_middleware", "profile_gates"],
     "Transports": ["cli", "http", "grpc", "mcp_transport", "sdk"],

@@ -47,15 +47,15 @@ FULL = LITE bricks + the full feature set, EXCLUDING federation
 """
 
 from nexus.contracts.deployment_profile import (
-    BRICK_ACCESS_MANIFEST,
-    BRICK_FEDERATION,
-    BRICK_LLM,
-    BRICK_MCP,
-    BRICK_PAY,
-    BRICK_SEARCH,
-    BRICK_SNAPSHOT,
-    BRICK_VERSIONING,
-    BRICK_WORKSPACE,
+    SERVICE_ACCESS_MANIFEST,
+    SERVICE_FEDERATION,
+    SERVICE_LLM,
+    SERVICE_MCP,
+    SERVICE_PAY,
+    SERVICE_SEARCH,
+    SERVICE_SNAPSHOT,
+    SERVICE_VERSIONING,
+    SERVICE_WORKSPACE,
     DRIVER_GCS,
     DRIVER_GDRIVE,
     DRIVER_REMOTE,
@@ -70,33 +70,33 @@ class TestFullProfileContract:
         assert DeploymentProfile("full") is DeploymentProfile.FULL
 
     def test_superset_over_lite(self) -> None:
-        full = DeploymentProfile.FULL.default_bricks()
-        lite = DeploymentProfile.LITE.default_bricks()
+        full = DeploymentProfile.FULL.default_services()
+        lite = DeploymentProfile.LITE.default_services()
         assert lite.issubset(full)
 
     def test_includes_feature_bricks(self) -> None:
-        bricks = DeploymentProfile.FULL.default_bricks()
+        bricks = DeploymentProfile.FULL.default_services()
         for b in (
-            BRICK_SEARCH,
-            BRICK_PAY,
-            BRICK_LLM,
-            BRICK_MCP,
-            BRICK_WORKSPACE,
-            BRICK_SNAPSHOT,
-            BRICK_VERSIONING,
-            BRICK_ACCESS_MANIFEST,
+            SERVICE_SEARCH,
+            SERVICE_PAY,
+            SERVICE_LLM,
+            SERVICE_MCP,
+            SERVICE_WORKSPACE,
+            SERVICE_SNAPSHOT,
+            SERVICE_VERSIONING,
+            SERVICE_ACCESS_MANIFEST,
         ):
             assert b in bricks, f"{b} must be enabled in FULL"
 
     def test_excludes_federation(self) -> None:
         # FULL excludes federation; CLOUD = FULL ∪ {federation}
-        assert BRICK_FEDERATION not in DeploymentProfile.FULL.default_bricks()
-        assert BRICK_FEDERATION in DeploymentProfile.CLOUD.default_bricks()
+        assert SERVICE_FEDERATION not in DeploymentProfile.FULL.default_services()
+        assert SERVICE_FEDERATION in DeploymentProfile.CLOUD.default_services()
 
     def test_cloud_is_full_plus_federation(self) -> None:
-        full = DeploymentProfile.FULL.default_bricks()
-        cloud = DeploymentProfile.CLOUD.default_bricks()
-        assert cloud == full | {BRICK_FEDERATION}
+        full = DeploymentProfile.FULL.default_services()
+        cloud = DeploymentProfile.CLOUD.default_services()
+        assert cloud == full | {SERVICE_FEDERATION}
 
     def test_drivers_include_cloud_storage(self) -> None:
         drivers = DeploymentProfile.FULL.default_drivers()
@@ -694,5 +694,5 @@ After user approval (per Task 10), comment on #4132 linking the deployment page,
 
 - **Spec coverage:** deployment page (T4) ✓, user-guide narrative (T5) ✓, stale-doc reconcile (T6) ✓, contract tests (T1/T2/T3) ✓, gated E2E + benchmarks (T9) ✓, matrix wiring (T7) ✓, missing-surface gate (T8/T10) ✓, acceptance mapping (T11) ✓.
 - **Placeholders:** none — every doc/test step has full content; the two investigation steps (T2.3, T7.1) are concrete commands with expected output and a defined fallback, not "TBD".
-- **Type consistency:** `DeploymentProfile.FULL`, `default_bricks()`, `default_drivers()`, `BRICK_*`/`DRIVER_*` constants match `deployment_profile.py`; `full_stack` fixture name consistent across T9 steps; gap ids consistent between T8 (gaps.yaml) and T10 (draft files).
+- **Type consistency:** `DeploymentProfile.FULL`, `default_services()`, `default_drivers()`, `SERVICE_*`/`DRIVER_*` constants match `deployment_profile.py`; `full_stack` fixture name consistent across T9 steps; gap ids consistent between T8 (gaps.yaml) and T10 (draft files).
 - **Risk acknowledged:** T9.4 explicitly forbids claiming E2E pass without Docker; T2.3 forbids weakening the remote-rejection test; T7.1 forbids hand-editing generated YAML.

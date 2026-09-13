@@ -6,11 +6,11 @@ document formats. The system is built around:
 1. Parser: Abstract base class for all parsers
 2. ParseResult: Structured output from parsing operations
 3. ParserRegistry: Central registry for managing parsers
-4. ParsersBrick: Facade that owns both registries (recommended entry point)
+4. ParsersService: Facade that owns both registries (recommended entry point)
 
 Example usage:
-    >>> from nexus.bricks.parsers.brick import ParsersBrick
-    >>> brick = ParsersBrick()
+    >>> from nexus.bricks.parsers.brick import ParsersService
+    >>> brick = ParsersService()
     >>> parse_fn = brick.create_parse_fn()
 """
 
@@ -35,11 +35,11 @@ def create_default_parse_fn() -> Callable[[bytes, str], bytes | None]:
     passing as ``parse_fn`` to :func:`nexus.lib.virtual_views.get_parsed_content`.
 
     .. deprecated::
-        Prefer ``ParsersBrick().create_parse_fn()`` which shares registries.
+        Prefer ``ParsersService().create_parse_fn()`` which shares registries.
     """
-    from nexus.bricks.parsers.brick import ParsersBrick
+    from nexus.bricks.parsers.brick import ParsersService
 
-    return ParsersBrick().create_parse_fn()
+    return ParsersService().create_parse_fn()
 
 
 __all__ = [

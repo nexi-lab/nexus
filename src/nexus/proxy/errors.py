@@ -1,4 +1,4 @@
-"""Proxy brick exceptions.
+"""Proxy service exceptions.
 
 All exceptions inherit from ProxyError so callers can catch the
 entire family with a single except clause.
@@ -6,7 +6,7 @@ entire family with a single except clause.
 
 
 class ProxyError(Exception):
-    """Base exception for all proxy brick errors."""
+    """Base exception for all proxy service errors."""
 
 
 class OfflineQueuedError(ProxyError):
@@ -68,7 +68,7 @@ class RemoteCallError(ProxyError):
 def is_connection_error(exc: RemoteCallError) -> bool:
     """Return True if the underlying cause is a connectivity failure.
 
-    Consolidated from duplicate definitions in ``brick.py`` and
+    Consolidated from duplicate definitions in ``service module`` and
     ``replay_engine.py`` (Issue #2073, 13A).
     """
     # Lazy import: httpx is only needed when this function is called,

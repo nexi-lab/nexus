@@ -2350,7 +2350,13 @@ def create_async_files_router(
                 # thread — not eagerly on the event loop when the factory
                 # is called inside ``build_range_response``.
                 def _range_generator(start: int, end: int, cs: int) -> Iterator[bytes]:
-                    data = fs.read_range(path, start, end, context=context)
+                    # ``build_range_response`` hands over the RFC 9110
+                    # range: ``end`` is INCLUSIVE.  ``read_range`` takes an
+                    # exclusive end, so ``bytes=0-9`` must read [0, 10) —
+                    # passing ``end`` through returned one byte short of
+                    # the advertised Content-Length and clients (and the
+                    # Railway edge) dropped the body.
+                    data = fs.read_range(path, start, end + 1, context=context)
                     if isinstance(data, bytes):
                         yield from _chunks(data, cs)
 

@@ -78,6 +78,28 @@ pub fn caller_zone(ctx: &OperationContext) -> Option<&str> {
     }
 }
 
+/// Zones the credential can *read*, drawn from
+/// [`OperationContext::zone_perms`] (Vec of `(zone_id, perm_chars)` —
+/// federation multi-zone tokens carry every zone they grant here).
+/// A perm string that contains `r` grants read; anything else — pure
+/// `w`, empty, or absent — is NOT read-visible.
+///
+/// Returns an empty slice for a single-zone token (federation not
+/// involved), so the caller can fall through to the [`caller_zone`]
+/// rule without a per-request allocation.
+fn readable_zones(ctx: &OperationContext) -> Vec<&str> {
+    ctx.zone_perms
+        .iter()
+        .filter_map(|(zone, perms)| {
+            if !zone.is_empty() && perms.contains('r') {
+                Some(zone.as_str())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 /// `true` for the root zone in either spelling the wire uses: the explicit
 /// id, or the empty string the search proto documents as "server default".
 pub fn is_root(zone: &str) -> bool {
@@ -89,12 +111,34 @@ pub fn is_root(zone: &str) -> bool {
 /// * privileged: the request passes through verbatim — an explicit zone
 ///   is honoured, and an empty one keeps meaning "the backend default
 ///   (ROOT)" so the admin wire contract is unchanged;
-/// * everyone else: the caller's zone — an explicit `requested` must
-///   match it, and a missing claim is an error.
+/// * federation multi-zone tokens (any `(zone, "r*")` pair in
+///   `zone_perms`): an explicit `requested` is accepted when it names a
+///   readable zone; an empty `requested` falls back to `caller_zone`
+///   (the primary zone the wire already carries);
+/// * everyone else (single-zone token): the caller's zone — an
+///   explicit `requested` must match it, and a missing claim is an error.
 pub fn effective_zone(ctx: &OperationContext, requested: &str) -> Result<String, ZoneError> {
     let requested = requested.trim();
     if is_privileged(ctx) {
         return Ok(requested.to_string());
+    }
+    let readable = readable_zones(ctx);
+    if !readable.is_empty() && !requested.is_empty() {
+        // Multi-zone token: an explicit request that names a readable
+        // zone is fine.  Fall through to the single-zone rule below
+        // when the request is empty so we pick the caller_zone as the
+        // sensible default (a token-wide "any zone" query is
+        // impersonation and must go through the admin `all_zones`
+        // gate, which the Rust surface does not wire yet).
+        if readable.contains(&requested) {
+            return Ok(requested.to_string());
+        }
+        // Explicit request to an unreadable zone — same fail-closed
+        // shape a single-zone caller would hit.
+        return Err(ZoneError::Mismatch {
+            requested: requested.to_string(),
+            caller: readable.join(","),
+        });
     }
     let caller = caller_zone(ctx).ok_or(ZoneError::NoZoneClaim)?;
     if !requested.is_empty() && requested != caller {
@@ -261,6 +305,64 @@ mod tests {
             effective_zone(&zoneless(), "ta"),
             Err(ZoneError::NoZoneClaim)
         );
+    }
+
+    /// Build a federation-shaped non-admin token: `context_zone_id` is
+    /// the primary zone, `zone_perms` grants read on `readable`.
+    fn multi_token(primary: &str, readable: &[(&str, &str)]) -> OperationContext {
+        let mut ctx = tenant(primary);
+        ctx.zone_perms = readable
+            .iter()
+            .map(|(z, p)| ((*z).to_string(), (*p).to_string()))
+            .collect();
+        ctx
+    }
+
+    #[test]
+    fn multi_zone_token_accepts_any_readable_zone_when_explicitly_named() {
+        // Token: primary "eng", readable {eng: r, legal: r, ops: w-only}.
+        let ctx = multi_token("eng", &[("eng", "r"), ("legal", "r"), ("ops", "w")]);
+        // An explicit request naming any read-granted zone is honoured.
+        assert_eq!(effective_zone(&ctx, "eng").unwrap(), "eng");
+        assert_eq!(effective_zone(&ctx, "legal").unwrap(), "legal");
+        // Write-only grants do not confer read visibility.
+        let err = effective_zone(&ctx, "ops").unwrap_err();
+        assert!(matches!(err, ZoneError::Mismatch { .. }), "got {err:?}");
+        // Empty request falls back to the caller_zone default (the
+        // primary), not any-of-readable — a token-wide "any zone" query
+        // is an admin-only escape hatch (Python `all_zones=true`) and
+        // the Rust surface does not wire it yet.
+        assert_eq!(effective_zone(&ctx, "").unwrap(), "eng");
+    }
+
+    #[test]
+    fn multi_zone_token_refuses_a_zone_the_token_cannot_read() {
+        let ctx = multi_token("eng", &[("eng", "r"), ("legal", "r")]);
+        let err = effective_zone(&ctx, "finance").unwrap_err();
+        match err {
+            ZoneError::Mismatch { requested, caller } => {
+                assert_eq!(requested, "finance");
+                // The refusal message names the readable set so an
+                // operator debugging a 403 can see what was allowed.
+                assert!(
+                    caller.contains("eng") && caller.contains("legal"),
+                    "{caller}"
+                );
+            }
+            other => panic!("expected Mismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn write_only_zone_perms_do_not_grant_read_visibility() {
+        // Every entry is write-only (no 'r').  Falls back to single-zone
+        // caller_zone rule — same as a token with no zone_perms at all.
+        let ctx = multi_token("eng", &[("eng", "w"), ("legal", "w")]);
+        assert_eq!(effective_zone(&ctx, "eng").unwrap(), "eng");
+        assert!(matches!(
+            effective_zone(&ctx, "legal"),
+            Err(ZoneError::Mismatch { .. })
+        ));
     }
 
     #[test]

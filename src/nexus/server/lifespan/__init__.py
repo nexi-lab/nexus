@@ -13,10 +13,11 @@ import asyncio
 import ctypes
 import gc
 import logging
+import os
 import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from nexus.server.lifespan._async_engines import adispose_async_engines
 from nexus.server.lifespan.services_container import LifespanServices
@@ -127,6 +128,72 @@ def _wire_query_observer(_app: "FastAPI", svc: LifespanServices) -> None:
         logger.info("QueryObserverComponent registered in observability registry")
     except Exception as exc:
         logger.info("QueryObserverComponent registration skipped: %s", exc)
+
+
+def _size_default_executor(max_workers: int) -> None:
+    """Size the loop's default executor to the configured thread pool (#4777).
+
+    ``asyncio.to_thread`` — which the REST routers use to keep blocking
+    kernel gRPC calls off the event loop — runs on the loop's default
+    ``ThreadPoolExecutor``, whose stock size is ``min(32, cpus + 4)``: six
+    threads on a 2-vCPU container.  The AnyIO limiter above only governs
+    ``anyio.to_thread`` / sync route handlers, so without this the two pools
+    disagree and offloaded syscalls queue behind each other.
+    """
+    if max_workers <= 0:
+        return
+    import concurrent.futures
+
+    try:
+        loop = asyncio.get_running_loop()
+        loop.set_default_executor(
+            concurrent.futures.ThreadPoolExecutor(
+                max_workers=max_workers, thread_name_prefix="nexus-to-thread"
+            )
+        )
+        logger.info("asyncio default executor sized to %d threads", max_workers)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Could not resize the asyncio default executor: %s", exc)
+
+
+def _wire_auth_cache(app: "FastAPI") -> None:
+    """Attach the auth-result cache ``dependencies.get_auth_result`` reads (#4777).
+
+    The dependency has always looked up ``app.state.auth_cache_store`` but
+    nothing ever assigned it, so every request paid the provider round-trip
+    (100 % ``(cache miss)`` in ``[AUTH-TIMING]``).  Reuse the CacheBrick's
+    shared store when one is configured — a key revocation's flush then
+    reaches every replica — else fall back to a process-local store.
+    ``/auth/keys`` revocation flushes ``auth:cache:*`` either way.
+    """
+    if getattr(app.state, "auth_provider", None) is None:
+        return
+    if getattr(app.state, "auth_cache_store", None) is not None:
+        return
+
+    store: Any = None
+    cache_brick = getattr(app.state, "cache_brick", None)
+    if cache_brick is not None and getattr(cache_brick, "has_cache_store", False):
+        store = getattr(cache_brick, "cache_store", None)
+    backend = "shared"
+    if store is None:
+        from nexus.contracts.cache_store import InMemoryCacheStore
+
+        max_entries = _env_int("NEXUS_AUTH_CACHE_MAX_ENTRIES", 10_000)
+        store = InMemoryCacheStore(max_size=max_entries)
+        backend = f"in-memory (max {max_entries} entries)"
+    app.state.auth_cache_store = store
+    logger.info("Auth result cache enabled: %s", backend)
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return default
 
 
 def _apply_boot_tweaks() -> None:
@@ -286,6 +353,7 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
     limiter = to_thread.current_default_thread_limiter()
     limiter.total_tokens = svc.thread_pool_size
     logger.info("Thread pool size set to %d", limiter.total_tokens)
+    _size_default_executor(svc.thread_pool_size)
 
     _done(StartupPhase.OBSERVABILITY)
 
@@ -293,6 +361,7 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
     _done(StartupPhase.FEATURES)
 
     bg_tasks.extend(await startup_permissions(app, svc))
+    _wire_auth_cache(app)
     _done(StartupPhase.PERMISSIONS)
 
     bg_tasks.extend(await startup_realtime(app, svc))

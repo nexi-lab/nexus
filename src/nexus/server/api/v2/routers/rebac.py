@@ -27,6 +27,7 @@ boundary — file-grant semantics stay in ``auth_keys.py``.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -146,7 +147,10 @@ async def write_tuple(
     obj = (body.object_namespace, normalized_object_id)
 
     try:
-        result = rebac_manager.rebac_write(
+        # ReBACManager is synchronous (database round-trips); keep it off
+        # the event loop (#4777).
+        result = await asyncio.to_thread(
+            rebac_manager.rebac_write,
             subject=subject,
             relation=body.relation,
             object=obj,
@@ -197,7 +201,8 @@ async def list_tuples(
     if object_id is not None and object_namespace is not None:
         object_id = _normalize_file_object_id(object_namespace, object_id)
 
-    tuples: list[dict[str, Any]] = rebac_manager.rebac_list_tuples(
+    tuples: list[dict[str, Any]] = await asyncio.to_thread(
+        rebac_manager.rebac_list_tuples,
         relation=relation,
         subject_type=subject_namespace,
         subject_id=subject_id,
@@ -234,19 +239,22 @@ async def delete_tuple(
     # zone) would also be deleted. ``body.subject_relation`` is None
     # for direct tuples (POST's default) and a string for usersets.
     # Either value routes through the manager's _UNSET-aware filter.
-    matches: list[dict[str, Any]] = rebac_manager.rebac_list_tuples(
-        subject=(body.subject_namespace, body.subject_id),
-        relation=body.relation,
-        object=obj,
-        subject_relation=body.subject_relation,
-        zone_id=body.zone_id,
-    )
+    def _delete_matching() -> int:
+        matches: list[dict[str, Any]] = rebac_manager.rebac_list_tuples(
+            subject=(body.subject_namespace, body.subject_id),
+            relation=body.relation,
+            object=obj,
+            subject_relation=body.subject_relation,
+            zone_id=body.zone_id,
+        )
+        removed = 0
+        for t in matches:
+            tid = t.get("tuple_id")
+            if tid and rebac_manager.rebac_delete(tid):
+                removed += 1
+        return removed
 
-    deleted = 0
-    for t in matches:
-        tid = t.get("tuple_id")
-        if tid and rebac_manager.rebac_delete(tid):
-            deleted += 1
+    deleted = await asyncio.to_thread(_delete_matching)
 
     return {
         "deleted": deleted,

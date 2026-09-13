@@ -14,6 +14,7 @@ Underscore-prefixed sibling of the router modules (same convention as
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 import time
@@ -291,7 +292,8 @@ async def read_written_bytes(fs: Any, path: str, context: Any) -> tuple[bytes, i
     use: 404 missing, 403 denied, 400 for a directory.
     """
     try:
-        raw = fs.read(path, context=context)
+        # Blocking kernel round-trip — off the event loop (#4777).
+        raw = await asyncio.to_thread(fs.read, path, context=context)
         if inspect.isawaitable(raw):
             raw = await raw
     except NexusFileNotFoundError as exc:
@@ -310,7 +312,7 @@ async def read_written_bytes(fs: Any, path: str, context: Any) -> tuple[bytes, i
 
     mtime_ms: int | None = None
     try:
-        meta = fs.sys_stat(path, context=context)
+        meta = await asyncio.to_thread(fs.sys_stat, path, context=context)
         if inspect.isawaitable(meta):
             meta = await meta
         if isinstance(meta, dict):

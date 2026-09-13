@@ -29,8 +29,10 @@ Rewritten for txtai backend (#2663):
   instrumentation so callers can detect silent-undercount scenarios.
 """
 
+import asyncio
 import inspect
 import logging
+import os
 import time
 from typing import Any
 
@@ -1349,8 +1351,10 @@ async def _do_glob_operation(
 
     async def _work() -> dict[str, Any]:
         try:
-            all_matches: list[str] = search_service.glob(
-                pattern=pattern, path=path, context=op_context, files=files
+            # SearchService.glob is synchronous (metastore walk); keep it
+            # off the event loop like the grep sibling (#4777).
+            all_matches: list[str] = await asyncio.to_thread(
+                search_service.glob, pattern=pattern, path=path, context=op_context, files=files
             )
         except (ValueError, InvalidPathError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1823,76 +1827,146 @@ async def search_index_documents(
                 ),
             )
 
-    # WRITE authorization (review R3): explicit indexing REPLACES the
-    # searchable content other readers see at these paths — a read-only
-    # principal must not be able to poison results.  Same
-    # admin-bypass / per-path ReBAC WRITE / fail-closed-without-enforcer
-    # gate the sibling index-directory mutation routes use.
-    from nexus.server.api.v2.routers._search_indexed_dirs import _require_admin_or_path_write
+    # Admission control (#4777): the plugin serializes index batches per
+    # zone, so every request past the first waits its turn while holding an
+    # HTTP connection for minutes.  Shed above the cap with 503 +
+    # Retry-After so clients back off instead of deepening the queue.
+    _admit_index_request(request.app.state)
+    try:
+        # WRITE authorization (review R3): explicit indexing REPLACES the
+        # searchable content other readers see at these paths — a read-only
+        # principal must not be able to poison results.  Same
+        # admin-bypass / per-path ReBAC WRITE / fail-closed-without-enforcer
+        # gate the sibling index-directory mutation routes use.
+        from nexus.server.api.v2.routers._search_indexed_dirs import (
+            _require_admin_or_path_write,
+        )
 
-    for doc in documents:
-        doc_path = doc.get("path", "") if isinstance(doc, dict) else ""
-        await _require_admin_or_path_write(request, auth_result, zone_id, doc_path or "/")
+        for doc in documents:
+            doc_path = doc.get("path", "") if isinstance(doc, dict) else ""
+            await _require_admin_or_path_write(request, auth_result, zone_id, doc_path or "/")
 
-    async def _work() -> dict[str, Any]:
-        try:
-            result = await search_daemon.index_documents(documents, zone_id=zone_id)
-        except Exception as exc:
-            logger.error("index_documents failed: %s", exc, exc_info=True)
-            raise HTTPException(
-                status_code=500,
-                detail=f"Index persistence failed: {type(exc).__name__}: {exc}",
-            ) from exc
-        # #4617: the P12 proxy returns a dict, the pre-P12 daemon
-        # returned an ExplicitIndexResult, and int-returning test
-        # doubles exist — normalize ALL of them so ``count`` stays the
-        # plain int the pre-pivot wire contract promised (the dict
-        # previously leaked whole into ``count`` because ``getattr``
-        # doesn't read dict keys).
-        if isinstance(result, dict):
-            count = result.get("indexed", 0)
-            skipped = list(result.get("skipped") or [])
-            skipped_count = int(result.get("skipped_count") or 0)
-            skipped_paths = list(result.get("skipped_paths") or [])
-            index_seq = result.get("index_seq")
-        else:
-            count = getattr(result, "indexed", result)
-            skipped = list(getattr(result, "skipped", []) or [])
-            skipped_count = int(getattr(result, "skipped_count", 0) or 0)
-            skipped_paths = list(getattr(result, "skipped_paths", []) or [])
-            index_seq = getattr(result, "index_seq", None)
-        if skipped:
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "error": (
-                        "documents skipped: no live file_paths row after the bounded "
-                        "projection wait — retry once the write is visible"
-                    ),
-                    "count": count,
-                    "skipped": skipped,
-                    "zone_id": zone_id,
-                },
-            )
-        # ``zoneId`` casing is the pre-P12 public contract (#4617);
-        # ``skippedCount`` is additive (review R2) — content-level
-        # skips (empty/whitespace/chunkless docs) were previously
-        # invisible behind a bare 200, so a caller couldn't tell
-        # "all indexed" from "half the batch was empty".
-        # #4736: ``skippedPaths`` names the content-skipped documents
-        # behind ``skippedCount``; ``indexSeq`` is the plugin sequence
-        # stamped after this batch's commit — ``/search/stats``
-        # ``last_index_seq >= indexSeq`` means the batch is served.
-        return {
-            "status": "indexed",
-            "count": int(count),
-            "skippedCount": skipped_count,
-            "skippedPaths": skipped_paths,
-            "indexSeq": int(index_seq) if index_seq is not None else None,
-            "zoneId": zone_id,
-        }
+        return await run_zone_scoped(
+            _get_zone_registry(request),
+            _auth_target_zone(auth_result),
+            lambda: _index_documents_work(search_daemon, documents, zone_id),
+        )
+    finally:
+        _release_index_request(request.app.state)
 
-    return await run_zone_scoped(_get_zone_registry(request), _auth_target_zone(auth_result), _work)
+
+INDEX_MAX_INFLIGHT_ENV = "NEXUS_SEARCH_INDEX_MAX_INFLIGHT"
+DEFAULT_INDEX_MAX_INFLIGHT = 8
+INDEX_RETRY_AFTER_SECONDS = 5
+
+
+def index_max_inflight() -> int:
+    """Per-process cap on concurrent ``POST /search/index`` requests.
+
+    ``0`` disables admission control.  Read per request so operators can
+    tune it without a restart-time config object and tests can patch env.
+    """
+    raw = os.environ.get(INDEX_MAX_INFLIGHT_ENV, "").strip()
+    if not raw:
+        return DEFAULT_INDEX_MAX_INFLIGHT
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        logger.warning(
+            "%s=%r is not an int; using %d", INDEX_MAX_INFLIGHT_ENV, raw, DEFAULT_INDEX_MAX_INFLIGHT
+        )
+        return DEFAULT_INDEX_MAX_INFLIGHT
+
+
+def _admit_index_request(state: Any) -> None:
+    """Reserve an in-flight slot or raise 503 (no await between check and
+    increment, so the counter is race-free on the single event loop)."""
+    cap = index_max_inflight()
+    inflight = int(getattr(state, "search_index_inflight", 0) or 0)
+    if cap > 0 and inflight >= cap:
+        logger.warning("search/index shed: %d requests already in flight (cap %d)", inflight, cap)
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "search indexing backlog: too many index requests in flight",
+                "inflight": inflight,
+                "max_inflight": cap,
+                "retry_after_seconds": INDEX_RETRY_AFTER_SECONDS,
+                "hint": (
+                    "back off and retry; poll /api/v2/search/stats "
+                    "(indexing_in_progress / pending) to pace submissions"
+                ),
+            },
+            headers={"Retry-After": str(INDEX_RETRY_AFTER_SECONDS)},
+        )
+    state.search_index_inflight = inflight + 1
+
+
+def _release_index_request(state: Any) -> None:
+    inflight = int(getattr(state, "search_index_inflight", 0) or 0)
+    state.search_index_inflight = max(0, inflight - 1)
+
+
+async def _index_documents_work(
+    search_daemon: Any, documents: list[dict[str, Any]], zone_id: str
+) -> dict[str, Any]:
+    """Body of ``POST /search/index`` once admitted and authorized."""
+    try:
+        result = await search_daemon.index_documents(documents, zone_id=zone_id)
+    except Exception as exc:
+        logger.error("index_documents failed: %s", exc, exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Index persistence failed: {type(exc).__name__}: {exc}",
+        ) from exc
+    # #4617: the P12 proxy returns a dict, the pre-P12 daemon
+    # returned an ExplicitIndexResult, and int-returning test
+    # doubles exist — normalize ALL of them so ``count`` stays the
+    # plain int the pre-pivot wire contract promised (the dict
+    # previously leaked whole into ``count`` because ``getattr``
+    # doesn't read dict keys).
+    if isinstance(result, dict):
+        count = result.get("indexed", 0)
+        skipped = list(result.get("skipped") or [])
+        skipped_count = int(result.get("skipped_count") or 0)
+        skipped_paths = list(result.get("skipped_paths") or [])
+        index_seq = result.get("index_seq")
+    else:
+        count = getattr(result, "indexed", result)
+        skipped = list(getattr(result, "skipped", []) or [])
+        skipped_count = int(getattr(result, "skipped_count", 0) or 0)
+        skipped_paths = list(getattr(result, "skipped_paths", []) or [])
+        index_seq = getattr(result, "index_seq", None)
+    if skipped:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": (
+                    "documents skipped: no live file_paths row after the bounded "
+                    "projection wait — retry once the write is visible"
+                ),
+                "count": count,
+                "skipped": skipped,
+                "zone_id": zone_id,
+            },
+        )
+    # ``zoneId`` casing is the pre-P12 public contract (#4617);
+    # ``skippedCount`` is additive (review R2) — content-level
+    # skips (empty/whitespace/chunkless docs) were previously
+    # invisible behind a bare 200, so a caller couldn't tell
+    # "all indexed" from "half the batch was empty".
+    # #4736: ``skippedPaths`` names the content-skipped documents
+    # behind ``skippedCount``; ``indexSeq`` is the plugin sequence
+    # stamped after this batch's commit — ``/search/stats``
+    # ``last_index_seq >= indexSeq`` means the batch is served.
+    return {
+        "status": "indexed",
+        "count": int(count),
+        "skippedCount": skipped_count,
+        "skippedPaths": skipped_paths,
+        "indexSeq": int(index_seq) if index_seq is not None else None,
+        "zoneId": zone_id,
+    }
 
 
 @router.post("/refresh")

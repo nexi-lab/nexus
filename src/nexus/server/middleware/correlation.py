@@ -15,6 +15,7 @@ It is then:
 - Set as the ``X-Request-ID`` response header
 """
 
+import os
 import re
 import time
 import uuid
@@ -23,6 +24,24 @@ from contextvars import ContextVar
 from typing import Any
 
 import structlog
+
+# #4777: requests slower than this log at WARNING with ``slow_request=True``
+# even when they succeed, so a 300 s ``200 OK`` is not indistinguishable from
+# a 20 ms one except by reading ``duration_ms``.  ``0`` disables the check.
+SLOW_REQUEST_MS_ENV = "NEXUS_SLOW_REQUEST_MS"
+DEFAULT_SLOW_REQUEST_MS = 10_000.0
+
+
+def slow_request_threshold_ms() -> float:
+    """Resolve the slow-request threshold from the environment (ms)."""
+    raw = os.environ.get(SLOW_REQUEST_MS_ENV, "").strip()
+    if not raw:
+        return DEFAULT_SLOW_REQUEST_MS
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return DEFAULT_SLOW_REQUEST_MS
+
 
 # ASGI type aliases for mypy compatibility with Starlette's _MiddlewareFactory
 ASGIApp = Callable[
@@ -55,8 +74,11 @@ class CorrelationMiddleware:
     Non-HTTP scopes (websocket, lifespan) are passed through without modification.
     """
 
-    def __init__(self, app: ASGIApp) -> None:
+    def __init__(self, app: ASGIApp, slow_request_ms: float | None = None) -> None:
         self._app = app
+        self._slow_request_ms = (
+            slow_request_ms if slow_request_ms is not None else slow_request_threshold_ms()
+        )
 
     async def __call__(self, scope: dict, receive: Any, send: Any) -> None:
         if scope["type"] != "http":
@@ -100,12 +122,16 @@ class CorrelationMiddleware:
         finally:
             duration_ms = round((time.perf_counter() - start_time) * 1000, 1)
 
-            log_kw = {
+            log_kw: dict[str, Any] = {
                 "status_code": status_code,
                 "duration_ms": duration_ms,
             }
+            is_slow = self._slow_request_ms > 0 and duration_ms >= self._slow_request_ms
+            if is_slow:
+                log_kw["slow_request"] = True
+                log_kw["slow_threshold_ms"] = self._slow_request_ms
 
-            if status_code >= 500:
+            if status_code >= 500 or is_slow:
                 _log.warning("request_completed", **log_kw)
             else:
                 _log.info("request_completed", **log_kw)

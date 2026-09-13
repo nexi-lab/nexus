@@ -1,0 +1,19 @@
+[package]
+name = "nexus-search-common"
+version = "0.1.0"
+edition = "2021"
+description = "Reusable search primitives shared by nexus-http-api, nexus-search-plugin, and the future federated-dispatcher crate: hit type, RRF/weighted fusion, federated-response envelope, degraded-signal helpers."
+
+[lib]
+name = "nexus_search_common"
+crate-type = ["rlib"]
+
+[dependencies]
+# No I/O — pure algorithms + DTOs.  Serde only so a caller that
+# serialises the envelope for a gRPC/HTTP boundary can `#[derive]`
+# without pulling us onto every leaf DTO.
+serde = { workspace = true, features = ["derive"] }
+# `Hit::extras` carries backend-specific attribution fields (title_score,
+# tier_boost, recency_boost, …) as opaque JSON so this crate does not
+# have to grow a field per backend.
+serde_json = { workspace = true }

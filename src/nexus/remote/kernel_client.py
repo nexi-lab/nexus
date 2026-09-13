@@ -15,6 +15,7 @@ Call RPC for metadata/service operations.
 
 from __future__ import annotations
 
+import atexit
 import contextlib
 import logging
 import os
@@ -319,34 +320,13 @@ class KernelClient:
     def close(self) -> None:
         """Shutdown kernel subprocess and close gRPC channel."""
         if self._transport:
-            import contextlib
-
             with contextlib.suppress(Exception):
                 self._transport.close()
             self._transport = None
-        if self._process:
-            self._process.send_signal(signal.SIGTERM)
-            try:
-                self._process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self._process.kill()
-            self._process = None
-        if self._stderr_file is not None:
-            import contextlib
-
-            with contextlib.suppress(OSError):
-                self._stderr_file.close()
-            stderr_path = getattr(self, "_stderr_path", None)
-            if stderr_path:
-                with contextlib.suppress(OSError):
-                    os.unlink(stderr_path)
-            self._stderr_file = None
-        if self._ephemeral_dir is not None:
-            import contextlib
-
-            with contextlib.suppress(OSError):
-                shutil.rmtree(self._ephemeral_dir, ignore_errors=True)
-            self._ephemeral_dir = None
+        # Also removes the stderr log and any ephemeral data dir.
+        self._terminate_spawned_kernel()
+        with contextlib.suppress(Exception):
+            atexit.unregister(self._terminate_spawned_kernel)
 
     def _is_remote(self) -> bool:
         return self._process is None and self._transport is not None
@@ -388,6 +368,14 @@ class KernelClient:
             stdout=subprocess.DEVNULL,
             stderr=self._stderr_file,
         )
+        # Reap the kernel when this interpreter exits (#4777 follow-up).
+        # Every `nexus` CLI invocation — including the REMOTE profile,
+        # whose routing kernel is a local ephemeral spawn — creates one of
+        # these, and callers rarely reach ``close()``.  Without this hook
+        # each CLI run left a ~30-thread ``nexus-cluster`` orphan behind
+        # (128 of them after two CI scripts in one container), which walks
+        # straight into a container's PID cgroup limit.
+        atexit.register(self._terminate_spawned_kernel)
         logger.info(
             "Spawned %s (pid=%d) at %s, log=%s",
             kernel_binary,
@@ -395,6 +383,42 @@ class KernelClient:
             self._server_address,
             self._stderr_path,
         )
+
+    def _terminate_spawned_kernel(self) -> None:
+        """SIGTERM (then SIGKILL) the kernel subprocess we spawned, if any.
+
+        Idempotent and exception-free so it is safe as an ``atexit`` hook.
+        """
+        proc = self._process
+        if proc is None:
+            return
+        self._process = None
+        if proc.poll() is None:
+            with contextlib.suppress(Exception):
+                proc.send_signal(signal.SIGTERM)
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    with contextlib.suppress(Exception):
+                        proc.wait(timeout=5)
+        # The spawn's scratch files go with it: the stderr log and, for
+        # ``:memory:`` kernels, the throwaway data dir — otherwise every
+        # CLI run also leaves a tempdir behind.
+        stderr_file = getattr(self, "_stderr_file", None)
+        if stderr_file is not None:
+            with contextlib.suppress(OSError):
+                stderr_file.close()
+            self._stderr_file = None
+        stderr_path = getattr(self, "_stderr_path", None)
+        if stderr_path:
+            with contextlib.suppress(OSError):
+                os.unlink(stderr_path)
+            self._stderr_path = None
+        ephemeral_dir = getattr(self, "_ephemeral_dir", None)
+        if ephemeral_dir is not None:
+            shutil.rmtree(ephemeral_dir, ignore_errors=True)
+            self._ephemeral_dir = None
 
     def _wait_ready(self, timeout: float = 30.0) -> None:
         """Poll kernel health until ready."""

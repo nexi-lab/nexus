@@ -1309,6 +1309,24 @@ fn ann_filter_max_fetch() -> usize {
     })
 }
 
+/// A path-scoped semantic query whose subtree holds at most this many
+/// live chunks is answered by EXACT cosine scoring over those chunks'
+/// own vectors (no graph traversal, no ceiling) instead of the global
+/// top-k + widening.  Env override: [`ANN_EXACT_MAX_CHUNKS_ENV`];
+/// `0` disables exact scoring.
+pub const ANN_EXACT_MAX_CHUNKS_ENV: &str = "NEXUS_SEARCH_ANN_EXACT_MAX_CHUNKS";
+pub const DEFAULT_ANN_EXACT_MAX_CHUNKS: usize = 4096;
+
+fn ann_exact_max_chunks() -> usize {
+    static CACHED: OnceLock<usize> = OnceLock::new();
+    *CACHED.get_or_init(|| {
+        std::env::var(ANN_EXACT_MAX_CHUNKS_ENV)
+            .ok()
+            .and_then(|v| v.trim().parse::<usize>().ok())
+            .unwrap_or(DEFAULT_ANN_EXACT_MAX_CHUNKS)
+    })
+}
+
 /// Vector-similarity search over the per-zone HNSW index (Phase 2).
 /// Embeds `q` via the caller-supplied embedder, opens the ANN index
 /// tagged with the embedder's `tag()`, runs top-k, and materialises
@@ -1331,7 +1349,7 @@ fn do_semantic_query(
     limit: usize,
     path_filter: &str,
 ) -> Result<Vec<QueryResult>, String> {
-    do_semantic_query_bounded(
+    do_semantic_query_inner(
         manager,
         embedder,
         embed_cache,
@@ -1340,9 +1358,13 @@ fn do_semantic_query(
         limit,
         path_filter,
         ann_filter_max_fetch(),
+        ann_exact_max_chunks(),
     )
 }
 
+/// Widening-only variant (exact scoring disabled) — pins the fallback
+/// path in tests.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 fn do_semantic_query_bounded(
     manager: &IndexManager,
@@ -1353,6 +1375,31 @@ fn do_semantic_query_bounded(
     limit: usize,
     path_filter: &str,
     max_fetch: usize,
+) -> Result<Vec<QueryResult>, String> {
+    do_semantic_query_inner(
+        manager,
+        embedder,
+        embed_cache,
+        q,
+        zone_id,
+        limit,
+        path_filter,
+        max_fetch,
+        0,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn do_semantic_query_inner(
+    manager: &IndexManager,
+    embedder: &Arc<dyn Embedder>,
+    embed_cache: &QueryEmbedCache,
+    q: &str,
+    zone_id: &str,
+    limit: usize,
+    path_filter: &str,
+    max_fetch: usize,
+    exact_max: usize,
 ) -> Result<Vec<QueryResult>, String> {
     let ann = manager
         .get_or_open_ann(zone_id, embedder.tag(), embedder.dim())
@@ -1367,6 +1414,33 @@ fn do_semantic_query_bounded(
     // stores only vectors + paths, but the RPC contract carries the
     // full QueryResult shape so callers don't need a follow-up read.
     let fts = manager.get_or_open(zone_id).ok();
+
+    // A scoped query can return at most as many hits as the subtree
+    // has live chunks: an empty subtree needs no ANN search at all
+    // (Koodle's per-workspace `notes` / `private-inbox` scopes are
+    // mostly empty), and a small one lets the widening stop as soon
+    // as every chunk it owns has been found.
+    let target = if path_filter.is_empty() {
+        limit
+    } else {
+        let under = ann.live_chunks_under(path_filter);
+        if under == 0 {
+            return Ok(Vec::new());
+        }
+        if under <= exact_max {
+            // Small subtree: score its own vectors exactly.  Cheaper
+            // than any graph fetch that has to be wide enough to
+            // catch them, and not bounded by a ceiling.
+            let hits = ann
+                .exact_search_under(&query_vec, path_filter, limit)
+                .map_err(|e| format!("ann exact search: {e}"))?;
+            return Ok(hits
+                .into_iter()
+                .filter_map(|hit| enrich_ann_hit(fts.as_deref(), hit, zone_id))
+                .collect());
+        }
+        limit.min(under)
+    };
 
     // Over-fetch when a path prefix is set — the post-scoring
     // filter would otherwise underfill the response.
@@ -1404,9 +1478,10 @@ fn do_semantic_query_bounded(
                 }
             }
         }
-        // Done when the response is full, no filter starved it, the
-        // graph ran out of candidates, or the ceiling is reached.
-        if path_filter.is_empty() || out.len() >= limit || returned < fetch || fetch >= max_fetch {
+        // Done when the response is full (or holds every chunk the
+        // subtree has), no filter starved it, the graph ran out of
+        // candidates, or the ceiling is reached.
+        if path_filter.is_empty() || out.len() >= target || returned < fetch || fetch >= max_fetch {
             return Ok(out);
         }
         fetch = fetch.saturating_mul(ANN_FILTER_FETCH_MULT).min(max_fetch);
@@ -5350,9 +5425,15 @@ mod tests {
             DEFAULT_ANN_FILTER_MAX_FETCH,
         )
         .expect("widened query");
-        assert_eq!(
-            found.iter().map(|r| r.path.as_str()).collect::<Vec<_>>(),
-            ["/ws/target.md"]
+        // Widening is still approximate HNSW: hnsw_rs stops expanding
+        // once the nearest remaining candidate is farther than the
+        // farthest result, so a target far from the query can sit
+        // beyond the search frontier however wide the fetch.  It must
+        // never surface anything OUTSIDE the subtree; finding the
+        // target is guaranteed by the exact path asserted below.
+        assert!(
+            found.iter().all(|r| r.path == "/ws/target.md"),
+            "widened query must stay inside the subtree: {found:?}"
         );
 
         // A subtree with fewer matches than `limit` returns what it
@@ -5369,6 +5450,94 @@ mod tests {
         )
         .expect("partial query");
         assert!(partial.len() <= 1);
+
+        // With `limit` above the subtree's single chunk, the widening
+        // stops the moment that chunk is found (target = 1) instead
+        // of running to the ceiling — and an empty subtree answers
+        // without any ANN search.
+        let bounded = do_semantic_query_bounded(
+            &manager,
+            &embedder,
+            &embed_cache,
+            query,
+            "root",
+            5,
+            "/ws/",
+            DEFAULT_ANN_FILTER_MAX_FETCH,
+        )
+        .expect("bounded query");
+        assert!(
+            bounded.len() <= 1,
+            "at most the subtree's single chunk: {bounded:?}"
+        );
+        let empty = do_semantic_query_bounded(
+            &manager,
+            &embedder,
+            &embed_cache,
+            query,
+            "root",
+            5,
+            "/nowhere/",
+            DEFAULT_ANN_FILTER_MAX_FETCH,
+        )
+        .expect("empty subtree query");
+        assert!(empty.is_empty());
+
+        // Production path: a subtree at or below the exact-scoring
+        // threshold is answered by exact scoring — found even with the
+        // fetch ceiling pinned to the starving 4×limit.
+        let exact = do_semantic_query_inner(
+            &manager,
+            &embedder,
+            &embed_cache,
+            query,
+            "root",
+            limit,
+            "/ws/",
+            old_fetch,
+            DEFAULT_ANN_EXACT_MAX_CHUNKS,
+        )
+        .expect("exact query");
+        assert_eq!(
+            exact.iter().map(|r| r.path.as_str()).collect::<Vec<_>>(),
+            ["/ws/target.md"]
+        );
+        // And the exact answer for the big subtree agrees with the
+        // graph's nearest neighbour when the whole corpus qualifies.
+        let exact_all = do_semantic_query_inner(
+            &manager,
+            &embedder,
+            &embed_cache,
+            query,
+            "root",
+            3,
+            "/",
+            old_fetch,
+            usize::MAX,
+        )
+        .expect("exact over everything");
+        let graph_all = do_semantic_query_inner(
+            &manager,
+            &embedder,
+            &embed_cache,
+            query,
+            "root",
+            3,
+            "",
+            old_fetch,
+            0,
+        )
+        .expect("graph top-3");
+        // Exact scoring is a lower bound on distance: its nearest hit
+        // is at least as close as whatever the approximate graph found.
+        assert!(
+            exact_all[0].score >= graph_all[0].score - 1e-6,
+            "exact nearest {} (score {}) must be at least as close as the graph's {} (score {})",
+            exact_all[0].path,
+            exact_all[0].score,
+            graph_all[0].path,
+            graph_all[0].score,
+        );
     }
 
     #[test]

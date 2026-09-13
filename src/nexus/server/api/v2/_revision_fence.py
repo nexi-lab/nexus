@@ -24,6 +24,25 @@ accepted for kernels that stamp them; on the pinned kernel they answer
 Unfenced reads are untouched: no header, no extra round-trip.
 
 Contract: ``docs/architecture/consistency-contract.md``.
+
+Migration note: the Rust axum surface (``rust/services/http-api``) now
+owns the fence for these routes:
+
+  * ``GET  /v2/search/glob``     (nexus-http-api handlers/search::glob)
+  * ``GET  /v2/search/grep``     (nexus-http-api handlers/search::grep)
+  * ``POST /v2/search/query``    (nexus-http-api handlers/search::query)
+
+Every other Python router below still calls ``get_revision_fence`` and
+keeps the fence live here.  When a route moves to axum, delete its
+``Depends(get_revision_fence)`` + ``revision_fence.enforce`` +
+``revision_fence.stamp`` triple from the Python handler and cross the
+route off this list — that is the whole migration step.
+
+  * ``async_files`` router: /v2/files/{read,write,list,glob,grep,
+    stream,batch-read,batch/read,metadata,exists,copy,rename,delete}
+  * ``search`` router: /v2/search/{refresh,expand,index,
+    index-directory,indexed-dirs,indexing-mode,query/batch,stats,
+    health,path-contexts/*}
 """
 
 from __future__ import annotations

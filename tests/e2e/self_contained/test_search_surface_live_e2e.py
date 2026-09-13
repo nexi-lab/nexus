@@ -444,6 +444,15 @@ def test_live_batch_search_contract(live_search_app: LiveSearchApp) -> None:
     covers and actually fails CI when the batch contract regresses.
     """
     live = live_search_app
+    if not live.plugin_loaded:
+        # PR #4764 removed the Python IndexingPipeline fallback from
+        # /api/v2/search/index: without the Rust search-plugin the handler
+        # returns 503 (fail-loud on missing daemon).  This test seeds via
+        # /search/index, so no plugin ⇒ no contract to verify.
+        pytest.skip(
+            "requires the worktree search-plugin dylib; build it with "
+            "`cargo build -p nexus-search-plugin`"
+        )
 
     # The fixture starts empty and `/search/index` resolves path_id from the
     # file_paths projection, so the file must exist before it is indexed —

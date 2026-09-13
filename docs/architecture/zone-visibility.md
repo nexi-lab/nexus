@@ -44,6 +44,16 @@ back to their `zone_id` column, `None` meaning root. Consequences:
   column root) belongs to that tenant's view and is hidden from root.
 * Explicit ReBAC cross-zone shares (`shared-viewer` etc.) are re-added by the
   search list pipeline after the zone predicate, as before.
+* **A non-admin key minted in the root zone is a root-zone caller.** The root
+  zone is the operator namespace, not a tenant: a key created with
+  `POST /api/v2/auth/keys` and `zone_id: "root"` (or no zone) can list `/`
+  and write outside the paths named in its `grants` — the grants add ReBAC
+  tuples, they do not fence the key into a subtree. Integrators who need a
+  tenant boundary mint the key **in a tenant zone** (`zone_id: "<tenant>"`),
+  which scopes every path it touches under `/zone/<tenant>/…`; per-path
+  grants then restrict access inside that zone. Observed on both the current
+  and previous releases while validating #4777, so this is the design, not a
+  regression.
 
 ### 1.1 What the kernel stamps
 

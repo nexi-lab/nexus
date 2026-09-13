@@ -348,7 +348,10 @@ mod tests {
             hit("c.txt", 0, 1.0),
         ];
         let out = rrf_multi_fusion(&[("keyword", kw)], 60, 10, true);
-        let c = out.iter().find(|h| h.path == "c.txt").expect("c.txt present");
+        let c = out
+            .iter()
+            .find(|h| h.path == "c.txt")
+            .expect("c.txt present");
         let expected = 1.0 / 63.0 + RRF_TOP3_BONUS;
         assert!(
             approx_eq(c.score, expected, 1e-9),
@@ -362,11 +365,12 @@ mod tests {
     fn parity_rank4_receives_no_bonus_matches_python_reference() {
         // Python: r3.txt is 0-indexed rank 4, no bonus.  Expected
         // score = 1/(60+4).
-        let kw: Vec<Hit> = (0..5)
-            .map(|i| hit(&format!("r{i}.txt"), 0, 1.0))
-            .collect();
+        let kw: Vec<Hit> = (0..5).map(|i| hit(&format!("r{i}.txt"), 0, 1.0)).collect();
         let out = rrf_multi_fusion(&[("keyword", kw)], 60, 10, true);
-        let r3 = out.iter().find(|h| h.path == "r3.txt").expect("r3.txt present");
+        let r3 = out
+            .iter()
+            .find(|h| h.path == "r3.txt")
+            .expect("r3.txt present");
         let expected = 1.0 / 64.0;
         assert!(
             approx_eq(r3.score, expected, 1e-9),
@@ -393,8 +397,12 @@ mod tests {
             hit("mediocre.txt", 0, 0.5),
         ];
 
-        let with_bonus =
-            rrf_multi_fusion(&[("keyword", kw.clone()), ("vector", ve.clone())], 60, 10, true);
+        let with_bonus = rrf_multi_fusion(
+            &[("keyword", kw.clone()), ("vector", ve.clone())],
+            60,
+            10,
+            true,
+        );
         let ranked: Vec<&str> = with_bonus.iter().map(|h| h.path.as_str()).collect();
         assert!(
             ranked.iter().position(|p| *p == "perfect.txt")

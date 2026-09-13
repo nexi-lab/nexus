@@ -1288,11 +1288,40 @@ fn do_keyword_query(
         .collect())
 }
 
+/// Ceiling on how many ANN candidates a path-scoped semantic query
+/// pulls while widening its fetch to fill `limit` (see
+/// [`do_semantic_query`]).  Env override: [`ANN_FILTER_MAX_FETCH_ENV`].
+pub const ANN_FILTER_MAX_FETCH_ENV: &str = "NEXUS_SEARCH_ANN_FILTER_MAX_FETCH";
+pub const DEFAULT_ANN_FILTER_MAX_FETCH: usize = 4096;
+
+/// First fetch for a path-scoped semantic query, as a multiple of
+/// `limit`; each widening round multiplies by this again.
+const ANN_FILTER_FETCH_MULT: usize = 4;
+
+fn ann_filter_max_fetch() -> usize {
+    static CACHED: OnceLock<usize> = OnceLock::new();
+    *CACHED.get_or_init(|| {
+        std::env::var(ANN_FILTER_MAX_FETCH_ENV)
+            .ok()
+            .and_then(|v| v.trim().parse::<usize>().ok())
+            .filter(|n| *n > 0)
+            .unwrap_or(DEFAULT_ANN_FILTER_MAX_FETCH)
+    })
+}
+
 /// Vector-similarity search over the per-zone HNSW index (Phase 2).
 /// Embeds `q` via the caller-supplied embedder, opens the ANN index
 /// tagged with the embedder's `tag()`, runs top-k, and materialises
 /// the FTS-stored fields (chunk_text, mtime_ms) so results carry the
 /// same shape as keyword hits.
+///
+/// The path filter is applied AFTER the ANN top-k, so a small subtree
+/// inside a large corpus is starved unless the fetch is wide enough:
+/// on a 220k-chunk index a fresh document that ranked ~100th globally
+/// was invisible to every `path=`-scoped semantic (and hybrid) query
+/// (#4777 follow-up).  When the filter under-fills the response and
+/// the graph still had more candidates, the fetch widens geometrically
+/// up to [`ann_filter_max_fetch`].
 fn do_semantic_query(
     manager: &IndexManager,
     embedder: &Arc<dyn Embedder>,
@@ -1301,6 +1330,29 @@ fn do_semantic_query(
     zone_id: &str,
     limit: usize,
     path_filter: &str,
+) -> Result<Vec<QueryResult>, String> {
+    do_semantic_query_bounded(
+        manager,
+        embedder,
+        embed_cache,
+        q,
+        zone_id,
+        limit,
+        path_filter,
+        ann_filter_max_fetch(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn do_semantic_query_bounded(
+    manager: &IndexManager,
+    embedder: &Arc<dyn Embedder>,
+    embed_cache: &QueryEmbedCache,
+    q: &str,
+    zone_id: &str,
+    limit: usize,
+    path_filter: &str,
+    max_fetch: usize,
 ) -> Result<Vec<QueryResult>, String> {
     let ann = manager
         .get_or_open_ann(zone_id, embedder.tag(), embedder.dim())
@@ -1311,42 +1363,54 @@ fn do_semantic_query(
     // embedder's session mutex.
     let query_vec = embed_query_cached(embedder.as_ref(), embed_cache, q)?;
 
-    // Over-fetch when a path prefix is set — the post-scoring
-    // filter would otherwise underfill the response.
-    let fetch = if path_filter.is_empty() {
-        limit
-    } else {
-        limit.saturating_mul(4).max(limit)
-    };
-    let ann_hits = ann
-        .search(&query_vec, fetch)
-        .map_err(|e| format!("ann search: {e}"))?;
-
     // Materialise chunk_text + mtime via the FTS index — the ANN
     // stores only vectors + paths, but the RPC contract carries the
     // full QueryResult shape so callers don't need a follow-up read.
     let fts = manager.get_or_open(zone_id).ok();
 
-    let mut out = Vec::with_capacity(limit);
-    for hit in ann_hits {
-        if !path_filter.is_empty() && !hit.path.starts_with(path_filter) {
-            continue;
-        }
-        // Orphan guard (review residual, follow-up landed): an ANN
-        // hit whose path has NO FTS row is drift — a deleted or
-        // content-transitioned doc whose vectors outlived it (the
-        // write-side lifecycle closes the known paths; this closes
-        // the unknown ones at read time).  Dropped, not served.
-        // When FTS itself is unavailable the hit is UNVERIFIABLE and
-        // kept — availability over a drift-window false negative.
-        if let Some(result) = enrich_ann_hit(fts.as_deref(), hit, zone_id) {
-            out.push(result);
-            if out.len() >= limit {
-                break;
+    // Over-fetch when a path prefix is set — the post-scoring
+    // filter would otherwise underfill the response.
+    let max_fetch = max_fetch.max(limit);
+    let mut fetch = if path_filter.is_empty() {
+        limit
+    } else {
+        limit
+            .saturating_mul(ANN_FILTER_FETCH_MULT)
+            .max(limit)
+            .min(max_fetch)
+    };
+    loop {
+        let ann_hits = ann
+            .search(&query_vec, fetch)
+            .map_err(|e| format!("ann search: {e}"))?;
+        let returned = ann_hits.len();
+
+        let mut out = Vec::with_capacity(limit);
+        for hit in ann_hits {
+            if !path_filter.is_empty() && !hit.path.starts_with(path_filter) {
+                continue;
+            }
+            // Orphan guard (review residual, follow-up landed): an ANN
+            // hit whose path has NO FTS row is drift — a deleted or
+            // content-transitioned doc whose vectors outlived it (the
+            // write-side lifecycle closes the known paths; this closes
+            // the unknown ones at read time).  Dropped, not served.
+            // When FTS itself is unavailable the hit is UNVERIFIABLE and
+            // kept — availability over a drift-window false negative.
+            if let Some(result) = enrich_ann_hit(fts.as_deref(), hit, zone_id) {
+                out.push(result);
+                if out.len() >= limit {
+                    break;
+                }
             }
         }
+        // Done when the response is full, no filter starved it, the
+        // graph ran out of candidates, or the ceiling is reached.
+        if path_filter.is_empty() || out.len() >= limit || returned < fetch || fetch >= max_fetch {
+            return Ok(out);
+        }
+        fetch = fetch.saturating_mul(ANN_FILTER_FETCH_MULT).min(max_fetch);
     }
-    Ok(out)
 }
 
 /// Enrich an ANN hit with FTS-side text/mtime.  Returns None when the
@@ -5192,6 +5256,119 @@ mod tests {
         assert_eq!(cached(&manager, "/a.md"), Some(Some(1_000)));
         assert_eq!(cached(&manager, "/b.md"), Some(Some(2_000)));
         assert!(!manager.zone_is_dirty("root"));
+    }
+
+    #[test]
+    fn path_scoped_semantic_query_widens_past_the_global_top_k() {
+        // A one-document subtree inside a corpus where that document
+        // does not rank in the global top 4×limit for the query.  The
+        // old fixed 4×limit fetch returned nothing for the scoped
+        // query (observed on a 220k-chunk production index); the
+        // widening fetch finds it, and unfiltered queries never widen.
+        let (_tmp, manager, embedder, cache, gate, flush) = deferral_fixture(None);
+        let embed_cache = QueryEmbedCache::with_capacity(0);
+        let mut docs: Vec<crate::search_proto::DocumentInput> = (0..600)
+            .map(|i| {
+                doc(
+                    &format!("/other/doc-{i}.md"),
+                    &format!("noise {i} {}", i * 7),
+                    1_000,
+                )
+            })
+            .collect();
+        docs.push(doc("/ws/target.md", "target document", 1_000));
+        do_index_documents(
+            &manager,
+            Some(&embedder),
+            false,
+            None,
+            "root",
+            docs,
+            &cache,
+            &gate,
+            &flush,
+        )
+        .expect("index corpus");
+
+        let limit = 1;
+        let old_fetch = limit * ANN_FILTER_FETCH_MULT;
+        // Pick a query for which the target is NOT in the global
+        // top-`old_fetch` (mock vectors are a deterministic hash, so
+        // one of these candidates always qualifies).
+        let query = [
+            "q alpha",
+            "q bravo",
+            "q charlie",
+            "q delta",
+            "q echo",
+            "q foxtrot",
+        ]
+        .into_iter()
+        .find(|q| {
+            let global = do_semantic_query_bounded(
+                &manager,
+                &embedder,
+                &embed_cache,
+                q,
+                "root",
+                old_fetch,
+                "",
+                old_fetch,
+            )
+            .expect("global query");
+            assert_eq!(global.len(), old_fetch, "unfiltered query fills its limit");
+            !global.iter().any(|r| r.path == "/ws/target.md")
+        })
+        .expect("a query whose target ranks past the old fetch");
+
+        // Old behaviour (ceiling = the first fetch): starved.
+        let starved = do_semantic_query_bounded(
+            &manager,
+            &embedder,
+            &embed_cache,
+            query,
+            "root",
+            limit,
+            "/ws/",
+            old_fetch,
+        )
+        .expect("capped query");
+        assert!(
+            starved.is_empty(),
+            "cap at 4×limit reproduces the starvation"
+        );
+
+        // Widening: found, and no more than `limit` results.
+        let found = do_semantic_query_bounded(
+            &manager,
+            &embedder,
+            &embed_cache,
+            query,
+            "root",
+            limit,
+            "/ws/",
+            DEFAULT_ANN_FILTER_MAX_FETCH,
+        )
+        .expect("widened query");
+        assert_eq!(
+            found.iter().map(|r| r.path.as_str()).collect::<Vec<_>>(),
+            ["/ws/target.md"]
+        );
+
+        // A subtree with fewer matches than `limit` returns what it
+        // has once the ceiling is reached, instead of erroring.
+        let partial = do_semantic_query_bounded(
+            &manager,
+            &embedder,
+            &embed_cache,
+            query,
+            "root",
+            5,
+            "/ws/",
+            64,
+        )
+        .expect("partial query");
+        assert!(partial.len() <= 1);
     }
 
     #[test]

@@ -62,8 +62,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anndists::dist::DistCosine;
-use hnsw_rs::hnsw::{Hnsw, Neighbour};
+use anndists::dist::{DistCosine, Distance};
+use hnsw_rs::hnsw::{Hnsw, Neighbour, Point};
 use hnsw_rs::hnswio::{HnswIo, ReloadOptions};
 use hnsw_rs::prelude::AnnT;
 use parking_lot::RwLock;
@@ -205,12 +205,21 @@ pub struct AnnIndex {
     /// on every write so search's path lookup stays O(1) without
     /// holding the sidecar RwLock for the whole search.
     id_to_chunk: RwLock<HashMap<usize, (String, u32)>>,
-    /// Live chunk count per path, ordered so a path-prefix range scan
-    /// is O(log n + matches).  Lets a `path=`-scoped semantic query
-    /// learn up front how many hits a subtree can yield at all (zero
-    /// → no ANN search; `n` → stop widening once `n` are found)
-    /// instead of paying for fetch rounds that can never fill.
-    path_chunks: RwLock<BTreeMap<String, u32>>,
+    /// Live chunk ids per path, ordered so a path-prefix range scan is
+    /// O(log n + matches).  Lets a `path=`-scoped semantic query learn
+    /// up front how many hits a subtree can yield at all (zero → no
+    /// ANN search) and, for a small subtree, score exactly those ids
+    /// (see [`exact_search_under`](Self::exact_search_under)).
+    path_ids: RwLock<BTreeMap<String, Vec<usize>>>,
+    /// `id → graph point` for every point in the graph as of the last
+    /// [`refresh_points`](Self::refresh_points) (open + every commit).
+    /// hnsw_rs exposes stored vectors only through point iteration,
+    /// so this is the lookup exact scoring reads vectors from.
+    points: RwLock<HashMap<usize, Arc<Point<'static, f32>>>>,
+    /// Vectors inserted since the last refresh — exact scoring falls
+    /// back to these so a just-indexed chunk is scorable before the
+    /// next commit rebuilds `points`.  Cleared by the refresh.
+    recent_vectors: RwLock<HashMap<usize, Arc<Vec<f32>>>>,
 }
 
 impl AnnIndex {
@@ -318,10 +327,11 @@ impl AnnIndex {
             .iter()
             .map(|e| (e.id, (e.path.clone(), e.chunk_index)))
             .collect();
-        let mut path_chunks: BTreeMap<String, u32> = BTreeMap::new();
+        let mut path_ids: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         for e in &sidecar.entries {
-            *path_chunks.entry(e.path.clone()).or_insert(0) += 1;
+            path_ids.entry(e.path.clone()).or_default().push(e.id);
         }
+        let points = Self::collect_points(&hnsw);
         Ok(Arc::new(Self {
             dim,
             dir,
@@ -329,8 +339,46 @@ impl AnnIndex {
             sidecar: RwLock::new(sidecar),
             chunk_to_id: RwLock::new(chunk_to_id),
             id_to_chunk: RwLock::new(id_to_chunk),
-            path_chunks: RwLock::new(path_chunks),
+            path_ids: RwLock::new(path_ids),
+            points: RwLock::new(points),
+            recent_vectors: RwLock::new(HashMap::new()),
         }))
+    }
+
+    /// Walk every point in the graph and index it by origin id.
+    /// O(points); ~tens of ms at a few hundred thousand chunks, run
+    /// once per open and once per commit.
+    fn collect_points(
+        hnsw: &Hnsw<'static, f32, DistCosine>,
+    ) -> HashMap<usize, Arc<Point<'static, f32>>> {
+        let total = hnsw.get_nb_point();
+        let mut map = HashMap::with_capacity(total);
+        if total == 0 {
+            // hnsw_rs's whole-graph iterator unwraps the entry point
+            // and panics on an empty graph.
+            return map;
+        }
+        // Per-layer iteration: one read guard per layer and no
+        // re-entrant lock on `points_by_layer` (the whole-graph
+        // iterator re-locks inside `next`, which parking_lot's fair
+        // RwLock would deadlock on if a writer queued meanwhile).
+        let indexation = hnsw.get_point_indexation();
+        for layer in 0..=usize::from(hnsw.get_max_level_observed()) {
+            for point in indexation.get_layer_iterator(layer) {
+                map.insert(point.get_origin_id(), point);
+            }
+        }
+        map
+    }
+
+    /// Rebuild the `id → point` lookup from the graph and drop the
+    /// interim vector copies it now covers.  Called from `commit`;
+    /// safe to call any time (the graph only grows).
+    fn refresh_points(&self) {
+        let fresh = Self::collect_points(&self.hnsw);
+        let mut recent = self.recent_vectors.write();
+        recent.retain(|id, _| !fresh.contains_key(id));
+        *self.points.write() = fresh;
     }
 
     /// Add / replace the embedding for `(path, chunk_index)`.
@@ -380,14 +428,16 @@ impl AnnIndex {
             self.id_to_chunk.write().insert(id, key);
             if let Some(pid) = prior {
                 self.id_to_chunk.write().remove(&pid);
-            } else {
-                // A genuinely new (path, chunk) — a replacement keeps
-                // the path's live count unchanged.
-                *self
-                    .path_chunks
-                    .write()
-                    .entry(path.to_string())
-                    .or_insert(0) += 1;
+            }
+            {
+                // A replacement swaps the old id for the new one in
+                // place; a genuinely new (path, chunk) appends.
+                let mut by_path = self.path_ids.write();
+                let ids = by_path.entry(path.to_string()).or_default();
+                match prior.and_then(|pid| ids.iter().position(|x| *x == pid)) {
+                    Some(pos) => ids[pos] = id,
+                    None => ids.push(id),
+                }
             }
             (id, prior)
         };
@@ -395,6 +445,11 @@ impl AnnIndex {
 
         // HNSW insert is thread-safe on `&self`; no lock needed here.
         self.hnsw.insert((vector, new_id));
+        // Scorable by exact_search_under before the next commit
+        // rebuilds the point lookup.
+        self.recent_vectors
+            .write()
+            .insert(new_id, Arc::new(vector.to_vec()));
 
         Ok(())
     }
@@ -428,18 +483,91 @@ impl AnnIndex {
         }
         lookup.retain(|(p, _), _| p != path);
         side.entries.retain(|e| e.path != path);
-        self.path_chunks.write().remove(path);
+        if let Some(ids) = self.path_ids.write().remove(path) {
+            let mut recent = self.recent_vectors.write();
+            for id in ids {
+                recent.remove(&id);
+            }
+        }
     }
 
     /// Number of live chunks whose path starts with `prefix` — the
     /// most hits a `path=`-scoped query over this index can return.
     /// O(log n + matches) over the ordered path map.
     pub fn live_chunks_under(&self, prefix: &str) -> usize {
-        let map = self.path_chunks.read();
+        let map = self.path_ids.read();
         map.range(prefix.to_string()..)
             .take_while(|(p, _)| p.starts_with(prefix))
-            .map(|(_, n)| *n as usize)
+            .map(|(_, ids)| ids.len())
             .sum()
+    }
+
+    /// Live chunk ids whose path starts with `prefix`.
+    fn ids_under(&self, prefix: &str) -> Vec<usize> {
+        let map = self.path_ids.read();
+        map.range(prefix.to_string()..)
+            .take_while(|(p, _)| p.starts_with(prefix))
+            .flat_map(|(_, ids)| ids.iter().copied())
+            .collect()
+    }
+
+    /// Exact nearest-`k` over the live chunks under `prefix`: cosine
+    /// distance against each of the subtree's own vectors, no graph
+    /// traversal, no ceiling.  Meant for small subtrees (the caller
+    /// bounds it by [`live_chunks_under`](Self::live_chunks_under));
+    /// cost is O(subtree chunks × dim).  Returns nearest first.
+    pub fn exact_search_under(
+        &self,
+        query: &[f32],
+        prefix: &str,
+        k: usize,
+    ) -> Result<Vec<AnnHit>, AnnError> {
+        if query.len() != self.dim {
+            return Err(AnnError::DimMismatch {
+                path: "<query>".to_string(),
+                got: query.len(),
+                expected: self.dim,
+            });
+        }
+        if is_all_zero(query) {
+            return Err(AnnError::ZeroVector("<query>".to_string()));
+        }
+        if k == 0 {
+            return Ok(Vec::new());
+        }
+        let ids = self.ids_under(prefix);
+        let dist = DistCosine {};
+        let mut scored: Vec<(f32, usize)> = Vec::with_capacity(ids.len());
+        {
+            let points = self.points.read();
+            let recent = self.recent_vectors.read();
+            for id in ids {
+                let d = if let Some(p) = points.get(&id) {
+                    dist.eval(query, p.get_v())
+                } else if let Some(v) = recent.get(&id) {
+                    dist.eval(query, v.as_slice())
+                } else {
+                    // Inserted between a refresh and this read on a
+                    // path that was then replaced — nothing to score.
+                    tracing::debug!(id, "ann: live id without a scorable vector — skipping");
+                    continue;
+                };
+                scored.push((d, id));
+            }
+        }
+        scored.sort_by(|a, b| a.0.total_cmp(&b.0));
+        scored.truncate(k);
+        let id_map = self.id_to_chunk.read();
+        Ok(scored
+            .into_iter()
+            .filter_map(|(distance, id)| {
+                id_map.get(&id).map(|(path, chunk_index)| AnnHit {
+                    path: path.clone(),
+                    chunk_index: *chunk_index,
+                    distance,
+                })
+            })
+            .collect())
     }
 
     /// Nearest-`k` search.  Returns hits sorted by cosine distance
@@ -571,6 +699,10 @@ impl AnnIndex {
         if let Some(current) = dumped_basename {
             prune_stale_dump_pairs(&self.dir, &current);
         }
+        // Every vector is durable now; re-index the graph's points so
+        // exact scoring reads them from the graph and the interim
+        // copies can go.
+        self.refresh_points();
         Ok(())
     }
 
@@ -840,6 +972,72 @@ mod tests {
         let reopened = AnnIndex::open_or_create(dir, 4).expect("reopen");
         assert_eq!(reopened.live_chunks_under("/ws/"), 1);
         assert_eq!(reopened.live_chunks_under("/wsx/"), 1);
+    }
+
+    #[test]
+    fn exact_search_under_scores_subtree_vectors_before_and_after_commit() {
+        let dir = tempdir().join("ann");
+        let idx = AnnIndex::open_or_create(dir.clone(), 4).expect("open");
+        idx.add_vector("/ws/a/one.md", 0, &vec_seed(4, 1.0))
+            .unwrap();
+        idx.add_vector("/ws/a/two.md", 0, &vec_seed(4, 5.0))
+            .unwrap();
+        idx.add_vector("/ws/b/three.md", 0, &vec_seed(4, 9.0))
+            .unwrap();
+        idx.add_vector("/other/far.md", 0, &vec_seed(4, 5.01))
+            .unwrap();
+
+        // Uncommitted vectors are scorable (served from the interim copies).
+        let hits = idx
+            .exact_search_under(&vec_seed(4, 5.0), "/ws/", 2)
+            .expect("exact");
+        assert_eq!(hits[0].path, "/ws/a/two.md", "nearest first: {hits:?}");
+        assert_eq!(hits.len(), 2);
+        assert!(hits.iter().all(|h| h.path.starts_with("/ws/")), "{hits:?}");
+
+        // After a commit the same answer comes from the graph's points.
+        idx.commit().expect("commit");
+        assert!(
+            idx.recent_vectors.read().is_empty(),
+            "refresh drops interim copies"
+        );
+        let hits = idx
+            .exact_search_under(&vec_seed(4, 5.0), "/ws/a/", 5)
+            .expect("exact");
+        assert_eq!(
+            hits.iter().map(|h| h.path.as_str()).collect::<Vec<_>>(),
+            ["/ws/a/two.md", "/ws/a/one.md"]
+        );
+
+        // Replacement + delete are honoured; a reopened index still scores.
+        idx.add_vector("/ws/a/two.md", 0, &vec_seed(4, 100.0))
+            .unwrap();
+        idx.delete_all_chunks("/ws/a/one.md");
+        let hits = idx
+            .exact_search_under(&vec_seed(4, 5.0), "/ws/", 5)
+            .expect("exact");
+        let mut paths: Vec<&str> = hits.iter().map(|h| h.path.as_str()).collect();
+        paths.sort_unstable();
+        assert_eq!(
+            paths,
+            ["/ws/a/two.md", "/ws/b/three.md"],
+            "one.md deleted, two.md replaced (still one live chunk): {hits:?}"
+        );
+        assert!(
+            hits.iter().all(|h| h.distance > 0.0),
+            "the replaced two.md must be scored by its NEW vector: {hits:?}"
+        );
+        idx.commit().expect("commit 2");
+        drop(idx);
+        let reopened = AnnIndex::open_or_create(dir, 4).expect("reopen");
+        let hits = reopened
+            .exact_search_under(&vec_seed(4, 9.0), "/ws/", 1)
+            .expect("exact");
+        assert_eq!(hits[0].path, "/ws/b/three.md");
+        assert!(reopened
+            .exact_search_under(&vec_seed(4, 9.0), "/nowhere/", 3)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

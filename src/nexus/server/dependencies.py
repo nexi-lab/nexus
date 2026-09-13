@@ -271,7 +271,28 @@ async def resolve_auth(
     else:
         return None
 
-    # Try auth provider first
+    # Static API key FIRST (constant-time compare, microseconds).  This is
+    # the operator/admin credential (``NEXUS_API_KEY``) and, for a deployment
+    # like Koodle's, the one every server-side request carries.  It used to
+    # be checked only AFTER the auth provider had been asked and had rejected
+    # the token — a database round-trip (12–20 ms on Railway, ~25 % of read
+    # latency) on every request, logged as a "(cache miss)", that no cache
+    # could ever absorb because static-key results are never cached
+    # (#4777 rollout finding).  Same order the gRPC servicer uses.
+    if _state.api_key and hmac.compare_digest(token, _state.api_key):
+        return {
+            "authenticated": True,
+            "is_admin": True,
+            "subject_type": "user",
+            "subject_id": "admin",
+            "zone_id": x_nexus_zone_id,
+            "inherit_permissions": True,  # Static admin key always inherits
+            "x_agent_id": x_agent_id,
+            "_auth_time_ms": 0.0,
+            "_auth_cached": False,
+        }
+
+    # Auth provider (database keys, JWTs, …) with the shared result cache
     if _state.auth_provider:
         import time as _time
 
@@ -353,20 +374,8 @@ async def resolve_auth(
         finally:
             _auth_inflight.pop(_flight_key, None)
 
-    # Fall back to static API key (constant-time comparison to prevent timing attacks)
-    if _state.api_key:
-        if hmac.compare_digest(token, _state.api_key):
-            return {
-                "authenticated": True,
-                "is_admin": True,
-                "subject_type": "user",
-                "subject_id": "admin",
-                "zone_id": x_nexus_zone_id,
-                "inherit_permissions": True,  # Static admin key always inherits
-                "x_agent_id": x_agent_id,
-            }
-        return None
-
+    # Static key was already compared above; a token that matched neither the
+    # provider nor the static key is unauthenticated.
     return None
 
 

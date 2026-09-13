@@ -58,7 +58,7 @@
 //! The lock is not held across the HNSW call itself, so a slow
 //! search does not stall a concurrent add on the sidecar.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -205,6 +205,12 @@ pub struct AnnIndex {
     /// on every write so search's path lookup stays O(1) without
     /// holding the sidecar RwLock for the whole search.
     id_to_chunk: RwLock<HashMap<usize, (String, u32)>>,
+    /// Live chunk count per path, ordered so a path-prefix range scan
+    /// is O(log n + matches).  Lets a `path=`-scoped semantic query
+    /// learn up front how many hits a subtree can yield at all (zero
+    /// → no ANN search; `n` → stop widening once `n` are found)
+    /// instead of paying for fetch rounds that can never fill.
+    path_chunks: RwLock<BTreeMap<String, u32>>,
 }
 
 impl AnnIndex {
@@ -312,6 +318,10 @@ impl AnnIndex {
             .iter()
             .map(|e| (e.id, (e.path.clone(), e.chunk_index)))
             .collect();
+        let mut path_chunks: BTreeMap<String, u32> = BTreeMap::new();
+        for e in &sidecar.entries {
+            *path_chunks.entry(e.path.clone()).or_insert(0) += 1;
+        }
         Ok(Arc::new(Self {
             dim,
             dir,
@@ -319,6 +329,7 @@ impl AnnIndex {
             sidecar: RwLock::new(sidecar),
             chunk_to_id: RwLock::new(chunk_to_id),
             id_to_chunk: RwLock::new(id_to_chunk),
+            path_chunks: RwLock::new(path_chunks),
         }))
     }
 
@@ -369,6 +380,14 @@ impl AnnIndex {
             self.id_to_chunk.write().insert(id, key);
             if let Some(pid) = prior {
                 self.id_to_chunk.write().remove(&pid);
+            } else {
+                // A genuinely new (path, chunk) — a replacement keeps
+                // the path's live count unchanged.
+                *self
+                    .path_chunks
+                    .write()
+                    .entry(path.to_string())
+                    .or_insert(0) += 1;
             }
             (id, prior)
         };
@@ -409,6 +428,18 @@ impl AnnIndex {
         }
         lookup.retain(|(p, _), _| p != path);
         side.entries.retain(|e| e.path != path);
+        self.path_chunks.write().remove(path);
+    }
+
+    /// Number of live chunks whose path starts with `prefix` — the
+    /// most hits a `path=`-scoped query over this index can return.
+    /// O(log n + matches) over the ordered path map.
+    pub fn live_chunks_under(&self, prefix: &str) -> usize {
+        let map = self.path_chunks.read();
+        map.range(prefix.to_string()..)
+            .take_while(|(p, _)| p.starts_with(prefix))
+            .map(|(_, n)| *n as usize)
+            .sum()
     }
 
     /// Nearest-`k` search.  Returns hits sorted by cosine distance
@@ -767,6 +798,48 @@ mod tests {
             !hits.iter().any(|h| h.path == "/doc"),
             "delete_all_chunks left ghost /doc hits: {hits:?}",
         );
+    }
+
+    #[test]
+    fn live_chunks_under_tracks_adds_replacements_deletes_and_reload() {
+        let dir = tempdir().join("ann");
+        let idx = AnnIndex::open_or_create(dir.clone(), 4).expect("open");
+        idx.add_vector("/ws/a/doc.md", 0, &vec_seed(4, 1.0))
+            .unwrap();
+        idx.add_vector("/ws/a/doc.md", 1, &vec_seed(4, 2.0))
+            .unwrap();
+        idx.add_vector("/ws/b/doc.md", 0, &vec_seed(4, 3.0))
+            .unwrap();
+        idx.add_vector("/wsx/doc.md", 0, &vec_seed(4, 4.0)).unwrap();
+        assert_eq!(
+            idx.live_chunks_under("/ws/"),
+            3,
+            "prefix must respect the slash"
+        );
+        assert_eq!(idx.live_chunks_under("/ws/a/"), 2);
+        assert_eq!(
+            idx.live_chunks_under("/ws"),
+            4,
+            "bare prefix also matches /wsx"
+        );
+        assert_eq!(idx.live_chunks_under("/nothing/"), 0);
+
+        // Replacing an existing (path, chunk) shadows the old id but
+        // does not change the live count.
+        idx.add_vector("/ws/a/doc.md", 0, &vec_seed(4, 9.0))
+            .unwrap();
+        assert_eq!(idx.live_chunks_under("/ws/a/"), 2);
+
+        idx.delete_all_chunks("/ws/a/doc.md");
+        assert_eq!(idx.live_chunks_under("/ws/"), 1);
+        assert_eq!(idx.live_chunks_under("/ws/a/"), 0);
+
+        // The map is rebuilt from the sidecar on reload.
+        idx.commit().expect("commit");
+        drop(idx);
+        let reopened = AnnIndex::open_or_create(dir, 4).expect("reopen");
+        assert_eq!(reopened.live_chunks_under("/ws/"), 1);
+        assert_eq!(reopened.live_chunks_under("/wsx/"), 1);
     }
 
     #[test]

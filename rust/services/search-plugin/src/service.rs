@@ -1368,6 +1368,21 @@ fn do_semantic_query_bounded(
     // full QueryResult shape so callers don't need a follow-up read.
     let fts = manager.get_or_open(zone_id).ok();
 
+    // A scoped query can return at most as many hits as the subtree
+    // has live chunks: an empty subtree needs no ANN search at all
+    // (Koodle's per-workspace `notes` / `private-inbox` scopes are
+    // mostly empty), and a small one lets the widening stop as soon
+    // as every chunk it owns has been found.
+    let target = if path_filter.is_empty() {
+        limit
+    } else {
+        let under = ann.live_chunks_under(path_filter);
+        if under == 0 {
+            return Ok(Vec::new());
+        }
+        limit.min(under)
+    };
+
     // Over-fetch when a path prefix is set — the post-scoring
     // filter would otherwise underfill the response.
     let max_fetch = max_fetch.max(limit);
@@ -1404,9 +1419,10 @@ fn do_semantic_query_bounded(
                 }
             }
         }
-        // Done when the response is full, no filter starved it, the
-        // graph ran out of candidates, or the ceiling is reached.
-        if path_filter.is_empty() || out.len() >= limit || returned < fetch || fetch >= max_fetch {
+        // Done when the response is full (or holds every chunk the
+        // subtree has), no filter starved it, the graph ran out of
+        // candidates, or the ceiling is reached.
+        if path_filter.is_empty() || out.len() >= target || returned < fetch || fetch >= max_fetch {
             return Ok(out);
         }
         fetch = fetch.saturating_mul(ANN_FILTER_FETCH_MULT).min(max_fetch);
@@ -5369,6 +5385,35 @@ mod tests {
         )
         .expect("partial query");
         assert!(partial.len() <= 1);
+
+        // With `limit` above the subtree's single chunk, the widening
+        // stops the moment that chunk is found (target = 1) instead
+        // of running to the ceiling — and an empty subtree answers
+        // without any ANN search.
+        let bounded = do_semantic_query_bounded(
+            &manager,
+            &embedder,
+            &embed_cache,
+            query,
+            "root",
+            5,
+            "/ws/",
+            DEFAULT_ANN_FILTER_MAX_FETCH,
+        )
+        .expect("bounded query");
+        assert_eq!(bounded.len(), 1);
+        let empty = do_semantic_query_bounded(
+            &manager,
+            &embedder,
+            &embed_cache,
+            query,
+            "root",
+            5,
+            "/nowhere/",
+            DEFAULT_ANN_FILTER_MAX_FETCH,
+        )
+        .expect("empty subtree query");
+        assert!(empty.is_empty());
     }
 
     #[test]

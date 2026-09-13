@@ -81,11 +81,9 @@ fn batch_query_concurrency() -> usize {
         .unwrap_or(DEFAULT_BATCH_QUERY_CONCURRENCY)
 }
 
-/// #4623: explicit-index incremental FTS commit cadence.  Every N
-/// successfully indexed documents the FTS layer commits (and the
-/// zone's result cache drops) so keyword hits become visible while
-/// the embed-heavy remainder of the batch is still building.
-const INDEX_INCREMENTAL_COMMIT_EVERY: usize = 8;
+// #4623's incremental FTS commit cadence is gone (#4777): the FTS pass
+// now commits in full BEFORE the embed phase starts, so keyword hits are
+// visible for the whole time a batch is embedding.
 
 /// #4617: backend identity string on Stats — distinguishes this
 /// generation from the deleted Python daemon's BM25S/pgvector stack.
@@ -198,6 +196,12 @@ pub struct SearchServiceImpl {
     /// Handler panics caught at the plugin's dispatch boundary
     /// (#4725) — surfaced on Health.  Recorded from `lib.rs`.
     dispatch_panics: DispatchPanicLog,
+    /// #4777: bounds concurrent `embed_batch` calls across
+    /// IndexDocuments batches (held OUTSIDE the zone write lock).
+    embed_gate: Arc<crate::ann_flush::EmbedGate>,
+    /// #4777: defers the per-batch hnsw dump while more batches are
+    /// queued on a zone, with a fallback flusher for durability.
+    ann_flush: Arc<crate::ann_flush::AnnFlushCoordinator>,
 }
 
 /// Bundle used by the query wrapper — the live expander plus its
@@ -317,6 +321,8 @@ impl SearchServiceImpl {
             expander_pin: None,
             peer_fanout_pin: None,
             context_generator_pin: None,
+            embed_gate: None,
+            ann_flush: None,
         }
     }
 
@@ -695,9 +701,26 @@ pub struct SearchServiceBuilder {
     expander_pin: Option<Option<Arc<ExpanderHandle>>>,
     peer_fanout_pin: Option<Option<SharedPeerFanoutDispatcher>>,
     context_generator_pin: Option<Option<SharedContextGenerator>>,
+    embed_gate: Option<Arc<crate::ann_flush::EmbedGate>>,
+    ann_flush: Option<Arc<crate::ann_flush::AnnFlushCoordinator>>,
 }
 
 impl SearchServiceBuilder {
+    /// Pin the embedding concurrency gate (#4777) — tests use it to
+    /// avoid reading `NEXUS_SEARCH_EMBED_CONCURRENCY` from the host env.
+    pub fn embed_gate(mut self, gate: Arc<crate::ann_flush::EmbedGate>) -> Self {
+        self.embed_gate = Some(gate);
+        self
+    }
+
+    /// Pin the deferred-dump coordinator (#4777) — tests pass a
+    /// coordinator with deferral disabled or a long fallback delay so
+    /// assertions never race the flusher thread.
+    pub fn ann_flush(mut self, coordinator: Arc<crate::ann_flush::AnnFlushCoordinator>) -> Self {
+        self.ann_flush = Some(coordinator);
+        self
+    }
+
     /// Inject a pre-configured `IndexManager` (typically rooted at
     /// a tempdir for tests, or at an explicit data volume for
     /// operators overriding the default storage location).
@@ -810,6 +833,12 @@ impl SearchServiceBuilder {
             peer_fanout_slot: Arc::new(pin_to_once_lock(self.peer_fanout_pin)),
             context_generator_slot: Arc::new(pin_to_once_lock(self.context_generator_pin)),
             dispatch_panics: DispatchPanicLog::default(),
+            embed_gate: self
+                .embed_gate
+                .unwrap_or_else(|| Arc::new(crate::ann_flush::EmbedGate::from_env())),
+            ann_flush: self
+                .ann_flush
+                .unwrap_or_else(|| Arc::new(crate::ann_flush::AnnFlushCoordinator::from_env())),
         }
     }
 }
@@ -2870,14 +2899,129 @@ struct IndexDocumentsOutcome {
     skipped_paths: Vec<String>,
 }
 
+/// One document of an `IndexDocuments` batch as it moves through the
+/// three phases of [`do_index_documents`] (#4777).
+struct BatchDoc {
+    path: String,
+    mtime_ms: Option<i64>,
+    /// Original text — the contextual chunker needs the whole document.
+    text: String,
+    /// Empty for content skips (empty / whitespace-only / chunkless).
+    chunks: Vec<crate::chunker::Chunk>,
+    /// Phase 1 could not add this doc's chunks to the FTS index.
+    fts_failed: bool,
+    /// Phase 2 result: `None` when no embedder is configured (or the
+    /// doc is a skip / FTS failure); otherwise the vectors — one per
+    /// chunk — or the reason embedding failed.
+    vectors: Option<Result<Vec<Vec<f32>>, String>>,
+}
+
+impl BatchDoc {
+    fn is_content_skip(&self) -> bool {
+        self.chunks.is_empty()
+    }
+}
+
+/// Phase 0 (no lock, CPU only): split every document into chunks.
+fn chunk_documents(docs: Vec<crate::search_proto::DocumentInput>) -> Vec<BatchDoc> {
+    docs.into_iter()
+        .map(|doc| {
+            let chunks = if doc.text.trim().is_empty() {
+                Vec::new()
+            } else {
+                crate::chunker::chunk_document(&doc.text)
+            };
+            BatchDoc {
+                path: doc.path,
+                mtime_ms: doc.mtime_ms,
+                text: doc.text,
+                chunks,
+                fts_failed: false,
+                vectors: None,
+            }
+        })
+        .collect()
+}
+
+/// Phase 2 (no lock): contextualise + embed every doc whose FTS add
+/// landed.  Everything that talks to the network happens here, so the
+/// zone write lock is never held across a provider round-trip; `gate`
+/// bounds how many batches hit the provider at once.
+fn embed_documents(
+    docs: &mut [BatchDoc],
+    embedder: &Arc<dyn Embedder>,
+    context_generator: Option<&dyn ContextGenerator>,
+    gate: &crate::ann_flush::EmbedGate,
+) {
+    for doc in docs.iter_mut() {
+        if doc.is_content_skip() || doc.fts_failed {
+            continue;
+        }
+        // Feature 3 — contextual chunking (see index_one's twin
+        // insertion point).  Per-chunk LLM failure = None ⇒ that
+        // chunk keeps its plain embed_input.  Only `embed_input` is
+        // touched, so the FTS text committed in Phase 1 is unaffected.
+        if let Some(gen) = context_generator {
+            crate::contextual_chunker::apply_contexts(
+                gen,
+                &doc.text,
+                &mut doc.chunks,
+                gen.max_chunks_per_doc(),
+            );
+        }
+        let _permit = gate.acquire();
+        let inputs: Vec<&str> = doc.chunks.iter().map(|c| c.embed_input.as_str()).collect();
+        doc.vectors = Some(match embedder.embed_batch(&inputs) {
+            Ok(vecs) if vecs.len() == doc.chunks.len() => Ok(vecs),
+            Ok(vecs) => Err(format!(
+                "embed count mismatch: got {} vectors for {} chunks",
+                vecs.len(),
+                doc.chunks.len()
+            )),
+            Err(e) => Err(format!("embed failed: {e}")),
+        });
+    }
+}
+
+/// Per-zone counters accumulated by [`index_zone_documents`].
+/// Per-process counter naming batches in the phase trace.
+static INDEX_BATCH_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static PHASE_TRACE: OnceLock<bool> = OnceLock::new();
+
+/// Stderr phase trace for `IndexDocuments`, enabled by
+/// `NEXUS_SEARCH_PHASE_TRACE=1`.  The plugin is a cdylib with no tracing
+/// subscriber of its own (its `tracing` events never reach the host's
+/// log), so this is the one way to see where a batch spends its time in
+/// a live host without attaching a profiler.
+fn phase_trace(zone_id: &str, batch_no: u64, what: &str, t0: Instant) {
+    let enabled =
+        *PHASE_TRACE.get_or_init(|| std::env::var_os("NEXUS_SEARCH_PHASE_TRACE").is_some());
+    if enabled {
+        eprintln!(
+            "[nexus-search-plugin] zone={zone_id} batch={batch_no} {what} t={:.3}s",
+            t0.elapsed().as_secs_f64()
+        );
+    }
+}
+
+#[derive(Default)]
+struct ZoneIndexOutcome {
+    indexed: u32,
+    skipped: u32,
+    skipped_paths: Vec<String>,
+}
+
+#[allow(clippy::too_many_arguments)]
 fn do_index_documents(
-    manager: &IndexManager,
+    manager: &Arc<IndexManager>,
     embedder: Option<&Arc<dyn Embedder>>,
     embed_broken: bool,
     context_generator: Option<&dyn ContextGenerator>,
     default_zone: &str,
     documents: Vec<crate::search_proto::DocumentInput>,
     cache: &crate::query_cache::SharedQueryCache,
+    gate: &crate::ann_flush::EmbedGate,
+    flush: &Arc<crate::ann_flush::AnnFlushCoordinator>,
 ) -> Result<IndexDocumentsOutcome, String> {
     // Bucket by zone so per-zone open + commit happens once.
     let mut by_zone: std::collections::HashMap<String, Vec<crate::search_proto::DocumentInput>> =
@@ -2896,226 +3040,34 @@ fn do_index_documents(
     let mut skipped_paths: Vec<String> = Vec::new();
 
     for (zone_id, docs) in by_zone {
-        // Serialize writers per zone — same rationale as do_index.
-        let zone_lock = manager.zone_write_lock(&zone_id);
-        let _zone_guard = zone_lock.lock();
-        // Dirty window — same rationale as do_index (reviews R5/R7).
-        let zone_was_dirty = manager.mark_zone_dirty(&zone_id)?;
-
-        let fts = manager
-            .get_or_open(&zone_id)
-            .map_err(|e| format!("open fts for zone {zone_id:?}: {e}"))?;
-        let ann = if let Some(e) = embedder {
-            Some(
-                manager
-                    .get_or_open_ann(&zone_id, e.tag(), e.dim())
-                    .map_err(|err| format!("open ann for zone {zone_id:?}: {err}"))?,
-            )
-        } else {
-            None
-        };
-        let state = crate::index_state::IndexState::open_or_create(manager.zone_root(&zone_id))
-            .map_err(|e| format!("open state for zone {zone_id:?}: {e}"))?;
-
-        // Embedder-generation alignment — same rationale as do_index.
-        if let Some(e) = embedder {
-            if state.ensure_embedder_generation(e.tag()) {
-                tracing::warn!(
-                    zone = %zone_id,
-                    tag = %e.tag(),
-                    "embedder generation changed — invalidated mtime cache; full re-embed",
-                );
-            }
-        }
-
-        // #4623: incremental FTS visibility.  Embedding dominates a
-        // large explicit batch (tens of seconds of CPU), and a single
-        // end-of-batch commit left keyword queries answering
-        // healthy-empty the whole time — indistinguishable from the
-        // silent-degradation modes health sentinels exist to catch.
-        // Commit (and drop the zone's cached results) every few docs
-        // so keyword hits appear progressively; commits are a couple
-        // of ms, noise next to the embed cost.  ANN stays end-commit:
-        // the dense leg is what's being built, and hnsw dumps are not
-        // cheap per-doc.
-        let mut docs_since_commit: usize = 0;
-
-        let zone_has_ann = zone_has_ann_dir(manager, &zone_id);
-        // Content transition on explicit indexing (review R6): a doc
-        // re-posted with empty/whitespace text must PURGE its prior
-        // chunks, not leave stale text searchable behind a skip.
-        // Returns true when the purge stayed TRANSIENT (unreachable
-        // ANN → retry tombstone kept) — the zone did not converge
-        // this pass (review R8).
-        let content_skip = |path: &str| -> bool {
-            fts.delete_all_chunks(path);
-            match ann.as_ref() {
-                Some(a) => {
-                    a.delete_all_chunks(path);
-                    state.forget(path);
-                    false
-                }
-                None if zone_has_ann => {
-                    // Vectors may exist but are unreachable — retry
-                    // tombstone so a later pass finishes the purge.
-                    // `tombstone()` dispatches to the correct map
-                    // (matches the `remove_one` posture).
-                    state.tombstone(path);
-                    true
-                }
-                None => {
-                    state.forget(path);
-                    false
-                }
-            }
-        };
-        // Docs whose sinks did NOT verifiably converge this pass
-        // (review R8) — blocks the zone's dirty-mark clear below.
-        let mut zone_transient: u32 = 0;
-        for doc in docs {
-            if doc.text.trim().is_empty() {
-                if content_skip(&doc.path) {
-                    zone_transient += 1;
-                }
-                total_skipped += 1;
-                skipped_paths.push(doc.path.clone());
-                continue;
-            }
-            let mut chunks = crate::chunker::chunk_document(&doc.text);
-            if chunks.is_empty() {
-                if content_skip(&doc.path) {
-                    zone_transient += 1;
-                }
-                total_skipped += 1;
-                skipped_paths.push(doc.path.clone());
-                continue;
-            }
-            // Feature 3 — contextual chunking (see index_one's twin
-            // insertion point).  Per-chunk LLM failure = None ⇒ that
-            // chunk keeps its plain embed_input.
-            if let Some(gen) = context_generator {
-                crate::contextual_chunker::apply_contexts(
-                    gen,
-                    &doc.text,
-                    &mut chunks,
-                    gen.max_chunks_per_doc(),
-                );
-            }
-            // FTS: drop-old-then-add-new (mirrors do_index).
-            fts.delete_all_chunks(&doc.path);
-            let mut fts_ok = true;
-            for chunk in &chunks {
-                if let Err(e) =
-                    fts.add_document(&doc.path, chunk.chunk_index, &chunk.text, doc.mtime_ms)
-                {
-                    tracing::warn!(path = %doc.path, err = %e, "index_documents: fts add failed");
-                    fts_ok = false;
-                    break;
-                }
-            }
-            if !fts_ok {
-                total_skipped += 1;
-                skipped_paths.push(doc.path.clone());
-                zone_transient += 1;
-                continue;
-            }
-
-            // ANN: keyword-degradation is fine per query, but a
-            // transient embed failure must stay RETRYABLE.  Recording
-            // the mtime below despite a failed embed would make the
-            // hole permanent — the next Refresh sees the matching
-            // mtime and never retries the missing vectors (a remote
-            // provider 429/timeout would silently produce a
-            // forever-keyword-only doc; review R1).
-            // Same completion invariant as index_one (review R7):
-            // embedder absent + existing ann-* dirs ⇒ stay retryable.
-            let mut ann_complete = !(embed_broken || embedder.is_none() && zone_has_ann);
-            if let (Some(ann), Some(emb)) = (ann.as_ref(), embedder) {
-                let inputs: Vec<&str> = chunks.iter().map(|c| c.embed_input.as_str()).collect();
-                match emb.embed_batch(&inputs) {
-                    Ok(vecs) if vecs.len() == chunks.len() => {
-                        ann.delete_all_chunks(&doc.path);
-                        for (chunk, vec) in chunks.iter().zip(vecs.iter()) {
-                            if let Err(e) = ann.add_vector(&doc.path, chunk.chunk_index, vec) {
-                                ann_complete = false;
-                                tracing::warn!(
-                                    path = %doc.path,
-                                    err = %e,
-                                    "index_documents: ann add failed — will retry on next index/refresh",
-                                );
-                            }
-                        }
-                    }
-                    Ok(vecs) => {
-                        ann_complete = false;
-                        tracing::warn!(
-                            path = %doc.path,
-                            got = vecs.len(),
-                            want = chunks.len(),
-                            "index_documents: embed count mismatch — will retry on next index/refresh",
-                        );
-                    }
-                    Err(e) => {
-                        ann_complete = false;
-                        tracing::warn!(
-                            path = %doc.path,
-                            err = %e,
-                            "index_documents: embed failed — will retry on next index/refresh",
-                        );
-                    }
-                }
-            }
-
-            // Only a FULLY indexed doc (FTS + ANN when an embedder is
-            // configured) gets its real mtime recorded.  An incomplete
-            // doc records mtime None EXPLICITLY — merely skipping the
-            // record would leave a PRIOR same-mtime entry in place and
-            // Refresh would read Unchanged forever (review R2).  A
-            // None mtime always verdicts Changed, so the next
-            // Refresh / IndexDocuments retries the missing vectors;
-            // FTS re-adds are idempotent (delete-then-add).
-            if ann_complete {
-                state.record(&doc.path, doc.mtime_ms);
-            } else {
-                state.record(&doc.path, None);
-                zone_transient += 1;
-            }
-            total_indexed += 1;
-            docs_since_commit += 1;
-            if docs_since_commit >= INDEX_INCREMENTAL_COMMIT_EVERY {
-                if let Err(e) = fts.commit() {
-                    return Err(format!("fts incremental commit for zone {zone_id:?}: {e}"));
-                }
-                // Cached results captured before this commit would
-                // mask the fresh docs for the cache TTL — drop them
-                // with every visibility step, not just at the end.
-                cache.invalidate_zone(&zone_id);
-                docs_since_commit = 0;
-            }
-        }
-
-        if let Err(e) = fts.commit() {
-            return Err(format!("fts commit for zone {zone_id:?}: {e}"));
-        }
-        if let Some(a) = ann.as_ref() {
-            if let Err(e) = a.commit() {
-                return Err(format!("ann commit for zone {zone_id:?}: {e}"));
-            }
-        }
-        let state_saved = match state.save() {
-            Ok(()) => true,
+        let batch = chunk_documents(docs);
+        // Epoch bookkeeping brackets the whole zone pass so the dirty
+        // sentinel is only ever cleared by the last batch in flight.
+        flush.begin_batch(&zone_id, manager);
+        let outcome = index_zone_documents(
+            manager,
+            embedder,
+            embed_broken,
+            context_generator,
+            &zone_id,
+            batch,
+            cache,
+            gate,
+            flush,
+        );
+        let outcome = match outcome {
+            Ok(outcome) => outcome,
             Err(e) => {
-                tracing::warn!(err = %e, zone = %zone_id, "index_state save failed — zone stays cache-bypassed");
-                false
+                // The success path ends the epoch itself (under the zone
+                // lock); a failure must still release its slot, and it
+                // never clears dirt.
+                flush.end_batch(&zone_id, false);
+                return Err(e);
             }
         };
-        cache.invalidate_zone(&zone_id);
-        // Clear only dirt this write created, only when the state
-        // file persisted, and only when every doc it touched
-        // verifiably converged (reviews R7/R8).
-        if state_saved && !zone_was_dirty && zone_transient == 0 {
-            manager.clear_zone_dirty(&zone_id);
-        }
+        total_indexed += outcome.indexed;
+        total_skipped += outcome.skipped;
+        skipped_paths.extend(outcome.skipped_paths);
     }
 
     Ok(IndexDocumentsOutcome {
@@ -3123,6 +3075,337 @@ fn do_index_documents(
         skipped: total_skipped,
         skipped_paths,
     })
+}
+
+/// One zone's share of an `IndexDocuments` batch, in three phases
+/// (#4777):
+///
+/// 1. **FTS (zone lock, short)** — delete-then-add every doc's chunks
+///    and commit, so keyword hits are visible BEFORE any embedding
+///    starts (#4623's progressive-visibility guarantee, now met up
+///    front instead of every eight docs).
+/// 2. **Embed (no lock)** — contextualise + embed behind [`EmbedGate`];
+///    concurrent batches overlap their provider round-trips instead of
+///    serialising on the zone mutex.
+/// 3. **ANN + state (zone lock, short)** — add vectors, record mtimes,
+///    then dump the hnsw graph — or defer the dump while sibling batches
+///    are in flight (see [`crate::ann_flush::AnnFlushCoordinator`]).
+///
+/// Ends the zone's epoch on success (caller ends it on failure).
+#[allow(clippy::too_many_arguments)]
+fn index_zone_documents(
+    manager: &Arc<IndexManager>,
+    embedder: Option<&Arc<dyn Embedder>>,
+    embed_broken: bool,
+    context_generator: Option<&dyn ContextGenerator>,
+    zone_id: &str,
+    mut batch: Vec<BatchDoc>,
+    cache: &crate::query_cache::SharedQueryCache,
+    gate: &crate::ann_flush::EmbedGate,
+    flush: &Arc<crate::ann_flush::AnnFlushCoordinator>,
+) -> Result<ZoneIndexOutcome, String> {
+    let zone_lock = manager.zone_write_lock(zone_id);
+    let mut out = ZoneIndexOutcome::default();
+    let t0 = Instant::now();
+    let batch_no = INDEX_BATCH_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let docs_n = batch.len();
+    phase_trace(zone_id, batch_no, &format!("start docs={docs_n}"), t0);
+
+    // ── Phase 1: FTS under the lock ──
+    {
+        let wait_ticket = flush.enter_wait(zone_id);
+        let _zone_guard = zone_lock.lock();
+        drop(wait_ticket);
+        phase_trace(zone_id, batch_no, "phase1 lock acquired", t0);
+        // Dirty window — same rationale as do_index (reviews R5/R7).
+        // Stays set across the unlocked embed phase; cleared (if ever)
+        // at the end of Phase 3 by the epoch's last batch.  Marking is
+        // three durable fsyncs, so skip it when the sentinel is already
+        // there (a sibling in the same burst set it).
+        if !manager.zone_is_dirty(zone_id) {
+            manager.mark_zone_dirty(zone_id)?;
+        }
+        let fts = manager
+            .get_or_open(zone_id)
+            .map_err(|e| format!("open fts for zone {zone_id:?}: {e}"))?;
+        for doc in batch.iter_mut() {
+            // Drop-old-then-add-new (mirrors do_index).  A content skip
+            // purges prior chunks here; its ANN/state side lands in
+            // Phase 3 (review R6).
+            fts.delete_all_chunks(&doc.path);
+            for chunk in &doc.chunks {
+                if let Err(e) =
+                    fts.add_document(&doc.path, chunk.chunk_index, &chunk.text, doc.mtime_ms)
+                {
+                    tracing::warn!(path = %doc.path, err = %e, "index_documents: fts add failed");
+                    doc.fts_failed = true;
+                    break;
+                }
+            }
+        }
+        // The tantivy commit (segment flush + fsync + reader reload +
+        // liveness probe) is the expensive part of this phase and it is
+        // serialised by the zone lock.  While siblings are queued behind
+        // us, leave it to the last of them — one commit then covers the
+        // whole burst, and keyword hits still appear before any of the
+        // batches finishes embedding.  Phase 3 (and the flusher) commit
+        // whatever is still uncommitted before recording state, so no
+        // document is ever recorded as indexed over an uncommitted add.
+        let coalesce = flush.deferral_enabled() && flush.waiters(zone_id) > 0;
+        if coalesce {
+            flush.note_fts_skipped(zone_id);
+            phase_trace(
+                zone_id,
+                batch_no,
+                "phase1 fts commit coalesced, lock released",
+                t0,
+            );
+        } else {
+            if let Err(e) = fts.commit() {
+                return Err(format!("fts commit for zone {zone_id:?}: {e}"));
+            }
+            flush.note_fts_committed(zone_id);
+            // Cached results captured before this commit would mask the
+            // fresh docs for the cache TTL.
+            cache.invalidate_zone(zone_id);
+            phase_trace(zone_id, batch_no, "phase1 fts committed, lock released", t0);
+        }
+    }
+
+    // ── Phase 2: embed with NO lock held ──
+    if let Some(emb) = embedder {
+        embed_documents(&mut batch, emb, context_generator, gate);
+    }
+    phase_trace(zone_id, batch_no, "phase2 embedded", t0);
+
+    // ── Phase 3: ANN + state under the lock ──
+    let wait_ticket = flush.enter_wait(zone_id);
+    let _zone_guard = zone_lock.lock();
+    drop(wait_ticket);
+    phase_trace(zone_id, batch_no, "phase3 lock acquired", t0);
+    // Re-assert the dirty window: a sibling that ended the previous
+    // epoch (or the flusher) may have cleared it while we embedded.
+    if !manager.zone_is_dirty(zone_id) {
+        manager.mark_zone_dirty(zone_id)?;
+    }
+    // A coalesced Phase 1 commit that no sibling has landed yet must go
+    // in BEFORE this batch records any document as indexed (a recorded
+    // mtime over an uncommitted FTS add would be a keyword hole after a
+    // crash).  In a burst the last queued Phase 1 normally commits for
+    // everyone, so this is rarely taken.
+    if flush.fts_uncommitted(zone_id) {
+        let fts = manager
+            .get_or_open(zone_id)
+            .map_err(|e| format!("open fts for zone {zone_id:?}: {e}"))?;
+        if let Err(e) = fts.commit() {
+            return Err(format!("fts commit for zone {zone_id:?}: {e}"));
+        }
+        flush.note_fts_committed(zone_id);
+        cache.invalidate_zone(zone_id);
+        phase_trace(zone_id, batch_no, "phase3 committed coalesced fts", t0);
+    }
+    // This batch now owns the verdict for its paths: drop any parked
+    // upgrade so a later flush cannot overwrite what we record.
+    flush.forget_paths(zone_id, batch.iter().map(|d| d.path.as_str()));
+
+    let ann = if let Some(e) = embedder {
+        Some(
+            manager
+                .get_or_open_ann(zone_id, e.tag(), e.dim())
+                .map_err(|err| format!("open ann for zone {zone_id:?}: {err}"))?,
+        )
+    } else {
+        None
+    };
+    let state = crate::index_state::IndexState::open_or_create(manager.zone_root(zone_id))
+        .map_err(|e| format!("open state for zone {zone_id:?}: {e}"))?;
+
+    // Embedder-generation alignment — same rationale as do_index.
+    if let Some(e) = embedder {
+        if state.ensure_embedder_generation(e.tag()) {
+            tracing::warn!(
+                zone = %zone_id,
+                tag = %e.tag(),
+                "embedder generation changed — invalidated mtime cache; full re-embed",
+            );
+        }
+    }
+
+    let zone_has_ann = zone_has_ann_dir(manager, zone_id);
+    // Content transition on explicit indexing (review R6): a doc
+    // re-posted with empty/whitespace text must PURGE its prior
+    // chunks, not leave stale text searchable behind a skip.  FTS
+    // chunks went in Phase 1; this is the ANN + state side.  Returns
+    // true when the purge stayed TRANSIENT (unreachable ANN → retry
+    // tombstone kept) — the zone did not converge this pass (review R8).
+    let content_skip = |path: &str| -> bool {
+        match ann.as_ref() {
+            Some(a) => {
+                a.delete_all_chunks(path);
+                state.forget(path);
+                false
+            }
+            None if zone_has_ann => {
+                // Vectors may exist but are unreachable — retry
+                // tombstone so a later pass finishes the purge.
+                // `tombstone()` dispatches to the correct map
+                // (matches the `remove_one` posture).
+                state.tombstone(path);
+                true
+            }
+            None => {
+                state.forget(path);
+                false
+            }
+        }
+    };
+    // Docs whose sinks did NOT verifiably converge this pass
+    // (review R8) — blocks the zone's dirty-mark clear below.
+    let mut zone_transient: u32 = 0;
+    // Docs whose FTS + ANN adds fully landed in memory.  Their real
+    // mtime is recorded only once the ANN dump is durable (below).
+    let mut completed: Vec<(String, Option<i64>)> = Vec::new();
+    for doc in batch {
+        if doc.is_content_skip() {
+            if content_skip(&doc.path) {
+                zone_transient += 1;
+            }
+            out.skipped += 1;
+            out.skipped_paths.push(doc.path);
+            continue;
+        }
+        if doc.fts_failed {
+            out.skipped += 1;
+            out.skipped_paths.push(doc.path);
+            zone_transient += 1;
+            continue;
+        }
+
+        // ANN: keyword-degradation is fine per query, but a
+        // transient embed failure must stay RETRYABLE.  Recording
+        // the mtime below despite a failed embed would make the
+        // hole permanent — the next Refresh sees the matching
+        // mtime and never retries the missing vectors (a remote
+        // provider 429/timeout would silently produce a
+        // forever-keyword-only doc; review R1).
+        // Same completion invariant as index_one (review R7):
+        // embedder absent + existing ann-* dirs ⇒ stay retryable.
+        let mut ann_complete = !(embed_broken || embedder.is_none() && zone_has_ann);
+        if let Some(ann) = ann.as_ref() {
+            match &doc.vectors {
+                Some(Ok(vecs)) => {
+                    ann.delete_all_chunks(&doc.path);
+                    for (chunk, vec) in doc.chunks.iter().zip(vecs.iter()) {
+                        if let Err(e) = ann.add_vector(&doc.path, chunk.chunk_index, vec) {
+                            ann_complete = false;
+                            tracing::warn!(
+                                path = %doc.path,
+                                err = %e,
+                                "index_documents: ann add failed — will retry on next index/refresh",
+                            );
+                        }
+                    }
+                }
+                Some(Err(reason)) => {
+                    ann_complete = false;
+                    tracing::warn!(
+                        path = %doc.path,
+                        err = %reason,
+                        "index_documents: embedding unavailable — will retry on next index/refresh",
+                    );
+                }
+                // `ann` is Some iff an embedder is configured, and
+                // Phase 2 embeds every surviving doc whenever one is —
+                // unreachable in practice; keep the computed verdict.
+                None => {}
+            }
+        }
+
+        // Only a FULLY indexed doc (FTS + ANN when an embedder is
+        // configured) gets its real mtime recorded.  An incomplete
+        // doc records mtime None EXPLICITLY — merely skipping the
+        // record would leave a PRIOR same-mtime entry in place and
+        // Refresh would read Unchanged forever (review R2).  A
+        // None mtime always verdicts Changed, so the next
+        // Refresh / IndexDocuments retries the missing vectors;
+        // FTS re-adds are idempotent (delete-then-add).
+        if ann_complete {
+            completed.push((doc.path, doc.mtime_ms));
+        } else {
+            state.record(&doc.path, None);
+            zone_transient += 1;
+        }
+        out.indexed += 1;
+    }
+
+    // #4777: the hnsw dump is a full rewrite of the graph (over a
+    // gigabyte at a few hundred thousand chunks).  While sibling
+    // batches are in flight for this zone, leave the dump to the last
+    // one — the vectors are already served from memory.  Until it
+    // lands, completed docs are recorded as `None` (retry-me) so a
+    // crash costs a re-embed, never a permanent hole; the coordinator
+    // upgrades them afterwards.
+    let defer_dump = ann.is_some() && flush.deferral_enabled() && flush.others_in_flight(zone_id);
+    let mut taken_pending_clearable = true;
+    if defer_dump {
+        for (path, _) in &completed {
+            state.record(path, None);
+        }
+    } else {
+        for (path, mtime) in &completed {
+            state.record(path, *mtime);
+        }
+        if let Some(a) = ann.as_ref() {
+            if let Err(e) = a.commit() {
+                return Err(format!("ann commit for zone {zone_id:?}: {e}"));
+            }
+            // This dump also covers vectors earlier batches deferred:
+            // promote their parked records now that they are durable.
+            if let Some(pending) = flush.take_pending(zone_id) {
+                crate::ann_flush::upgrade_records(&state, &pending.records);
+                taken_pending_clearable = pending.clearable;
+            }
+        }
+    }
+    let state_saved = match state.save() {
+        Ok(()) => true,
+        Err(e) => {
+            tracing::warn!(err = %e, zone = %zone_id, "index_state save failed — zone stays cache-bypassed");
+            false
+        }
+    };
+    cache.invalidate_zone(zone_id);
+
+    if defer_dump {
+        if let Some(a) = ann.clone() {
+            flush.defer(
+                zone_id,
+                a,
+                completed,
+                Arc::clone(manager),
+                Arc::clone(cache),
+            );
+        }
+    }
+    // Clear only dirt this epoch created, only when every batch of the
+    // epoch persisted its state and every doc it touched verifiably
+    // converged (reviews R7/R8), and never while a dump is still owed
+    // (the flusher or the committing batch clears it then).
+    let end = flush.end_batch(zone_id, state_saved && zone_transient == 0);
+    phase_trace(
+        zone_id,
+        batch_no,
+        &format!(
+            "phase3 done defer_dump={defer_dump} last={} indexed={}",
+            end.last, out.indexed
+        ),
+        t0,
+    );
+    if !defer_dump && end.last && end.clearable && taken_pending_clearable {
+        manager.clear_zone_dirty(zone_id);
+    }
+
+    Ok(out)
 }
 
 /// Per-file change event.  "delete" drops the file from every
@@ -4120,6 +4403,8 @@ impl SearchService for SearchServiceImpl {
         let context_generator = self.get_or_init_context_generator();
         let cache = Arc::clone(&self.query_cache);
         let index_seq = Arc::clone(&self.index_seq);
+        let embed_gate = Arc::clone(&self.embed_gate);
+        let ann_flush = Arc::clone(&self.ann_flush);
         let outcome = tokio::task::spawn_blocking(move || {
             let _indexing = indexing; // held until the WORK ends, not the RPC
             let _pending = pending;
@@ -4131,6 +4416,8 @@ impl SearchService for SearchServiceImpl {
                 &default_zone,
                 req.documents,
                 &cache,
+                &embed_gate,
+                &ann_flush,
             )
             // Sequence assigned AFTER the per-zone commits above —
             // `last_index_seq >= this` on Stats means the batch is
@@ -4733,6 +5020,221 @@ mod tests {
         assert_eq!(strip_root("/", "/foo/bar"), "foo/bar");
         assert_eq!(strip_root("/root", "/root/a/b"), "a/b");
         assert_eq!(strip_root("/root/", "/root/a/b"), "a/b");
+    }
+
+    // ── #4777: deferred hnsw dump + lock-free embedding ──────────
+
+    fn deferral_fixture(
+        flush_delay: Option<std::time::Duration>,
+    ) -> (
+        tempfile::TempDir,
+        Arc<IndexManager>,
+        Arc<dyn Embedder>,
+        crate::query_cache::SharedQueryCache,
+        crate::ann_flush::EmbedGate,
+        Arc<crate::ann_flush::AnnFlushCoordinator>,
+    ) {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let manager = Arc::new(IndexManager::with_root(tmp.path().to_path_buf()));
+        let embedder: Arc<dyn Embedder> = Arc::new(crate::embedder::MockEmbedder::with_dim(8));
+        let cache: crate::query_cache::SharedQueryCache =
+            Arc::new(crate::query_cache::QueryCache::new());
+        let gate = crate::ann_flush::EmbedGate::new(0);
+        let flush = Arc::new(crate::ann_flush::AnnFlushCoordinator::new(flush_delay));
+        (tmp, manager, embedder, cache, gate, flush)
+    }
+
+    fn doc(path: &str, text: &str, mtime: i64) -> crate::search_proto::DocumentInput {
+        crate::search_proto::DocumentInput {
+            path: path.to_string(),
+            text: text.to_string(),
+            mtime_ms: Some(mtime),
+            zone_id: String::new(),
+        }
+    }
+
+    fn has_hnsw_dump(ann_dir: &std::path::Path) -> bool {
+        match std::fs::read_dir(ann_dir) {
+            Ok(rd) => rd
+                .flatten()
+                .any(|e| e.file_name().to_string_lossy().starts_with("hnsw")),
+            Err(_) => false,
+        }
+    }
+
+    fn cached(manager: &IndexManager, path: &str) -> Option<Option<i64>> {
+        crate::index_state::IndexState::open_or_create(manager.zone_root("root"))
+            .expect("state")
+            .cached_mtime(path)
+    }
+
+    #[test]
+    fn index_documents_defers_hnsw_dump_while_writers_are_queued() {
+        let (_tmp, manager, embedder, cache, gate, flush) =
+            deferral_fixture(Some(std::time::Duration::from_secs(3600)));
+        let ann_dir = manager.ann_dir("root", embedder.tag());
+
+        // A second batch is queued on the zone lock.
+        let queued = flush.enter_wait("root");
+        do_index_documents(
+            &manager,
+            Some(&embedder),
+            false,
+            None,
+            "root",
+            vec![doc("/a.md", "alpha bravo charlie", 1_000)],
+            &cache,
+            &gate,
+            &flush,
+        )
+        .expect("first batch");
+
+        assert!(
+            !has_hnsw_dump(&ann_dir),
+            "dump must be deferred while a batch is queued"
+        );
+        assert_eq!(
+            cached(&manager, "/a.md"),
+            Some(None),
+            "deferred doc stays retry-me"
+        );
+        assert!(flush.has_pending("root"));
+        assert!(
+            manager.zone_is_dirty("root"),
+            "zone stays dirty until the dump lands"
+        );
+        // The vectors are already served from memory.
+        let ann = manager
+            .get_or_open_ann("root", embedder.tag(), embedder.dim())
+            .unwrap();
+        assert_eq!(ann.live_paths(), 1);
+
+        // Last batch in the burst: nobody queued behind it ⇒ dumps
+        // inline and promotes the earlier batch's records.
+        drop(queued);
+        do_index_documents(
+            &manager,
+            Some(&embedder),
+            false,
+            None,
+            "root",
+            vec![doc("/b.md", "delta echo foxtrot", 2_000)],
+            &cache,
+            &gate,
+            &flush,
+        )
+        .expect("second batch");
+
+        assert!(has_hnsw_dump(&ann_dir), "final batch must dump");
+        assert_eq!(cached(&manager, "/a.md"), Some(Some(1_000)));
+        assert_eq!(cached(&manager, "/b.md"), Some(Some(2_000)));
+        assert!(!flush.has_pending("root"));
+        assert!(!manager.zone_is_dirty("root"));
+    }
+
+    #[test]
+    fn flush_zone_lands_deferred_dump_and_promotes_records() {
+        let (_tmp, manager, embedder, cache, gate, flush) =
+            deferral_fixture(Some(std::time::Duration::from_secs(3600)));
+        let ann_dir = manager.ann_dir("root", embedder.tag());
+
+        let queued = flush.enter_wait("root");
+        do_index_documents(
+            &manager,
+            Some(&embedder),
+            false,
+            None,
+            "root",
+            vec![doc("/a.md", "alpha bravo", 1_000)],
+            &cache,
+            &gate,
+            &flush,
+        )
+        .expect("batch");
+        drop(queued);
+        assert!(!has_hnsw_dump(&ann_dir));
+
+        assert_eq!(flush.flush_zone("root", &manager, &cache), Ok(true));
+        assert!(has_hnsw_dump(&ann_dir));
+        assert_eq!(cached(&manager, "/a.md"), Some(Some(1_000)));
+        assert!(!manager.zone_is_dirty("root"));
+        // Nothing left to flush.
+        assert_eq!(flush.flush_zone("root", &manager, &cache), Ok(false));
+    }
+
+    #[test]
+    fn later_batch_owns_its_paths_over_a_parked_upgrade() {
+        // Batch 1 defers /a.md@1000.  Batch 2 (also deferring) re-indexes
+        // /a.md@1500.  The flush must land 1500, not the stale 1000.
+        let (_tmp, manager, embedder, cache, gate, flush) =
+            deferral_fixture(Some(std::time::Duration::from_secs(3600)));
+
+        let queued = flush.enter_wait("root");
+        for (text, mtime) in [("alpha", 1_000), ("alpha revised", 1_500)] {
+            do_index_documents(
+                &manager,
+                Some(&embedder),
+                false,
+                None,
+                "root",
+                vec![doc("/a.md", text, mtime)],
+                &cache,
+                &gate,
+                &flush,
+            )
+            .expect("batch");
+        }
+        drop(queued);
+        assert_eq!(flush.flush_zone("root", &manager, &cache), Ok(true));
+        assert_eq!(cached(&manager, "/a.md"), Some(Some(1_500)));
+    }
+
+    #[test]
+    fn deferral_disabled_dumps_inline_even_with_queued_writers() {
+        let (_tmp, manager, embedder, cache, gate, flush) = deferral_fixture(None);
+        let ann_dir = manager.ann_dir("root", embedder.tag());
+
+        let _queued = flush.enter_wait("root");
+        do_index_documents(
+            &manager,
+            Some(&embedder),
+            false,
+            None,
+            "root",
+            vec![doc("/a.md", "alpha bravo", 1_000)],
+            &cache,
+            &gate,
+            &flush,
+        )
+        .expect("batch");
+
+        assert!(has_hnsw_dump(&ann_dir));
+        assert_eq!(cached(&manager, "/a.md"), Some(Some(1_000)));
+        assert!(!flush.has_pending("root"));
+        assert!(!manager.zone_is_dirty("root"));
+    }
+
+    #[test]
+    fn keyword_only_zone_never_defers() {
+        // No embedder ⇒ no ANN sink ⇒ nothing to defer, queued or not.
+        let (_tmp, manager, _embedder, cache, gate, flush) =
+            deferral_fixture(Some(std::time::Duration::from_secs(3600)));
+        let _queued = flush.enter_wait("root");
+        do_index_documents(
+            &manager,
+            None,
+            false,
+            None,
+            "root",
+            vec![doc("/a.md", "alpha bravo", 1_000)],
+            &cache,
+            &gate,
+            &flush,
+        )
+        .expect("batch");
+        assert!(!flush.has_pending("root"));
+        assert_eq!(cached(&manager, "/a.md"), Some(Some(1_000)));
+        assert!(!manager.zone_is_dirty("root"));
     }
 
     #[test]

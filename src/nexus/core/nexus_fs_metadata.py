@@ -1686,6 +1686,34 @@ class MetadataMixin:
             if next_path.startswith(f"{parent}/")
         }
 
+    def _implicit_dirs_by_stat(self, entries: builtins.list[FileMetadata]) -> set[str] | None:
+        """Paths among ``entries`` that the kernel reports as directories.
+
+        Only ``DT_REG``-typed entries need confirming (directory-typed ones
+        are already directories).  Uses the kernel's batched stat — one
+        round-trip for the whole listing — and falls back to ``None`` (the
+        caller then stats per entry, the pre-existing behaviour) when the
+        kernel has no batch stat or it fails.
+        """
+        regs = [e.path for e in entries if e.entry_type == 0 and e.path]
+        if not regs:
+            return set()
+        stat_batch = getattr(self._kernel, "stat_batch", None)
+        if not callable(stat_batch):
+            return None
+        try:
+            stats = stat_batch(regs)
+        except Exception as exc:
+            logger.debug("sys_readdir: stat_batch failed (%s); falling back to per-entry stat", exc)
+            return None
+        if not isinstance(stats, (list, tuple)) or len(stats) != len(regs):
+            return None
+        return {
+            p.rstrip("/")
+            for p, st in zip(regs, stats, strict=True)
+            if isinstance(st, dict) and st.get("is_directory")
+        }
+
     def _entry_to_detail_dict(
         self,
         entry: FileMetadata,
@@ -2043,16 +2071,21 @@ class MetadataMixin:
         )
         if details:
             if not recursive:
-                all_entries = [
-                    e
-                    for e in metastore_list_iter(self._kernel, prefix=prefix, recursive=True)
-                    if not self._is_internal_path(e.path) and _zone_allowed(e)
-                ]
-                implicit_dirs = self._paths_with_descendants(all_entries)
+                # Direct children only.  This used to walk the WHOLE subtree
+                # (``recursive=True``) just to learn which children have
+                # descendants and promote them to directories — O(every file
+                # below ``path``) per listing: 54 s for a 5-child directory
+                # over ~7k descendants locally, 764 s for ``/workspaces`` on a
+                # production corpus (#4777 rollout finding).  The kernel's
+                # non-recursive readdir already reports directories — implicit
+                # ones included — as ``DT_DIR``; the remaining ``DT_REG``
+                # children are confirmed with ONE batched stat instead of a
+                # stat per entry.
+                _children = list(entries_iter)
+                implicit_dirs = self._implicit_dirs_by_stat(_children)
                 _result = [
                     self._entry_to_detail_dict(e, recursive, implicit_dirs=implicit_dirs)
-                    for e in all_entries
-                    if self._is_direct_child_path(e.path, prefix)
+                    for e in _children
                 ]
             else:
                 _result = [self._entry_to_detail_dict(e, recursive) for e in entries_iter]

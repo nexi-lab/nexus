@@ -53,6 +53,7 @@ use transport::auth::AuthProvider;
 
 pub mod handlers;
 pub mod middleware;
+pub mod revision;
 pub mod search_backend;
 pub mod zone;
 
@@ -100,6 +101,15 @@ pub struct AppState {
     /// `auth::mint::mint_key` takes it as `&str` and consumes it
     /// only for HMAC.
     pub api_key_secret: Option<Arc<str>>,
+    /// Read-your-writes fence backend (Issue #4737).  Any object that
+    /// can report `sys_stat(path).gen` — the middleware polls this to
+    /// decide when a fenced read can proceed.  In production the
+    /// install closure passes the live `Arc<Kernel>` (which impls
+    /// `KernelSyscall` and therefore `StatGen` via the blanket impl
+    /// in `middleware/revision.rs`); tests can pass any `StatGen`
+    /// (see `for_tests` — a `ZeroGenKernel` that returns 0, so a
+    /// fenced request just 412s).
+    pub kernel: Arc<dyn middleware::revision::StatGen>,
     /// The kernel-adjacent ReBAC tuple store — grant / list / revoke
     /// backend for `/v2/rebac/tuples`.  Present iff this crate was
     /// built `--features rebac`; the composition root in `nexusd`
@@ -137,6 +147,11 @@ impl AppState {
             auth_key_store: Arc::new(middleware::auth::empty_auth_key_store_for_tests()),
             // No secret by default — mint tests set it explicitly.
             api_key_secret: None,
+            // Zero-gen kernel — a fence probe would just time out at
+            // 412, which is what a revision fence unit test wants.
+            // Real deployments pull the live kernel from the install
+            // closure (see `service_decl`).
+            kernel: Arc::new(middleware::revision::ZeroGenKernel),
             #[cfg(feature = "rebac")]
             rebac_store: Arc::new(nexus_rebac::InMemoryReBACTupleStore::new()),
         }
@@ -290,6 +305,14 @@ pub fn service_decl(
         name: "http_api".to_string(),
         install: Box::new(move |kernel| {
             let auth_key_store = kernel.auth_key_store();
+            // The revision fence polls `sys_stat(path).gen`; hand it
+            // the same kernel the gRPC surface already reads.  The
+            // blanket `impl<K: KernelSyscall> StatGen for K` in
+            // `middleware/revision.rs` covers the Arc coercion.
+            let stat_kernel: Arc<dyn middleware::revision::StatGen> = {
+                let k: Arc<kernel::kernel::Kernel> = Arc::clone(kernel);
+                k
+            };
             install_impl(
                 addr,
                 upstream_grpc,
@@ -297,6 +320,7 @@ pub fn service_decl(
                 runtime,
                 auth_key_store,
                 api_key_secret,
+                stat_kernel,
             )
         }),
     }
@@ -321,6 +345,10 @@ pub fn service_decl(
         name: "http_api".to_string(),
         install: Box::new(move |kernel| {
             let auth_key_store = kernel.auth_key_store();
+            let stat_kernel: Arc<dyn middleware::revision::StatGen> = {
+                let k: Arc<kernel::kernel::Kernel> = Arc::clone(kernel);
+                k
+            };
             install_impl(
                 addr,
                 upstream_grpc,
@@ -328,6 +356,7 @@ pub fn service_decl(
                 runtime,
                 auth_key_store,
                 api_key_secret,
+                stat_kernel,
                 rebac_store,
             )
         }),
@@ -344,6 +373,12 @@ pub fn service_decl(
 /// it under a real tokio runtime.  Production callers should use
 /// [`service_decl`], not this fn directly; a `#[doc(hidden)]`
 /// annotation keeps it out of the rustdoc surface.
+// This deliberately grows one arg at a time as `AppState` accretes
+// state — the composition-root shape sits at the boundary of an FFI
+// install closure, so refactoring into a builder would obscure which
+// fields are threaded from `nexus_cluster::ServiceBootCtx` vs which
+// are wired here.  Documented in the module-level rustdoc.
+#[allow(clippy::too_many_arguments)]
 #[doc(hidden)]
 pub fn install_impl(
     addr: SocketAddr,
@@ -352,6 +387,7 @@ pub fn install_impl(
     runtime: tokio::runtime::Handle,
     auth_key_store: Arc<dyn kernel::hal::auth_key_store::AuthKeyStore>,
     api_key_secret: Option<Arc<str>>,
+    kernel: Arc<dyn middleware::revision::StatGen>,
     #[cfg(feature = "rebac")] rebac_store: Arc<dyn nexus_rebac::ReBACTupleStore>,
 ) -> Result<(), String> {
     let state = AppState {
@@ -359,6 +395,7 @@ pub fn install_impl(
         auth,
         auth_key_store,
         api_key_secret,
+        kernel,
         #[cfg(feature = "rebac")]
         rebac_store,
     };

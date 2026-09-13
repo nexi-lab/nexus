@@ -5,3 +5,4 @@
 //! code — layers compose additively at `router()` assembly time.
 
 pub mod auth;
+pub mod revision;

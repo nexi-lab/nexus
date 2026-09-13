@@ -115,6 +115,9 @@ async fn service_decl_install_body_runs_under_a_tokio_runtime() {
         std::sync::Arc::new(nexus_http_api::middleware::auth::empty_auth_key_store_for_tests()),
         // No api_key_secret needed — this test only hits /v2/status.
         None,
+        // Revision fence kernel — /v2/status never fences, so
+        // ZeroGenKernel (always reports gen 0) is fine.
+        std::sync::Arc::new(nexus_http_api::middleware::revision::ZeroGenKernel),
         // The `--features rebac` build widens `install_impl` with a
         // tuple-store arg — use the same in-memory default the
         // `AppState::for_tests` helper wires (this test never hits
@@ -160,6 +163,7 @@ async fn service_decl_install_body_returns_err_on_bind_failure() {
         std::sync::Arc::new(nexus_http_api::middleware::auth::empty_auth_key_store_for_tests()),
         // No api_key_secret needed — this test only hits /v2/status.
         None,
+        std::sync::Arc::new(nexus_http_api::middleware::revision::ZeroGenKernel),
         #[cfg(feature = "rebac")]
         std::sync::Arc::new(nexus_rebac::InMemoryReBACTupleStore::new()),
     );
@@ -175,6 +179,7 @@ async fn service_decl_install_body_returns_err_on_bind_failure() {
         std::sync::Arc::new(nexus_http_api::middleware::auth::empty_auth_key_store_for_tests()),
         // No api_key_secret needed — this test only hits /v2/status.
         None,
+        std::sync::Arc::new(nexus_http_api::middleware::revision::ZeroGenKernel),
         #[cfg(feature = "rebac")]
         std::sync::Arc::new(nexus_rebac::InMemoryReBACTupleStore::new()),
     );

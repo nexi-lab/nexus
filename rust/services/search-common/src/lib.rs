@@ -21,6 +21,11 @@
 //! * [`federated`] — [`FederatedSearchResponse`], [`ZoneFailure`],
 //!   [`is_all_peers_failed`]: the cross-zone response envelope and
 //!   the degrade-guard predicate.
+//! * [`delegation`] — [`SearchDelegation`] short-lived read-only
+//!   credential the dispatcher hands to a remote zone so the remote
+//!   can run a search on behalf of the original caller.
+//! * [`registry`] — [`ZoneSearchRegistry`] trait + in-memory impl
+//!   the dispatcher calls to find each zone's daemon target.
 //!
 //! # Two-shape layering: [`Hit`] vs `nexus_http_api::handlers::search::QueryHit`
 //!
@@ -41,13 +46,19 @@
 //! crate so both shapes remain but their conversion is a single named
 //! function — one place to keep the two in lockstep.
 
+pub mod delegation;
 pub mod federated;
 pub mod fusion;
+pub mod registry;
 pub mod results;
 
 // Re-exports so downstream callers can `use nexus_search_common::{...}`
 // without knowing the module split — the split is an internal
 // organisation, not a public API contract.
+pub use delegation::{
+    DelegationError, SearchDelegation, DEFAULT_TTL_SECONDS, SEARCH_DELEGATION_METHODS,
+};
 pub use federated::{is_all_peers_failed, FederatedSearchResponse, ZoneFailure};
 pub use fusion::{rrf_multi_fusion, FusionConfig, FusionMethod, RRF_TOP1_BONUS, RRF_TOP3_BONUS};
+pub use registry::{InMemoryZoneSearchRegistry, SearchDaemonTarget, ZoneSearchRegistry};
 pub use results::{Hit, BACKEND_LEG_TIMING_KEYS};

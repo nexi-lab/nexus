@@ -46,6 +46,7 @@
 
 pub mod graph_cache;
 pub mod inmem;
+pub mod list_zones;
 pub mod permission_provider;
 pub mod raft_store;
 pub mod store;

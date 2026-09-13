@@ -17,3 +17,6 @@ serde = { workspace = true, features = ["derive"] }
 # tier_boost, recency_boost, …) as opaque JSON so this crate does not
 # have to grow a field per backend.
 serde_json = { workspace = true }
+# `DelegationError` uses `#[derive(thiserror::Error)]` so its Display
+# matches the Python `PermissionError` message shape 1:1.
+thiserror = "1"

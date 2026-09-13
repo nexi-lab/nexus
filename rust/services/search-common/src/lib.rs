@@ -21,6 +21,25 @@
 //! * [`federated`] — [`FederatedSearchResponse`], [`ZoneFailure`],
 //!   [`is_all_peers_failed`]: the cross-zone response envelope and
 //!   the degrade-guard predicate.
+//!
+//! # Two-shape layering: [`Hit`] vs `nexus_http_api::handlers::search::QueryHit`
+//!
+//! The HTTP crate carries its own typed hit — `QueryHit` — with 12
+//! optional attribution fields (`title_score`, `tier_boost`,
+//! `recency_boost`, per-arm scores, …).  It is the **wire contract**
+//! a JSON caller deserialises into.
+//!
+//! [`Hit`] in this crate is the **algorithm working type** — narrow,
+//! carries an opaque `extras` map so fusion / dedup / envelope
+//! building do not have to know which attribution fields exist.
+//!
+//! Both must stay: collapsing them would either pull HTTP-wire
+//! knowledge into this pure-algorithm crate (SRP violation) or push
+//! the algorithm surface into the HTTP crate (blocks the future
+//! federated-dispatcher from reusing it).  **PR 3** of the federated
+//! axum port MUST land an `impl From<Hit> for QueryHit` in the HTTP
+//! crate so both shapes remain but their conversion is a single named
+//! function — one place to keep the two in lockstep.
 
 pub mod federated;
 pub mod fusion;

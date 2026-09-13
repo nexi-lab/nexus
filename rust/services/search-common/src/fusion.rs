@@ -134,6 +134,9 @@ pub fn rrf_multi_fusion(
         std::collections::BTreeMap::new();
 
     for (source_name, hits) in result_lists {
+        // `format!` runs ONCE per source, not per hit — the source
+        // list is small (2–5) so this stays in a handful of
+        // allocations even on a wide fanout.
         let score_key = format!("{source_name}_score");
         for (rank, hit) in hits.iter().enumerate() {
             let rank_1based = (rank + 1) as u32;
@@ -149,10 +152,12 @@ pub fn rrf_multi_fusion(
                 entry.best_rank = rank_1based;
             }
             // Attribution: per-source raw score on the hit's extras.
+            // `Value::from(f64)` is a cheap tag-and-store; no
+            // intermediate JSON string / parse round-trip.
             entry
                 .hit
                 .extras
-                .insert(score_key.clone(), serde_json::json!(hit.score));
+                .insert(score_key.clone(), serde_json::Value::from(hit.score));
         }
     }
 
@@ -300,6 +305,110 @@ mod tests {
         assert_eq!(out.len(), 2);
         assert!(out.iter().any(|h| h.zone_id.as_deref() == Some("eng")));
         assert!(out.iter().any(|h| h.zone_id.as_deref() == Some("legal")));
+    }
+
+    // ── Numerical parity ────────────────────────────────────────
+    //
+    // Exact expected fused scores lifted from the Python
+    // `tests/integration/bricks/search/test_rrf_bonus.py` reference
+    // (Python's `rrf_fusion` is the 2-source special case of
+    // `rrf_multi_fusion`).  Any drift in the RRF formula or the
+    // top-rank bonus flips one of these — the parity guard for the
+    // federated dispatcher, which will run Python and Rust nodes in
+    // the same cluster and must produce byte-identical rankings.
+
+    fn approx_eq(a: f64, b: f64, tol: f64) -> bool {
+        (a - b).abs() < tol
+    }
+
+    #[test]
+    fn parity_rank1_two_sources_matches_python_reference() {
+        // Python: single doc in both sources at rank 1.  Expected
+        // score = 1/(60+1) + 1/(60+1) + RRF_TOP1_BONUS.
+        let kw = vec![hit("only.txt", 0, 1.0)];
+        let ve = vec![hit("only.txt", 0, 1.0)];
+        let out = rrf_multi_fusion(&[("keyword", kw), ("vector", ve)], 60, 10, true);
+        assert_eq!(out.len(), 1);
+        let expected = 1.0 / 61.0 + 1.0 / 61.0 + RRF_TOP1_BONUS;
+        assert!(
+            approx_eq(out[0].score, expected, 1e-9),
+            "got {} want {}",
+            out[0].score,
+            expected,
+        );
+    }
+
+    #[test]
+    fn parity_rank3_receives_top3_bonus_matches_python_reference() {
+        // Python: c.txt at rank 3 in keyword only.  Expected score =
+        // 1/(60+3) + RRF_TOP3_BONUS.
+        let kw = vec![
+            hit("a.txt", 0, 1.0),
+            hit("b.txt", 0, 1.0),
+            hit("c.txt", 0, 1.0),
+        ];
+        let out = rrf_multi_fusion(&[("keyword", kw)], 60, 10, true);
+        let c = out.iter().find(|h| h.path == "c.txt").expect("c.txt present");
+        let expected = 1.0 / 63.0 + RRF_TOP3_BONUS;
+        assert!(
+            approx_eq(c.score, expected, 1e-9),
+            "got {} want {}",
+            c.score,
+            expected,
+        );
+    }
+
+    #[test]
+    fn parity_rank4_receives_no_bonus_matches_python_reference() {
+        // Python: r3.txt is 0-indexed rank 4, no bonus.  Expected
+        // score = 1/(60+4).
+        let kw: Vec<Hit> = (0..5)
+            .map(|i| hit(&format!("r{i}.txt"), 0, 1.0))
+            .collect();
+        let out = rrf_multi_fusion(&[("keyword", kw)], 60, 10, true);
+        let r3 = out.iter().find(|h| h.path == "r3.txt").expect("r3.txt present");
+        let expected = 1.0 / 64.0;
+        assert!(
+            approx_eq(r3.score, expected, 1e-9),
+            "got {} want {}",
+            r3.score,
+            expected,
+        );
+    }
+
+    #[test]
+    fn parity_top1_keyword_beats_mediocre_both_matches_python_reference() {
+        // Python: perfect.txt is rank 1 in keyword only, mediocre.txt
+        // is rank 3 in BOTH.  With the top-rank bonus, perfect wins
+        // because +RRF_TOP1_BONUS outranks the double-rank-3
+        // contribution.  Without the bonus, mediocre wins.
+        let kw = vec![
+            hit("perfect.txt", 0, 10.0),
+            hit("x.txt", 0, 1.0),
+            hit("mediocre.txt", 0, 0.5),
+        ];
+        let ve = vec![
+            hit("y.txt", 0, 0.9),
+            hit("z.txt", 0, 0.8),
+            hit("mediocre.txt", 0, 0.5),
+        ];
+
+        let with_bonus =
+            rrf_multi_fusion(&[("keyword", kw.clone()), ("vector", ve.clone())], 60, 10, true);
+        let ranked: Vec<&str> = with_bonus.iter().map(|h| h.path.as_str()).collect();
+        assert!(
+            ranked.iter().position(|p| *p == "perfect.txt")
+                < ranked.iter().position(|p| *p == "mediocre.txt"),
+            "with bonus: perfect must beat mediocre, got {ranked:?}",
+        );
+
+        let no_bonus = rrf_multi_fusion(&[("keyword", kw), ("vector", ve)], 60, 10, false);
+        let ranked: Vec<&str> = no_bonus.iter().map(|h| h.path.as_str()).collect();
+        assert!(
+            ranked.iter().position(|p| *p == "mediocre.txt")
+                < ranked.iter().position(|p| *p == "perfect.txt"),
+            "without bonus: mediocre must beat perfect, got {ranked:?}",
+        );
     }
 
     #[test]

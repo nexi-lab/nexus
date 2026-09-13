@@ -102,7 +102,7 @@ anyhow = "1"
 # `kernel::AgentState` directly). Pinned to the sudocode main merge that
 # carries that same rev: bumping the workspace pin means bumping this one
 # in the same commit, or the co-host build fails to compile.
-sudocode-tools = { package = "tools", git = "https://github.com/sudoprivacy/sudocode", rev = "e5278a9611031c44d2f2bf9bd0bee282e8909527", optional = true }
+sudocode-tools = { package = "tools", git = "https://github.com/sudoprivacy/sudocode", rev = "a67bb90f5c4b8de1b9b6aee32bc3c0df73c81408", optional = true }
 # Named directly to spell `kernel::kernel::{ServiceDecl, Kernel}` — the
 # managed-agent boot decl's return type (both builds) and the co-host
 # adapter's `SpawnTask<Kernel>` (cohost build). Already present transitively

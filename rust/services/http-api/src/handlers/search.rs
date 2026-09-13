@@ -427,14 +427,23 @@ fn hit_from_proto(r: ProtoQueryResult) -> QueryHit {
 pub async fn query(
     State(state): State<AppState>,
     Extension(ctx): Extension<OperationContext>,
+    fence: crate::middleware::revision::RevisionFence,
     Json(body): Json<QueryBody>,
-) -> Result<Json<QueryResponseBody>, SearchError> {
+) -> Result<Response, SearchError> {
     let query_type = parse_query_type(&body.query_type).map_err(SearchError::BadRequest)?;
     let fusion_method =
         parse_fusion_method(&body.fusion_method).map_err(SearchError::BadRequest)?;
     // #4740: the index zone is the caller's zone, never a wire-supplied
     // one (admins may still name a zone explicitly).
     let zone_id = effective_zone(&ctx, &body.zone_id)?;
+    // Issue #4737: wait for the fenced revision to be applied on this
+    // node BEFORE running the search, so a read-after-write against a
+    // co-hosted cluster observes the just-committed row.  No-op when
+    // the caller did not send X-Nexus-Min-Revision.
+    let observed = fence
+        .enforce(std::sync::Arc::clone(&state.kernel), &zone_id)
+        .await
+        .map_err(SearchError::Fence)?;
     let mut client = state.search.client().await?;
     let req = QueryRequest {
         q: body.q,
@@ -458,10 +467,15 @@ pub async fn query(
         .await
         .map_err(SearchError::Rpc)?
         .into_inner();
-    Ok(Json(QueryResponseBody {
+    let mut response = Json(QueryResponseBody {
         results: resp.results.into_iter().map(hit_from_proto).collect(),
         error: resp.error,
-    }))
+    })
+    .into_response();
+    if let Some(tok) = observed {
+        crate::middleware::revision::stamp_revision(&mut response, &tok);
+    }
+    Ok(response)
 }
 
 // ── Router + shared error ────────────────────────────────────────
@@ -501,17 +515,31 @@ pub enum SearchError {
     /// zone.  403, matching the Python surface.
     #[error("forbidden: {0}")]
     Forbidden(#[from] ZoneError),
+    /// #4737: read-your-writes fence rejected the request (400 / 412 /
+    /// 501 / 503 shape owned by `middleware::revision::FenceError`).
+    /// Passed through verbatim so the handler surfaces the same body /
+    /// header contract the Python `_revision_fence` publishes.
+    #[error("revision fence: {0}")]
+    Fence(crate::middleware::revision::FenceError),
     #[error("rpc failed: {0}")]
     Rpc(tonic::Status),
 }
 
 impl IntoResponse for SearchError {
     fn into_response(self) -> Response {
+        // `FenceError` owns its own `IntoResponse` (412 body carries
+        // current_revision + waited_ms + stamps X-Nexus-Revision — none
+        // of that fits the generic `{"error": ...}` shape below), so
+        // pass it through untouched.
+        if let SearchError::Fence(e) = self {
+            return e.into_response();
+        }
         let (status, message) = match self {
             SearchError::BackendUnavailable(e) => (StatusCode::SERVICE_UNAVAILABLE, e.to_string()),
             SearchError::BadRequest(m) => (StatusCode::BAD_REQUEST, m),
             SearchError::Forbidden(e) => (StatusCode::FORBIDDEN, e.to_string()),
             SearchError::Rpc(s) => (grpc_status_to_http(s.code()), s.message().to_string()),
+            SearchError::Fence(_) => unreachable!("handled above"),
         };
         (status, Json(serde_json::json!({ "error": message }))).into_response()
     }

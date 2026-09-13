@@ -34,6 +34,17 @@ _AUTH_CACHE_TTL = 900
 # Singleflight: at most one in-flight provider auth call per unique token (Issue #15)
 _auth_inflight: dict[str, asyncio.Future[dict[str, Any] | None]] = {}
 
+# ``NEXUS_AUTH_CACHE_DEBUG=1`` logs every auth-cache get/set outcome at INFO
+# (key prefix, hit/miss, payload size, store class).  Off by default — it is
+# one line per request.  Exists because a deployment can show a 100 % miss
+# rate with the store wired and healthy (#4777 rollout: Dragonfly db 0 on
+# Railway) and there was nothing in the logs to tell WHICH side failed.
+_AUTH_CACHE_DEBUG = os.environ.get("NEXUS_AUTH_CACHE_DEBUG", "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
+
 
 def _auth_cache_key(token: str) -> str:
     """Compute the cache key for an auth token (SHA-256 prefix)."""
@@ -43,23 +54,56 @@ def _auth_cache_key(token: str) -> str:
 async def _get_cached_auth(
     cache_store: "CacheStoreABC | None", token: str
 ) -> dict[str, Any] | None:
-    """Get cached auth result if valid via CacheStoreABC."""
+    """Get cached auth result if valid via CacheStoreABC.
+
+    Fail-open: a cache backend error is a MISS (the provider is re-asked),
+    never a 500 — the cache is an optimisation, not the source of truth.
+    """
     if cache_store is None:
         return None
-    raw = await cache_store.get(_auth_cache_key(token))
-    if raw is None:
+    key = _auth_cache_key(token)
+    try:
+        raw = await cache_store.get(key)
+        result: dict[str, Any] | None = json.loads(raw) if raw is not None else None
+    except Exception as exc:
+        logger.warning(
+            "[AUTH-CACHE] get failed (%s: %s) — treating as miss", type(exc).__name__, exc
+        )
         return None
-    result: dict[str, Any] = json.loads(raw)
+    if _AUTH_CACHE_DEBUG:
+        logger.info(
+            "[AUTH-CACHE] get %s key=%s… store=%s bytes=%s",
+            "hit" if result else "miss",
+            key[:24],
+            type(cache_store).__name__,
+            len(raw) if raw is not None else 0,
+        )
     return result
 
 
 async def _set_cached_auth(
     cache_store: "CacheStoreABC | None", token: str, result: dict[str, Any]
 ) -> None:
-    """Cache auth result with TTL via CacheStoreABC."""
+    """Cache auth result with TTL via CacheStoreABC (fail-open, see above)."""
     if cache_store is None:
         return
-    await cache_store.set(_auth_cache_key(token), json.dumps(result).encode(), ttl=_AUTH_CACHE_TTL)
+    key = _auth_cache_key(token)
+    try:
+        payload = json.dumps(result).encode()
+        await cache_store.set(key, payload, ttl=_AUTH_CACHE_TTL)
+    except Exception as exc:
+        logger.warning(
+            "[AUTH-CACHE] set failed (%s: %s) — auth stays uncached", type(exc).__name__, exc
+        )
+        return
+    if _AUTH_CACHE_DEBUG:
+        logger.info(
+            "[AUTH-CACHE] set ok key=%s… store=%s bytes=%d ttl=%d",
+            key[:24],
+            type(cache_store).__name__,
+            len(payload),
+            _AUTH_CACHE_TTL,
+        )
 
 
 async def _reset_auth_cache(cache_store: "CacheStoreABC | None") -> None:

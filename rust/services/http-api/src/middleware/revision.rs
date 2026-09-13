@@ -1,14 +1,13 @@
 //! Read-your-writes fence for HTTP reads (Issue #4737).
 //!
-//! Rust port of `src/nexus/server/api/v2/_revision_fence.py`.  Extracts
-//! the fence parameters from the request (`X-Nexus-Min-Revision` header
-//! or `?min_revision=` query param, plus optional timeout), and
-//! enforces them by polling `kernel.sys_stat(anchor).gen` until the
-//! required index is applied on the serving node (or the timeout
-//! elapses).  Because raft applies entries in order, a node whose stat
-//! shows the path at `gen >= G` has applied every earlier entry of the
-//! zone — so a path-anchored fence also fences listings, glob, grep
-//! and search for that zone.
+//! Extracts the fence parameters from the request
+//! (`X-Nexus-Min-Revision` header or `?min_revision=` query param,
+//! plus optional timeout), and enforces them by polling
+//! `kernel.sys_stat(anchor).gen` until the required index is applied
+//! on the serving node (or the timeout elapses).  Because raft applies
+//! entries in order, a node whose stat shows the path at `gen >= G`
+//! has applied every earlier entry of the zone — so a path-anchored
+//! fence also fences listings, glob, grep and search for that zone.
 //!
 //! # Wire shape
 //!
@@ -60,7 +59,6 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use kernel::kernel::syscall::KernelSyscall;
 use serde::{Deserialize, Serialize};
-use tokio::time::{sleep, Instant};
 
 use crate::revision::{
     ParseRevisionError, RevisionToken, DEFAULT_REVISION_TIMEOUT_MS, MAX_REVISION_TIMEOUT_MS,
@@ -68,14 +66,14 @@ use crate::revision::{
 };
 
 /// Narrow interface the revision fence needs from a kernel: read the
-/// current `gen` of a path (`0` when the path is not visible on this
-/// node, matching the Python `_gen_of(meta)` fallback).
+/// current `gen` of a path.  Returns `0` when the path is not visible
+/// on this node — treated identically to "gen 0" so an unseeded fence
+/// times out honestly rather than becoming an existence oracle.
 ///
 /// Kept trait-narrow — impls exist for the full [`KernelSyscall`] —
 /// so tests can supply a fake gen source without stubbing every
-/// syscall on the [`KernelSyscall`] trait (whose result types are
-/// crate-private in `kernel`, so a full impl outside the crate is
-/// not possible).
+/// syscall on [`KernelSyscall`] (whose result types are crate-private
+/// in `kernel`, so a full outside-crate impl is not possible).
 pub trait StatGen: Send + Sync + 'static {
     fn stat_gen(&self, path: &str, zone_id: &str) -> u64;
 }
@@ -101,14 +99,12 @@ impl StatGen for ZeroGenKernel {
 }
 
 /// Default zone the parser assumes when a caller sends a bare integer
-/// (`?min_revision=42` ⇒ `root@42`).  Matches the Python
-/// `default_zone=ROOT_ZONE_ID` on `RevisionToken.parse`.
+/// (`?min_revision=42` ⇒ `root@42`).
 const DEFAULT_ZONE: &str = "root";
 
-/// Poll cadence used by the fence loop.  Matches the Python
-/// `_INITIAL_POLL_S` / `_MAX_POLL_S` — exponential backoff between the
-/// two so a fast-applying gen returns quickly and a slow one does not
-/// hammer the kernel.
+/// Poll cadence for the fence loop — exponential backoff between the
+/// two bounds so a fast-applying gen returns within ~20 ms and a slow
+/// one settles at 4 polls per second instead of hammering the kernel.
 const INITIAL_POLL: Duration = Duration::from_millis(20);
 const MAX_POLL: Duration = Duration::from_millis(250);
 
@@ -137,18 +133,19 @@ impl RevisionFence {
     /// carrying the right HTTP response.  No-op when the caller did
     /// not ask for a fence — returns `Ok(None)`.
     ///
-    /// `zone_id` scopes the `sys_stat` call the same way the Python
-    /// `RevisionFence.enforce` passes the caller's `OperationContext`.
-    /// The Rust `KernelSyscall::sys_stat` API takes zone_id as a
-    /// string rather than a full context (see
-    /// `rust/kernel/src/kernel/syscall.rs:146`), so callers pass
-    /// `&ctx.zone_id` from their `Extension<OperationContext>`.
+    /// `zone_id` scopes the `sys_stat` call to the caller's zone —
+    /// pass `&ctx.zone_id` from the request's
+    /// `Extension<OperationContext>`.  A fence on a path the caller
+    /// cannot see stats as `gen = 0` and times out at 412 (never an
+    /// existence oracle).
     ///
-    /// Path-anchored fences poll `sys_stat` via `spawn_blocking` (the
-    /// syscall is synchronous — see the trait definition — so calling
-    /// it directly from an async handler would block the runtime).
-    /// Zone-anchored fences answer 501 today: `nexusd-cluster` does
-    /// not expose `federation_cluster_info` yet.
+    /// The whole poll loop runs on ONE [`spawn_blocking`] task —
+    /// `KernelSyscall::sys_stat` is synchronous, so calling it from
+    /// the async handler would block the runtime; batching the loop
+    /// into a single blocking task also avoids `Arc::clone` +
+    /// spawn-overhead per iteration.  Zone-anchored fences answer 501
+    /// today: `nexusd-cluster` does not expose
+    /// `federation_cluster_info` yet.
     pub async fn enforce(
         &self,
         kernel: Arc<dyn StatGen>,
@@ -162,33 +159,38 @@ impl RevisionFence {
                 min_revision: required,
             });
         }
-        let started = Instant::now();
-        let deadline = started + Duration::from_millis(self.timeout_ms);
-        let zone_id = zone_id.to_string();
-        let mut interval = INITIAL_POLL;
+        let started = std::time::Instant::now();
+        let timeout = Duration::from_millis(self.timeout_ms);
+        let anchor = required.anchor.clone();
+        let zone = zone_id.to_string();
+        let min_gen = required.index;
 
-        let (satisfied, current) = loop {
-            let anchor = required.anchor.clone();
-            let zone = zone_id.clone();
-            let kernel_c = Arc::clone(&kernel);
-            let current = tokio::task::spawn_blocking(move || kernel_c.stat_gen(&anchor, &zone))
-                .await
-                .map_err(|e| FenceError::ProbeFailed {
-                    min_revision: required.clone(),
-                    message: format!("sys_stat join error: {e}"),
-                })?;
-
-            if current >= required.index {
-                break (true, current);
+        // Single spawn_blocking hosts the whole poll loop.  `sys_stat`
+        // is sync, so the loop runs on the blocking pool; the caller
+        // still awaits at async speed.  std::thread::sleep is fine
+        // here — the task owns the OS thread until the loop ends.
+        let (satisfied, current) = tokio::task::spawn_blocking(move || {
+            let deadline = std::time::Instant::now() + timeout;
+            let mut interval = INITIAL_POLL;
+            loop {
+                let current = kernel.stat_gen(&anchor, &zone);
+                if current >= min_gen {
+                    return (true, current);
+                }
+                let now = std::time::Instant::now();
+                if now >= deadline {
+                    return (false, current);
+                }
+                let remaining = deadline - now;
+                std::thread::sleep(interval.min(remaining));
+                interval = (interval * 2).min(MAX_POLL);
             }
-            let now = Instant::now();
-            if now >= deadline {
-                break (false, current);
-            }
-            let remaining = deadline - now;
-            sleep(interval.min(remaining)).await;
-            interval = (interval * 2).min(MAX_POLL);
-        };
+        })
+        .await
+        .map_err(|e| FenceError::ProbeFailed {
+            min_revision: required.clone(),
+            message: format!("sys_stat join error: {e}"),
+        })?;
 
         let observed = RevisionToken {
             anchor: required.anchor.clone(),
@@ -200,7 +202,7 @@ impl RevisionFence {
             Err(FenceError::NotApplied {
                 min_revision: required,
                 current_revision: observed,
-                waited_ms: started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
+                waited_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
             })
         }
     }
@@ -216,13 +218,15 @@ struct RevisionQuery {
     revision_timeout_ms: Option<String>,
 }
 
-/// axum extractor.  Reads header first (matches Python precedence),
-/// falls back to query param.  Rejects malformed input with 400.
+/// axum extractor.  Header takes precedence, query param is the
+/// fallback (a `curl` on a fixed URL can attach the fence via the
+/// header without editing the query string).  Malformed input is a 400.
 impl<S: Send + Sync> FromRequestParts<S> for RevisionFence {
     type Rejection = FenceError;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        // Header takes precedence per Python `get_revision_fence`.
+        // Header wins so a caller can attach a fence to a fixed URL
+        // without editing the query string.
         let header_raw = parts
             .headers
             .get(MIN_REVISION_HEADER)
@@ -269,13 +273,13 @@ impl<S: Send + Sync> FromRequestParts<S> for RevisionFence {
     }
 }
 
-/// Fence rejection shapes.  Maps 1:1 to Python `HTTPException` codes:
+/// Fence rejection shapes and their HTTP status mapping:
 ///
-/// * `ParseMinRevision` / `ParseTimeoutNotInt` / `TimeoutOutOfRange`
-///   → 400 (matches `_parse_min_revision` / `_parse_timeout`).
+/// * `ParseMinRevision` / `ParseTimeoutNotInt` / `TimeoutOutOfRange` → 400.
 /// * `NotApplied` → 412 with `current_revision` / `waited_ms` payload
-///   and `X-Nexus-Revision` header (matches `RevisionFence.enforce`).
-/// * `ZoneRevisionUnavailable` → 501 (matches `_await_zone`).
+///   and `X-Nexus-Revision` header so the caller can retry or degrade.
+/// * `ZoneRevisionUnavailable` → 501 (kernel does not expose zone
+///   applied_index — client should fence on a path token instead).
 /// * `ProbeFailed` → 503.
 #[derive(Debug, thiserror::Error)]
 pub enum FenceError {
@@ -301,8 +305,9 @@ pub enum FenceError {
     },
 }
 
-/// Payload shape for the 412 body — matches the Python
-/// `RevisionFence.enforce` `HTTPException.detail` dict.
+/// 412 body — carries the observed revision + wait time so the caller
+/// can retry or fall back without re-issuing the read to guess where
+/// this node is.
 #[derive(Debug, Serialize)]
 struct NotAppliedDetail {
     error: &'static str,

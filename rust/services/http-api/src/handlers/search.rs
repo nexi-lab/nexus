@@ -20,8 +20,11 @@
 //!
 //! Every handler surfaces backend / RPC errors as [`SearchError`];
 //! the [`IntoResponse`] impl maps `BackendError` → HTTP 503 and
-//! `tonic::Status` → HTTP status by gRPC `Code`.  A new handler
-//! reuses the enum + mapper instead of hand-rolling its own.
+//! `tonic::Status` → HTTP status by gRPC `Code`.  Fence rejections
+//! (`SearchError::Fence`) render through the fence module's own
+//! [`IntoResponse`] so the 412 body's `X-Nexus-Revision` + payload
+//! reach the caller intact.  A new handler reuses the enum + mapper
+//! instead of hand-rolling its own.
 
 use std::collections::HashMap;
 
@@ -100,10 +103,18 @@ pub struct GlobResponse {
 pub async fn glob(
     State(state): State<AppState>,
     Extension(ctx): Extension<OperationContext>,
+    fence: crate::middleware::revision::RevisionFence,
     Query(params): Query<GlobQuery>,
-) -> Result<Json<GlobResponse>, SearchError> {
+) -> Result<Response, SearchError> {
     let zone = effective_zone(&ctx, &params.zone_id)?;
     let root_path = scope_request_path(&ctx, &zone, &params.root_path)?;
+    // #4737: wait for the fenced revision to be applied on this node
+    // BEFORE running the glob, so a caller who just wrote /ws/a.md
+    // and passes X-Nexus-Min-Revision sees the row in the walk.
+    let observed = fence
+        .enforce(std::sync::Arc::clone(&state.kernel), &zone)
+        .await
+        .map_err(SearchError::Fence)?;
     let mut client = state.search.client().await?;
     let req = GlobRequest {
         root_path,
@@ -117,11 +128,16 @@ pub async fn glob(
         .await
         .map_err(SearchError::Rpc)?
         .into_inner();
-    Ok(Json(GlobResponse {
+    let mut response = Json(GlobResponse {
         paths: present_paths(&ctx, &zone, resp.paths),
         truncated: resp.truncated,
         error: resp.error,
-    }))
+    })
+    .into_response();
+    if let Some(tok) = observed {
+        crate::middleware::revision::stamp_revision(&mut response, &tok);
+    }
+    Ok(response)
 }
 
 // ── /v2/search/grep ──────────────────────────────────────────────
@@ -196,11 +212,17 @@ pub struct GrepResponse {
 pub async fn grep(
     State(state): State<AppState>,
     Extension(ctx): Extension<OperationContext>,
+    fence: crate::middleware::revision::RevisionFence,
     Query(params): Query<GrepQuery>,
-) -> Result<Json<GrepResponse>, SearchError> {
+) -> Result<Response, SearchError> {
     let zone = effective_zone(&ctx, &params.zone_id)?;
     let root_path = scope_request_path(&ctx, &zone, &params.root_path)?;
     let privileged = is_privileged(&ctx);
+    // #4737: fence BEFORE the walk so a fresh write is visible in matches.
+    let observed = fence
+        .enforce(std::sync::Arc::clone(&state.kernel), &zone)
+        .await
+        .map_err(SearchError::Fence)?;
     let mut client = state.search.client().await?;
     let req = GrepRequest {
         root_path,
@@ -219,7 +241,7 @@ pub async fn grep(
         .await
         .map_err(SearchError::Rpc)?
         .into_inner();
-    Ok(Json(GrepResponse {
+    let body = GrepResponse {
         matches: resp
             .matches
             .into_iter()
@@ -234,7 +256,12 @@ pub async fn grep(
             .collect(),
         truncated: resp.truncated,
         error: resp.error,
-    }))
+    };
+    let mut response = Json(body).into_response();
+    if let Some(tok) = observed {
+        crate::middleware::revision::stamp_revision(&mut response, &tok);
+    }
+    Ok(response)
 }
 
 // ── /v2/search/query ─────────────────────────────────────────────
@@ -512,13 +539,14 @@ pub enum SearchError {
     BadRequest(String),
     /// #4740: zone refusal — zone-less non-admin caller, an explicit
     /// `zone_id` that is not the caller's, or a path naming another
-    /// zone.  403, matching the Python surface.
+    /// zone.  403.
     #[error("forbidden: {0}")]
     Forbidden(#[from] ZoneError),
     /// #4737: read-your-writes fence rejected the request (400 / 412 /
-    /// 501 / 503 shape owned by `middleware::revision::FenceError`).
-    /// Passed through verbatim so the handler surfaces the same body /
-    /// header contract the Python `_revision_fence` publishes.
+    /// 501 / 503 shape owned by [`crate::middleware::revision::FenceError`]).
+    /// Handed through verbatim so the 412 body's `current_revision` +
+    /// `waited_ms` + `X-Nexus-Revision` header reach the caller
+    /// intact (the generic `{"error": ...}` envelope below would lose them).
     #[error("revision fence: {0}")]
     Fence(crate::middleware::revision::FenceError),
     #[error("rpc failed: {0}")]

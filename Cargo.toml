@@ -32,6 +32,11 @@ members = [
     # `GET /v2/status` so the axum + JSON + test-harness pattern
     # is proven before the search/documents/auth routes land.
     "rust/services/http-api",
+    # nexus-search-common — reusable search primitives (Hit type,
+    # RRF fusion, federated response envelope, degrade-guard).
+    # Consumed by http-api and the upcoming federated-dispatcher
+    # crate — a pure-algorithm sibling keeps both callers thin.
+    "rust/services/search-common",
     # nexus-rebac — Rust replacement for `src/nexus/bricks/rebac/`
     # (Zanzibar-shaped relationship-based access control).  Part
     # of R10 epic #4674.  PR-1 ships the ReBACTupleStore HAL trait

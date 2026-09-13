@@ -360,19 +360,23 @@ flowchart TB
 </ul>
 
 <h3>4.2 Tomorrow: Rust axum (R10 arc)</h3>
-<p>New crate: <code>rust/services/http-api/</code> (see §7). Landed today:</p>
+<p>New crate: <code>rust/services/http-api/</code> (see §7). Landed:</p>
 <ul>
   <li><code>GET /v2/status</code> <span class="status-done">&check;</span> (PR #4675)</li>
   <li><code>GET /v2/search/glob</code> <span class="status-done">&check;</span> (PR #4678, with cached tonic backend + typed error → HTTP status mapping)</li>
-  <li><code>serve()</code> / <code>bind_and_serve()</code> helpers <span class="status-done">&check;</span> (PR #4680) &mdash; the same call the future <code>nexusd-cluster</code> assembly binary uses</li>
+  <li><code>serve()</code> / <code>bind_and_serve()</code> helpers <span class="status-done">&check;</span> (PR #4680) &mdash; the same call <code>nexusd-cluster</code> now uses</li>
+  <li><code>GET /v2/search/grep</code> <span class="status-done">&check;</span> (PR #4693, same shape as glob)</li>
+  <li><code>POST /v2/search/query</code> <span class="status-done">&check;</span> (PR #4693, JSON body via <code>axum::extract::Json</code>)</li>
+  <li><code>POST /v2/documents/{index,refresh,batch}</code> + <code>GET /v2/documents/stats</code> <span class="status-done">&check;</span> (write / meta RPCs sibling to search)</li>
+  <li>Auth middleware <span class="status-done">&check;</span> (PR #4700, tower <code>.layer()</code> populating <code>OperationContext</code> extension; PR #4713 fail-loud on bind failure)</li>
+  <li>Wiring into <code>nexusd-cluster</code> boot <span class="status-done">&check;</span> (PR #4713 with <code>--features http-api</code>; PR #4735 for <code>--features rebac</code>/<code>full</code>)</li>
+  <li><code>POST /v2/rebac/tuples</code> grant/list/revoke <span class="status-done">&check;</span> (Rust ReBAC engine + HTTP router; PRs #4721-#4735)</li>
+  <li><code>POST /v2/auth/keys</code> mint/rotate/list/revoke <span class="status-done">&check;</span> (PR #4756)</li>
 </ul>
-<p>Pending (§7 arc):</p>
+<p>Still open (§7 arc):</p>
 <ul>
-  <li><code>GET /v2/search/grep</code> <span class="status-open">·</span> same shape as glob, one handler file</li>
-  <li><code>POST /v2/search/query</code> <span class="status-open">·</span> JSON body via <code>axum::extract::Json</code></li>
-  <li>Auth middleware <span class="status-open">·</span> tower <code>.layer()</code> on the router, populates <code>Request::extensions</code>::&lt;AuthContext&gt;</li>
-  <li>ReBAC post-filter <span class="status-open">·</span> waits on Rust ReBAC (§5)</li>
-  <li>Wiring into <code>nexusd-cluster</code> boot <span class="status-open">·</span> uses <code>serve()</code> helper alongside the gRPC listener</li>
+  <li>ReBAC post-filter integrated into <code>/v2/search/query</code> <span class="status-open">·</span> Rust engine landed but the axum handler still relies on the plugin's own scope filter</li>
+  <li>Federated dispatcher port to axum <span class="status-open">·</span> multi-zone dispatch still lives in Python (<code>src/nexus/server/api/v2/routers/search.py::_handle_federated_search</code>); unblocked by ReBAC</li>
 </ul>
 
 <h2 id="federation">5. Cross-zone federation dispatcher</h2>
@@ -592,32 +596,42 @@ flowchart TB
     <tr>
       <td>Grep &amp; Query axum handlers</td>
       <td>Rust http-api (R10)</td>
-      <td><span class="status-open">Next</span> &mdash; same pattern as glob</td>
+      <td><span class="status-done">&check; Done</span> &mdash; PR #4693 (<code>handlers/search.rs</code>, same pattern as glob)</td>
     </tr>
     <tr>
       <td>Auth middleware for axum router</td>
       <td>Rust http-api (R10)</td>
-      <td><span class="status-open">Next</span></td>
+      <td><span class="status-done">&check; Done</span> &mdash; PR #4700 (<code>middleware/auth.rs</code>) + PR #4713 (fail-loud bind)</td>
     </tr>
     <tr>
       <td>Rust ReBAC engine (or gRPC facade)</td>
       <td>New Rust crate</td>
-      <td><span class="status-open">Unblocks</span> &mdash; federated dispatcher Rust port</td>
+      <td><span class="status-done">&check; Done</span> &mdash; PRs #4721-#4735 (5-part arc); <code>nexus-rebac</code> crate + Raft tuple store + graph cache + in-crate enforcer + <code>--features rebac</code> wiring + HTTP <code>/v2/rebac/tuples</code></td>
     </tr>
     <tr>
       <td>Federated dispatcher port to axum handler group</td>
       <td>Rust http-api (R10)</td>
-      <td><span class="status-open">After ReBAC</span></td>
+      <td><span class="status-open">Next</span> &mdash; ReBAC now landed, this is the last major R10 chunk; still lives in Python <code>src/nexus/server/api/v2/routers/search.py::_handle_federated_search</code></td>
     </tr>
     <tr>
       <td><code>nexusd-cluster</code> wiring of the axum listener</td>
       <td>rust/nexusd</td>
-      <td><span class="status-open">Uses <code>serve()</code> helper</span> &mdash; do once router surface justifies it</td>
+      <td><span class="status-done">&check; Done</span> &mdash; PR #4713 (<code>--features http-api</code>), PR #4735 (<code>--features full</code> composition)</td>
     </tr>
     <tr>
       <td>Deprecate Python SANDBOX chain</td>
       <td>Python cleanup</td>
-      <td><span class="status-open">After R10 closes</span> &mdash; ~4400 LoC removal</td>
+      <td><span class="status-done">&check; Done</span> &mdash; PRs #4760-#4764 (~11.6k LoC removed; well past ~4400 estimate); SearchService now daemon-shim only, all in-process pipeline + factory + chunk store + indexing pipeline deleted</td>
+    </tr>
+    <tr>
+      <td>Full <code>SearchService</code> Python delete</td>
+      <td>Python cleanup (post-R10)</td>
+      <td><span class="status-open">Open</span> &mdash; <code>src/nexus/bricks/search/search_service.py</code> (~4400 LoC) still owns the query dispatcher, daemon shim, SQL fallback and ReBAC post-filter.  Blocks the final <code>nexus-server</code> retirement</td>
+    </tr>
+    <tr>
+      <td>Refresh this doc when statuses drift</td>
+      <td>docs</td>
+      <td><span class="status-done">&check; Done</span> &mdash; this refresh (2026-09-13)</td>
     </tr>
   </tbody>
 </table>

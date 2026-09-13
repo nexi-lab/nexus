@@ -1775,7 +1775,7 @@ operations:
   transports:
     grpc_expose:
       name: backfill_directory_index
-      source: src/nexus/core/nexus_fs_metadata.py:2096
+      source: src/nexus/core/nexus_fs_metadata.py:2129
     sdk:
       name: MCPClient.backfill_directory_index
       source: src/nexus/remote/domain/mcp.py:91
@@ -3868,7 +3868,7 @@ operations:
   transports:
     grpc_expose:
       name: flush_write_observer
-      source: src/nexus/core/nexus_fs_metadata.py:2126
+      source: src/nexus/core/nexus_fs_metadata.py:2159
   profiles:
     lite: supported
     sandbox: supported

@@ -3340,12 +3340,15 @@ fn index_zone_documents(
 
     // #4777: the hnsw dump is a full rewrite of the graph (over a
     // gigabyte at a few hundred thousand chunks).  While sibling
-    // batches are in flight for this zone, leave the dump to the last
-    // one — the vectors are already served from memory.  Until it
-    // lands, completed docs are recorded as `None` (retry-me) so a
-    // crash costs a re-embed, never a permanent hole; the coordinator
-    // upgrades them afterwards.
-    let defer_dump = ann.is_some() && flush.deferral_enabled() && flush.others_in_flight(zone_id);
+    // batches are in flight for this zone — or whenever the index is
+    // large enough that an inline dump would stall the node's disk —
+    // leave the dump to the flusher; the vectors are already served
+    // from memory.  Until it lands, completed docs are recorded as
+    // `None` (retry-me) so a crash costs a re-embed, never a permanent
+    // hole; the coordinator upgrades them afterwards.
+    let defer_dump = ann
+        .as_ref()
+        .is_some_and(|a| flush.should_defer(zone_id, a.live_count()));
     let mut taken_pending_clearable = true;
     if defer_dump {
         for (path, _) in &completed {
@@ -5129,6 +5132,94 @@ mod tests {
         assert_eq!(cached(&manager, "/a.md"), Some(Some(1_000)));
         assert_eq!(cached(&manager, "/b.md"), Some(Some(2_000)));
         assert!(!flush.has_pending("root"));
+        assert!(!manager.zone_is_dirty("root"));
+    }
+
+    #[test]
+    fn large_index_defers_dump_even_without_siblings() {
+        // Threshold 0 ⇒ every zone counts as "large": a lone batch must
+        // NOT dump inline (prod: 1.5 GB per single-document call) but
+        // leave it to the flusher, recording its docs retry-me meanwhile.
+        let (_tmp, manager, embedder, cache, gate, flush) =
+            deferral_fixture(Some(std::time::Duration::from_secs(3600)));
+        let flush = Arc::new(
+            crate::ann_flush::AnnFlushCoordinator::new(flush.flush_delay())
+                .with_defer_min_chunks(0),
+        );
+        let ann_dir = manager.ann_dir("root", embedder.tag());
+
+        do_index_documents(
+            &manager,
+            Some(&embedder),
+            false,
+            None,
+            "root",
+            vec![doc("/a.md", "alpha bravo charlie", 1_000)],
+            &cache,
+            &gate,
+            &flush,
+        )
+        .expect("lone batch");
+
+        assert!(!has_hnsw_dump(&ann_dir), "large index must not dump inline");
+        assert!(flush.has_pending("root"));
+        assert_eq!(cached(&manager, "/a.md"), Some(None));
+        assert!(manager.zone_is_dirty("root"));
+        // Served from memory meanwhile.
+        let ann = manager
+            .get_or_open_ann("root", embedder.tag(), embedder.dim())
+            .unwrap();
+        assert_eq!(ann.live_paths(), 1);
+
+        // A second lone batch also defers — one dump per flush window,
+        // however many calls arrive.
+        do_index_documents(
+            &manager,
+            Some(&embedder),
+            false,
+            None,
+            "root",
+            vec![doc("/b.md", "delta echo", 2_000)],
+            &cache,
+            &gate,
+            &flush,
+        )
+        .expect("second lone batch");
+        assert!(!has_hnsw_dump(&ann_dir));
+
+        assert_eq!(flush.flush_zone("root", &manager, &cache), Ok(true));
+        assert!(has_hnsw_dump(&ann_dir));
+        assert_eq!(cached(&manager, "/a.md"), Some(Some(1_000)));
+        assert_eq!(cached(&manager, "/b.md"), Some(Some(2_000)));
+        assert!(!manager.zone_is_dirty("root"));
+    }
+
+    #[test]
+    fn small_index_dumps_inline_without_siblings() {
+        // Default threshold (10k chunks): a tiny zone keeps the
+        // pre-existing inline dump — immediate durability, no flusher.
+        let (_tmp, manager, embedder, cache, gate, flush) =
+            deferral_fixture(Some(std::time::Duration::from_secs(3600)));
+        assert_eq!(
+            flush.defer_min_chunks(),
+            crate::ann_flush::DEFAULT_ANN_DEFER_MIN_CHUNKS
+        );
+        let ann_dir = manager.ann_dir("root", embedder.tag());
+        do_index_documents(
+            &manager,
+            Some(&embedder),
+            false,
+            None,
+            "root",
+            vec![doc("/a.md", "alpha bravo", 1_000)],
+            &cache,
+            &gate,
+            &flush,
+        )
+        .expect("batch");
+        assert!(has_hnsw_dump(&ann_dir));
+        assert!(!flush.has_pending("root"));
+        assert_eq!(cached(&manager, "/a.md"), Some(Some(1_000)));
         assert!(!manager.zone_is_dirty("root"));
     }
 

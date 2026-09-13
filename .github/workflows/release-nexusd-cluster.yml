@@ -38,8 +38,45 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # One derivation of "what is being released", consumed by every job below.
+  # It used to be three: the build job stamped the raw tag, and the two
+  # publish jobs each re-derived their own answer. They drifted — the build
+  # job stamped `nexusd-cluster-v0.1.3` where the publish job had already
+  # worked out that the version is `v0.1.3`.
+  version:
+    name: Resolve the version being released
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.v.outputs.tag }}
+      ver: ${{ steps.v.outputs.ver }}
+      is_prerelease: ${{ steps.v.outputs.is_prerelease }}
+    steps:
+      - name: Derive tag, version and pre-release flag
+        id: v
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag || github.ref_name }}"
+          # nexusd-cluster-v0.1.0 -> v0.1.0. The TAG carries the binary's
+          # name; the VERSION must not. clap already prefixes the binary name
+          # to `--version`, so stamping the tag prints it twice:
+          #   nexusd-cluster nexusd-cluster-v0.1.3 (nexus-cluster 0.1.1, ...)
+          VER="${TAG#nexusd-cluster-}"
+          if [ "$VER" = "$TAG" ]; then
+            echo "::error::tag $TAG does not start with nexusd-cluster-"
+            exit 1
+          fi
+          if [[ "$TAG" =~ -(rc|beta|alpha|dev|nightly) ]]; then
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "ver=$VER" >> "$GITHUB_OUTPUT"
+
   build:
     name: build-${{ matrix.name }}
+    needs: version
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
@@ -136,14 +173,16 @@ jobs:
       # production profile). Do NOT add --features cohost-sudocode here.
       - name: Build release binary (assembly, managed_agent on / cohost off)
         env:
-          # Stamp the assembly tag into `--version` and the `Ping` RPC
+          # Stamp the assembly VERSION into `--version` and the `Ping` RPC
           # (nexus-vfs reads NEXUSD_BUILD_VERSION; see its cluster profile).
           # Without it the binary reports the version of the crate that owns
           # the clap derive — nexus-vfs's `nexus-cluster` — which is the SAME
           # number the pure nexus-vfs daemon prints and does not move when
           # this assembly is re-tagged. Downstream confirming an upgrade read
           # 0.1.1 before and after v0.1.2.
-          NEXUSD_BUILD_VERSION: ${{ inputs.tag || github.ref_name }}
+          #
+          # The version, not the tag: clap prefixes the binary name itself.
+          NEXUSD_BUILD_VERSION: ${{ needs.version.outputs.ver }}
         run: cargo build --locked --release -p nexusd --bin nexusd-cluster ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
 
       - name: Stage release payload
@@ -185,7 +224,7 @@ jobs:
 
   publish-github-release:
     name: publish-github-release
-    needs: build
+    needs: [version, build]
     runs-on: ubuntu-latest
     steps:
       - name: Download build artifacts
@@ -202,32 +241,20 @@ jobs:
           sha256sum nexusd-cluster-* > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
-      - name: Resolve tag + pre-release flag
-        id: rel
-        shell: bash
-        run: |
-          TAG="${{ inputs.tag || github.ref_name }}"
-          if [[ "$TAG" =~ -(rc|beta|alpha|dev|nightly) ]]; then
-            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
-          fi
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.rel.outputs.tag }}
+          tag_name: ${{ needs.version.outputs.tag }}
           files: |
             dist/nexusd-cluster-*
             dist/SHA256SUMS.txt
           fail_on_unmatched_files: true
-          prerelease: ${{ steps.rel.outputs.is_prerelease == 'true' }}
+          prerelease: ${{ needs.version.outputs.is_prerelease == 'true' }}
           generate_release_notes: true
 
   publish-cos:
     name: publish-cos
-    needs: build
+    needs: [version, build]
     runs-on: ubuntu-latest
     env:
       COS_SECRET_ID: ${{ secrets.COS_SECRET_ID }}
@@ -249,26 +276,6 @@ jobs:
       - name: Checkout code
         if: steps.check.outputs.skip == 'false'
         uses: actions/checkout@v4
-
-      - name: Resolve version from tag
-        if: steps.check.outputs.skip == 'false'
-        id: ver
-        shell: bash
-        run: |
-          set -euo pipefail
-          TAG="${{ inputs.tag || github.ref_name }}"
-          # nexusd-cluster-v0.1.0 -> v0.1.0
-          VER="${TAG#nexusd-cluster-}"
-          if [ "$VER" = "$TAG" ]; then
-            echo "::error::tag $TAG does not start with nexusd-cluster-"
-            exit 1
-          fi
-          if [[ "$TAG" =~ -(rc|beta|alpha|dev|nightly) ]]; then
-            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
-          fi
-          echo "ver=$VER" >> "$GITHUB_OUTPUT"
 
       - name: Download build artifacts
         if: steps.check.outputs.skip == 'false'
@@ -301,7 +308,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          PATH_VER="nexusd-cluster/release/${{ steps.ver.outputs.ver }}"
+          PATH_VER="nexusd-cluster/release/${{ needs.version.outputs.ver }}"
           echo "Uploading to $PATH_VER"
           for file in dist/nexusd-cluster-* dist/SHA256SUMS.txt; do
             [ -f "$file" ] || continue
@@ -312,7 +319,7 @@ jobs:
           echo "::notice::Versioned artifacts: https://${COS_BUCKET}.cos.${COS_REGION}.myqcloud.com/${PATH_VER}/"
 
       - name: Upload to latest path (stable tags only)
-        if: steps.check.outputs.skip == 'false' && steps.ver.outputs.is_prerelease == 'false'
+        if: steps.check.outputs.skip == 'false' && needs.version.outputs.is_prerelease == 'false'
         shell: bash
         run: |
           set -euo pipefail

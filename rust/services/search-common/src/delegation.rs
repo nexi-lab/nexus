@@ -20,7 +20,7 @@
 //!   carrier the RPC servicer inspects only after transport auth has
 //!   passed.
 
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 
@@ -202,6 +202,8 @@ fn instant_now_ns() -> u128 {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
 
     fn subject(id: &str) -> (String, String) {

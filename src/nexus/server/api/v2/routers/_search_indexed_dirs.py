@@ -8,6 +8,7 @@ because ``search.py`` includes this module's ``router`` via
 Shared helpers (``_get_search_daemon``) come from the parent module.
 """
 
+import asyncio
 import logging
 from typing import Any
 
@@ -53,7 +54,12 @@ async def _require_admin_or_path_write(
         subject_id=auth_result.get("subject_id"),
     )
     try:
-        allowed = bool(enforcer.check(directory_path, Permission.WRITE, ctx))
+        # The enforcer is synchronous and may hit the database on a cache
+        # miss; keep it off the event loop (#4777) — ``/search/index`` runs
+        # this once per document.
+        allowed = bool(
+            await asyncio.to_thread(enforcer.check, directory_path, Permission.WRITE, ctx)
+        )
     except Exception as exc:
         logger.warning("ReBAC write check failed for %s: %s", directory_path, exc)
         raise HTTPException(status_code=500, detail="permission check failed") from exc

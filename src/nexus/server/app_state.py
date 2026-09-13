@@ -35,6 +35,10 @@ class NexusAppState:
     database_url: str | None = None
     api_key: str | None = None
     auth_provider: Any = None
+    # #4777: CacheStoreABC behind ``dependencies.get_auth_result``; wired by
+    # the lifespan once the cache brick is up (shared store when configured,
+    # process-local otherwise).  ``None`` = every request re-authenticates.
+    auth_cache_store: Any = None
     data_dir: str | None = None
     brick_container: Any = None
     zone_registry: Any = None
@@ -86,6 +90,10 @@ class NexusAppState:
     subscription_manager: Any = None
     search_daemon: Any = None
     search_daemon_enabled: bool = False
+    # #4777: ``POST /search/index`` requests currently in flight in this
+    # process — admission control sheds with 503 + Retry-After above
+    # ``NEXUS_SEARCH_INDEX_MAX_INFLIGHT``.
+    search_index_inflight: int = 0
     directory_grant_expander: Any = None
     cache_brick: Any = None
     websocket_manager: Any = None

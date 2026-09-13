@@ -10,6 +10,7 @@ Wraps the existing RPC admin handlers with proper REST semantics.
 Admin auth required for all operations.
 """
 
+import asyncio
 import json
 import logging
 from datetime import UTC, datetime, timedelta
@@ -227,16 +228,25 @@ async def create_key(
     request: Request,
     body: CreateKeyRequest,
 ) -> dict[str, Any]:
-    """Create a new API key."""
-    from types import SimpleNamespace
+    """Create a new API key.
 
-    from nexus.server.rpc.handlers.admin import handle_admin_create_key
-
+    The key/grant writes are synchronous SQLAlchemy + ReBAC calls, so the
+    whole body runs on a worker thread (#4777) — never on the event loop.
+    """
     db_provider = _resolve_db_auth(request)
 
     # Fail-fast: verify rebac_manager is available before creating the key
-    if body.grants:
-        _resolve_rebac_manager(request)
+    rebac_manager = _resolve_rebac_manager(request) if body.grants else None
+
+    return await asyncio.to_thread(_create_key_sync, db_provider, rebac_manager, body)
+
+
+def _create_key_sync(
+    db_provider: Any, rebac_manager: Any, body: CreateKeyRequest
+) -> dict[str, Any]:
+    from types import SimpleNamespace
+
+    from nexus.server.rpc.handlers.admin import handle_admin_create_key
 
     key_name = body.label or body.name or "unnamed"
 
@@ -285,8 +295,7 @@ async def create_key(
     }
 
     # Create ReBAC grants if requested — rollback key on failure
-    if body.grants:
-        rebac_manager = _resolve_rebac_manager(request)
+    if body.grants and rebac_manager is not None:
         subject_id = result.get("subject_id") or result["user_id"]
         subject_type = body.subject_type or "user"
 
@@ -352,7 +361,7 @@ async def list_keys(
         offset=offset,
     )
     context = SimpleNamespace(is_admin=True)
-    return handle_admin_list_keys(db_provider, params, context)
+    return await asyncio.to_thread(handle_admin_list_keys, db_provider, params, context)
 
 
 @router.get("/{key_id}")
@@ -369,7 +378,7 @@ async def get_key(
     db_provider = _resolve_db_auth(request)
     params = SimpleNamespace(key_id=key_id, zone_id=zone_id)
     context = SimpleNamespace(is_admin=True)
-    return handle_admin_get_key(db_provider, params, context)
+    return await asyncio.to_thread(handle_admin_get_key, db_provider, params, context)
 
 
 @router.delete("/{key_id}")
@@ -379,15 +388,30 @@ async def revoke_key(
     zone_id: str | None = None,
 ) -> dict[str, Any]:
     """Revoke an API key and clean up only the ReBAC grants created for it."""
+    from nexus.server.dependencies import _reset_auth_cache
+
+    db_provider = _resolve_db_auth(request)
+    rebac_manager = getattr(request.app.state, "rebac_manager", None)
+
+    # Synchronous SQLAlchemy + ReBAC work — off the event loop (#4777).
+    result = await asyncio.to_thread(_revoke_key_sync, db_provider, rebac_manager, key_id, zone_id)
+
+    # Flush auth cache so revoked key is immediately rejected (Issue #2195)
+    auth_cache = getattr(request.app.state, "auth_cache_store", None)
+    await _reset_auth_cache(auth_cache)
+
+    return result
+
+
+def _revoke_key_sync(
+    db_provider: Any, rebac_manager: Any, key_id: str, zone_id: str | None
+) -> dict[str, Any]:
     from types import SimpleNamespace
 
     from sqlalchemy import select
 
-    from nexus.server.dependencies import _reset_auth_cache
     from nexus.server.rpc.handlers.admin import handle_admin_revoke_key
     from nexus.storage.models import APIKeyModel
-
-    db_provider = _resolve_db_auth(request)
 
     # Read grant_tuple_ids before revocation so we can do targeted cleanup
     grant_tuple_ids: list[str] = []
@@ -411,23 +435,17 @@ async def revoke_key(
     result = handle_admin_revoke_key(db_provider, params, context)
 
     # Delete only the ReBAC tuples that were created for this specific key
-    if grant_tuple_ids:
-        rebac_manager = getattr(request.app.state, "rebac_manager", None)
-        if rebac_manager is not None:
-            deleted = 0
-            for tid in grant_tuple_ids:
-                if rebac_manager.rebac_delete(tid):
-                    deleted += 1
-            if deleted:
-                logger.info(
-                    "Cleaned up %d/%d ReBAC grant tuple(s) for key %s",
-                    deleted,
-                    len(grant_tuple_ids),
-                    key_id,
-                )
-
-    # Flush auth cache so revoked key is immediately rejected (Issue #2195)
-    auth_cache = getattr(request.app.state, "auth_cache_store", None)
-    await _reset_auth_cache(auth_cache)
+    if grant_tuple_ids and rebac_manager is not None:
+        deleted = 0
+        for tid in grant_tuple_ids:
+            if rebac_manager.rebac_delete(tid):
+                deleted += 1
+        if deleted:
+            logger.info(
+                "Cleaned up %d/%d ReBAC grant tuple(s) for key %s",
+                deleted,
+                len(grant_tuple_ids),
+                key_id,
+            )
 
     return result

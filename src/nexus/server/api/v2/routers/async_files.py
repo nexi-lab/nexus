@@ -151,7 +151,7 @@ async def _read_connector_by_physical_path(
     longer needs it handed in.
     """
     try:
-        content = fs.sys_read(display_path, context=context)
+        content = await _call_sync_or_async(fs.sys_read, display_path, context=context)
     except Exception:
         return None
     if isinstance(content, bytes):
@@ -807,7 +807,9 @@ def create_async_files_router(
                         _ss.validate_path_available(transaction_id, _norm_path)
                         # Capture original state for rollback
                         try:
-                            _orig_meta = fs.sys_stat(_norm_path, context=context)
+                            _orig_meta = await _call_sync_or_async(
+                                fs.sys_stat, _norm_path, context=context
+                            )
                             if _orig_meta:
                                 _original_hash = _orig_meta.get("content_id")
                                 _original_metadata = {
@@ -902,8 +904,10 @@ def create_async_files_router(
                     except FileExistsError as exc:
                         raise HTTPException(status_code=409, detail=str(exc)) from exc
                 else:
-                    # fs.write is async — call directly
-                    result = fs.write(**write_kwargs)
+                    # #4777: fs.write is a blocking kernel gRPC round-trip
+                    # (plus post-write hooks); run it off the event loop so a
+                    # slow write cannot stall every other request.
+                    result = await _call_sync_or_async(fs.write, **write_kwargs)
 
                 # Track write in transaction AFTER successful write.
                 # Skip if _write_internal already tracked it (path already in registry).
@@ -1105,7 +1109,9 @@ def create_async_files_router(
                     _skip_access = _entry_op == "delete" and _is_admin
                     if not _skip_access:
                         try:
-                            _accessible = fs.access(path, context=context)
+                            _accessible = await _call_sync_or_async(
+                                fs.access, path, context=context
+                            )
                         except _PERMISSION_ERRORS as e:
                             raise HTTPException(status_code=403, detail=str(e)) from e
                         if not _accessible:
@@ -1208,7 +1214,7 @@ def create_async_files_router(
                 if_none_match = request.headers.get("If-None-Match")
                 if if_none_match:
                     try:
-                        meta = fs.sys_stat(path, context=context)
+                        meta = await _call_sync_or_async(fs.sys_stat, path, context=context)
                     except Exception:
                         meta = None
                     meta_cid = None
@@ -1273,8 +1279,10 @@ def create_async_files_router(
                         media_type="application/json",
                     )
 
-                # Standard VFS read
-                result = fs.read(path, return_metadata=include_metadata, context=context)
+                # Standard VFS read — off the event loop (#4777).
+                result = await _call_sync_or_async(
+                    fs.read, path, return_metadata=include_metadata, context=context
+                )
 
                 # --- Markdown partial read (Issue #3718) ---
                 if section and path.endswith(".md"):
@@ -1534,10 +1542,10 @@ def create_async_files_router(
 
             async def _work() -> Response:
                 fs = await _get_fs(context)
-                accessible = await fs.access(path, context=context)
+                accessible = await _call_sync_or_async(fs.access, path, context=context)
                 if not accessible:
                     raise NexusFileNotFoundError(path)
-                raw = await fs.read(path, context=context)
+                raw = await _call_sync_or_async(fs.read, path, context=context)
                 content = (
                     raw
                     if isinstance(raw, bytes)
@@ -1650,7 +1658,9 @@ def create_async_files_router(
                         _norm_path = _normalize_path(path)
                         _ss.validate_path_available(transaction_id, _norm_path)
                         try:
-                            _orig_meta = fs.sys_stat(_norm_path, context=context)
+                            _orig_meta = await _call_sync_or_async(
+                                fs.sys_stat, _norm_path, context=context
+                            )
                             if _orig_meta:
                                 _original_hash = _orig_meta.get("content_id")
                                 _original_metadata = {
@@ -1662,7 +1672,7 @@ def create_async_files_router(
                         except Exception:
                             _original_hash = None
 
-                unlink_result = fs.sys_unlink(path, context=context)
+                unlink_result = await _call_sync_or_async(fs.sys_unlink, path, context=context)
 
                 if (
                     _ss is not None
@@ -1723,7 +1733,7 @@ def create_async_files_router(
             async def _work() -> ExistsResponse:
                 fs = await _get_fs(context)
                 await revision_fence.enforce(fs, context=context)
-                exists = fs.access(path, context=context)
+                exists = await _call_sync_or_async(fs.access, path, context=context)
                 return ExistsResponse(exists=exists)
 
             exists_response = await _run_for_context(context, {"path": path, "zone": zone}, _work)
@@ -1796,16 +1806,15 @@ def create_async_files_router(
                 # while sys_readdir(details=True) returns detail dicts. We use
                 # sys_readdir as the primary path and only fall back to search
                 # for connector mounts where metastore-first listing is needed.
-                result = await _maybe_await(
-                    fs.sys_readdir(
-                        path,
-                        recursive=False,
-                        details=True,
-                        context=context,
-                        limit=limit,
-                        cursor=cursor_path,
-                        all_zones=all_zones,
-                    )
+                result = await _call_sync_or_async(
+                    fs.sys_readdir,
+                    path,
+                    recursive=False,
+                    details=True,
+                    context=context,
+                    limit=limit,
+                    cursor=cursor_path,
+                    all_zones=all_zones,
                 )
 
                 # Issue #3266: If sys_readdir returned nothing for a connector
@@ -1814,7 +1823,8 @@ def create_async_files_router(
                 if not result_items and path.startswith("/mnt/"):
                     search = fs.service("search")
                     if search is not None:
-                        search_result = search.list(
+                        search_result = await _call_sync_or_async(
+                            search.list,
                             path=path,
                             recursive=False,
                             context=context,
@@ -1930,15 +1940,14 @@ def create_async_files_router(
 
                     # If filtering emptied the page but more data exists, keep fetching
                     while not file_items and has_more and next_cursor_raw:
-                        result = await _maybe_await(
-                            fs.sys_readdir(
-                                path,
-                                recursive=False,
-                                details=True,
-                                context=context,
-                                limit=limit,
-                                cursor=next_cursor_raw,
-                            )
+                        result = await _call_sync_or_async(
+                            fs.sys_readdir,
+                            path,
+                            recursive=False,
+                            details=True,
+                            context=context,
+                            limit=limit,
+                            cursor=next_cursor_raw,
                         )
                         if isinstance(result, list):
                             _page_items = result
@@ -2010,7 +2019,9 @@ def create_async_files_router(
 
             async def _work() -> dict[str, Any]:
                 fs = await _get_fs(context)
-                _made = fs.mkdir(request.path, parents=request.parents, context=context)
+                _made = await _call_sync_or_async(
+                    fs.mkdir, request.path, parents=request.parents, context=context
+                )
                 return {
                     "created": True,
                     "path": request.path,
@@ -2055,7 +2066,7 @@ def create_async_files_router(
             async def _work() -> MetadataResponse:
                 fs = await _get_fs(context)
                 await revision_fence.enforce(fs, context=context)
-                meta = fs.sys_stat(path, context=context)
+                meta = await _call_sync_or_async(fs.sys_stat, path, context=context)
                 if meta is None:
                     raise NexusFileNotFoundError(path=path)
 
@@ -2182,7 +2193,7 @@ def create_async_files_router(
                 files = [
                     (item.path, base64.b64decode(item.content_base64)) for item in request.files
                 ]
-                raw_results = await _maybe_await(fs.write_batch(files, context=context))
+                raw_results = await _call_sync_or_async(fs.write_batch, files, context=context)
                 results = [
                     BatchWriteResult(
                         path=r["path"] if "path" in r else files[i][0],
@@ -2248,8 +2259,8 @@ def create_async_files_router(
             async def _work() -> BatchReadResponse:
                 fs = await _get_fs(context)
                 await revision_fence.enforce(fs, context=context)
-                raw_results = await _maybe_await(
-                    fs.read_batch(request.paths, partial=request.partial, context=context)
+                raw_results = await _call_sync_or_async(
+                    fs.read_batch, request.paths, partial=request.partial, context=context
                 )
                 # Belt-and-suspenders aggregate size guard (Finding #3).
                 # NexusFS.read_batch() already pre-checks via metadata sizes; this
@@ -2327,24 +2338,28 @@ def create_async_files_router(
             async def _work() -> Response | StreamingResponse:
                 fs = await _get_fs(context)
                 await revision_fence.enforce(fs, context=context)
-                meta = fs.sys_stat(path, context=context)
+                meta = await _call_sync_or_async(fs.sys_stat, path, context=context)
                 if meta is None:
                     raise NexusFileNotFoundError(path=path)
 
                 def _chunks(data: bytes, cs: int) -> Iterator[bytes]:
                     return (data[i : i + cs] for i in range(0, len(data), cs))
 
+                # Lazy generators (#4777): the kernel read runs on first
+                # ``next()``, which StreamingResponse drives from a worker
+                # thread — not eagerly on the event loop when the factory
+                # is called inside ``build_range_response``.
                 def _range_generator(start: int, end: int, cs: int) -> Iterator[bytes]:
                     data = fs.read_range(path, start, end, context=context)
                     if isinstance(data, bytes):
-                        return _chunks(data, cs)
-                    return iter(())
+                        yield from _chunks(data, cs)
 
                 def _full_generator() -> Iterator[bytes]:
                     data = fs.sys_read(path, context=context)
                     if isinstance(data, bytes):
-                        return _chunks(data, chunk_size)
-                    return _chunks(str(data).encode("utf-8"), chunk_size)
+                        yield from _chunks(data, chunk_size)
+                    else:
+                        yield from _chunks(str(data).encode("utf-8"), chunk_size)
 
                 return build_range_response(
                     request_headers=request.headers,
@@ -2392,8 +2407,8 @@ def create_async_files_router(
 
             async def _work() -> RenameResponse:
                 fs = await _get_fs(context)
-                rename_result = await _maybe_await(
-                    fs.sys_rename(request.source, request.destination, context=context)
+                rename_result = await _call_sync_or_async(
+                    fs.sys_rename, request.source, request.destination, context=context
                 )
                 return RenameResponse(
                     success=True,
@@ -2439,7 +2454,7 @@ def create_async_files_router(
                 fs = await _get_fs(context)
 
                 # Check source exists and get size
-                meta = await _maybe_await(fs.sys_stat(request.source, context=context))
+                meta = await _call_sync_or_async(fs.sys_stat, request.source, context=context)
                 if meta is None:
                     raise NexusFileNotFoundError(path=request.source)
 
@@ -2447,9 +2462,11 @@ def create_async_files_router(
 
                 if file_size < STREAMING_COPY_THRESHOLD:
                     # Small file: read all then write all
-                    content = await _maybe_await(fs.sys_read(request.source, context=context))
-                    write_result = await _maybe_await(
-                        fs.write(request.destination, buf=content, context=context)
+                    content = await _call_sync_or_async(
+                        fs.sys_read, request.source, context=context
+                    )
+                    write_result = await _call_sync_or_async(
+                        fs.write, request.destination, buf=content, context=context
                     )
                     bytes_copied = len(content)
                 else:
@@ -2502,7 +2519,7 @@ def create_async_files_router(
             async def _work() -> RenameBatchResponse:
                 fs = await _get_fs(context)
                 renames = [(op.source, op.destination) for op in request.operations]
-                raw_results = await _maybe_await(fs.rename_batch(renames, context=context))
+                raw_results = await _call_sync_or_async(fs.rename_batch, renames, context=context)
 
                 results: list[BulkRenameResult] = []
                 for op in request.operations:
@@ -2549,7 +2566,7 @@ def create_async_files_router(
 
                 for op in request.operations:
                     try:
-                        meta = await _maybe_await(fs.sys_stat(op.source, context=context))
+                        meta = await _call_sync_or_async(fs.sys_stat, op.source, context=context)
                         if meta is None:
                             results.append(
                                 BulkCopyResult(
@@ -2564,9 +2581,11 @@ def create_async_files_router(
                         file_size = _metadata_field(meta, "size", 0) or 0
 
                         if file_size < STREAMING_COPY_THRESHOLD:
-                            content = await _maybe_await(fs.sys_read(op.source, context=context))
-                            await _maybe_await(
-                                fs.write(op.destination, buf=content, context=context)
+                            content = await _call_sync_or_async(
+                                fs.sys_read, op.source, context=context
+                            )
+                            await _call_sync_or_async(
+                                fs.write, op.destination, buf=content, context=context
                             )
                             bytes_copied = len(content)
                         else:

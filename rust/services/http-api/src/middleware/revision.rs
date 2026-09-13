@@ -333,7 +333,10 @@ impl IntoResponse for FenceError {
             | FenceError::ParseTimeoutNotInt
             | FenceError::TimeoutOutOfRange { .. } => {
                 let msg = self.to_string();
-                (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "detail": msg })))
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "detail": msg })),
+                )
                     .into_response()
             }
             FenceError::NotApplied {
@@ -380,7 +383,10 @@ impl IntoResponse for FenceError {
                 })),
             )
                 .into_response(),
-            FenceError::ProbeFailed { min_revision, message } => (
+            FenceError::ProbeFailed {
+                min_revision,
+                message,
+            } => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(serde_json::json!({
                     "detail": ProbeFailedDetail {
@@ -510,7 +516,9 @@ mod tests {
         let resp = err.into_response();
         assert_eq!(resp.status(), StatusCode::PRECONDITION_FAILED);
         assert_eq!(
-            resp.headers().get(REVISION_HEADER).and_then(|v| v.to_str().ok()),
+            resp.headers()
+                .get(REVISION_HEADER)
+                .and_then(|v| v.to_str().ok()),
             Some("/ws/a.txt@3")
         );
     }

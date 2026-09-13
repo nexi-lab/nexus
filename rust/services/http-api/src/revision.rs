@@ -173,8 +173,14 @@ mod tests {
 
     #[test]
     fn parse_empty_rejects() {
-        assert_eq!(RevisionToken::parse("", "root"), Err(ParseRevisionError::Empty));
-        assert_eq!(RevisionToken::parse("   ", "root"), Err(ParseRevisionError::Empty));
+        assert_eq!(
+            RevisionToken::parse("", "root"),
+            Err(ParseRevisionError::Empty)
+        );
+        assert_eq!(
+            RevisionToken::parse("   ", "root"),
+            Err(ParseRevisionError::Empty)
+        );
     }
 
     #[test]

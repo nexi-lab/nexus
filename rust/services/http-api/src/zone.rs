@@ -344,7 +344,10 @@ mod tests {
                 assert_eq!(requested, "finance");
                 // The refusal message names the readable set so an
                 // operator debugging a 403 can see what was allowed.
-                assert!(caller.contains("eng") && caller.contains("legal"), "{caller}");
+                assert!(
+                    caller.contains("eng") && caller.contains("legal"),
+                    "{caller}"
+                );
             }
             other => panic!("expected Mismatch, got {other:?}"),
         }

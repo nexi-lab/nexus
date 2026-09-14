@@ -27,10 +27,17 @@
 #
 # The pytest harness (tests/e2e/docker/test_cohost_duet_e2e.py) then drives
 # start_session + the seed message + the PONG assertion.
+#
+# `COHOST_IMAGE` selects which build runs, so a harness that wants a freshly
+# built tag says so ONCE and this file follows. Without it the harness and the
+# compose file each decide, and they disagree silently: a run that rebuilds and
+# tags `nexusd-cluster-cohost:<pin>` still starts `:latest`, so the container
+# under test is whatever was built weeks ago — which reads exactly like an agent
+# that spawns and never answers.
 
 services:
   cohost:
-    image: nexusd-cluster-cohost:latest
+    image: ${COHOST_IMAGE:-nexusd-cluster-cohost:latest}
     container_name: nexus-cohost-duet
     hostname: cohost
     environment:

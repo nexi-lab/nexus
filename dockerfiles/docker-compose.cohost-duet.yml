@@ -64,8 +64,15 @@ services:
         {"auth_modes":{"proxy":{"sudorouter":{"baseUrl":"$${SUDOROUTER_BASE_URL}","apiKey":"$${SUDOROUTER_API_KEY}"}}}}
         EOF
         exec nexusd-cluster --bind-addr 0.0.0.0:2126 --data-dir /app/data --no-tls --insecure-no-auth
+    # The HOST half is the harness's to choose — it may be running beside
+    # another daemon that already holds 2126 — while the container's own
+    # bind stays fixed. Hardcoding both halves here while `run-cohost.sh`
+    # builds its endpoint from NEXUS_A2A_HOST_PORT is how a run ends up
+    # dialling a port nothing published; and on the default it would instead
+    # reach whatever OTHER daemon happens to hold 2126, which is worse,
+    # because that run looks like it passed.
     ports:
-      - "2126:2126"
+      - "${NEXUS_A2A_HOST_PORT:-2126}:2126"
     healthcheck:
       test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/2126' 2>/dev/null || exit 1"]
       interval: 2s

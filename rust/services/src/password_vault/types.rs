@@ -71,6 +71,21 @@ pub(crate) struct VaultEntryPlaintext {
     pub tags: String,
     pub totp_secret: String,
     pub extra_json: String,
+    /// Metadata only — bytes live in `StoredBlob`s. `default` reads
+    /// entries written before attachments existed; `skip_serializing_if`
+    /// keeps attachment-free entries byte-identical to that format.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<AttachmentMeta>,
+}
+
+/// One attachment as recorded inside an entry version.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct AttachmentMeta {
+    pub filename: String,
+    pub content_type: String,
+    pub size_bytes: u64,
+    /// Lowercase hex SHA-256 of the plaintext bytes.
+    pub sha256: String,
 }
 
 /// Errors local to the password_vault service. Converted to
@@ -83,6 +98,8 @@ pub enum PasswordVaultError {
     NotFound(String),
     #[error("vault entry has no TOTP secret: {0}")]
     TotpNotConfigured(String),
+    #[error("attachment {filename:?} not found on entry {title:?}")]
+    AttachmentNotFound { title: String, filename: String },
     #[error("storage error: {0}")]
     Storage(String),
     #[error("crypto error")]
@@ -97,6 +114,9 @@ impl From<PasswordVaultError> for tonic::Status {
             PasswordVaultError::NotFound(t) => {
                 tonic::Status::not_found(format!("entry not found: {t}"))
             }
+            PasswordVaultError::AttachmentNotFound { title, filename } => tonic::Status::not_found(
+                format!("attachment {filename:?} not found on entry {title:?}"),
+            ),
             PasswordVaultError::TotpNotConfigured(t) => {
                 // Maps to HTTP 422 semantics from the existing Python service —
                 // distinct from NotFound so callers can tell "entry exists but

@@ -15,6 +15,7 @@
 //!   /vault/entries/{namespace}/{key}            → SecretIndex
 //!   /vault/versions/passwords/{title}/{v:010}   → StoredEntry
 //!   /vault/versions/{namespace}/{key}/{v:010}   → StoredEntry
+//!   /vault/blobs/passwords/{blob_id}            → StoredBlob (attachment bytes)
 
 pub mod idle;
 
@@ -210,6 +211,17 @@ fn dispatch_vault(plugin: &VaultPlugin, method: &str, payload: &[u8]) -> Result<
             resp.encode(&mut buf).map_err(|_| -3)?;
             Ok(buf)
         }
+        "get_attachment" => {
+            let req = GetAttachmentRequest::decode(payload).map_err(|_| -2)?;
+            let resp = plugin
+                .rt
+                .block_on(plugin.svc.get_attachment(Request::new(req)))
+                .map_err(status_to_plugin_error)?
+                .into_inner();
+            let mut buf = Vec::new();
+            resp.encode(&mut buf).map_err(|_| -3)?;
+            Ok(buf)
+        }
         // ── Generic secrets dispatch ──────────────────────────────────
         "secret_put" => {
             let req = secrets_proto::PutSecretRequest::decode(payload).map_err(|_| -2)?;
@@ -387,6 +399,7 @@ fn dispatch_grpc(plugin: &VaultPlugin, full_path: &str, payload: &[u8]) -> Resul
         ("nexus.password_vault.v1.PasswordVaultService", "RestoreEntry") => "restore_entry",
         ("nexus.password_vault.v1.PasswordVaultService", "ListVersions") => "list_versions",
         ("nexus.password_vault.v1.PasswordVaultService", "GenerateTotp") => "generate_totp",
+        ("nexus.password_vault.v1.PasswordVaultService", "GetAttachment") => "get_attachment",
         _ => return Err(-1), // PluginResult::NotFound
     };
     dispatch_vault(plugin, legacy, payload)
@@ -844,6 +857,7 @@ mod dylib_e2e {
                         tags: None,
                         totp_secret: None,
                         extra_json: None,
+                        attachments: vec![],
                     }),
                     audit: None,
                 }),
@@ -979,6 +993,7 @@ mod dispatch_e2e {
             tags: None,
             totp_secret: totp_secret.map(String::from),
             extra_json: None,
+            attachments: vec![],
         }
     }
 
@@ -1093,6 +1108,41 @@ mod dispatch_e2e {
         let resp_bytes = dispatch_vault(&plugin, "get_entry", &get_latest).unwrap();
         let resp = GetEntryResponse::decode(resp_bytes.as_slice()).unwrap();
         assert_eq!(resp.entry.unwrap().password.as_deref(), Some("final-pw"));
+    }
+
+    // ── Scenario: attachment bytes via both dispatch entry points ────
+
+    #[test]
+    fn get_attachment_dispatches_by_short_name_and_grpc_path() {
+        let (_dir, plugin) = fresh_plugin();
+        let mut e = entry("bank", "pw", None);
+        e.attachments = vec![Attachment {
+            filename: "qr.png".into(),
+            content_type: "image/png".into(),
+            data: b"qr bytes".to_vec(),
+            size_bytes: 0,
+            sha256: String::new(),
+        }];
+        let payload = encode(&PutEntryRequest {
+            entry: Some(e),
+            audit: None,
+        });
+        dispatch_vault(&plugin, "put_entry", &payload).unwrap();
+
+        let req = encode(&GetAttachmentRequest {
+            title: "bank".into(),
+            filename: "qr.png".into(),
+            version: None,
+            audit: None,
+        });
+        for method in [
+            "get_attachment",
+            "/nexus.password_vault.v1.PasswordVaultService/GetAttachment",
+        ] {
+            let resp_bytes = dispatch_vault(&plugin, method, &req).unwrap();
+            let resp = GetAttachmentResponse::decode(resp_bytes.as_slice()).unwrap();
+            assert_eq!(resp.attachment.unwrap().data, b"qr bytes");
+        }
     }
 
     // ── Scenario 3: TOTP survives password rotation ────────────────

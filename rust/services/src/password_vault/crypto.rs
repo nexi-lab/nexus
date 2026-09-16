@@ -38,6 +38,45 @@ impl MasterKey {
     fn as_aes_key(&self) -> &Key<Aes256Gcm> {
         Key::<Aes256Gcm>::from_slice(&self.0)
     }
+
+    /// Storage id for the attachment blob whose plaintext digest is
+    /// `sha256_hex`: hex HMAC-SHA256 under a subkey derived from the
+    /// master key. Deterministic, so identical bytes dedupe onto one
+    /// blob — but unlike naming blobs by the digest itself, a copy of
+    /// the synced data dir can't be used to confirm that a known file
+    /// is in the vault.
+    pub fn blob_id(&self, sha256_hex: &str) -> String {
+        let subkey = hmac_sha256(&self.0, BLOB_ID_KEY_LABEL);
+        to_hex(&hmac_sha256(&subkey, sha256_hex.as_bytes()))
+    }
+}
+
+/// Domain-separation label for the blob-id subkey, so the AES key bytes
+/// are never used directly as an HMAC key.
+const BLOB_ID_KEY_LABEL: &[u8] = b"nexus.password_vault.attachment_blob_id.v1";
+
+fn hmac_sha256(key: &[u8], msg: &[u8]) -> [u8; 32] {
+    use hmac::{Hmac, Mac};
+    let mut mac =
+        <Hmac<sha2::Sha256> as Mac>::new_from_slice(key).expect("HMAC accepts any key length");
+    mac.update(msg);
+    mac.finalize().into_bytes().into()
+}
+
+fn to_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut s, b| {
+            let _ = write!(s, "{b:02x}");
+            s
+        })
+}
+
+/// Lowercase hex SHA-256 of `data`.
+pub fn sha256_hex(data: &[u8]) -> String {
+    use sha2::Digest;
+    to_hex(&sha2::Sha256::digest(data))
 }
 
 impl std::fmt::Debug for MasterKey {
@@ -162,6 +201,25 @@ mod tests {
         let key = MasterKey::generate();
         let (nonce, ct) = seal(b"", &key).unwrap();
         assert_eq!(open(&nonce, &ct, &key).unwrap(), b"");
+    }
+
+    #[test]
+    fn sha256_hex_matches_known_vector() {
+        assert_eq!(
+            sha256_hex(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[test]
+    fn blob_id_is_deterministic_keyed_and_hides_digest() {
+        let key = MasterKey::generate();
+        let digest = sha256_hex(b"qr code bytes");
+        let id = key.blob_id(&digest);
+        assert_eq!(id, key.blob_id(&digest));
+        assert_eq!(id.len(), 64);
+        assert_ne!(id, digest);
+        assert_ne!(id, MasterKey::generate().blob_id(&digest));
     }
 
     #[test]

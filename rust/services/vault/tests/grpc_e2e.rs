@@ -22,6 +22,9 @@
 //!   1. `PutSecret` → `GetSecret` round-trip                  (plaintext path)
 //!   2. `GetSecretSealed` → `PutSecretSealed` (fresh key)
 //!      → `GetSecret`                                          (sealed path)
+//!   3. `PutEntry` with attachments past tonic's 4 MiB default
+//!      message cap → `GetAttachment`                          (attachments;
+//!      server built via `into_server()` like `nexusd-vault`)
 //!
 //! Non-localhost peer rejection is covered by the unit tests in
 //! `services::generic_secrets::tests::sealed_handlers_reject_non_loopback_peer`
@@ -36,6 +39,11 @@ use services::generic_secrets::proto::generic_secrets_service_server::GenericSec
 use services::generic_secrets::proto::*;
 use services::generic_secrets::GenericSecretsServiceImpl;
 use services::password_vault::crypto;
+use services::password_vault::proto::password_vault_service_client::PasswordVaultServiceClient;
+use services::password_vault::proto::{
+    Attachment, GetAttachmentRequest, PutEntryRequest, VaultEntry,
+};
+use services::password_vault::{PasswordVaultServiceImpl, MAX_ATTACHMENT_BYTES};
 use tempfile::TempDir;
 use tokio::net::TcpListener;
 use tokio_stream::wrappers::TcpListenerStream;
@@ -96,6 +104,7 @@ impl Harness {
 
         let svc =
             GenericSecretsServiceImpl::new_on_existing_mount(kernel, "/vault", master_key).unwrap();
+        let vault_svc = PasswordVaultServiceImpl::new_with_secrets(svc.clone());
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -104,6 +113,7 @@ impl Harness {
         let server = tokio::spawn(async move {
             tonic::transport::Server::builder()
                 .add_service(GenericSecretsServiceServer::new(svc))
+                .add_service(vault_svc.into_server())
                 .serve_with_incoming_shutdown(TcpListenerStream::new(listener), async move {
                     let _ = shutdown_rx.await;
                 })
@@ -209,6 +219,65 @@ async fn sealed_round_trip_through_real_grpc_transport() {
         .unwrap()
         .into_inner();
     assert_eq!(restored.value, "ed25519-grpc-e2e-bytes");
+
+    h.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn attachments_past_default_message_cap_round_trip_through_real_grpc_transport() {
+    let h = Harness::start().await;
+    let mut client = PasswordVaultServiceClient::connect(h.url()).await.unwrap();
+
+    // Three distinct max-size files: a ~6 MiB PutEntry, which tonic's
+    // default 4 MiB decode limit would reject before validation.
+    let files: Vec<Vec<u8>> = (0u8..3).map(|i| vec![i; MAX_ATTACHMENT_BYTES]).collect();
+    let attachments = files
+        .iter()
+        .enumerate()
+        .map(|(i, data)| Attachment {
+            filename: format!("scan-{i}.bin"),
+            content_type: "application/octet-stream".into(),
+            data: data.clone(),
+            size_bytes: 0,
+            sha256: String::new(),
+        })
+        .collect();
+    let put = client
+        .put_entry(PutEntryRequest {
+            entry: Some(VaultEntry {
+                title: "bank".into(),
+                username: None,
+                password: Some("pw".into()),
+                url: None,
+                notes: None,
+                tags: None,
+                totp_secret: None,
+                extra_json: None,
+                attachments,
+            }),
+            audit: None,
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(put.version, 1);
+
+    for (i, data) in files.iter().enumerate() {
+        let got = client
+            .get_attachment(GetAttachmentRequest {
+                title: "bank".into(),
+                filename: format!("scan-{i}.bin"),
+                version: None,
+                audit: None,
+            })
+            .await
+            .unwrap()
+            .into_inner()
+            .attachment
+            .unwrap();
+        assert_eq!(&got.data, data);
+        assert_eq!(got.size_bytes, MAX_ATTACHMENT_BYTES as u64);
+    }
 
     h.shutdown().await;
 }

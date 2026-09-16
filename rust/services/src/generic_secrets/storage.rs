@@ -3,6 +3,7 @@
 //! Two-level namespace layout under the vault mount:
 //!   - `{root}/entries/{namespace}/{key}` → bincode(SecretIndex)
 //!   - `{root}/versions/{namespace}/{key}/{version:010}` → bincode(StoredEntry)
+//!   - `{root}/blobs/{namespace}/{blob_id}` → bincode(StoredBlob)
 //!
 //! Shared by both `GenericSecretsService` and `PasswordVaultService`
 //! (the latter uses namespace="passwords"). Created by the vault
@@ -13,7 +14,7 @@ use std::sync::Arc;
 use kernel::kernel::convenience::KernelConvenience;
 use kernel::kernel::{Kernel, KernelError, OperationContext};
 
-use crate::password_vault::types::{PasswordVaultError, SecretIndex, StoredEntry};
+use crate::password_vault::types::{PasswordVaultError, SecretIndex, StoredBlob, StoredEntry};
 
 const DT_DIR: i32 = 1;
 
@@ -153,6 +154,63 @@ impl SecretStorage {
             self.root,
             escape_path_component(namespace)
         )
+    }
+
+    fn ns_blob_dir(&self, namespace: &str) -> String {
+        format!("{}/blobs/{}", self.root, escape_path_component(namespace))
+    }
+
+    fn blob_path(&self, namespace: &str, blob_id: &str) -> String {
+        format!(
+            "{}/{}",
+            self.ns_blob_dir(namespace),
+            escape_path_component(blob_id)
+        )
+    }
+
+    /// Write an attachment blob (create-or-overwrite).
+    pub(crate) fn put_blob(
+        &self,
+        namespace: &str,
+        blob_id: &str,
+        blob: &StoredBlob,
+    ) -> Result<(), PasswordVaultError> {
+        self.ensure_dir(&format!("{}/blobs", self.root))?;
+        self.ensure_dir(&self.ns_blob_dir(namespace))?;
+        let encoded = bincode::serialize(blob)
+            .map_err(|e| PasswordVaultError::Storage(format!("encode blob: {e}")))?;
+        self.kernel
+            .write(&self.blob_path(namespace, blob_id), &self.ctx, &encoded, 0)
+            .map_err(|e| {
+                PasswordVaultError::Storage(format!("put_blob {namespace}/{blob_id}: {e:?}"))
+            })?;
+        Ok(())
+    }
+
+    /// Read an attachment blob. `None` = no blob with that id.
+    pub(crate) fn get_blob(
+        &self,
+        namespace: &str,
+        blob_id: &str,
+    ) -> Result<Option<StoredBlob>, PasswordVaultError> {
+        let path = self.blob_path(namespace, blob_id);
+        match KernelConvenience::read(&*self.kernel, &path, &self.ctx, 0, 0) {
+            Ok(result) => {
+                let data = result.data.ok_or_else(|| {
+                    PasswordVaultError::Storage(format!(
+                        "get_blob {namespace}/{blob_id}: empty read"
+                    ))
+                })?;
+                let blob: StoredBlob = bincode::deserialize(&data).map_err(|e| {
+                    PasswordVaultError::Storage(format!("decode blob {namespace}/{blob_id}: {e}"))
+                })?;
+                Ok(Some(blob))
+            }
+            Err(KernelError::FileNotFound(_)) => Ok(None),
+            Err(e) => Err(PasswordVaultError::Storage(format!(
+                "get_blob {namespace}/{blob_id}: {e:?}"
+            ))),
+        }
     }
 
     pub(crate) fn get_index(

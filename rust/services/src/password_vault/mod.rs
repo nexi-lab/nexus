@@ -14,6 +14,12 @@
 //! the totp_secret never leaves the server — `GetEntry` always redacts
 //! it, and clients call `GenerateTotp` to get a current code.
 //!
+//! Attachments: an entry version records attachment metadata only; the
+//! bytes are sealed into content-addressed blobs
+//! (`GenericSecretsServiceImpl::do_put_blob`), so ListEntries never
+//! decrypts files and unchanged attachments cost nothing on re-put.
+//! `GetAttachment` is the only RPC that returns bytes.
+//!
 //! Loaded as a dylib plugin by `nexusd-cluster` via `--plugin-dir`.
 
 pub mod proto {
@@ -29,26 +35,45 @@ pub mod types;
 // Re-export the public error type for binaries that host the service.
 pub use types::PasswordVaultError;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use parking_lot::Mutex;
 use tonic::{Request, Response, Status};
 
-use proto::password_vault_service_server::PasswordVaultService;
+use proto::password_vault_service_server::{PasswordVaultService, PasswordVaultServiceServer};
 use proto::{
-    DeleteEntryRequest, DeleteEntryResponse, GenerateTotpRequest, GenerateTotpResponse,
-    GetEntryRequest, GetEntryResponse, ListEntriesRequest, ListEntriesResponse,
-    ListVersionsRequest, ListVersionsResponse, PutEntryRequest, PutEntryResponse,
-    RestoreEntryRequest, RestoreEntryResponse, VaultEntry as ProtoVaultEntry,
+    Attachment as ProtoAttachment, DeleteEntryRequest, DeleteEntryResponse, GenerateTotpRequest,
+    GenerateTotpResponse, GetAttachmentRequest, GetAttachmentResponse, GetEntryRequest,
+    GetEntryResponse, ListEntriesRequest, ListEntriesResponse, ListVersionsRequest,
+    ListVersionsResponse, PutEntryRequest, PutEntryResponse, RestoreEntryRequest,
+    RestoreEntryResponse, VaultEntry as ProtoVaultEntry,
 };
 
-use self::types::VaultEntryPlaintext;
+use self::types::{AttachmentMeta, VaultEntryPlaintext};
 use crate::generic_secrets::GenericSecretsServiceImpl;
 
 /// The namespace under which all password-vault entries are stored.
 const PASSWORDS_NAMESPACE: &str = "passwords";
+
+/// Largest single attachment `PutEntry` accepts.
+pub const MAX_ATTACHMENT_BYTES: usize = 2 * 1024 * 1024;
+
+/// Largest combined size of the attachments one entry version may hold.
+pub const MAX_ENTRY_ATTACHMENT_BYTES: usize = 8 * 1024 * 1024;
+
+/// Most attachments one entry version may hold.
+pub const MAX_ATTACHMENTS_PER_ENTRY: usize = 32;
+
+/// Longest attachment filename or content_type, in bytes.
+const MAX_ATTACHMENT_LABEL_BYTES: usize = 255;
+
+/// Inbound gRPC message cap for hosts of this service: a `PutEntry`
+/// uploading `MAX_ENTRY_ATTACHMENT_BYTES`, plus 1 MiB for the text fields
+/// and framing. tonic's 4 MiB default would reject a legal upload before
+/// validation runs. Applied by [`PasswordVaultServiceImpl::into_server`].
+pub const MAX_REQUEST_BYTES: usize = MAX_ENTRY_ATTACHMENT_BYTES + 1024 * 1024;
 
 /// RFC 6238 default: 30-second window.
 const TOTP_PERIOD_SECONDS: u64 = 30;
@@ -179,12 +204,140 @@ impl PasswordVaultServiceImpl {
             }),
         }
     }
+
+    /// The tonic server for this service, with the inbound message cap
+    /// attachment uploads need ([`MAX_REQUEST_BYTES`]). Hosts use this
+    /// rather than `PasswordVaultServiceServer::new` so the limit has a
+    /// single source.
+    pub fn into_server(self) -> PasswordVaultServiceServer<Self> {
+        PasswordVaultServiceServer::new(self).max_decoding_message_size(MAX_REQUEST_BYTES)
+    }
+
+    /// Validate a `PutEntry`'s attachments, store any uploaded bytes, and
+    /// return the metadata to record in the new version. Nothing is
+    /// written unless the whole list is valid.
+    fn store_attachments(
+        &self,
+        attachments: Vec<ProtoAttachment>,
+    ) -> Result<Vec<AttachmentMeta>, Status> {
+        if attachments.len() > MAX_ATTACHMENTS_PER_ENTRY {
+            return Err(Status::invalid_argument(format!(
+                "at most {MAX_ATTACHMENTS_PER_ENTRY} attachments per entry, got {}",
+                attachments.len()
+            )));
+        }
+        let mut filenames = HashSet::new();
+        let mut total_bytes = 0usize;
+        let mut metas = Vec::with_capacity(attachments.len());
+        let mut uploads = Vec::new();
+
+        for a in attachments {
+            validate_attachment_filename(&a.filename)?;
+            if !filenames.insert(a.filename.clone()) {
+                return Err(Status::invalid_argument(format!(
+                    "duplicate attachment filename {:?}",
+                    a.filename
+                )));
+            }
+            if a.content_type.len() > MAX_ATTACHMENT_LABEL_BYTES {
+                return Err(Status::invalid_argument(format!(
+                    "attachment {:?}: content_type longer than {MAX_ATTACHMENT_LABEL_BYTES} bytes",
+                    a.filename
+                )));
+            }
+            let claimed_sha256 = a.sha256.to_ascii_lowercase();
+
+            let (sha256, size) = if a.data.is_empty() {
+                // Keep an attachment the vault already stores.
+                if claimed_sha256.is_empty() {
+                    return Err(Status::invalid_argument(format!(
+                        "attachment {:?}: data is empty and sha256 is unset — upload \
+                         non-empty data, or set sha256 to keep an attachment the vault \
+                         already stores",
+                        a.filename
+                    )));
+                }
+                let stored = self
+                    .inner
+                    .secrets
+                    .do_get_blob(PASSWORDS_NAMESPACE, &claimed_sha256)?
+                    .ok_or_else(|| {
+                        Status::invalid_argument(format!(
+                            "attachment {:?}: the vault stores no attachment with sha256 \
+                             {claimed_sha256}; upload its data",
+                            a.filename
+                        ))
+                    })?;
+                (claimed_sha256, stored.len())
+            } else {
+                if a.data.len() > MAX_ATTACHMENT_BYTES {
+                    return Err(Status::invalid_argument(format!(
+                        "attachment {:?}: {} bytes exceeds the {MAX_ATTACHMENT_BYTES}-byte limit",
+                        a.filename,
+                        a.data.len()
+                    )));
+                }
+                let digest = crypto::sha256_hex(&a.data);
+                if !claimed_sha256.is_empty() && claimed_sha256 != digest {
+                    return Err(Status::invalid_argument(format!(
+                        "attachment {:?}: sha256 {claimed_sha256} does not match data ({digest})",
+                        a.filename
+                    )));
+                }
+                let size = a.data.len();
+                uploads.push((digest.clone(), a.data));
+                (digest, size)
+            };
+
+            total_bytes += size;
+            if total_bytes > MAX_ENTRY_ATTACHMENT_BYTES {
+                return Err(Status::invalid_argument(format!(
+                    "attachments exceed the {MAX_ENTRY_ATTACHMENT_BYTES}-byte per-entry limit"
+                )));
+            }
+            metas.push(AttachmentMeta {
+                filename: a.filename,
+                content_type: a.content_type,
+                size_bytes: size as u64,
+                sha256,
+            });
+        }
+
+        for (sha256, data) in uploads {
+            self.inner
+                .secrets
+                .do_put_blob(PASSWORDS_NAMESPACE, &sha256, &data)?;
+        }
+        Ok(metas)
+    }
+}
+
+/// Filenames are lookup keys and become file names when clients save
+/// attachments, so reject anything that could act as a path.
+fn validate_attachment_filename(name: &str) -> Result<(), Status> {
+    let valid = !name.is_empty()
+        && name.len() <= MAX_ATTACHMENT_LABEL_BYTES
+        && name != "."
+        && name != ".."
+        && !name
+            .chars()
+            .any(|c| c == '/' || c == '\\' || c.is_control());
+    if valid {
+        Ok(())
+    } else {
+        Err(Status::invalid_argument(format!(
+            "attachment filename {name:?} must be 1-{MAX_ATTACHMENT_LABEL_BYTES} bytes with no \
+             path separators or control characters"
+        )))
+    }
 }
 
 // ---------------------------------------------------------------------
 // Conversion helpers — proto <-> internal types.
 // ---------------------------------------------------------------------
 
+/// `attachments` is left empty: resolving them needs storage, so
+/// `put_entry` fills it from `store_attachments`.
 fn proto_to_plaintext(p: ProtoVaultEntry) -> VaultEntryPlaintext {
     VaultEntryPlaintext {
         title: p.title,
@@ -195,10 +348,12 @@ fn proto_to_plaintext(p: ProtoVaultEntry) -> VaultEntryPlaintext {
         tags: p.tags.unwrap_or_default(),
         totp_secret: p.totp_secret.unwrap_or_default(),
         extra_json: p.extra_json.unwrap_or_default(),
+        attachments: Vec::new(),
     }
 }
 
-/// `plaintext_to_proto`: always redacts `totp_secret` (security invariant).
+/// `plaintext_to_proto`: always redacts `totp_secret` (security invariant)
+/// and carries attachment metadata without bytes.
 fn plaintext_to_proto(p: VaultEntryPlaintext) -> ProtoVaultEntry {
     ProtoVaultEntry {
         title: p.title,
@@ -209,6 +364,17 @@ fn plaintext_to_proto(p: VaultEntryPlaintext) -> ProtoVaultEntry {
         tags: Some(p.tags),
         totp_secret: None, // ALWAYS redacted — security invariant
         extra_json: Some(p.extra_json),
+        attachments: p
+            .attachments
+            .into_iter()
+            .map(|a| ProtoAttachment {
+                filename: a.filename,
+                content_type: a.content_type,
+                data: Vec::new(),
+                size_bytes: a.size_bytes,
+                sha256: a.sha256,
+            })
+            .collect(),
     }
 }
 
@@ -240,7 +406,7 @@ impl PasswordVaultService for PasswordVaultServiceImpl {
         req: Request<PutEntryRequest>,
     ) -> Result<Response<PutEntryResponse>, Status> {
         let req = req.into_inner();
-        let entry = req
+        let mut entry = req
             .entry
             .ok_or_else(|| Status::invalid_argument("entry field is required"))?;
         if entry.title.is_empty() {
@@ -250,7 +416,11 @@ impl PasswordVaultService for PasswordVaultServiceImpl {
         }
         let title = entry.title.clone();
 
-        let plain = proto_to_plaintext(entry);
+        let attachments = self.store_attachments(std::mem::take(&mut entry.attachments))?;
+        let plain = VaultEntryPlaintext {
+            attachments,
+            ..proto_to_plaintext(entry)
+        };
         let json_str = serialize_plaintext(&plain)?;
 
         let metadata = self
@@ -452,6 +622,50 @@ impl PasswordVaultService for PasswordVaultServiceImpl {
             period_seconds: TOTP_PERIOD_SECONDS as i32,
         }))
     }
+
+    async fn get_attachment(
+        &self,
+        req: Request<GetAttachmentRequest>,
+    ) -> Result<Response<GetAttachmentResponse>, Status> {
+        let req = req.into_inner();
+        if req.title.is_empty() || req.filename.is_empty() {
+            return Err(Status::invalid_argument("title and filename are required"));
+        }
+
+        let (json_str, version) =
+            self.inner
+                .secrets
+                .do_get(PASSWORDS_NAMESPACE, &req.title, req.version)?;
+        let meta = deserialize_plaintext(&json_str)?
+            .attachments
+            .into_iter()
+            .find(|a| a.filename == req.filename)
+            .ok_or_else(|| PasswordVaultError::AttachmentNotFound {
+                title: req.title.clone(),
+                filename: req.filename.clone(),
+            })?;
+        let data = self
+            .inner
+            .secrets
+            .do_get_blob(PASSWORDS_NAMESPACE, &meta.sha256)?
+            .ok_or_else(|| {
+                PasswordVaultError::Storage(format!(
+                    "attachment {:?} on {:?} v{version}: blob missing",
+                    req.filename, req.title
+                ))
+            })?;
+
+        Ok(Response::new(GetAttachmentResponse {
+            attachment: Some(ProtoAttachment {
+                filename: meta.filename,
+                content_type: meta.content_type,
+                data,
+                size_bytes: meta.size_bytes,
+                sha256: meta.sha256,
+            }),
+            version,
+        }))
+    }
 }
 
 #[cfg(test)]
@@ -476,6 +690,7 @@ mod tests {
             tags: None,
             totp_secret: None,
             extra_json: None,
+            attachments: vec![],
         }
     }
 
@@ -1054,6 +1269,288 @@ mod tests {
         assert_eq!(a.code, b.code);
     }
 
+    // -----------------------------------------------------------------
+    // Attachments
+    // -----------------------------------------------------------------
+
+    const QR_PNG: &[u8] = b"\x89PNG\r\n\x1a\n fake qr payload";
+
+    fn attachment(filename: &str, data: &[u8]) -> ProtoAttachment {
+        ProtoAttachment {
+            filename: filename.into(),
+            content_type: "image/png".into(),
+            data: data.to_vec(),
+            size_bytes: 0,
+            sha256: String::new(),
+        }
+    }
+
+    fn with_attachments(title: &str, attachments: Vec<ProtoAttachment>) -> ProtoVaultEntry {
+        ProtoVaultEntry {
+            attachments,
+            ..entry(title, "pw")
+        }
+    }
+
+    async fn put(
+        svc: &PasswordVaultServiceImpl,
+        e: ProtoVaultEntry,
+    ) -> Result<PutEntryResponse, Status> {
+        svc.put_entry(Request::new(PutEntryRequest {
+            entry: Some(e),
+            audit: None,
+        }))
+        .await
+        .map(Response::into_inner)
+    }
+
+    async fn get(svc: &PasswordVaultServiceImpl, title: &str) -> ProtoVaultEntry {
+        svc.get_entry(Request::new(GetEntryRequest {
+            title: title.into(),
+            version: None,
+            audit: None,
+        }))
+        .await
+        .unwrap()
+        .into_inner()
+        .entry
+        .unwrap()
+    }
+
+    async fn fetch_attachment(
+        svc: &PasswordVaultServiceImpl,
+        title: &str,
+        filename: &str,
+        version: Option<i32>,
+    ) -> Result<GetAttachmentResponse, Status> {
+        svc.get_attachment(Request::new(GetAttachmentRequest {
+            title: title.into(),
+            filename: filename.into(),
+            version,
+            audit: None,
+        }))
+        .await
+        .map(Response::into_inner)
+    }
+
+    #[tokio::test]
+    async fn attachment_bytes_only_come_from_get_attachment() {
+        let (_d, svc) = fresh_service();
+        put(
+            &svc,
+            with_attachments("bank", vec![attachment("qr.png", QR_PNG)]),
+        )
+        .await
+        .unwrap();
+
+        let got = get(&svc, "bank").await;
+        assert_eq!(got.attachments.len(), 1);
+        let meta = &got.attachments[0];
+        assert!(meta.data.is_empty());
+        assert_eq!(meta.filename, "qr.png");
+        assert_eq!(meta.content_type, "image/png");
+        assert_eq!(meta.size_bytes, QR_PNG.len() as u64);
+        assert_eq!(meta.sha256, crypto::sha256_hex(QR_PNG));
+
+        let listed = svc
+            .list_entries(Request::new(ListEntriesRequest {
+                query: String::new(),
+                limit: 0,
+                audit: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(listed.entries[0].attachments[0].data.is_empty());
+        assert_eq!(listed.entries[0].attachments[0].sha256, meta.sha256);
+
+        let resp = fetch_attachment(&svc, "bank", "qr.png", None)
+            .await
+            .unwrap();
+        assert_eq!(resp.version, 1);
+        let full = resp.attachment.unwrap();
+        assert_eq!(full.data, QR_PNG);
+        assert_eq!(full.sha256, meta.sha256);
+        assert_eq!(full.size_bytes, meta.size_bytes);
+    }
+
+    #[tokio::test]
+    async fn read_modify_write_keeps_attachment_and_history_resolves_it() {
+        let (_d, svc) = fresh_service();
+        put(
+            &svc,
+            with_attachments("bank", vec![attachment("qr.png", QR_PNG)]),
+        )
+        .await
+        .unwrap();
+
+        // Pass back the metadata GetEntry returned (no bytes) with a new password.
+        let mut e = get(&svc, "bank").await;
+        e.password = Some("rotated".into());
+        assert_eq!(put(&svc, e).await.unwrap().version, 2);
+        let v2 = fetch_attachment(&svc, "bank", "qr.png", None)
+            .await
+            .unwrap();
+        assert_eq!(v2.version, 2);
+        assert_eq!(v2.attachment.unwrap().data, QR_PNG);
+
+        // Detach in v3: latest no longer has it, v1 still does.
+        let mut e = get(&svc, "bank").await;
+        e.attachments.clear();
+        assert_eq!(put(&svc, e).await.unwrap().version, 3);
+        let err = fetch_attachment(&svc, "bank", "qr.png", None)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::NotFound);
+        let v1 = fetch_attachment(&svc, "bank", "qr.png", Some(1))
+            .await
+            .unwrap();
+        assert_eq!(v1.attachment.unwrap().data, QR_PNG);
+    }
+
+    #[tokio::test]
+    async fn reference_must_name_a_stored_attachment() {
+        let (_d, svc) = fresh_service();
+        let unstored = ProtoAttachment {
+            sha256: crypto::sha256_hex(b"never uploaded"),
+            ..attachment("qr.png", b"")
+        };
+        let err = put(&svc, with_attachments("bank", vec![unstored]))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+
+        let err = put(
+            &svc,
+            with_attachments("bank", vec![attachment("qr.png", b"")]),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+
+        // Rejected puts create no version.
+        let err = svc
+            .get_entry(Request::new(GetEntryRequest {
+                title: "bank".into(),
+                version: None,
+                audit: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::NotFound);
+    }
+
+    #[tokio::test]
+    async fn supplied_sha256_must_match_data() {
+        let (_d, svc) = fresh_service();
+        let wrong = ProtoAttachment {
+            sha256: crypto::sha256_hex(b"other bytes"),
+            ..attachment("qr.png", QR_PNG)
+        };
+        let err = put(&svc, with_attachments("bank", vec![wrong]))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+
+        // Digest comparison is case-insensitive; stored form is lowercase.
+        let upper = ProtoAttachment {
+            sha256: crypto::sha256_hex(QR_PNG).to_uppercase(),
+            ..attachment("qr.png", QR_PNG)
+        };
+        put(&svc, with_attachments("bank", vec![upper]))
+            .await
+            .unwrap();
+        assert_eq!(
+            get(&svc, "bank").await.attachments[0].sha256,
+            crypto::sha256_hex(QR_PNG)
+        );
+    }
+
+    #[tokio::test]
+    async fn attachment_size_and_count_limits_are_enforced() {
+        let (_d, svc) = fresh_service();
+
+        let at_limit = vec![7u8; MAX_ATTACHMENT_BYTES];
+        put(
+            &svc,
+            with_attachments("ok", vec![attachment("max.bin", &at_limit)]),
+        )
+        .await
+        .unwrap();
+
+        let over = vec![7u8; MAX_ATTACHMENT_BYTES + 1];
+        let err = put(
+            &svc,
+            with_attachments("big", vec![attachment("big.bin", &over)]),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+
+        // Five max-size files: each legal, together past the per-entry total.
+        let files: Vec<ProtoAttachment> = (0u8..5)
+            .map(|i| attachment(&format!("f{i}.bin"), &vec![i; MAX_ATTACHMENT_BYTES]))
+            .collect();
+        let err = put(&svc, with_attachments("total", files))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+
+        let many: Vec<ProtoAttachment> = (0..=MAX_ATTACHMENTS_PER_ENTRY)
+            .map(|i| attachment(&format!("f{i}.bin"), &[i as u8]))
+            .collect();
+        let err = put(&svc, with_attachments("many", many)).await.unwrap_err();
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[tokio::test]
+    async fn invalid_or_duplicate_filenames_are_rejected() {
+        let (_d, svc) = fresh_service();
+        let too_long = "x".repeat(MAX_ATTACHMENT_LABEL_BYTES + 1);
+        for name in ["", ".", "..", "a/b", "a\\b", "tab\tname", too_long.as_str()] {
+            let err = put(
+                &svc,
+                with_attachments("bank", vec![attachment(name, QR_PNG)]),
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(
+                err.code(),
+                tonic::Code::InvalidArgument,
+                "filename {name:?}"
+            );
+        }
+        let dup = vec![attachment("qr.png", QR_PNG), attachment("qr.png", b"other")];
+        let err = put(&svc, with_attachments("bank", dup)).await.unwrap_err();
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[tokio::test]
+    async fn get_attachment_unknown_filename_is_not_found() {
+        let (_d, svc) = fresh_service();
+        put(
+            &svc,
+            with_attachments("bank", vec![attachment("qr.png", QR_PNG)]),
+        )
+        .await
+        .unwrap();
+        let err = fetch_attachment(&svc, "bank", "missing.png", None)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::NotFound);
+    }
+
+    #[test]
+    fn attachment_free_entries_keep_the_pre_attachment_json_format() {
+        // Entries written before attachments existed still decode...
+        let old = r#"{"title":"t","username":"","password":"p","url":"","notes":"","tags":"","totp_secret":"","extra_json":""}"#;
+        let plain = deserialize_plaintext(old).unwrap();
+        assert!(plain.attachments.is_empty());
+        // ...and attachment-free entries re-encode byte-identically, so older
+        // binaries sharing a synced data dir keep reading them.
+        assert_eq!(serialize_plaintext(&plain).unwrap(), old);
+    }
+
     #[tokio::test]
     async fn delete_is_idempotent() {
         let (_d, svc) = fresh_service();
@@ -1132,6 +1629,7 @@ mod e2e_integration {
             tags: None,
             totp_secret: None,
             extra_json: None,
+            attachments: vec![],
         }
     }
 
@@ -1339,7 +1837,90 @@ mod e2e_integration {
         assert!(got.entry.unwrap().totp_secret.is_none());
     }
 
-    // ── Scenario 4: Multi-credential search and cleanup ──────────
+    // ── Scenario 4: Attachment blobs on disk ─────────────────────
+
+    fn attached(title: &str, filename: &str, data: &[u8]) -> PutEntryRequest {
+        PutEntryRequest {
+            entry: Some(ProtoVaultEntry {
+                attachments: vec![ProtoAttachment {
+                    filename: filename.into(),
+                    content_type: "image/png".into(),
+                    data: data.to_vec(),
+                    size_bytes: 0,
+                    sha256: String::new(),
+                }],
+                ..entry(title, "pw")
+            }),
+            audit: None,
+        }
+    }
+
+    fn blob_paths(kernel: &Kernel) -> Vec<String> {
+        kernel
+            .sys_readdir(
+                "/vault/blobs/passwords",
+                "root",
+                true,
+                kernel::kernel::syscall::ReaddirOpts::default(),
+            )
+            .into_iter()
+            .map(|(path, _)| path)
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn identical_attachments_share_one_blob_not_named_by_digest() {
+        let (kernel, svc) = kernel_service();
+        let qr = b"same qr bytes";
+        for title in ["bank-a", "bank-b", "bank-a"] {
+            svc.put_entry(Request::new(attached(title, "qr.png", qr)))
+                .await
+                .unwrap();
+        }
+        let blobs = blob_paths(&kernel);
+        assert_eq!(blobs.len(), 1);
+        assert!(!blobs[0].contains(&crypto::sha256_hex(qr)));
+    }
+
+    #[tokio::test]
+    async fn swapped_blob_file_fails_the_integrity_check() {
+        let (kernel, svc) = kernel_service();
+        let ctx = OperationContext::new("test", "root", true, None, true);
+        svc.put_entry(Request::new(attached("a", "a.png", b"bytes of a")))
+            .await
+            .unwrap();
+        svc.put_entry(Request::new(attached("b", "b.png", b"bytes of b")))
+            .await
+            .unwrap();
+
+        // Overwrite one blob file with the other's (validly sealed) contents.
+        let blobs = blob_paths(&kernel);
+        assert_eq!(blobs.len(), 2);
+        let donor = KernelConvenience::read(&*kernel, &blobs[0], &ctx, 0, 0)
+            .unwrap()
+            .data
+            .unwrap();
+        KernelConvenience::write(&*kernel, &blobs[1], &ctx, &donor, 0).unwrap();
+
+        let mut outcomes = Vec::new();
+        for (title, filename) in [("a", "a.png"), ("b", "b.png")] {
+            outcomes.push(
+                svc.get_attachment(Request::new(GetAttachmentRequest {
+                    title: title.into(),
+                    filename: filename.into(),
+                    version: None,
+                    audit: None,
+                }))
+                .await
+                .map(|_| ())
+                .map_err(|s| s.code()),
+            );
+        }
+        outcomes.sort_by_key(|o| o.is_err());
+        assert_eq!(outcomes, vec![Ok(()), Err(tonic::Code::Internal)]);
+    }
+
+    // ── Scenario 5: Multi-credential search and cleanup ──────────
 
     #[tokio::test]
     async fn multi_credential_search_and_cleanup() {

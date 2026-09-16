@@ -5,7 +5,7 @@
 //!
 //! Data layout (under `<data_dir>/vault/`):
 //!   vault-meta.redb  — private kernel metastore
-//!   content/         — PathLocalBackend (encrypted entry blobs)
+//!   content/         — PathLocalBackend (encrypted entries + attachment blobs)
 //!   master.key       — 32-byte AES-256 master key (auto-generated)
 //!
 //! Designed to be spawned on-demand by `password-agent` for ~1s RPCs,
@@ -22,7 +22,6 @@ use tonic::transport::Server;
 use nexus_vault::idle::{wait_for_shutdown, IdleTracker, ShutdownReason};
 use services::generic_secrets::proto::generic_secrets_service_server::GenericSecretsServiceServer;
 use services::generic_secrets::GenericSecretsServiceImpl;
-use services::password_vault::proto::password_vault_service_server::PasswordVaultServiceServer;
 use services::password_vault::PasswordVaultServiceImpl;
 
 #[derive(Parser)]
@@ -158,10 +157,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let tracker = IdleTracker::new();
-    let pwd_intercepted = InterceptedService::new(
-        PasswordVaultServiceServer::new(svc),
-        BumpInterceptor(tracker.clone()),
-    );
+    let pwd_intercepted =
+        InterceptedService::new(svc.into_server(), BumpInterceptor(tracker.clone()));
     let sec_intercepted = InterceptedService::new(
         GenericSecretsServiceServer::new(secrets_svc),
         BumpInterceptor(tracker.clone()),

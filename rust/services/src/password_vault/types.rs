@@ -28,6 +28,18 @@ pub struct StoredEntry {
     pub ciphertext: Vec<u8>,
 }
 
+/// Sealed attachment bytes. One file per distinct plaintext, stored at
+/// `{root}/blobs/{namespace}/{blob_id}` where `blob_id` is derived from
+/// the plaintext digest (`MasterKey::blob_id`). Immutable once written:
+/// the same bytes always map to the same id, so entry versions share it.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct StoredBlob {
+    /// AES-GCM nonce (12 bytes per RFC 5116) — unique per write.
+    pub nonce: [u8; 12],
+    /// AES-256-GCM ciphertext with the 16-byte auth tag appended.
+    pub ciphertext: Vec<u8>,
+}
+
 /// Unified secret index for both password-vault (namespace="passwords")
 /// and generic secrets (arbitrary namespaces). Stored at
 /// `{root}/entries/{namespace}/{key}` via kernel syscalls.

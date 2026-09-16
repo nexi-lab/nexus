@@ -9,6 +9,8 @@
 //! Storage layout (under the vault mount at `/vault`):
 //!   - `/vault/entries/{namespace}/{key}` → bincode(SecretIndex)
 //!   - `/vault/versions/{namespace}/{key}/{version:010}` → bincode(StoredEntry)
+//!   - `/vault/blobs/{namespace}/{blob_id}` → bincode(StoredBlob)
+//!     (password-vault attachments; not exposed over GenericSecretsService)
 //!
 //! Consumer: sudowork `SecretStoreClient` (replaces HTTP `/api/v2/secrets`).
 
@@ -26,7 +28,9 @@ use proto::generic_secrets_service_server::GenericSecretsService;
 use proto::*;
 
 use crate::password_vault::crypto;
-use crate::password_vault::types::{now_unix_ms, PasswordVaultError, SecretIndex, StoredEntry};
+use crate::password_vault::types::{
+    now_unix_ms, PasswordVaultError, SecretIndex, StoredBlob, StoredEntry,
+};
 
 use self::storage::SecretStorage;
 
@@ -369,6 +373,56 @@ impl GenericSecretsServiceImpl {
             })?;
 
         Ok((stored.nonce, stored.ciphertext, stored.version as i32))
+    }
+
+    /// Store attachment bytes whose SHA-256 is `sha256_hex` (the caller
+    /// has already computed it from `data`). Idempotent: a blob that
+    /// already opens to these exact bytes is left untouched, so re-puts
+    /// don't rewrite files under a cloud-sync client. A missing or
+    /// unreadable blob is (re)written.
+    pub(crate) fn do_put_blob(
+        &self,
+        namespace: &str,
+        sha256_hex: &str,
+        data: &[u8],
+    ) -> Result<(), Status> {
+        if self
+            .do_get_blob(namespace, sha256_hex)
+            .ok()
+            .flatten()
+            .is_some()
+        {
+            return Ok(());
+        }
+        let (nonce, ciphertext) = crypto::seal(data, &self.inner.master_key)?;
+        let blob_id = self.inner.master_key.blob_id(sha256_hex);
+        self.inner
+            .storage
+            .put_blob(namespace, &blob_id, &StoredBlob { nonce, ciphertext })?;
+        Ok(())
+    }
+
+    /// Open the attachment blob holding bytes whose SHA-256 is
+    /// `sha256_hex`. `None` = not stored. Re-hashes the plaintext and
+    /// fails on mismatch: AES-GCM authenticates each file but not which
+    /// id it sits under, so a swapped blob would otherwise decrypt fine.
+    pub(crate) fn do_get_blob(
+        &self,
+        namespace: &str,
+        sha256_hex: &str,
+    ) -> Result<Option<Vec<u8>>, Status> {
+        let blob_id = self.inner.master_key.blob_id(sha256_hex);
+        let Some(blob) = self.inner.storage.get_blob(namespace, &blob_id)? else {
+            return Ok(None);
+        };
+        let data = crypto::open(&blob.nonce, &blob.ciphertext, &self.inner.master_key)?;
+        if crypto::sha256_hex(&data) != sha256_hex {
+            return Err(PasswordVaultError::Storage(format!(
+                "attachment blob {namespace}/{blob_id} does not hash to {sha256_hex}"
+            ))
+            .into());
+        }
+        Ok(Some(data))
     }
 
     /// Internal list metadata — returns `(namespace, key, SecretIndex)` triples.

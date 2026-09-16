@@ -147,9 +147,39 @@ and exposes:
 | `RestoreEntry` | `POST /{title}/restore` |
 | `ListVersions` | `GET /{title}/versions` |
 | `GenerateTotp` | `POST /{title}/totp` |
+| `GetAttachment` | — (gRPC only) |
 
 Errors follow `nexus.exchange.v1.NexusErrorCode` so all nexus gRPC
 services share one error vocabulary.
+
+### Attachments
+
+`VaultEntry.attachments` holds binary files that are part of the
+credential (a payment QR code, a scanned card). The shape keeps the
+list path cheap and read-modify-write safe:
+
+- **Storage.** An entry version records only metadata (filename,
+  content_type, size, SHA-256). Bytes are sealed with the master key
+  into `/vault/blobs/passwords/{blob_id}`, one file per distinct
+  content, where `blob_id` = HMAC-SHA256 (master-key-derived subkey)
+  over the digest. Identical bytes dedupe across versions and entries,
+  and the plaintext digest never appears in synced file names.
+- **Reads.** `GetEntry` / `ListEntries` return metadata with empty
+  `data`; `GetAttachment` is the only RPC that returns bytes, and it
+  re-hashes them against the recorded digest (AES-GCM authenticates a
+  blob file but not the id it is stored under).
+- **Writes.** `PutEntry` stays a full replace of the attachment list.
+  An attachment with `data` uploads; one with empty `data` and a
+  `sha256` keeps bytes the vault already stores, so clients pass back
+  the metadata they read without re-uploading.
+- **Limits** (server-enforced, `INVALID_ARGUMENT`): 2 MiB per
+  attachment, 8 MiB per entry, 32 attachments, filename 1–255 bytes
+  without path separators or control characters. Hosts build the tonic
+  server with `PasswordVaultServiceImpl::into_server()`, which raises
+  the inbound message cap to fit a maximal upload.
+- **Retention.** Blobs are immutable and never deleted, like entry
+  versions; nothing garbage-collects blobs whose last referencing
+  version is removed via `DeleteSecretVersion`.
 
 The `/v1/` segment in the package path matches `nexus.exchange.v1` —
 both are cross-repo public protocols (consumed by sudoprivacy/* repos),

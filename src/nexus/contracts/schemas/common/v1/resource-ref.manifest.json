@@ -1,0 +1,827 @@
+{
+  "manifest_version": 1,
+  "contract": {
+    "family": "common.sudo.dev",
+    "major": 1,
+    "api_version": "common.sudo.dev/v1",
+    "kind": "ResourceRef",
+    "schema_id": "urn:sudo:contracts:common:v1:resource-ref"
+  },
+  "lifecycle": {
+    "adr_maturity": "proposed",
+    "contract_baseline": "unfrozen",
+    "owner_source_status": "provisional_external_refs_frozen",
+    "artifact_publication": "unpublished",
+    "deployment_evidence": "not_deployed",
+    "freeze": {
+      "state": "blocked",
+      "reason": "External primitive closure is immutable; Nexus owner definition is uncommitted under task authorization.",
+      "blocking_condition": "immutable Nexus owner revision"
+    }
+  },
+  "definition": {
+    "semantic_owner_repository": "https://github.com/nexi-lab/nexus.git",
+    "working_base_revision": "23d3717a052ccd4b28ab399de27a50f4879d38c0",
+    "owner_revision": null,
+    "source_path": "src/nexus/contracts/schemas/common/v1/resource-ref.schema.json",
+    "source_sha256": "15ce4b2ed53f1278a40dc313a837e170a77fb4ea026022898479dd0135b798b7",
+    "dialect": "https://json-schema.org/draft/2020-12/schema",
+    "adapter_path": "src/nexus/contracts/resource_ref.py",
+    "documentation_path": "src/nexus/contracts/schemas/common/v1/README.md",
+    "source_lock": {
+      "path": "src/nexus/contracts/schemas/common/v1/nexus-vfs.source-lock.json",
+      "sha256": "924dfefd9cf1f73264b355d1059ae7fb03d5f950253a87a99184539b57dfbf7c"
+    }
+  },
+  "roles": {
+    "semantic_owner": "Nexus data/context/security plane",
+    "authoritative_definition_writer": "Nexus owner maintainers",
+    "canonical_definition_store": "Nexus exact commit + source path + digest (revision pending)",
+    "resource_ref_runtime_writer": "none_confirmed",
+    "resource_ref_canonical_runtime_store": "none_confirmed",
+    "referenced_resource_writers_and_stores": "unchanged_existing_domain_boundaries",
+    "actual_producers": [],
+    "actual_consumers": [],
+    "planned_producers": [
+      "Nexus product services",
+      "Moss",
+      "sudocode"
+    ],
+    "planned_consumers": [
+      "Nexus product services",
+      "Moss",
+      "sudocode",
+      "sudowork"
+    ],
+    "transport_owner": null,
+    "transport_mappings": [],
+    "security_owner": "Nexus owner/security review",
+    "compatibility_owner": "Nexus owner review with sudostack assembly coordination",
+    "migration_and_rollback_owner": null,
+    "assembly_and_distribution_owner": "sudostack"
+  },
+  "wire_policy": {
+    "identity": "zone_id + path is a locator, not rename-stable identity",
+    "authorization": "possession and schema validity grant no access; every dereference reauthorizes the target",
+    "version": "optional opaque visible-ASCII owner-issued revision selector; absent means unpinned; null and empty are invalid",
+    "digest": "optional algorithm-qualified lowercase hexadecimal digest; sha256 and blake3 are exactly 32 bytes",
+    "media_type": "optional canonical lowercase type/subtype without parameters",
+    "size_bytes": "optional canonical non-negative decimal string; zero means empty; absent means unknown",
+    "known_optional_null": "reject",
+    "unknown_optional": "accept and preserve when it satisfies bounded metadata policy",
+    "unknown_optional_null": "preserve",
+    "data_classification": "resource locator and bounded metadata; no resource bytes or Secret bytes",
+    "large_payload_policy": "JSON is limited to 65536 UTF-8 bytes; direct input is counted incrementally before schema validation or freezing",
+    "redaction_policy": "diagnostics expose category and JSON pointer, never rejected values",
+    "retention_policy": "not_applicable_to_value_object",
+    "extension_depth": "at most 8 nested array/object containers",
+    "extension_numbers": "JSON-safe integers only; fractional values are rejected before binary floating-point conversion"
+  },
+  "owner_references": {
+    "source_lock_path": "src/nexus/contracts/schemas/common/v1/nexus-vfs.source-lock.json",
+    "source_lock_sha256": "924dfefd9cf1f73264b355d1059ae7fb03d5f950253a87a99184539b57dfbf7c",
+    "owner_revision": "24f6730ec90fab8a035b2f5400ed313bda343fbe",
+    "owner_parent_revision": "557f0b9ba7c1847ae0eaadb1535ac6ea6d9099e1",
+    "wire_mappings": {
+      "zone_id": {
+        "wire_field": "zone_id",
+        "contract_id": "urn:sudo:nexus-vfs:zone-id:v1",
+        "semantic_scope": "portable lexical existing-identity reference; reserved values allowed"
+      },
+      "zone_path": {
+        "wire_field": "path",
+        "contract_id": "urn:sudo:nexus-vfs:zone-path:v1",
+        "semantic_scope": "strict zone-relative path; legacy raw paths excluded",
+        "required_vocabulary": "urn:sudo:nexus-vfs:vocab:zone-path:v1",
+        "assertion_keyword": "sudoZonePath"
+      }
+    }
+  },
+  "compatibility": {
+    "supported_family_majors": [
+      1
+    ],
+    "unknown_major": "reject",
+    "same_major_unknown_optional": "accept_preserve_subject_to_metadata_policy",
+    "legacy_unversioned_payload": "reject_no_implicit_adapter",
+    "previous_immutable_baseline": null,
+    "previous_minor_fixture_state": "synthetic_pre_freeze_only",
+    "compatibility_result": "indeterminate_until_first_immutable_owner_baseline"
+  },
+  "fixtures": {
+    "root": "src/nexus/contracts/schemas/common/v1/fixtures",
+    "index_sha256": "10c6ea4f4716a5d715c1d55cfd441f174500805cbae97f0a91021152ee58a7a0",
+    "cases": [
+      {
+        "case_id": "invalid-digest",
+        "category": "invalid",
+        "path": "fixtures/invalid/invalid-digest.json",
+        "sha256": "02395c41127b2c6c4579bfa4991a50dd72a4537db9323dac3dc4ea0d6e764265",
+        "schema_expected": "reject",
+        "adapter_expected": "reject",
+        "expected_issue": {
+          "category": "invalid_digest",
+          "path": "/digest",
+          "keyword": "pattern"
+        }
+      },
+      {
+        "case_id": "invalid-digest-encoding",
+        "category": "invalid",
+        "path": "fixtures/invalid/invalid-digest-encoding.json",
+        "schema_expected": "reject",
+        "adapter_expected": "reject",
+        "expected_issue": {
+          "category": "invalid_digest",
+          "path": "/digest",
+          "keyword": "pattern"
+        },
+        "sha256": "2283dfb0d59a48e87a51bfa9151f604e0af13b29a70017d7ff57dd589e84affb"
+      },
+      {
+        "case_id": "invalid-digest-length",
+        "category": "invalid",
+        "path": "fixtures/invalid/invalid-digest-length.json",
+        "schema_expected": "reject",
+        "adapter_expected": "reject",
+        "expected_issue": {
+          "category": "invalid_digest",
+          "path": "/digest",
+          "keyword": "pattern"
+        },
+        "sha256": "ceb61d7737bbba432eb9608583164b99761de289d00a20912f6386469b177b2e"
+      },
+      {
+        "case_id": "invalid-empty-version",
+        "category": "invalid",
+        "path": "fixtures/invalid/empty-version.json",
+        "sha256": "b55867fa38f5f137c6e98346230e156e77adcb8069d80e5815204498d188af93",
+        "schema_expected": "reject",
+        "adapter_expected": "reject",
+        "expected_issue": {
+          "category": "invalid_version",
+          "path": "/version",
+          "keyword": "minLength"
+        }
+      },
+      {
+        "case_id": "invalid-extension-too-deep",
+        "category": "security",
+        "path": "fixtures/invalid/extension-too-deep.json",
+        "sha256": "e46fc88656e5423e31772c3b91c26f721f39ef91345a468c09c2504e38961e04",
+        "schema_expected": "reject",
+        "adapter_expected": "reject",
+        "expected_issue": {
+          "category": "extension_too_deep",
+          "path": "/future_metadata/level_8/level_7/level_6/level_5/level_4/level_3/level_2/level_1",
+          "keyword": "maxDepth"
+        }
+      },
+      {
+        "case_id": "invalid-large-extension",
+        "category": "security",
+        "path": "fixtures/invalid/large-extension.json",
+        "sha256": "d74733612a3d2bcb785158503d738496f78a3f627646bac691c7fe0c95b848f2",
+        "schema_expected": "reject",
+        "adapter_expected": "reject",
+        "expected_issue": {
+          "category": "extension_value_too_large",
+          "path": "/vendor_metadata/description",
+          "keyword": "maxLength"
+        }
+      },
+      {
+        "case_id": "invalid-media-type",
+        "category": "invalid",
+        "path": "fixtures/invalid/invalid-media-type.json",
+        "sha256": "38c9941f50bcc0cc7ad4618ad6885a4bfd153a11dd6fa55f27d91774365238de",
+        "schema_expected": "reject",
+        "adapter_expected": "reject",
+        "expected_issue": {
+          "category": "invalid_media_type",
+          "path": "/media_type",
+          "keyword": "pattern"
+        }
+      },
+      {
+        "case_id": "invalid-missing-required",
+        "category": "invalid",
+        "path": "fixtures/invalid/missing-required.json",
+        "sha256": "50ece9d4136926418a1b162f52b5a869ba541e57cf13c41f4d85bbdf5d9c2675",
+        "schema_expected": "reject",
+        "adapter_expected": "reject",
+        "expected_issue": {
+          "category": "missing_required",
+          "path": "",
+          "keyword": "required"
+        }
+      },
+      {
+        "case_id": "invalid-nested-secret-extension",
+        "category": "security",
+        "path": "fixtures/invalid/nested-secret-extension.json",
+        "sha256": "04f0c005c5e934ffd48191572fd0a54a28934c5248e8e8c6b4807037b99099d6",
+        "schema_expected": "reject",
+        "adapter_expected": "reject",
+        "expected_issue": {
+          "category": "secret_like_extension_key",
+          "path": "/vendor_metadata/auth",
+          "keyword": "propertyNames"
+        }
+      },
+      {
+        "case_id": "invalid-non-ascii-version",
+        "category": "invalid",
+        "path": "fixtures/invalid/non-ascii-version.json",
+        "sha256": "72302194fb47a2a16f7e6758e3b957886dec63acce15f89c3ac0fc74f9265e03",
+        "schema_expected": "reject",
+        "adapter_expected": "reject",
+        "expected_issue": {
+          "category": "invalid_version",
+          "path": "/version",
+          "keyword": "pattern"
+        }
+      },
+      {
+        "case_id": "invalid-null-known-optional",
+        "category": "invalid",
+        "path": "fixtures/invalid/null-known-optional.json",
+        "sha256": "dcfe212f6cfa0ede38617765f7310bedd6284b7e375be0a1a61c1bd9bd9b8747",
+        "schema_expected": "reject",
+        "adapter_expected": "reject",
+        "expected_issue": {
+          "category": "wrong_type",
+          "path": "/version",
+          "keyword": "type"
+        }
+      },
+      {
+        "case_id": "invalid-size",
+        "category": "invalid",
+        "path": "fixtures/invalid/invalid-size.json",
+        "sha256": "3914257de9cdf6f7fe7be24dfddc06c726cdcd990a62a13794341e9c8cde71bc",
+        "schema_expected": "reject",
+        "adapter_expected": "reject",
+        "expected_issue": {
+          "category": "invalid_size_bytes",
+          "path": "/size_bytes",
+          "keyword": "pattern"
+        }
+      },
+      {
+        "case_id": "invalid-trailing-newline",
+        "category": "invalid",
+        "path": "fixtures/invalid/trailing-newline.json",
+        "sha256": "6f58433b64b416003245223ce185f746adb1686364ce22df78e75f7f745b33c3",
+        "schema_expected": "reject",
+        "adapter_expected": "reject",
+        "expected_issue": {
+          "category": "invalid_size_bytes",
+          "path": "/size_bytes",
+          "keyword": "pattern"
+        }
+      },
+      {
+        "case_id": "invalid-unknown-major",
+        "category": "invalid",
+        "path": "fixtures/invalid/unknown-major.json",
+        "sha256": "1cf18e1efa1b3c926509d55cf0be3b6490aed5206f27227d0728400209809e8d",
+        "schema_expected": "reject",
+        "adapter_expected": "reject",
+        "expected_issue": {
+          "category": "unsupported_api_version",
+          "path": "/api_version",
+          "keyword": "const"
+        }
+      },
+      {
+        "case_id": "invalid-wrong-type",
+        "category": "invalid",
+        "path": "fixtures/invalid/wrong-type.json",
+        "sha256": "22ca233f7b7a35fe6cc86bba9ac7d878008eb6492f8320ceab3ab154c94d66ae",
+        "schema_expected": "reject",
+        "adapter_expected": "reject",
+        "expected_issue": {
+          "category": "wrong_type",
+          "path": "/size_bytes",
+          "keyword": "type"
+        }
+      },
+      {
+        "case_id": "invalid-zone-id",
+        "category": "invalid",
+        "path": "fixtures/invalid/invalid-zone-id.json",
+        "schema_expected": "reject",
+        "adapter_expected": "reject",
+        "expected_issue": {
+          "category": "invalid_zone_id",
+          "path": "/zone_id"
+        },
+        "sha256": "930f83204fa1a9561103508e8357e5d88c52d75d7731fa2ab7a1dd32bf972f74"
+      },
+      {
+        "case_id": "invalid-zone-path-repeated-separator",
+        "category": "invalid",
+        "path": "fixtures/invalid/invalid-zone-path-repeated-separator.json",
+        "schema_expected": "reject",
+        "adapter_expected": "reject",
+        "expected_issue": {
+          "category": "invalid_zone_path",
+          "path": "/path",
+          "keyword": "sudoZonePath"
+        },
+        "sha256": "4e5b046afde0f89bc0e2bab98469fd76ece2d3110eda1c6e17fccd07c38ae82e"
+      },
+      {
+        "case_id": "invalid-zone-path-traversal",
+        "category": "security",
+        "path": "fixtures/invalid/invalid-zone-path-traversal.json",
+        "schema_expected": "reject",
+        "adapter_expected": "reject",
+        "expected_issue": {
+          "category": "invalid_zone_path",
+          "path": "/path",
+          "keyword": "sudoZonePath"
+        },
+        "sha256": "71bfe4726b92ddaab76e35c40112a786929f52c4aba06def10f470b3248c9100"
+      },
+      {
+        "case_id": "valid-arbitrary-precision-size",
+        "category": "boundary",
+        "path": "fixtures/valid/arbitrary-precision-size.json",
+        "sha256": "4de5b83bf4a8f723e0749f10d1faa17f034d37a35748a19086fb8172cf1fcbde",
+        "schema_expected": "accept",
+        "adapter_expected": "accept"
+      },
+      {
+        "case_id": "valid-full",
+        "category": "valid",
+        "path": "fixtures/valid/full.json",
+        "sha256": "75c826df8b6ecf819bc384818d7608f2505110a5cd989275b9a734f41c437bd5",
+        "schema_expected": "accept",
+        "adapter_expected": "accept"
+      },
+      {
+        "case_id": "valid-minimal",
+        "category": "valid",
+        "path": "fixtures/valid/minimal.json",
+        "sha256": "32d99a00be668a368004e80eb01cfaa9c6f246cb4ca2cbc1b84c1ae3afc01b67",
+        "schema_expected": "accept",
+        "adapter_expected": "accept"
+      },
+      {
+        "case_id": "valid-previous-minor",
+        "category": "compatibility",
+        "path": "fixtures/valid/previous-minor.json",
+        "sha256": "2345de63e2ad3aa2295be045de63eed8ea6d4dc52967c024e51cbcbbfbe9bf67",
+        "schema_expected": "accept",
+        "adapter_expected": "accept",
+        "compatibility": {
+          "source": "G0 proposed minimum v1 shape",
+          "state": "synthetic_pre_freeze"
+        }
+      },
+      {
+        "case_id": "valid-reserved-root-zone-reference",
+        "category": "boundary",
+        "path": "fixtures/valid/reserved-root-zone-reference.json",
+        "schema_expected": "accept",
+        "adapter_expected": "accept",
+        "sha256": "7b6c47d8f6cd7a4386761ef240de75324dedd1c8d4a1cbf0dc13b86be4f32e49"
+      },
+      {
+        "case_id": "valid-unknown-field-control",
+        "category": "valid",
+        "path": "fixtures/valid/unknown-field-control.json",
+        "sha256": "1933bd069d58a7e10571a2f22054181d505c07feb04cd5bfec4cf2785a24786f",
+        "schema_expected": "accept",
+        "adapter_expected": "accept"
+      },
+      {
+        "case_id": "valid-unknown-optional",
+        "category": "valid",
+        "path": "fixtures/valid/unknown-optional.json",
+        "sha256": "4117b581efaa8e9b82a5029cac499f9befe91200134b44e97c6a3ff0056fb6b1",
+        "schema_expected": "accept",
+        "adapter_expected": "accept"
+      }
+    ],
+    "primitive_cases": {
+      "state": "integrated_exact_owner_revision",
+      "owner_revision": "24f6730ec90fab8a035b2f5400ed313bda343fbe",
+      "zone_id_bundle_path": "vendor/nexus-vfs/zone-id.vectors.source.json",
+      "zone_id_bundle_sha256": "6d840d389f1fa3dc41ddd5c4c33eab2fb37792bfa144b43881cda3bd245c083a",
+      "zone_id_case_count": 12,
+      "zone_id_cases": [
+        {
+          "owner_case_id": "shortest",
+          "owner_class": "boundary",
+          "case_sha256": "0a3c11d8c617b8b4d7aeecdcc2124306bbea4848755cd6035b1dc453c5b73446",
+          "value_field": "value",
+          "schema_expected": "accept",
+          "adapter_expected": "accept"
+        },
+        {
+          "owner_case_id": "longest",
+          "owner_class": "boundary",
+          "case_sha256": "54ce287f1274b02d388af932f91074f4915cac9a3f53c671f51cb19fcbb52d23",
+          "value_field": "value",
+          "schema_expected": "accept",
+          "adapter_expected": "accept"
+        },
+        {
+          "owner_case_id": "canonical",
+          "owner_class": "positive",
+          "case_sha256": "5269695634652549889a32cfde17c2e48f2f95e2584f30f7f545a0bb197c39e7",
+          "value_field": "value",
+          "schema_expected": "accept",
+          "adapter_expected": "accept"
+        },
+        {
+          "owner_case_id": "uuid",
+          "owner_class": "positive",
+          "case_sha256": "13c80dfbd0600c05beada104bc7f98f24ee8792809bca8ca415a4f64ec51f73c",
+          "value_field": "value",
+          "schema_expected": "accept",
+          "adapter_expected": "accept"
+        },
+        {
+          "owner_case_id": "too-short",
+          "owner_class": "boundary",
+          "case_sha256": "6cdb686c1fb81527a6285dbeb32c0e9bf7032d2c3ae924bb3ec4f0f5946a40ca",
+          "value_field": "value",
+          "schema_expected": "reject",
+          "adapter_expected": "reject",
+          "expected_issue": {
+            "category": "invalid_zone_id",
+            "path": "/zone_id"
+          }
+        },
+        {
+          "owner_case_id": "too-long",
+          "owner_class": "boundary",
+          "case_sha256": "4ce527452ff93a0c7550d310e8f3b7e4e9966e26cc4eeea9c86c9b23bdfc6d17",
+          "value_field": "value",
+          "schema_expected": "reject",
+          "adapter_expected": "reject",
+          "expected_issue": {
+            "category": "invalid_zone_id",
+            "path": "/zone_id"
+          }
+        },
+        {
+          "owner_case_id": "leading",
+          "owner_class": "negative",
+          "case_sha256": "3b6e7084140e3df3ddbb8b4db5dad1b9eaeaf8ffa298fd7a7701c90ee7958d36",
+          "value_field": "value",
+          "schema_expected": "reject",
+          "adapter_expected": "reject",
+          "expected_issue": {
+            "category": "invalid_zone_id",
+            "path": "/zone_id"
+          }
+        },
+        {
+          "owner_case_id": "trailing",
+          "owner_class": "negative",
+          "case_sha256": "2d426dd6f9bf150bedb13e5f75b2bb65589ed84b651c981595a4f35e28f730d2",
+          "value_field": "value",
+          "schema_expected": "reject",
+          "adapter_expected": "reject",
+          "expected_issue": {
+            "category": "invalid_zone_id",
+            "path": "/zone_id"
+          }
+        },
+        {
+          "owner_case_id": "uppercase",
+          "owner_class": "negative",
+          "case_sha256": "76ce13f90ac687497143f208c3181369a519887e437cc22dd6a4170e4283a1c4",
+          "value_field": "value",
+          "schema_expected": "reject",
+          "adapter_expected": "reject",
+          "expected_issue": {
+            "category": "invalid_zone_id",
+            "path": "/zone_id"
+          }
+        },
+        {
+          "owner_case_id": "bad-character",
+          "owner_class": "negative",
+          "case_sha256": "1e9b0f8d8ecf16ac4bcdee8966a9f84c538ca5e28687c504586742986f469998",
+          "value_field": "value",
+          "schema_expected": "reject",
+          "adapter_expected": "reject",
+          "expected_issue": {
+            "category": "invalid_zone_id",
+            "path": "/zone_id"
+          }
+        },
+        {
+          "owner_case_id": "prefixed-uuid",
+          "owner_class": "negative",
+          "case_sha256": "403546de31c6dccd374511c06b5472380161e96ecbdfff67c2150cf9d6c9018f",
+          "value_field": "value",
+          "schema_expected": "reject",
+          "adapter_expected": "reject",
+          "expected_issue": {
+            "category": "invalid_zone_id",
+            "path": "/zone_id"
+          }
+        },
+        {
+          "owner_case_id": "terminal-newline",
+          "owner_class": "negative",
+          "case_sha256": "ab1768d959498b707dd4c7381d1dac63cecf4b84f46f2454d1265db9571e8fa1",
+          "value_field": "value",
+          "schema_expected": "reject",
+          "adapter_expected": "reject",
+          "expected_issue": {
+            "category": "invalid_zone_id",
+            "path": "/zone_id"
+          }
+        }
+      ],
+      "zone_path_bundle_path": "vendor/nexus-vfs/zone-path.cases.source.json",
+      "zone_path_bundle_sha256": "944a5c63e368ece3a38e13a92851cd31d918a7a56d847d833469bff40f3d2a93",
+      "zone_path_case_count": 23,
+      "zone_path_cases": [
+        {
+          "owner_case_id": "root",
+          "owner_class": "boundary",
+          "case_sha256": "d7e7f4b141b9ed4fa953b6fa2ff7e995e2452d7b1210e85a9cc7b5d3a63e3ff0",
+          "value_field": "path",
+          "schema_expected": "accept",
+          "adapter_expected": "accept"
+        },
+        {
+          "owner_case_id": "single-segment",
+          "owner_class": "positive",
+          "case_sha256": "685937128ee9433274a22b78e4386ec6d85df98852a02109a792bfade0dd81b1",
+          "value_field": "path",
+          "schema_expected": "accept",
+          "adapter_expected": "accept"
+        },
+        {
+          "owner_case_id": "nested",
+          "owner_class": "positive",
+          "case_sha256": "6cd5a2389651d131470b985626bd01dac1a232b0fca31fc3a84924958ba8548c",
+          "value_field": "path",
+          "schema_expected": "accept",
+          "adapter_expected": "accept"
+        },
+        {
+          "owner_case_id": "unicode-nfc",
+          "owner_class": "positive",
+          "case_sha256": "d72dd4a5c5a00aac3cb673aa7dd04665ad0b32a5c854db3689327f831f071bf0",
+          "value_field": "path",
+          "schema_expected": "accept",
+          "adapter_expected": "accept"
+        },
+        {
+          "owner_case_id": "unicode-nfd",
+          "owner_class": "positive",
+          "case_sha256": "6042799060b0393381e4a97cb71a6002b0cd89c3161315e63c4eff930a9d5136",
+          "value_field": "path",
+          "schema_expected": "accept",
+          "adapter_expected": "accept"
+        },
+        {
+          "owner_case_id": "percent-looking-literal",
+          "owner_class": "positive",
+          "case_sha256": "87ee674b42982c30c1da4a9592fabf758088f177c8a035eab03598f4dfe7fe12",
+          "value_field": "path",
+          "schema_expected": "accept",
+          "adapter_expected": "accept"
+        },
+        {
+          "owner_case_id": "mixed-case-preserved",
+          "owner_class": "positive",
+          "case_sha256": "4a00f000f9b91a1aa46fceba409e40afd66ada551f1859cc8f3b85e69fa714ae",
+          "value_field": "path",
+          "schema_expected": "accept",
+          "adapter_expected": "accept"
+        },
+        {
+          "owner_case_id": "terminal-newline-is-literal",
+          "owner_class": "positive",
+          "case_sha256": "2a7a57673363acf3f6feb886afaeb47e6c621fdb215c53d506dbbec55d1d98b8",
+          "value_field": "path",
+          "schema_expected": "accept",
+          "adapter_expected": "accept"
+        },
+        {
+          "owner_case_id": "terminal-newline-parent-looking-is-literal",
+          "owner_class": "positive",
+          "case_sha256": "cb17063fda0e9bf3320d3a9ca0e6855f9619a71bcb58bf2589982eb5d9766ec2",
+          "value_field": "path",
+          "schema_expected": "accept",
+          "adapter_expected": "accept"
+        },
+        {
+          "owner_case_id": "unicode-scalar-above-bmp",
+          "owner_class": "positive",
+          "case_sha256": "607dfb7535c011c026beff1b56455765e203d949b4caabbb4192ee02d8ae3fea",
+          "value_field": "path",
+          "schema_expected": "accept",
+          "adapter_expected": "accept"
+        },
+        {
+          "owner_case_id": "empty",
+          "owner_class": "boundary",
+          "case_sha256": "1a97574284031873e64304cb2bb8f3d2ee4eec4c25ed8e41adb5bc7d0a6d046f",
+          "value_field": "path",
+          "schema_expected": "reject",
+          "adapter_expected": "reject",
+          "expected_issue": {
+            "category": "invalid_zone_path",
+            "path": "/path"
+          }
+        },
+        {
+          "owner_case_id": "relative",
+          "owner_class": "negative",
+          "case_sha256": "23bc5375ec4cd1406b7ceb94ff57a26be5c5f01baf1d5577e410c02de42fd851",
+          "value_field": "path",
+          "schema_expected": "reject",
+          "adapter_expected": "reject",
+          "expected_issue": {
+            "category": "invalid_zone_path",
+            "path": "/path"
+          }
+        },
+        {
+          "owner_case_id": "leading-repeated-separator",
+          "owner_class": "negative",
+          "case_sha256": "a2bace23c134d556cb5b7c14cfd8b03a447a0c39ddc9ac31f05f88cf922a85c9",
+          "value_field": "path",
+          "schema_expected": "reject",
+          "adapter_expected": "reject",
+          "expected_issue": {
+            "category": "invalid_zone_path",
+            "path": "/path"
+          }
+        },
+        {
+          "owner_case_id": "interior-repeated-separator",
+          "owner_class": "negative",
+          "case_sha256": "b08b8cf21cdb33f653ec2c43052a028677e5c228a49e23b6e91c5a27a9a7a8af",
+          "value_field": "path",
+          "schema_expected": "reject",
+          "adapter_expected": "reject",
+          "expected_issue": {
+            "category": "invalid_zone_path",
+            "path": "/path"
+          }
+        },
+        {
+          "owner_case_id": "all-separators-not-root",
+          "owner_class": "boundary",
+          "case_sha256": "47b63405a90aff88526a1be29591392ee51734f8163780a8786b1cfae7dca456",
+          "value_field": "path",
+          "schema_expected": "reject",
+          "adapter_expected": "reject",
+          "expected_issue": {
+            "category": "invalid_zone_path",
+            "path": "/path"
+          }
+        },
+        {
+          "owner_case_id": "trailing-separator",
+          "owner_class": "negative",
+          "case_sha256": "4a806dd2df959307e4d44769cde22a67f5fa96ba0283b40295af6ac23b5e2689",
+          "value_field": "path",
+          "schema_expected": "reject",
+          "adapter_expected": "reject",
+          "expected_issue": {
+            "category": "invalid_zone_path",
+            "path": "/path"
+          }
+        },
+        {
+          "owner_case_id": "current-directory-segment",
+          "owner_class": "negative",
+          "case_sha256": "273f6327ebaa15484814b5ea9016cb7c875ea876bb1996905c25d7f488de9d3d",
+          "value_field": "path",
+          "schema_expected": "reject",
+          "adapter_expected": "reject",
+          "expected_issue": {
+            "category": "invalid_zone_path",
+            "path": "/path"
+          }
+        },
+        {
+          "owner_case_id": "parent-directory-segment",
+          "owner_class": "negative",
+          "case_sha256": "42745adc173cb13d0997dbe15e6eaef38d438ddb6cb7edf11ef21ccf48d9afbc",
+          "value_field": "path",
+          "schema_expected": "reject",
+          "adapter_expected": "reject",
+          "expected_issue": {
+            "category": "invalid_zone_path",
+            "path": "/path"
+          }
+        },
+        {
+          "owner_case_id": "root-current-directory",
+          "owner_class": "boundary",
+          "case_sha256": "24170380e4fd070f533d5a3990d0c4c92356eb89bc124858f4c28221d0e24c61",
+          "value_field": "path",
+          "schema_expected": "reject",
+          "adapter_expected": "reject",
+          "expected_issue": {
+            "category": "invalid_zone_path",
+            "path": "/path"
+          }
+        },
+        {
+          "owner_case_id": "root-parent-directory",
+          "owner_class": "boundary",
+          "case_sha256": "8ef443f0e7e17842e587d196a2b3fd156c3dc8420f039132360678ef9bdcd33a",
+          "value_field": "path",
+          "schema_expected": "reject",
+          "adapter_expected": "reject",
+          "expected_issue": {
+            "category": "invalid_zone_path",
+            "path": "/path"
+          }
+        },
+        {
+          "owner_case_id": "nul",
+          "owner_class": "negative",
+          "case_sha256": "e7018496f64b49b5428dd573181f22a269fbd8333d7a1fa4a5b987ab74e447cb",
+          "value_field": "path",
+          "schema_expected": "reject",
+          "adapter_expected": "reject",
+          "expected_issue": {
+            "category": "invalid_zone_path",
+            "path": "/path"
+          }
+        },
+        {
+          "owner_case_id": "backslash",
+          "owner_class": "negative",
+          "case_sha256": "a6bb20bcff7322e36b58df4fb4905088b51e53696bd038a74be0d2531000aa22",
+          "value_field": "path",
+          "schema_expected": "reject",
+          "adapter_expected": "reject",
+          "expected_issue": {
+            "category": "invalid_zone_path",
+            "path": "/path"
+          }
+        },
+        {
+          "owner_case_id": "backslash-parent-looking",
+          "owner_class": "negative",
+          "case_sha256": "af503756f8c9bbde5ac9164eb9769a1a602d0992553e2d56abb10da36e6a6d5c",
+          "value_field": "path",
+          "schema_expected": "reject",
+          "adapter_expected": "reject",
+          "expected_issue": {
+            "category": "invalid_zone_path",
+            "path": "/path"
+          }
+        }
+      ],
+      "case_digest_encoding": "canonical sorted compact UTF-8 JSON"
+    }
+  },
+  "conformance": {
+    "owner_adapter": "nexus.contracts.resource_ref.ResourceRef",
+    "validator": "jsonschema.Draft202012Validator",
+    "test_path": "tests/unit/contracts",
+    "default_ci_workflow": ".github/workflows/test.yml",
+    "default_ci_job": "test",
+    "standalone_checkout": true,
+    "sibling_checkout_required": false,
+    "primitive_conformance": "blocked",
+    "reference_resolution": "offline registry backed by exact-pinned nexus-vfs schemas and required sudoZonePath vocabulary",
+    "primitive_validation": "active_exact_owner_revision",
+    "draft_freeze": "blocked_on_immutable_nexus_owner_revision",
+    "validator_versions": {
+      "python_jsonschema": "4.26.0",
+      "python_referencing": "0.37.0",
+      "owner_node": ">=22",
+      "owner_ajv": "8.20.0"
+    },
+    "structural_validator_scope": "JSON Schema only; validate_resource_ref additionally enforces document bytes, duplicate keys, and numeric parsing policy"
+  },
+  "deferred": [
+    "Product Zone and ZoneGrant persistence/lifecycle/APIs",
+    "ResourceRef production boundary adoption",
+    "ReBAC lifecycle and delegation changes",
+    "runtime writer/store changes",
+    "migration, release, deployment, and destructive cleanup",
+    "Rust or other language adapters without a confirmed real consumer"
+  ],
+  "resolution_policy": {
+    "owner": "Nexus product services",
+    "state": "deferred_separate_design",
+    "validated_input": "zone_id + strict ZonePath",
+    "zero_matching_mount_aliases": "deferred",
+    "multiple_matching_mount_aliases": "deferred",
+    "root_fallback": "deferred",
+    "permission_evaluation": "deferred",
+    "constraint": "schema validation must occur before authorization, routing, or storage and must not select or normalize a route"
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "$comment": [
+    "Canonical editable source for the strict ZonePath primitive.",
+    "",
+    "ZonePath is paired with a separate ZoneId and is absolute within that",
+    "zone. It is an opt-in boundary for new references; legacy VFS syscall",
+    "spellings and persisted keys are outside this contract and are not",
+    "normalized or reinterpreted by it.",
+    "",
+    "rust/contracts/build.rs derives Rust rule data, conformance vectors, and",
+    "schema.json from this source. cases.json contains the owner fixtures."
+  ],
+  "$id": "urn:sudo:nexus-vfs:zone-path:v1",
+  "version": 1,
+  "owner": "nexus-vfs",
+  "representation": {
+    "scope": "zone-relative",
+    "absolute": true,
+    "root": "/",
+    "separator": "/",
+    "empty": "reject",
+    "repeated_separators": "reject",
+    "trailing_separator": "root-only"
+  },
+  "segments": {
+    "forbidden_exact": [
+      ".",
+      ".."
+    ],
+    "forbidden_characters": [
+      "\u0000",
+      "\\"
+    ]
+  },
+  "encoding": {
+    "input": "UTF-8",
+    "unicode_scalar_values_only": true,
+    "unicode_normalization": "none",
+    "case_folding": "none",
+    "percent_decoding": "none"
+  },
+  "normalization": {
+    "automatic": false,
+    "validation_timing": "before-authorization-routing-storage"
+  },
+  "compatibility": {
+    "legacy_raw_vfs_paths_in_scope": false,
+    "persisted_keys_rewritten": false
+  },
+  "projection": {
+    "json_schema": "schema.json",
+    "json_meta_schema": "meta-schema.json",
+    "meta_schema_id": "urn:sudo:nexus-vfs:meta:zone-path:v1",
+    "required_vocabulary": "urn:sudo:nexus-vfs:vocab:zone-path:v1",
+    "zone_path_keyword": "sudoZonePath",
+    "fixtures": "cases.json"
+  }
+}

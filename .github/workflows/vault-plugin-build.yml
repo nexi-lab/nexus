@@ -1,7 +1,7 @@
 name: Vault Plugin Build (reusable)
 
-# Reusable workflow for building the vault cdylib plugin across all three
-# platforms. Per-platform size budgets keep regressions visible — the
+# Reusable workflow for building the vault cdylib plugin across supported
+# release platforms. Per-platform size budgets keep regressions visible — the
 # dylib is slimmer than the old standalone binary (no clap, no tokio
 # multi-thread, no tonic server, no signal handling).
 #
@@ -57,6 +57,10 @@ jobs:
             # cdylib is slimmer than the old standalone binary (no clap,
             # no tokio server runtime, no signal handling). Budget keeps
             # ~1 MiB headroom.
+            max_size_bytes: 6291456  # 6 MiB
+          - os: ubuntu-22.04-arm
+            artifact_name: nexus-vault-linux-aarch64
+            dylib: libnexus_vault.so
             max_size_bytes: 6291456  # 6 MiB
           - os: macos-14
             artifact_name: nexus-vault-macos-arm64

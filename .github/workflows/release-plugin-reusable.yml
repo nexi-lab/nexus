@@ -1,7 +1,7 @@
 name: Release Plugin (reusable)
 
 # Reusable release pipeline for any cdylib plugin loaded by nexusd-cluster.
-# Builds across 4 platforms, Ed25519-signs each dylib, packages into
+# Builds across selected platforms, Ed25519-signs each dylib, packages into
 # platform-appropriate archives, uploads to COS, and creates a GitHub
 # Release.
 #
@@ -66,7 +66,7 @@ on:
         type: number
         default: 8388608   # 8 MiB
       platforms:
-        description: 'JSON array of platform suffixes to build. Plugins that don''t support all 4 platforms (e.g. nexus-fuse-plugin is Linux-only) shrink the matrix here. Valid entries: linux-x86_64, macos-arm64, macos-x86_64, windows-x86_64.'
+        description: 'JSON array of platform suffixes to build. Plugins that don''t support every platform (e.g. nexus-fuse-plugin skips Windows) shrink the matrix here. Valid entries: linux-x86_64, linux-aarch64, macos-arm64, macos-x86_64, windows-x86_64.'
         required: false
         type: string
         default: '["linux-x86_64", "macos-arm64", "macos-x86_64", "windows-x86_64"]'
@@ -113,13 +113,13 @@ permissions:
 
 jobs:
   # ── Build ──────────────────────────────────────────────────────────────────
-  # Up-to-4-platform build matrix. Dylib names are derived from `dylib_basename`:
+  # Platform build matrix. Dylib names are derived from `dylib_basename`:
   #   linux:   <dylib_basename>.so
   #   macos:   <dylib_basename>.dylib   (arm64 + x86_64)
   #   windows: <dylib_basename> with the leading `lib` stripped + `.dll`
   # Every step is gated on `inputs.platforms` so plugins that opt out of
-  # platforms (e.g. nexus-fuse-plugin is Linux-only) spawn a runner but
-  # skip the build work. GitHub Actions does NOT permit `matrix.*` at
+  # platforms spawn a runner but skip the build work. GitHub Actions does
+  # NOT permit `matrix.*` at
   # job-level `if`; only at step level — so the gate sits on every step.
   build:
     name: build / ${{ matrix.artifact_name_suffix }}
@@ -140,6 +140,10 @@ jobs:
           # runs.
           - os: ubuntu-22.04
             artifact_name_suffix: linux-x86_64
+            dylib_ext: .so
+            strip_lib_prefix: false
+          - os: ubuntu-22.04-arm
+            artifact_name_suffix: linux-aarch64
             dylib_ext: .so
             strip_lib_prefix: false
           - os: macos-14
@@ -356,7 +360,7 @@ jobs:
           retention-days: 1
 
   # ── Package, sign, upload ──────────────────────────────────────────────────
-  # Downloads all 4 dylibs, signs each (privkey source per `signing_key_source`),
+  # Downloads all selected dylibs, signs each (privkey source per `signing_key_source`),
   # packages into tar.gz / zip, uploads to COS at <cos_subdir>/v<version>/.
   package-and-upload:
     name: Package and upload

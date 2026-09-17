@@ -129,7 +129,7 @@ scp nexusd-cluster-linux-x86_64/nexusd-cluster ubuntu@100.64.0.1:~/   # over the
 mkdir -p ~/nexus-broker/data ~/nexus-broker/identity
 export NEXUS_API_KEY_SECRET="$(openssl rand -hex 32)"   # REQUIRED for auth-on; persist it (Step 5)
 nexusd-cluster \
-  --cluster-init saas \
+  --cluster-init cloud \
   --hostname <label> \
   --advertise-addr <addr>:8443 \
   --data-dir     ~/nexus-broker/data \

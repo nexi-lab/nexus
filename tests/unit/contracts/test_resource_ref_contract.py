@@ -86,7 +86,7 @@ def test_every_fixture_is_indexed_once_with_exact_digest() -> None:
     assert hashlib.sha256(canonical_index).hexdigest() == manifest["fixtures"]["index_sha256"]
 
 
-def test_manifest_and_schema_digest_are_truthful_and_provisional() -> None:
+def test_manifest_and_schema_digest_are_truthful_and_draft_frozen() -> None:
     manifest = load_resource_ref_manifest()
     schema_resource = CONTRACT_ROOT.joinpath("resource-ref.schema.json")
 
@@ -94,9 +94,15 @@ def test_manifest_and_schema_digest_are_truthful_and_provisional() -> None:
         manifest["definition"]["source_sha256"]
         == hashlib.sha256(schema_resource.read_bytes()).hexdigest()
     )
-    assert manifest["lifecycle"]["contract_baseline"] == "unfrozen"
-    assert manifest["lifecycle"]["freeze"]["state"] == "blocked"
-    assert manifest["definition"]["owner_revision"] is None
+    assert manifest["lifecycle"]["contract_baseline"] == "draft-frozen"
+    assert manifest["lifecycle"]["owner_source_status"] == "immutable_owner_revision"
+    assert manifest["lifecycle"]["freeze"]["state"] == "ready"
+    assert manifest["lifecycle"]["artifact_publication"] == "unpublished"
+    assert manifest["lifecycle"]["deployment_evidence"] == "not_deployed"
+    assert manifest["definition"]["owner_revision"] == ("5139e2019d7f46d4dde3f73ee6cd21bb094a7dc1")
+    assert manifest["definition"]["provenance_activation_revision"] is None
+    assert manifest["conformance"]["primitive_conformance"] == "active_exact_owner_revision"
+    assert manifest["conformance"]["draft_freeze"] == "ready"
     assert manifest["roles"]["actual_producers"] == []
     assert manifest["roles"]["actual_consumers"] == []
     assert manifest["roles"]["resource_ref_runtime_writer"] == "none_confirmed"
@@ -256,7 +262,14 @@ def test_manifest_distinguishes_definition_runtime_and_distribution_roles() -> N
 
     assert roles["semantic_owner"] == "Nexus data/context/security plane"
     assert roles["authoritative_definition_writer"] == "Nexus owner maintainers"
-    assert "exact commit" in roles["canonical_definition_store"]
+    definition_store = roles["canonical_definition_store"]
+    assert definition_store["revision"] == "5139e2019d7f46d4dde3f73ee6cd21bb094a7dc1"
+    assert definition_store["path"] == (
+        "src/nexus/contracts/schemas/common/v1/resource-ref.schema.json"
+    )
+    assert definition_store["sha256"] == (
+        "15ce4b2ed53f1278a40dc313a837e170a77fb4ea026022898479dd0135b798b7"
+    )
     assert roles["assembly_and_distribution_owner"] == "sudostack"
     assert roles["referenced_resource_writers_and_stores"] == (
         "unchanged_existing_domain_boundaries"

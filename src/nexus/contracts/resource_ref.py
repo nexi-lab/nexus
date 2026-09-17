@@ -36,7 +36,7 @@ ZONE_ID_SCHEMA_RESOURCE = "schemas/common/v1/vendor/nexus-vfs/zone-id.schema.gen
 ZONE_PATH_SCHEMA_RESOURCE = "schemas/common/v1/vendor/nexus-vfs/zone-path.schema.gen.json"
 ZONE_PATH_META_SCHEMA_RESOURCE = "schemas/common/v1/vendor/nexus-vfs/zone-path.meta-schema.gen.json"
 RESOURCE_REF_PRIMITIVE_VALIDATION_AVAILABLE = True
-RESOURCE_REF_DRAFT_FREEZE_AVAILABLE = False
+RESOURCE_REF_DRAFT_FREEZE_AVAILABLE = True
 MAX_RESOURCE_REF_JSON_BYTES = 65_536
 MAX_EXTENSION_DEPTH = 8
 MAX_EXTENSION_STRING_LENGTH = 4_096
@@ -861,10 +861,9 @@ class ResourceRef:
     """Parsed Product ResourceRef with lossless unknown-optional preservation.
 
     The object is a locator, not a rename-stable identity or authorization
-    grant. Construction validates the provisional owner envelope, extension policy,
-    and exact-pinned primitive projections. Callers must invoke
-    :func:`require_resource_ref_draft_freeze` before operational use; that guard
-    remains closed until the Nexus owner definition has an immutable revision.
+    grant. Construction validates the draft-frozen owner envelope, extension policy,
+    and exact-pinned primitive projections. Callers may use
+    :func:`require_resource_ref_draft_freeze` to assert that owner provenance is active.
     """
 
     zone_id: str

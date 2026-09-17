@@ -13,7 +13,6 @@ from nexus.contracts.resource_ref import (
     FrozenJsonValue,
     JsonValue,
     ResourceRef,
-    ResourceRefDraftFreezeUnavailable,
     ResourceRefValidationError,
     load_resource_ref_schema,
     require_resource_ref_draft_freeze,
@@ -427,7 +426,6 @@ def test_secret_values_are_not_reflected_in_validation_errors() -> None:
     assert all(secret not in issue.message for issue in exc_info.value.issues)
 
 
-def test_primitive_validation_is_available_but_draft_freeze_fails_closed() -> None:
+def test_primitive_validation_and_draft_freeze_are_available() -> None:
     require_resource_ref_primitive_validation()
-    with pytest.raises(ResourceRefDraftFreezeUnavailable):
-        require_resource_ref_draft_freeze()
+    require_resource_ref_draft_freeze()

@@ -9,20 +9,19 @@
   },
   "lifecycle": {
     "adr_maturity": "proposed",
-    "contract_baseline": "unfrozen",
-    "owner_source_status": "provisional_external_refs_frozen",
+    "contract_baseline": "draft-frozen",
+    "owner_source_status": "immutable_owner_revision",
     "artifact_publication": "unpublished",
     "deployment_evidence": "not_deployed",
     "freeze": {
-      "state": "blocked",
-      "reason": "External primitive closure is immutable; Nexus owner definition is uncommitted under task authorization.",
-      "blocking_condition": "immutable Nexus owner revision"
+      "state": "ready",
+      "reason": "Immutable Nexus definition commit and exact-pinned nexus-vfs closure are verified."
     }
   },
   "definition": {
     "semantic_owner_repository": "https://github.com/nexi-lab/nexus.git",
     "working_base_revision": "23d3717a052ccd4b28ab399de27a50f4879d38c0",
-    "owner_revision": null,
+    "owner_revision": "5139e2019d7f46d4dde3f73ee6cd21bb094a7dc1",
     "source_path": "src/nexus/contracts/schemas/common/v1/resource-ref.schema.json",
     "source_sha256": "15ce4b2ed53f1278a40dc313a837e170a77fb4ea026022898479dd0135b798b7",
     "dialect": "https://json-schema.org/draft/2020-12/schema",
@@ -31,12 +30,18 @@
     "source_lock": {
       "path": "src/nexus/contracts/schemas/common/v1/nexus-vfs.source-lock.json",
       "sha256": "924dfefd9cf1f73264b355d1059ae7fb03d5f950253a87a99184539b57dfbf7c"
-    }
+    },
+    "provenance_activation_revision": null
   },
   "roles": {
     "semantic_owner": "Nexus data/context/security plane",
     "authoritative_definition_writer": "Nexus owner maintainers",
-    "canonical_definition_store": "Nexus exact commit + source path + digest (revision pending)",
+    "canonical_definition_store": {
+      "repository": "https://github.com/nexi-lab/nexus.git",
+      "revision": "5139e2019d7f46d4dde3f73ee6cd21bb094a7dc1",
+      "path": "src/nexus/contracts/schemas/common/v1/resource-ref.schema.json",
+      "sha256": "15ce4b2ed53f1278a40dc313a837e170a77fb4ea026022898479dd0135b798b7"
+    },
     "resource_ref_runtime_writer": "none_confirmed",
     "resource_ref_canonical_runtime_store": "none_confirmed",
     "referenced_resource_writers_and_stores": "unchanged_existing_domain_boundaries",
@@ -794,10 +799,10 @@
     "default_ci_job": "test",
     "standalone_checkout": true,
     "sibling_checkout_required": false,
-    "primitive_conformance": "blocked",
+    "primitive_conformance": "active_exact_owner_revision",
     "reference_resolution": "offline registry backed by exact-pinned nexus-vfs schemas and required sudoZonePath vocabulary",
     "primitive_validation": "active_exact_owner_revision",
-    "draft_freeze": "blocked_on_immutable_nexus_owner_revision",
+    "draft_freeze": "ready",
     "validator_versions": {
       "python_jsonschema": "4.26.0",
       "python_referencing": "0.37.0",

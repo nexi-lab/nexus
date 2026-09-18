@@ -8,7 +8,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from nexus.contracts.constants import ROOT_ZONE_ID
@@ -355,6 +355,24 @@ class ZoneModel(Base):
     finalizers: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
 
+    # ── zone-v1 canonical columns (2B, expand-only) ─────────────────────────
+    # Legacy name/phase/settings stay for the legacy mapper; canonical product
+    # state lives here. Nullable on purpose: existing rows have no canonical
+    # data until migration maps them (never assumed — see zone_migration.py).
+    display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    canonical_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    canonical_revision: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_by: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    placement_location: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    placement_data_domain: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    trust_domain: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    placement_region: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    replication_policy_ref: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    labels: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    runtime_observed_receipt: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    runtime_health: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    runtime_observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=lambda: datetime.now(UTC), index=True
     )
@@ -368,6 +386,7 @@ class ZoneModel(Base):
     __table_args__ = (
         Index("idx_zones_name", "name"),
         Index("idx_zones_phase", "phase"),
+        Index("idx_zones_canonical_status", "canonical_status"),
     )
 
     @property

@@ -146,6 +146,20 @@ from nexus.storage.models.transaction_snapshot import (
 from nexus.storage.models.upload_session import UploadSessionModel as UploadSessionModel
 from nexus.storage.models.version_history import VersionHistoryModel as VersionHistoryModel
 
+# Domain: zone-v1 canonical storage (2B). alembic discovers these through
+# this re-export (env.py imports Base from this package); an unlisted model
+# is a table no migration will ever create.
+from nexus.storage.models.zone_v1 import (
+    RebacRelationSourceModel as RebacRelationSourceModel,
+)
+from nexus.storage.models.zone_v1 import ZoneAuthorizationEpochModel as ZoneAuthorizationEpochModel
+from nexus.storage.models.zone_v1 import ZoneDelegationModel as ZoneDelegationModel
+from nexus.storage.models.zone_v1 import ZoneGrantModel as ZoneGrantModel
+from nexus.storage.models.zone_v1 import ZoneGrantProjectionOutboxModel as ZoneGrantProjectionOutboxModel
+from nexus.storage.models.zone_v1 import ZoneMountModel as ZoneMountModel
+from nexus.storage.models.zone_v1 import ZoneOperationModel as ZoneOperationModel
+from nexus.storage.models.zone_v1 import ZoneRuntimeOutboxModel as ZoneRuntimeOutboxModel
+
 # Domain: Workflows
 from nexus.storage.models.workflows import WorkflowExecutionModel as WorkflowExecutionModel
 from nexus.storage.models.workflows import WorkflowModel as WorkflowModel

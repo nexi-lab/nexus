@@ -128,8 +128,8 @@ impl SecretStorage {
     fn ensure_dir(&self, path: &str) -> Result<(), PasswordVaultError> {
         self.kernel
             .sys_setattr(
-                path, DT_DIR, "", None, None, None, "memory", "root", false, 0, None, None, None,
-                None, None, None, None, None, None, None, None,
+                path, &self.ctx, DT_DIR, "", None, None, None, "memory", "root", false, 0, None,
+                None, None, None, None, None, None, None, None, None, None,
             )
             .map(|_| ())
             .map_err(|e| PasswordVaultError::Storage(format!("mkdir {path}: {e:?}")))
@@ -716,9 +716,11 @@ mod tests {
         let kernel = Arc::new(Kernel::new());
         let backend: Arc<dyn ObjectStore> = Arc::new(MemBackend::new());
         let backend_name = backend.name().to_string();
+        let ctx = OperationContext::new("vault-test", "root", true, None, true);
         kernel
             .sys_setattr(
                 "/vault",
+                &ctx,
                 2,
                 /* DT_MOUNT */ &backend_name,
                 Some(backend),
@@ -972,9 +974,11 @@ mod tests {
         let kernel = Arc::new(Kernel::new());
         let backend: Arc<dyn ObjectStore> = Arc::new(MemBackend::new());
         let backend_name = backend.name().to_string();
+        let ctx = OperationContext::new("vault-storage", "root", true, Some("vault-storage"), true);
         kernel
             .sys_setattr(
                 "/vault",
+                &ctx,
                 2, /* DT_MOUNT */
                 &backend_name,
                 Some(backend),
@@ -997,15 +1001,15 @@ mod tests {
                 None,
             )
             .unwrap();
-        let ctx = OperationContext::new("vault-storage", "root", true, Some("vault-storage"), true);
         (kernel, ctx)
     }
 
     fn mkdir_raw(kernel: &Arc<Kernel>, path: &str) {
+        let ctx = OperationContext::new("vault-test", "root", true, None, true);
         kernel
             .sys_setattr(
-                path, DT_DIR, "", None, None, None, "memory", "root", false, 0, None, None, None,
-                None, None, None, None, None, None, None, None,
+                path, &ctx, DT_DIR, "", None, None, None, "memory", "root", false, 0, None, None,
+                None, None, None, None, None, None, None, None, None,
             )
             .unwrap();
     }

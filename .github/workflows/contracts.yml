@@ -1,0 +1,32 @@
+# Contract conformance CI for the zone-v1 owner contracts (2A).
+# Runs the owner-side checks: vendor/lock/manifest reproducibility, lint,
+# and the shared-fixture conformance suite that judges both the JSON
+# Schemas and the owner-local Pydantic adapter.
+name: contracts
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+    paths:
+      - "contracts/**"
+      - "src/nexus/contracts/**"
+      - "tests/contracts/**"
+      - ".github/workflows/contracts.yml"
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Install Python deps for the contract suite
+        run: uv pip install --system "pydantic[email]>=2.13.4" "jsonschema>=4.20.0" pytest pytest-xdist ruff mypy
+      - name: Vendor/lock/manifest reproducibility
+        run: python contracts/tools/sync_vendor.py --check
+      - name: Lint contract code
+        run: |
+          ruff check src/nexus/contracts/zone_v1.py tests/contracts/ contracts/tools/sync_vendor.py
+          ruff format --check src/nexus/contracts/zone_v1.py tests/contracts/ contracts/tools/sync_vendor.py
+      - name: Contract conformance (shared fixtures judge schema + adapter)
+        run: python -m pytest -n 0 tests/contracts -q

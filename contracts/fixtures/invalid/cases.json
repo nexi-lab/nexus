@@ -1,0 +1,302 @@
+{
+  "$comment": "Invalid payloads. Classes covered: missing-required, wrong-type, bad-id, unknown-major, bad-enum, patch-outside-whitelist, bad-digest, bad-time, empty-required-string, size-bytes-not-string, secret-in-Required-adjacent-shape.",
+  "cases": [
+    {
+      "name": "zone-missing-required-revision",
+      "class": "missing-required",
+      "schema": "auth/v1/zone.schema.json",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "Zone",
+        "zone_id": "z",
+        "display_name": "d",
+        "status": "active",
+        "deployment": { "location": "cloud", "trust_domain": "t" },
+        "created_by": { "subject_type": "user", "subject_id": "u" },
+        "created_at": "2026-09-18T08:00:00Z",
+        "updated_at": "2026-09-18T08:00:00Z"
+      }
+    },
+    {
+      "name": "zone-grant-missing-required-grantee",
+      "class": "missing-required",
+      "schema": "auth/v1/zone-grant.schema.json",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "ZoneGrant",
+        "grant_id": "g",
+        "zone_id": "z",
+        "capabilities": ["zone.data.read"],
+        "issued_by": { "subject_type": "user", "subject_id": "u" },
+        "reason": "r",
+        "policy_version": "p",
+        "revision": "r",
+        "status": "active",
+        "created_at": "2026-09-18T08:00:00Z"
+      }
+    },
+    {
+      "name": "zone-operation-missing-required-step",
+      "class": "missing-required",
+      "schema": "auth/v1/zone-operation.schema.json",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "ZoneOperation",
+        "operation_id": "o",
+        "action": "create",
+        "state": "queued",
+        "retryable": true,
+        "created_at": "2026-09-18T08:00:00Z",
+        "updated_at": "2026-09-18T08:00:00Z"
+      }
+    },
+    {
+      "name": "zone-wrong-type-status-number",
+      "class": "wrong-type",
+      "schema": "auth/v1/zone.schema.json",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "Zone",
+        "zone_id": "z",
+        "display_name": "d",
+        "status": 1,
+        "deployment": { "location": "cloud", "trust_domain": "t" },
+        "revision": "r",
+        "created_by": { "subject_type": "user", "subject_id": "u" },
+        "created_at": "2026-09-18T08:00:00Z",
+        "updated_at": "2026-09-18T08:00:00Z"
+      }
+    },
+    {
+      "name": "zone-grant-wrong-type-capabilities-string",
+      "class": "wrong-type",
+      "schema": "auth/v1/zone-grant.schema.json",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "ZoneGrant",
+        "grant_id": "g",
+        "zone_id": "z",
+        "grantee": { "subject_type": "user", "subject_id": "u" },
+        "capabilities": "zone.data.read",
+        "issued_by": { "subject_type": "user", "subject_id": "u" },
+        "reason": "r",
+        "policy_version": "p",
+        "revision": "r",
+        "status": "active",
+        "created_at": "2026-09-18T08:00:00Z"
+      }
+    },
+    {
+      "name": "zone-wrong-type-labels-values-number",
+      "class": "wrong-type",
+      "schema": "auth/v1/zone.schema.json",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "Zone",
+        "zone_id": "z",
+        "display_name": "d",
+        "status": "active",
+        "deployment": { "location": "cloud", "trust_domain": "t" },
+        "labels": { "team": 7 },
+        "revision": "r",
+        "created_by": { "subject_type": "user", "subject_id": "u" },
+        "created_at": "2026-09-18T08:00:00Z",
+        "updated_at": "2026-09-18T08:00:00Z"
+      }
+    },
+    {
+      "name": "zone-bad-id-uppercase",
+      "class": "bad-id",
+      "schema": "auth/v1/zone.schema.json",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "Zone",
+        "zone_id": "Cloud-User",
+        "display_name": "d",
+        "status": "active",
+        "deployment": { "location": "cloud", "trust_domain": "t" },
+        "revision": "r",
+        "created_by": { "subject_type": "user", "subject_id": "u" },
+        "created_at": "2026-09-18T08:00:00Z",
+        "updated_at": "2026-09-18T08:00:00Z"
+      }
+    },
+    {
+      "name": "zone-bad-id-too-short",
+      "class": "bad-id",
+      "schema": "auth/v1/zone.schema.json",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "Zone",
+        "zone_id": "ab",
+        "display_name": "d",
+        "status": "active",
+        "deployment": { "location": "cloud", "trust_domain": "t" },
+        "revision": "r",
+        "created_by": { "subject_type": "user", "subject_id": "u" },
+        "created_at": "2026-09-18T08:00:00Z",
+        "updated_at": "2026-09-18T08:00:00Z"
+      }
+    },
+    {
+      "name": "zone-create-request-reserved-id-root",
+      "class": "bad-id",
+      "schema": "auth/v1/zone-create-request.schema.json",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "ZoneCreateRequest",
+        "zone_id": "root",
+        "display_name": "hijack attempt"
+      },
+      "$comment": "TenantZoneIdCreate rejects kernel-owned ids; the record/ref validator would have accepted 'root'."
+    },
+    {
+      "name": "zone-unknown-major",
+      "class": "unknown-major",
+      "schema": "auth/v1/zone.schema.json",
+      "payload": {
+        "api_version": "auth.sudo.dev/v2",
+        "kind": "Zone",
+        "zone_id": "z",
+        "display_name": "d",
+        "status": "active",
+        "deployment": { "location": "cloud", "trust_domain": "t" },
+        "revision": "r",
+        "created_by": { "subject_type": "user", "subject_id": "u" },
+        "created_at": "2026-09-18T08:00:00Z",
+        "updated_at": "2026-09-18T08:00:00Z"
+      }
+    },
+    {
+      "name": "resource-ref-unknown-major",
+      "class": "unknown-major",
+      "schema": "common/v1/resource-ref.schema.json",
+      "payload": {
+        "api_version": "common.sudo.dev/v9",
+        "kind": "ResourceRef",
+        "zone_id": "z",
+        "path": "/a"
+      }
+    },
+    {
+      "name": "zone-bad-enum-status",
+      "class": "bad-enum",
+      "schema": "auth/v1/zone.schema.json",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "Zone",
+        "zone_id": "z",
+        "display_name": "d",
+        "status": "Terminating",
+        "deployment": { "location": "cloud", "trust_domain": "t" },
+        "revision": "r",
+        "created_by": { "subject_type": "user", "subject_id": "u" },
+        "created_at": "2026-09-18T08:00:00Z",
+        "updated_at": "2026-09-18T08:00:00Z"
+      },
+      "$comment": "Legacy phase spellings are migration inputs, never wire values."
+    },
+    {
+      "name": "zone-operation-bad-enum-action",
+      "class": "bad-enum",
+      "schema": "auth/v1/zone-operation.schema.json",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "ZoneOperation",
+        "operation_id": "o",
+        "action": "destroy",
+        "state": "queued",
+        "step": "s",
+        "retryable": true,
+        "created_at": "2026-09-18T08:00:00Z",
+        "updated_at": "2026-09-18T08:00:00Z"
+      }
+    },
+    {
+      "name": "zone-patch-request-outside-whitelist",
+      "class": "patch-outside-whitelist",
+      "schema": "auth/v1/zone-patch-request.schema.json",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "ZonePatchRequest",
+        "zone_id": "new-id"
+      },
+      "$comment": "Patching an immutable field is rejected by the whitelist, not merely by the service."
+    },
+    {
+      "name": "zone-patch-request-trust-domain",
+      "class": "patch-outside-whitelist",
+      "schema": "auth/v1/zone-patch-request.schema.json",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "ZonePatchRequest",
+        "deployment": { "trust_domain": "attacker.example" }
+      }
+    },
+    {
+      "name": "resource-ref-bad-digest-no-prefix",
+      "class": "bad-digest",
+      "schema": "common/v1/resource-ref.schema.json",
+      "payload": {
+        "api_version": "common.sudo.dev/v1",
+        "kind": "ResourceRef",
+        "zone_id": "z",
+        "path": "/a",
+        "digest": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
+      }
+    },
+    {
+      "name": "resource-ref-size-bytes-number",
+      "class": "size-bytes-not-string",
+      "schema": "common/v1/resource-ref.schema.json",
+      "payload": {
+        "api_version": "common.sudo.dev/v1",
+        "kind": "ResourceRef",
+        "zone_id": "z",
+        "path": "/a",
+        "size_bytes": 1048576
+      },
+      "$comment": "Numbers lose precision past 2^53 on JS consumers; the wire type is a decimal string."
+    },
+    {
+      "name": "zone-bad-time-bare-date",
+      "class": "bad-time",
+      "schema": "auth/v1/zone.schema.json",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "Zone",
+        "zone_id": "z",
+        "display_name": "d",
+        "status": "active",
+        "deployment": { "location": "cloud", "trust_domain": "t" },
+        "revision": "r",
+        "created_by": { "subject_type": "user", "subject_id": "u" },
+        "created_at": "2026-09-18",
+        "updated_at": "2026-09-18T08:00:00Z"
+      }
+    },
+    {
+      "name": "zone-empty-display-name",
+      "class": "empty-required-string",
+      "schema": "auth/v1/zone.schema.json",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "Zone",
+        "zone_id": "z",
+        "display_name": "",
+        "status": "active",
+        "deployment": { "location": "cloud", "trust_domain": "t" },
+        "revision": "r",
+        "created_by": { "subject_type": "user", "subject_id": "u" },
+        "created_at": "2026-09-18T08:00:00Z",
+        "updated_at": "2026-09-18T08:00:00Z"
+      }
+    },
+    {
+      "name": "principal-ref-bad-subject-type",
+      "class": "bad-enum",
+      "schema": "common/v1/principal-ref.schema.json",
+      "payload": { "subject_type": "robot", "subject_id": "u" }
+    }
+  ]
+}

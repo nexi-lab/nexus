@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.sudo.dev/schemas/auth/v1/zone-grant.schema.json",
+  "title": "ZoneGrant",
+  "description": "Auditable, revocable business fact of authorization. NOT a ReBAC tuple, API-key junction or token claim — those are projections. pending grants no access; capability/scope changes are new-grant-plus-revoke, never in-place rewrites; expires_at is judged at access time; revoke never deletes Audit/Session/Task/Artifact history.",
+  "type": "object",
+  "properties": {
+    "api_version": {
+      "const": "auth.sudo.dev/v1"
+    },
+    "kind": {
+      "const": "ZoneGrant"
+    },
+    "grant_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "zone_id": {
+      "$ref": "https://nexus-vfs.dev/contracts/zone-id/existing-zone-id-ref.schema.gen.json"
+    },
+    "grantee": {
+      "$ref": "https://contracts.sudo.dev/schemas/common/v1/principal-ref.schema.json"
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^zone\\.[a-z-]+\\.[a-z-]+$",
+        "minLength": 1,
+        "description": "Open registry. Known: zone.data.read, zone.data.write, zone.runtime.execute, zone.metadata.manage, zone.grants.manage, zone.data.export, zone.lifecycle.delete."
+      }
+    },
+    "resource_prefixes": {
+      "type": "array",
+      "items": {
+        "$ref": "https://nexus-vfs.dev/contracts/zone-path/zone-path.schema.gen.json",
+        "description": "Zone-internal absolute path prefix; canonicalized and .. / cross-zone / ambiguous encodings rejected at admission."
+      }
+    },
+    "source": {
+      "type": "object",
+      "properties": {
+        "source_type": {
+          "enum": ["manual", "moss_org_binding", "migration", "system"]
+        },
+        "source_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Idempotency anchor: creation of the same source is keyed here, never on tuple-matching."
+        }
+      },
+      "required": ["source_type", "source_id"],
+      "additionalProperties": true
+    },
+    "issued_by": {
+      "$ref": "https://contracts.sudo.dev/schemas/common/v1/principal-ref.schema.json"
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "policy_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "revision": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "enum": ["pending", "active", "revoked", "expired"]
+    },
+    "created_at": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
+    },
+    "not_before": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
+    },
+    "expires_at": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
+    },
+    "revoked_at": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
+    },
+    "revoked_by": {
+      "$ref": "https://contracts.sudo.dev/schemas/common/v1/principal-ref.schema.json"
+    },
+    "revoke_reason": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "api_version",
+    "kind",
+    "grant_id",
+    "zone_id",
+    "grantee",
+    "capabilities",
+    "issued_by",
+    "reason",
+    "policy_version",
+    "revision",
+    "status",
+    "created_at"
+  ],
+  "additionalProperties": true
+}

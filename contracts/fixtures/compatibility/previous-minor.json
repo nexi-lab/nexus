@@ -1,0 +1,100 @@
+{
+  "$comment": "Compatibility baseline: the accepted/rejected verdicts a previous minor must keep producing. v1.0 is the first minor of the auth/common families, so this file freezes the v1.0 verdicts themselves — later minors diff against it. Each entry records the payload and the expected verdict.",
+  "baseline_for": "auth.sudo.dev/v1 + common.sudo.dev/v1 (first release)",
+  "cases": [
+    {
+      "name": "zone-minimal-accepted",
+      "schema": "auth/v1/zone.schema.json",
+      "expected": "valid",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "Zone",
+        "zone_id": "cloud-user-1001",
+        "display_name": "Cloud User 1001",
+        "status": "active",
+        "deployment": { "location": "cloud", "trust_domain": "internal" },
+        "revision": "rev-1",
+        "created_by": { "subject_type": "user", "subject_id": "usr_1" },
+        "created_at": "2026-09-18T08:00:00Z",
+        "updated_at": "2026-09-18T08:00:00Z"
+      }
+    },
+    {
+      "name": "zone-unknown-optional-accepted",
+      "schema": "auth/v1/zone.schema.json",
+      "expected": "valid",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "Zone",
+        "zone_id": "cloud-user-1001",
+        "display_name": "d",
+        "status": "active",
+        "deployment": { "location": "cloud", "trust_domain": "internal" },
+        "revision": "rev-1",
+        "created_by": { "subject_type": "user", "subject_id": "usr_1" },
+        "created_at": "2026-09-18T08:00:00Z",
+        "updated_at": "2026-09-18T08:00:00Z",
+        "x_future_minor_field": true
+      }
+    },
+    {
+      "name": "zone-unknown-major-rejected",
+      "schema": "auth/v1/zone.schema.json",
+      "expected": "invalid",
+      "payload": {
+        "api_version": "auth.sudo.dev/v2",
+        "kind": "Zone",
+        "zone_id": "cloud-user-1001",
+        "display_name": "d",
+        "status": "active",
+        "deployment": { "location": "cloud", "trust_domain": "t" },
+        "revision": "r",
+        "created_by": { "subject_type": "user", "subject_id": "u" },
+        "created_at": "2026-09-18T08:00:00Z",
+        "updated_at": "2026-09-18T08:00:00Z"
+      }
+    },
+    {
+      "name": "zone-create-request-reserved-rejected",
+      "schema": "auth/v1/zone-create-request.schema.json",
+      "expected": "invalid",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "ZoneCreateRequest",
+        "zone_id": "root",
+        "display_name": "hijack"
+      }
+    },
+    {
+      "name": "zone-grant-open-capability-accepted",
+      "schema": "auth/v1/zone-grant.schema.json",
+      "expected": "valid",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "ZoneGrant",
+        "grant_id": "g",
+        "zone_id": "cloud-user-1001",
+        "grantee": { "subject_type": "agent", "subject_id": "a" },
+        "capabilities": ["zone.data.read", "zone.future.capability"],
+        "issued_by": { "subject_type": "user", "subject_id": "u" },
+        "reason": "r",
+        "policy_version": "p",
+        "revision": "r",
+        "status": "active",
+        "created_at": "2026-09-18T08:00:00Z"
+      }
+    },
+    {
+      "name": "resource-ref-size-bytes-string-accepted",
+      "schema": "common/v1/resource-ref.schema.json",
+      "expected": "valid",
+      "payload": {
+        "api_version": "common.sudo.dev/v1",
+        "kind": "ResourceRef",
+        "zone_id": "cloud-user-1001",
+        "path": "/a",
+        "size_bytes": "9007199254740993"
+      }
+    }
+  ]
+}

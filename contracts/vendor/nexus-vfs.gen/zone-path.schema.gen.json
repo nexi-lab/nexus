@@ -1,0 +1,9 @@
+{
+  "$id": "https://nexus-vfs.dev/contracts/zone-path/zone-path.schema.gen.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Canonical zone-relative wire path. This is not a product ResourceRef.",
+  "maxLength": 1024,
+  "pattern": "^(?:/|/(?!__sys__(?:/|$))(?!(?:\\.|\\.\\.)(?:/|$))[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._~!$&'()*+,;=:@\\-]{1,255}(?:/(?!(?:\\.|\\.\\.)(?:/|$))[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._~!$&'()*+,;=:@\\-]{1,255}){0,31})$",
+  "title": "ZonePath",
+  "type": "string"
+}

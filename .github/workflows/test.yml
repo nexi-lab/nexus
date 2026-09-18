@@ -82,6 +82,14 @@ jobs:
         if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/checkout@v4
 
+      - name: Checkout pinned contract fixtures
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: sudoprivacy/sudostack
+          ref: 6a51190a0e08f673912967716629a2fdb424b85a
+          path: .contract-input/sudostack
+
       - name: Set up Python ${{ matrix.python-version }}
         if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/setup-python@v5
@@ -107,6 +115,8 @@ jobs:
       - name: Run unit tests
         if: needs.detect-changes.outputs.code_changed == 'true'
         timeout-minutes: 30
+        env:
+          SUDOSTACK_REPO: ${{ github.workspace }}/.contract-input/sudostack
         run: |
           start=$(date +%s)
           uv run --no-sync python -Xfaulthandler -m pytest tests/unit -v --durations=10 -n auto --dist loadgroup \

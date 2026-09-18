@@ -1,0 +1,70 @@
+{
+  "source_lock_version": 1,
+  "owner_repository": "https://github.com/nexi-lab/nexus-vfs.git",
+  "owner_revision": "24f6730ec90fab8a035b2f5400ed313bda343fbe",
+  "owner_parent_revision": "557f0b9ba7c1847ae0eaadb1535ac6ea6d9099e1",
+  "revision_state": "immutable_local_commit",
+  "line_endings": "LF",
+  "contracts": {
+    "zone_id": {
+      "contract_id": "urn:sudo:nexus-vfs:zone-id:v1",
+      "semantic_scope": "portable lexical existing-identity reference; tenant creation additionally applies reserved constants",
+      "canonical_source": {
+        "owner_path": "contracts/zone-id/spec.json",
+        "vendored_path": "vendor/nexus-vfs/zone-id.spec.source.json",
+        "sha256": "6f5fb408d08de19172ac1d10b793a143588494ec6dae5326e60f9de5a2bce4d7"
+      },
+      "projection": {
+        "owner_path": "contracts/zone-id/schema.json",
+        "vendored_path": "vendor/nexus-vfs/zone-id.schema.gen.json",
+        "sha256": "3e2a9a5286450293a65f3db2b5189a47383e5f9b1da7f434e1d25a1371e16473"
+      },
+      "fixtures": {
+        "owner_path": "contracts/zone-id/vectors.json",
+        "vendored_path": "vendor/nexus-vfs/zone-id.vectors.source.json",
+        "sha256": "6d840d389f1fa3dc41ddd5c4c33eab2fb37792bfa144b43881cda3bd245c083a"
+      }
+    },
+    "zone_path": {
+      "contract_id": "urn:sudo:nexus-vfs:zone-path:v1",
+      "semantic_scope": "strict zone-relative path for new reference boundaries; legacy raw paths and persisted keys excluded",
+      "canonical_source": {
+        "owner_path": "contracts/zone-path/spec.json",
+        "vendored_path": "vendor/nexus-vfs/zone-path.spec.source.json",
+        "sha256": "9869c731ffcf38c0f28267ddb74f725f40f1d3d76b52d6b3f78e7e93b6b1e462"
+      },
+      "projection": {
+        "owner_path": "contracts/zone-path/schema.json",
+        "vendored_path": "vendor/nexus-vfs/zone-path.schema.gen.json",
+        "sha256": "cd9c09d197b1afa061fd28ce36d8561163eb06b2185631116c72956937434f94"
+      },
+      "meta_schema": {
+        "id": "urn:sudo:nexus-vfs:meta:zone-path:v1",
+        "owner_path": "contracts/zone-path/meta-schema.json",
+        "vendored_path": "vendor/nexus-vfs/zone-path.meta-schema.gen.json",
+        "sha256": "c44f0827848d08a4f89e31f04d7b4ad02b9bfc896ded46a0e223e8de1f8e0047"
+      },
+      "vocabulary": {
+        "id": "urn:sudo:nexus-vfs:vocab:zone-path:v1",
+        "assertion_keyword": "sudoZonePath"
+      },
+      "fixtures": {
+        "owner_path": "contracts/zone-path/cases.json",
+        "vendored_path": "vendor/nexus-vfs/zone-path.cases.source.json",
+        "sha256": "944a5c63e368ece3a38e13a92851cd31d918a7a56d847d833469bff40f3d2a93"
+      },
+      "validator_lock": {
+        "owner_path": "contracts/zone-path/package-lock.json",
+        "vendored_path": "vendor/nexus-vfs/zone-path.package-lock.source.json",
+        "sha256": "07a399352f13fd71bdef77c7d37f4dfddbde8bf4e5fb949d493708057de29a2c",
+        "node": ">=22",
+        "ajv": "8.20.0"
+      }
+    }
+  },
+  "policy": {
+    "vendored_artifacts": "byte-exact generated/source snapshots for standalone validation; not editable Nexus primitive definitions",
+    "network_resolution": "forbidden",
+    "resolver_semantics": "deferred to Nexus product design"
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "api_version": "common.sudo.dev/v1",
+  "kind": "ResourceRef",
+  "path": "/reports/missing-zone.txt"
+}

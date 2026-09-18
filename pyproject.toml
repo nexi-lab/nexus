@@ -434,6 +434,13 @@ where = ["src"]
 "nexus.backends.connectors.github" = ["*.yaml"]
 "nexus.bricks.auth.daemon.templates" = ["*.plist.j2", "*.service.j2"]
 "nexus.bricks.portability" = ["schemas/*.json"]
+"nexus.contracts" = [
+    "schemas/common/v1/*.json",
+    "schemas/common/v1/*.md",
+    "schemas/common/v1/fixtures/valid/*.json",
+    "schemas/common/v1/fixtures/invalid/*.json",
+    "schemas/common/v1/vendor/nexus-vfs/*.json",
+]
 "nexus.extensions._index" = ["extensions.json"]
 
 [tool.pytest.ini_options]

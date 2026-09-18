@@ -1,0 +1,82 @@
+{
+  "cases": [
+    {
+      "class": "boundary",
+      "expected": "accept",
+      "id": "shortest",
+      "value": "aaa"
+    },
+    {
+      "class": "boundary",
+      "expected": "accept",
+      "id": "longest",
+      "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "class": "positive",
+      "expected": "accept",
+      "id": "canonical",
+      "value": "cloud-user-1001"
+    },
+    {
+      "class": "positive",
+      "expected": "accept",
+      "id": "uuid",
+      "value": "550e8400-e29b-41d4-a716-446655440000"
+    },
+    {
+      "class": "boundary",
+      "expected": "reject",
+      "id": "too-short",
+      "value": "aa"
+    },
+    {
+      "class": "boundary",
+      "expected": "reject",
+      "id": "too-long",
+      "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "class": "negative",
+      "expected": "reject",
+      "id": "leading",
+      "value": "-leading"
+    },
+    {
+      "class": "negative",
+      "expected": "reject",
+      "id": "trailing",
+      "value": "trailing-"
+    },
+    {
+      "class": "negative",
+      "expected": "reject",
+      "id": "uppercase",
+      "value": "Has-Upper"
+    },
+    {
+      "class": "negative",
+      "expected": "reject",
+      "id": "bad-character",
+      "value": "has_char"
+    },
+    {
+      "class": "negative",
+      "expected": "reject",
+      "id": "prefixed-uuid",
+      "value": "org:550e8400-e29b-41d4-a716-446655440000"
+    },
+    {
+      "class": "negative",
+      "expected": "reject",
+      "id": "terminal-newline",
+      "value": "abc\n"
+    }
+  ],
+  "provenance": {
+    "canonical_source": "contracts/zone-id/spec.json",
+    "contract_id": "urn:sudo:nexus-vfs:zone-id:v1",
+    "generation": "derived",
+    "owner": "nexus-vfs"
+  }
+}

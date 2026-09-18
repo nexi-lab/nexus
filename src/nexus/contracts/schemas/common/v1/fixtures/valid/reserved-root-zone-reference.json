@@ -1,0 +1,6 @@
+{
+  "api_version": "common.sudo.dev/v1",
+  "kind": "ResourceRef",
+  "zone_id": "root",
+  "path": "/reports/system-owned.txt"
+}

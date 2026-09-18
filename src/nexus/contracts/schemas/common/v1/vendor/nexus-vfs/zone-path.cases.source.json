@@ -1,0 +1,152 @@
+{
+  "$comment": [
+    "Owner conformance fixtures for urn:sudo:nexus-vfs:zone-path:v1.",
+    "Each expected outcome is explicit; validator implementations must consume",
+    "these cases rather than recreate a test-only parser."
+  ],
+  "provenance": {
+    "owner": "nexus-vfs",
+    "canonical_source": "contracts/zone-path/spec.json",
+    "contract_id": "urn:sudo:nexus-vfs:zone-path:v1"
+  },
+  "cases": [
+    {
+      "id": "root",
+      "class": "boundary",
+      "path": "/",
+      "expected": "accept"
+    },
+    {
+      "id": "single-segment",
+      "class": "positive",
+      "path": "/artifact",
+      "expected": "accept"
+    },
+    {
+      "id": "nested",
+      "class": "positive",
+      "path": "/sessions/sess_123/artifacts/result.json",
+      "expected": "accept"
+    },
+    {
+      "id": "unicode-nfc",
+      "class": "positive",
+      "path": "/资料/café.txt",
+      "expected": "accept"
+    },
+    {
+      "id": "unicode-nfd",
+      "class": "positive",
+      "path": "/资料/café.txt",
+      "expected": "accept"
+    },
+    {
+      "id": "percent-looking-literal",
+      "class": "positive",
+      "path": "/literal/%2e%2e/value",
+      "expected": "accept"
+    },
+    {
+      "id": "mixed-case-preserved",
+      "class": "positive",
+      "path": "/Case/Sensitive",
+      "expected": "accept"
+    },
+    {
+      "id": "terminal-newline-is-literal",
+      "class": "positive",
+      "path": "/artifact/.\n",
+      "expected": "accept"
+    },
+    {
+      "id": "terminal-newline-parent-looking-is-literal",
+      "class": "positive",
+      "path": "/artifact/..\n",
+      "expected": "accept"
+    },
+    {
+      "id": "unicode-scalar-above-bmp",
+      "class": "positive",
+      "path": "/emoji/😀",
+      "expected": "accept"
+    },
+    {
+      "id": "empty",
+      "class": "boundary",
+      "path": "",
+      "expected": "reject"
+    },
+    {
+      "id": "relative",
+      "class": "negative",
+      "path": "artifact/file",
+      "expected": "reject"
+    },
+    {
+      "id": "leading-repeated-separator",
+      "class": "negative",
+      "path": "//artifact",
+      "expected": "reject"
+    },
+    {
+      "id": "interior-repeated-separator",
+      "class": "negative",
+      "path": "/artifact//file",
+      "expected": "reject"
+    },
+    {
+      "id": "all-separators-not-root",
+      "class": "boundary",
+      "path": "///",
+      "expected": "reject"
+    },
+    {
+      "id": "trailing-separator",
+      "class": "negative",
+      "path": "/artifact/",
+      "expected": "reject"
+    },
+    {
+      "id": "current-directory-segment",
+      "class": "negative",
+      "path": "/artifact/./file",
+      "expected": "reject"
+    },
+    {
+      "id": "parent-directory-segment",
+      "class": "negative",
+      "path": "/artifact/../file",
+      "expected": "reject"
+    },
+    {
+      "id": "root-current-directory",
+      "class": "boundary",
+      "path": "/.",
+      "expected": "reject"
+    },
+    {
+      "id": "root-parent-directory",
+      "class": "boundary",
+      "path": "/..",
+      "expected": "reject"
+    },
+    {
+      "id": "nul",
+      "class": "negative",
+      "path": "/artifact/\u0000/file",
+      "expected": "reject"
+    },
+    {
+      "id": "backslash",
+      "class": "negative",
+      "path": "/artifact\\file",
+      "expected": "reject"
+    },
+    {
+      "id": "backslash-parent-looking",
+      "class": "negative",
+      "path": "/artifact\\..\\file",
+      "expected": "reject"
+    }
+  ]
+}

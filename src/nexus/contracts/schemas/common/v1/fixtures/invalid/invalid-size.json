@@ -1,0 +1,7 @@
+{
+  "api_version": "common.sudo.dev/v1",
+  "kind": "ResourceRef",
+  "zone_id": "workspace-main",
+  "path": "/reports/negative.bin",
+  "size_bytes": "-1"
+}

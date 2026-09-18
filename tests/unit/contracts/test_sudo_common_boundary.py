@@ -17,7 +17,6 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
-
 HERE = Path(__file__).resolve()
 NEXUS_REPO = HERE.parents[3]
 SUDOSTACK_REPO = Path(os.environ.get("SUDOSTACK_REPO", NEXUS_REPO.parent / "sudostack"))
@@ -113,5 +112,7 @@ def read_json(path: Path) -> Any:
 
 
 def assert_sudostack_sha() -> None:
-    actual = subprocess.check_output(["git", "-C", str(SUDOSTACK_REPO), "rev-parse", "HEAD"], text=True).strip()
+    actual = subprocess.check_output(
+        ["git", "-C", str(SUDOSTACK_REPO), "rev-parse", "HEAD"], text=True
+    ).strip()
     assert actual == EXPECTED_SUDOSTACK_SHA

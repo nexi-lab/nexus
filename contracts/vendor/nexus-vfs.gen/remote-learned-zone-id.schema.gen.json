@@ -1,0 +1,21 @@
+{
+  "$id": "https://nexus-vfs.dev/contracts/zone-id/remote-learned-zone-id.schema.gen.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "anyOf": [
+    {
+      "maxLength": 63,
+      "minLength": 3,
+      "pattern": "^[abcdefghijklmnopqrstuvwxyz0123456789][abcdefghijklmnopqrstuvwxyz0123456789\\-]*[abcdefghijklmnopqrstuvwxyz0123456789]$",
+      "type": "string"
+    },
+    {
+      "enum": [
+        "root",
+        "__control__"
+      ]
+    }
+  ],
+  "description": "Identity learned through join or discovery. The caller must separately verify the remote incarnation and trust relationship.",
+  "title": "RemoteLearnedZoneId",
+  "x-nexus-vfs-requires-verified-remote": true
+}

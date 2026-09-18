@@ -1,0 +1,70 @@
+{
+  "$comment": "Secret-negative fixtures. Two-layer semantics (§4.1): (a) object-model layer — payloads carrying secret-STYLED unknown optional fields are ACCEPTED (unknown-optional rule) and the field must NOT appear in the parsed model output; (b) no contract field is a secret carrier — the contract field set below is asserted to contain none of the styled names. The wire/proxy layer MAY preserve unknown optionals when forwarding; that is a separate concern this fixture class does not judge.",
+  "secret_style_field_names": ["api_key", "apikey", "token", "access_token", "refresh_token", "secret", "client_secret", "password", "private_key", "session_cookie"],
+  "cases": [
+    {
+      "name": "zone-with-secret-styled-unknown-field",
+      "schema": "auth/v1/zone.schema.json",
+      "expect": "accepted-and-dropped",
+      "drop_fields": ["api_key"],
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "Zone",
+        "zone_id": "cloud-user-1001",
+        "display_name": "d",
+        "status": "active",
+        "deployment": { "location": "cloud", "trust_domain": "internal" },
+        "revision": "rev-1",
+        "created_by": { "subject_type": "user", "subject_id": "usr_1" },
+        "created_at": "2026-09-18T08:00:00Z",
+        "updated_at": "2026-09-18T08:00:00Z",
+        "api_key": "sk-live-DO-NOT-LEAK"
+      }
+    },
+    {
+      "name": "zone-grant-with-token-and-password",
+      "schema": "auth/v1/zone-grant.schema.json",
+      "expect": "accepted-and-dropped",
+      "drop_fields": ["token", "password"],
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "ZoneGrant",
+        "grant_id": "g",
+        "zone_id": "cloud-user-1001",
+        "grantee": { "subject_type": "user", "subject_id": "u" },
+        "capabilities": ["zone.data.read"],
+        "issued_by": { "subject_type": "user", "subject_id": "u" },
+        "reason": "r",
+        "policy_version": "p",
+        "revision": "r",
+        "status": "active",
+        "created_at": "2026-09-18T08:00:00Z",
+        "token": "Bearer eyJhbGciOi...",
+        "password": "hunter2"
+      }
+    },
+    {
+      "name": "zone-operation-with-secret-in-details-object",
+      "schema": "auth/v1/zone-operation.schema.json",
+      "expect": "accepted-model-carries-it-until-service-layer-strips",
+      "$comment": "details is a free-form Record<string, unknown>; the schema layer cannot enumerate secret keys inside it. This case documents that boundary explicitly: the object model keeps details verbatim and stripping is the serialization/service boundary's job (§4.1: Secret bytes do not enter objects — enforced there, not here).",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "ZoneOperation",
+        "operation_id": "o",
+        "action": "create",
+        "state": "failed",
+        "step": "s",
+        "retryable": false,
+        "error": {
+          "code": "ZONE_RUNTIME_UNAVAILABLE",
+          "message": "m",
+          "retryable": false,
+          "details": { "upstream_header": "Authorization: Bearer x" }
+        },
+        "created_at": "2026-09-18T08:00:00Z",
+        "updated_at": "2026-09-18T08:00:00Z"
+      }
+    }
+  ]
+}

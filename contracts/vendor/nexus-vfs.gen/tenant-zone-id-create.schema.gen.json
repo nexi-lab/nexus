@@ -1,0 +1,22 @@
+{
+  "$id": "https://nexus-vfs.dev/contracts/zone-id/tenant-zone-id-create.schema.gen.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "allOf": [
+    {
+      "maxLength": 63,
+      "minLength": 3,
+      "pattern": "^[abcdefghijklmnopqrstuvwxyz0123456789][abcdefghijklmnopqrstuvwxyz0123456789\\-]*[abcdefghijklmnopqrstuvwxyz0123456789]$",
+      "type": "string"
+    },
+    {
+      "not": {
+        "enum": [
+          "root",
+          "__control__"
+        ]
+      }
+    }
+  ],
+  "description": "Zone id admitted for creation of a tenant or data zone.",
+  "title": "TenantZoneIdCreate"
+}

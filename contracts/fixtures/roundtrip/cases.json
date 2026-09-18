@@ -1,0 +1,81 @@
+{
+  "$comment": "Roundtrip cases: parse -> serialize -> parse must be semantically equivalent. Property order and whitespace differences are explicitly not judged.",
+  "cases": [
+    {
+      "name": "zone-full",
+      "schema": "auth/v1/zone.schema.json",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "Zone",
+        "zone_id": "org-acme-shared",
+        "display_name": "Acme Shared Zone",
+        "description": "Shared working zone for Acme",
+        "status": "active",
+        "deployment": {
+          "location": "private",
+          "data_domain": "office",
+          "trust_domain": "acme.corp",
+          "region": "eu-central-1",
+          "replication_policy_ref": {
+            "api_version": "common.sudo.dev/v1",
+            "kind": "ResourceRef",
+            "zone_id": "root",
+            "path": "/policies/replication/3x",
+            "version": "3",
+            "digest": "sha256:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+            "media_type": "application/json",
+            "size_bytes": "1048576"
+          }
+        },
+        "labels": { "team": "platform" },
+        "revision": "rev-42",
+        "created_by": { "subject_type": "service", "subject_id": "moss-provisioner", "trust_domain": "sudo.dev" },
+        "created_at": "2026-09-01T10:00:00Z",
+        "updated_at": "2026-09-18T09:30:00.5Z"
+      }
+    },
+    {
+      "name": "zone-grant-full",
+      "schema": "auth/v1/zone-grant.schema.json",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "ZoneGrant",
+        "grant_id": "grant_01H5K9W3N0YRA4B7C8D9E0F1G2",
+        "zone_id": "org-acme-shared",
+        "grantee": { "subject_type": "organization", "subject_id": "org_550e8400", "trust_domain": "sudo.dev" },
+        "capabilities": ["zone.data.read", "zone.data.write", "zone.runtime.execute"],
+        "resource_prefixes": ["/sessions", "/artifacts"],
+        "source": { "source_type": "moss_org_binding", "source_id": "binding_01H5K8V2M9XQZ3A6B7C8D9E0F2" },
+        "issued_by": { "subject_type": "service", "subject_id": "moss-provisioner" },
+        "reason": "default zone provisioning",
+        "policy_version": "2026-09-15.1",
+        "revision": "rev-3",
+        "status": "revoked",
+        "created_at": "2026-09-18T08:05:00Z",
+        "expires_at": "2027-09-18T08:05:00Z",
+        "revoked_at": "2026-09-18T12:00:00Z",
+        "revoked_by": { "subject_type": "user", "subject_id": "usr_admin" },
+        "revoke_reason": "org detached"
+      }
+    },
+    {
+      "name": "zone-operation-full",
+      "schema": "auth/v1/zone-operation.schema.json",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "ZoneOperation",
+        "operation_id": "op_01H5K9X4O1ZSB5C8D9E0F1G2H3",
+        "action": "create",
+        "zone_id": "org-acme-shared",
+        "state": "succeeded",
+        "step": "mark-active-with-receipt",
+        "retryable": false,
+        "revision": "rev-1",
+        "result": { "physical_identity": "zone-uuid-1234" },
+        "created_at": "2026-09-18T08:00:01Z",
+        "updated_at": "2026-09-18T08:00:09Z",
+        "completed_at": "2026-09-18T08:00:09Z"
+      }
+    }
+  ]
+}

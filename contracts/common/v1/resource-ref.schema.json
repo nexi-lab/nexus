@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.sudo.dev/schemas/common/v1/resource-ref.schema.json",
+  "title": "ResourceRef",
+  "description": "Product-level wire identity for a resource. zone_id and path rules are owned by nexus-vfs and referenced by stable $id from the vendored projections; this schema composes them and adds product semantics (api_version, media type, digest, size). It never restates the underlying regex or path normalization.",
+  "type": "object",
+  "properties": {
+    "api_version": {
+      "const": "common.sudo.dev/v1"
+    },
+    "kind": {
+      "const": "ResourceRef"
+    },
+    "zone_id": {
+      "$ref": "https://nexus-vfs.dev/contracts/zone-id/existing-zone-id-ref.schema.gen.json",
+      "description": "Existing identity reference (never a tenant-create validator); system/control refs require an explicit system contract/context."
+    },
+    "path": {
+      "$ref": "https://nexus-vfs.dev/contracts/zone-path/zone-path.schema.gen.json",
+      "description": "Zone-internal absolute path, e.g. /sessions/sess_123 — not /{zone}/sessions/..."
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+:[A-Za-z0-9+/=._-]+$",
+      "description": "Algorithm-prefixed digest, e.g. sha256:... — never a bare hex string."
+    },
+    "media_type": {
+      "type": "string",
+      "minLength": 1
+    },
+    "size_bytes": {
+      "type": "string",
+      "pattern": "^[0-9]+$",
+      "description": "Decimal string on purpose: avoids the JavaScript safe-integer trap."
+    }
+  },
+  "required": ["api_version", "kind", "zone_id", "path"],
+  "additionalProperties": true,
+  "$comment": "zone_id + path jointly form the identity. follow/mount/copy into a target zone re-authorizes. additionalProperties stays true: unknown optional fields are accepted and ignored under a supported major."
+}

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.sudo.dev/schemas/common/v1/principal-ref.schema.json",
+  "title": "PrincipalRef",
+  "description": "Identity reference for creators, issuers, revokers and grantees. Semantics owned by the Nexus identity plane. subject_id and trust_domain are NOT credentials.",
+  "type": "object",
+  "properties": {
+    "subject_type": {
+      "enum": ["organization", "user", "agent", "service"],
+      "description": "Closed set of principal categories."
+    },
+    "subject_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque identity; consumers do not parse its structure."
+    },
+    "trust_domain": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Optional trust-domain qualifier; not a credential."
+    }
+  },
+  "required": ["subject_type", "subject_id"],
+  "additionalProperties": true,
+  "$comment": "additionalProperties stays true: unknown optional fields are accepted and ignored under a supported major."
+}

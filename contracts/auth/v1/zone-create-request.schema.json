@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.sudo.dev/schemas/auth/v1/zone-create-request.schema.json",
+  "title": "ZoneCreateRequest",
+  "description": "Admission request for a new zone. zone_id uses the strict TenantZoneIdCreate projection (every format and reserved rule enforced) — the record/ref validator must never stand in for create admission.",
+  "type": "object",
+  "properties": {
+    "api_version": {
+      "const": "auth.sudo.dev/v1"
+    },
+    "kind": {
+      "const": "ZoneCreateRequest"
+    },
+    "zone_id": {
+      "$ref": "https://nexus-vfs.dev/contracts/zone-id/tenant-zone-id-create.schema.gen.json"
+    },
+    "display_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string"
+    },
+    "deployment": {
+      "type": "object",
+      "properties": {
+        "location": {
+          "enum": ["cloud", "private", "edge"]
+        },
+        "data_domain": {
+          "enum": ["office", "core", "general"]
+        },
+        "trust_domain": {
+          "type": "string",
+          "minLength": 1
+        },
+        "region": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": ["location", "trust_domain"],
+      "additionalProperties": true
+    },
+    "labels": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    }
+  },
+  "required": ["api_version", "kind", "zone_id", "display_name"],
+  "additionalProperties": true
+}

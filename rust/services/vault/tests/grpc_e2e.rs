@@ -76,6 +76,7 @@ impl Harness {
         kernel
             .sys_setattr(
                 "/vault",
+                &kernel::kernel::OperationContext::new("vault-e2e-test", "root", true, None, true),
                 /* DT_MOUNT */ 2,
                 &backend_name,
                 Some(backend),

@@ -765,9 +765,11 @@ mod tests {
         let kernel = Arc::new(Kernel::new());
         let backend: Arc<dyn ObjectStore> = Arc::new(MemBackend::new());
         let backend_name = backend.name().to_string();
+        let ctx = OperationContext::new("vault-test", "root", true, None, true);
         kernel
             .sys_setattr(
                 "/vault",
+                &ctx,
                 2,
                 &backend_name,
                 Some(backend),

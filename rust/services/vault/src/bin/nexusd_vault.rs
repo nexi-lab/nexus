@@ -114,9 +114,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let backend_name = backend.name().to_string();
 
+    // Trusted local-daemon init path: mount as the vault daemon identity
+    // (admin + system), matching the context SecretStorage builds.
+    let ctx = kernel::kernel::OperationContext::new("nexusd-vault", "root", true, None, true);
+
     kernel
         .sys_setattr(
             "/vault",
+            &ctx,
             /* DT_MOUNT */ 2,
             &backend_name,
             Some(backend),

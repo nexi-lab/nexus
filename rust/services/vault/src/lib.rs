@@ -69,10 +69,15 @@ fn create_vault(_kernel_handle: &KernelHandle) -> Box<VaultPlugin> {
     );
     let backend_name = backend.name().to_string();
 
+    // Trusted plugin-init path: mount as the vault plugin identity
+    // (admin + system), matching the context SecretStorage builds.
+    let ctx = kernel::kernel::OperationContext::new("nexus-vault", "root", true, None, true);
+
     // Mount backend at /vault — shared by both services.
     kernel
         .sys_setattr(
             "/vault",
+            &ctx,
             /* DT_MOUNT */ 2,
             &backend_name,
             Some(backend),
@@ -937,6 +942,7 @@ mod dispatch_e2e {
         kernel
             .sys_setattr(
                 "/vault",
+                &kernel::kernel::OperationContext::new("vault-test", "root", true, None, true),
                 2,
                 &backend_name,
                 Some(backend),
@@ -1645,6 +1651,7 @@ mod dispatch_e2e {
         kernel
             .sys_setattr(
                 "/vault",
+                &kernel::kernel::OperationContext::new("vault-test", "root", true, None, true),
                 2,
                 &backend_name,
                 Some(backend),
@@ -2157,6 +2164,7 @@ mod dispatch_e2e {
         kernel
             .sys_setattr(
                 "/vault",
+                &kernel::kernel::OperationContext::new("vault-test", "root", true, None, true),
                 2,
                 &backend_name,
                 Some(backend),

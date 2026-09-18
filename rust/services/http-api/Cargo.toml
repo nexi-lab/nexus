@@ -42,7 +42,7 @@ dashmap = "6.1"
 # reads /v2/auth/keys on Rust unchanged).  Pinned to the same
 # nexus-vfs rev the workspace does (no `auth` workspace-dep entry
 # yet — the `kernel` + `transport` neighbors are the precedent).
-auth = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "b878b015bf2b4663063425af19902b18c09890b9" }
+auth = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "763f8c0fef392da8c1151fc3f17b3a6f3f707dbd" }
 
 # Bearer-token → `OperationContext` SSOT.
 #

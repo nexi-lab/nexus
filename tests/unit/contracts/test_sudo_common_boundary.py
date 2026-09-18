@@ -21,7 +21,7 @@ from jsonschema import Draft202012Validator
 HERE = Path(__file__).resolve()
 NEXUS_REPO = HERE.parents[3]
 SUDOSTACK_REPO = Path(os.environ.get("SUDOSTACK_REPO", NEXUS_REPO.parent / "sudostack"))
-EXPECTED_SUDOSTACK_SHA = "65904eb0a0991366767095b707f5a86835089a1e"
+EXPECTED_SUDOSTACK_SHA = "6a51190a0e08f673912967716629a2fdb424b85a"
 SCHEMA_ROOT = SUDOSTACK_REPO / "schemas" / "common" / "v1"
 FIXTURE_ROOT = SUDOSTACK_REPO / "fixtures"
 SECRET_KEY_RE = re.compile(

@@ -1,0 +1,244 @@
+{
+  "$comment": "Valid payloads across all auth/v1 + common/v1 kinds. Classes covered: minimal, full, unknown-optional, open-capability, open-error-code.",
+  "cases": [
+    {
+      "name": "zone-minimal",
+      "class": "minimal",
+      "schema": "auth/v1/zone.schema.json",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "Zone",
+        "zone_id": "cloud-user-1001",
+        "display_name": "Cloud User 1001",
+        "status": "active",
+        "deployment": { "location": "cloud", "trust_domain": "internal" },
+        "revision": "rev-1",
+        "created_by": { "subject_type": "user", "subject_id": "usr_1" },
+        "created_at": "2026-09-18T08:00:00Z",
+        "updated_at": "2026-09-18T08:00:00Z"
+      }
+    },
+    {
+      "name": "zone-full",
+      "class": "full",
+      "schema": "auth/v1/zone.schema.json",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "Zone",
+        "zone_id": "org-acme-shared",
+        "display_name": "Acme Shared Zone",
+        "description": "Shared working zone for Acme",
+        "status": "suspended",
+        "deployment": {
+          "location": "private",
+          "data_domain": "office",
+          "trust_domain": "acme.corp",
+          "region": "eu-central-1",
+          "replication_policy_ref": {
+            "api_version": "common.sudo.dev/v1",
+            "kind": "ResourceRef",
+            "zone_id": "root",
+            "path": "/policies/replication/3x",
+            "version": "3",
+            "digest": "sha256:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+            "media_type": "application/json",
+            "size_bytes": "1048576"
+          }
+        },
+        "labels": { "team": "platform", "tier": "gold" },
+        "revision": "rev-42",
+        "created_by": { "subject_type": "service", "subject_id": "moss-provisioner", "trust_domain": "sudo.dev" },
+        "created_at": "2026-09-01T10:00:00Z",
+        "updated_at": "2026-09-18T09:30:00.5Z",
+        "x_future_field": { "note": "unknown optional accepted and ignored" }
+      },
+      "$comment": "x_future_field exercises unknown-optional on the same full payload."
+    },
+    {
+      "name": "zone-root-id-allowed-as-existing-ref",
+      "class": "full",
+      "schema": "auth/v1/zone.schema.json",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "Zone",
+        "zone_id": "root",
+        "display_name": "Root",
+        "status": "active",
+        "deployment": { "location": "cloud", "trust_domain": "internal" },
+        "revision": "rev-0",
+        "created_by": { "subject_type": "service", "subject_id": "boot" },
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z"
+      },
+      "$comment": "ExistingZoneIdRef accepts kernel-owned ids; only create admission rejects them."
+    },
+    {
+      "name": "zone-create-request-minimal",
+      "class": "minimal",
+      "schema": "auth/v1/zone-create-request.schema.json",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "ZoneCreateRequest",
+        "zone_id": "org-acme-shared",
+        "display_name": "Acme Shared Zone"
+      }
+    },
+    {
+      "name": "zone-create-request-full",
+      "class": "full",
+      "schema": "auth/v1/zone-create-request.schema.json",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "ZoneCreateRequest",
+        "zone_id": "team-platform-eu",
+        "display_name": "Platform EU",
+        "description": "Primary working zone",
+        "deployment": { "location": "edge", "data_domain": "general", "trust_domain": "sudo.dev", "region": "ap-northeast-1" },
+        "labels": { "env": "prod" }
+      }
+    },
+    {
+      "name": "zone-patch-request-whitelist",
+      "class": "minimal",
+      "schema": "auth/v1/zone-patch-request.schema.json",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "ZonePatchRequest",
+        "display_name": "Renamed Zone"
+      }
+    },
+    {
+      "name": "zone-patch-request-placement",
+      "class": "full",
+      "schema": "auth/v1/zone-patch-request.schema.json",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "ZonePatchRequest",
+        "display_name": "Renamed Zone",
+        "description": "Updated",
+        "labels": { "team": "platform" },
+        "deployment": { "region": "us-west-2", "data_domain": "core" }
+      }
+    },
+    {
+      "name": "zone-grant-full",
+      "class": "full",
+      "schema": "auth/v1/zone-grant.schema.json",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "ZoneGrant",
+        "grant_id": "grant_01H5K9W3N0YRA4B7C8D9E0F1G2",
+        "zone_id": "org-acme-shared",
+        "grantee": { "subject_type": "organization", "subject_id": "org_550e8400", "trust_domain": "sudo.dev" },
+        "capabilities": ["zone.data.read", "zone.data.write"],
+        "resource_prefixes": ["/sessions", "/artifacts"],
+        "source": { "source_type": "moss_org_binding", "source_id": "binding_01H5K8V2M9XQZ3A6B7C8D9E0F2" },
+        "issued_by": { "subject_type": "service", "subject_id": "moss-provisioner" },
+        "reason": "default zone provisioning for org onboarding",
+        "policy_version": "2026-09-15.1",
+        "revision": "rev-3",
+        "status": "active",
+        "created_at": "2026-09-18T08:05:00Z",
+        "not_before": "2026-09-18T08:05:00Z",
+        "expires_at": "2027-09-18T08:05:00Z"
+      }
+    },
+    {
+      "name": "zone-grant-open-capability",
+      "class": "open-capability",
+      "schema": "auth/v1/zone-grant.schema.json",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "ZoneGrant",
+        "grant_id": "grant_future",
+        "zone_id": "org-acme-shared",
+        "grantee": { "subject_type": "agent", "subject_id": "agent_77" },
+        "capabilities": ["zone.data.read", "zone.audit.trace"],
+        "issued_by": { "subject_type": "user", "subject_id": "usr_admin" },
+        "reason": "evaluating a capability added in a later minor",
+        "policy_version": "2026-09-15.1",
+        "revision": "rev-1",
+        "status": "pending",
+        "created_at": "2026-09-18T08:00:00Z"
+      },
+      "$comment": "zone.audit.trace is not in the known list; the registry is open within the same major."
+    },
+    {
+      "name": "zone-grant-create-request-minimal",
+      "class": "minimal",
+      "schema": "auth/v1/zone-grant-create-request.schema.json",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "ZoneGrantCreateRequest",
+        "grantee": { "subject_type": "organization", "subject_id": "org_550e8400" },
+        "capabilities": ["zone.data.read"],
+        "reason": "onboarding default"
+      }
+    },
+    {
+      "name": "zone-operation-full",
+      "class": "full",
+      "schema": "auth/v1/zone-operation.schema.json",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "ZoneOperation",
+        "operation_id": "op_01H5K9X4O1ZSB5C8D9E0F1G2H3",
+        "action": "create",
+        "zone_id": "org-acme-shared",
+        "state": "succeeded",
+        "step": "mark-active-with-receipt",
+        "retryable": false,
+        "revision": "rev-1",
+        "result": { "physical_identity": "zone-uuid-1234", "membership": "member" },
+        "created_at": "2026-09-18T08:00:01Z",
+        "updated_at": "2026-09-18T08:00:09Z",
+        "completed_at": "2026-09-18T08:00:09Z"
+      }
+    },
+    {
+      "name": "zone-operation-open-error-code",
+      "class": "open-error-code",
+      "schema": "auth/v1/zone-operation.schema.json",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "ZoneOperation",
+        "operation_id": "op_future_err",
+        "action": "grant",
+        "zone_id": "org-acme-shared",
+        "state": "failed",
+        "step": "project-rebac-edges",
+        "retryable": true,
+        "error": {
+          "code": "REBAC_STORE_OVERLOADED",
+          "message": "projection target rejected writes",
+          "retryable": true
+        },
+        "created_at": "2026-09-18T08:00:01Z",
+        "updated_at": "2026-09-18T08:00:03Z"
+      },
+      "$comment": "Unknown-but-wellformed error codes must survive parsing (unknown fallback), matching the open registry rule."
+    },
+    {
+      "name": "resource-ref-full",
+      "class": "full",
+      "schema": "common/v1/resource-ref.schema.json",
+      "payload": {
+        "api_version": "common.sudo.dev/v1",
+        "kind": "ResourceRef",
+        "zone_id": "org-acme-shared",
+        "path": "/sessions/sess_123/transcript.jsonl",
+        "version": "12",
+        "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "media_type": "application/x-ndjson",
+        "size_bytes": "9007199254740993"
+      },
+      "$comment": "size_bytes exceeds 2^53 and must stay a decimal string."
+    },
+    {
+      "name": "principal-ref-minimal",
+      "class": "minimal",
+      "schema": "common/v1/principal-ref.schema.json",
+      "payload": { "subject_type": "user", "subject_id": "usr_1" }
+    }
+  ]
+}

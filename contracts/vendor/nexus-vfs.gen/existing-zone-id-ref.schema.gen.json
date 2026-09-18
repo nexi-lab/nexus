@@ -1,0 +1,20 @@
+{
+  "$id": "https://nexus-vfs.dev/contracts/zone-id/existing-zone-id-ref.schema.gen.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "anyOf": [
+    {
+      "maxLength": 63,
+      "minLength": 3,
+      "pattern": "^[abcdefghijklmnopqrstuvwxyz0123456789][abcdefghijklmnopqrstuvwxyz0123456789\\-]*[abcdefghijklmnopqrstuvwxyz0123456789]$",
+      "type": "string"
+    },
+    {
+      "enum": [
+        "root",
+        "__control__"
+      ]
+    }
+  ],
+  "description": "Reference to an existing or historical zone identity; grants no create authority.",
+  "title": "ExistingZoneIdRef"
+}

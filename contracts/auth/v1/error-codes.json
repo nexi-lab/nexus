@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.sudo.dev/schemas/auth/v1/error-codes.json",
+  "title": "ZoneErrorCodes",
+  "description": "Fixed known codes of the auth/v1 error registry. The registry is open: unknown codes are legal on the wire and must hit an unknown-fallback, but these constants are stable and machine-matchable. Clients judge by code/retryable, never by message.",
+  "type": "object",
+  "properties": {
+    "api_version": {
+      "const": "auth.sudo.dev/v1"
+    },
+    "kind": {
+      "const": "ZoneErrorCodes"
+    },
+    "codes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]*$"
+          },
+          "description": {
+            "type": "string"
+          }
+        },
+        "required": ["code", "description"],
+        "additionalProperties": true
+      }
+    }
+  },
+  "required": ["api_version", "kind", "codes"],
+  "additionalProperties": true,
+  "codes": [
+    { "code": "INVALID_ZONE_ID", "description": "zone_id fails the admission format/reserved rules." },
+    { "code": "RESERVED_ZONE_ID", "description": "zone_id is kernel-owned (root/__control__) and not creatable by tenants." },
+    { "code": "ZONE_ALREADY_EXISTS", "description": "A zone with the requested identity already exists." },
+    { "code": "ZONE_NOT_FOUND", "description": "No zone with the given identity is visible to the caller." },
+    { "code": "ZONE_IMMUTABLE_FIELD", "description": "Patch attempted to change an immutable field (zone_id, origin trust domain, created_by, history)." },
+    { "code": "ZONE_REVISION_CONFLICT", "description": "If-Match/revision is stale; the resource changed concurrently." },
+    { "code": "ZONE_NOT_ACTIVE", "description": "The operation requires an active zone (suspended blocks new runtimes and writes; deleting blocks new grants/runtimes/mounts)." },
+    { "code": "ZONE_IN_USE", "description": "The zone still hosts runtimes/sessions/mounts that block the requested transition." },
+    { "code": "ZONE_DELETE_BLOCKED", "description": "Deprovision blocked by retention, active grants, mounts, sessions or exports." },
+    { "code": "ZONE_RUNTIME_UNAVAILABLE", "description": "The physical zone runtime could not be reached or provisioned." },
+    { "code": "ZONE_QUORUM_UNAVAILABLE", "description": "Raft quorum for the zone is unavailable." },
+    { "code": "GRANT_NOT_FOUND", "description": "No such grant." },
+    { "code": "GRANT_NOT_ACTIVE", "description": "Grant exists but is not active (pending/revoked/expired grants carry no access)." },
+    { "code": "GRANT_REVOKED", "description": "The grant has been revoked." },
+    { "code": "GRANT_EXPIRED", "description": "The grant's expires_at has passed (judged at access time)." },
+    { "code": "RESOURCE_RELATION_DENIED", "description": "Active ZoneGrant holds but the resource-level ReBAC relation does not; both layers must hold to allow." },
+    { "code": "IDEMPOTENCY_CONFLICT", "description": "Same Idempotency-Key with a different canonical request hash." },
+    { "code": "UNSUPPORTED_CONTRACT_MAJOR", "description": "api_version carries a major this endpoint does not support; unknown majors are rejected by default." },
+    { "code": "UNSUPPORTED_CAPABILITY", "description": "The capability code is known but not enabled for this zone/principal." },
+    { "code": "PROJECTION_PENDING", "description": "Mandatory projections (ReBAC edges, API-key/delegation, caches) are not yet materialized; grant stays pending and access is denied." },
+    { "code": "PROJECTION_FAILED", "description": "Mandatory projection materialization failed; worker may retry." }
+  ]
+}

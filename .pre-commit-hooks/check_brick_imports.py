@@ -10,7 +10,12 @@ in core/protocols/ and contracts/protocols/. Direct imports from nexus.core
 or nexus.services are architectural violations. Cross-brick
 imports (bricks/<X>/ importing from nexus.bricks.<Y>) are also forbidden.
 
-Reference: docs/design/NEXUS-LEGO-ARCHITECTURE.md §1.2, Principle 3
+This hook is the authority on what a brick may import; the prose below it is
+a pointer, not the rule.
+
+Reference: docs/archive/design/NEXUS-LEGO-ARCHITECTURE.md §1.2, Principle 3
+(under archive/ after a docs sweep kept only docs/architecture/ — the model
+is current, see src/nexus/bricks/__init__.py).
 """
 
 import re

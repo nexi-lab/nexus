@@ -1,0 +1,38 @@
+[package]
+name = "nexus-federated-search"
+version = "0.1.0"
+edition = "2021"
+description = "Cross-zone search fanout dispatcher — resolves the caller's accessible zones from nexus-rebac, fans a query out concurrently to each zone's search daemon, times each leg out independently, and fuses the per-zone results with RRF from nexus-search-common.  Consumed by the axum /v2/search/query handler when the caller's token grants more than one zone."
+
+[lib]
+name = "nexus_federated_search"
+crate-type = ["rlib"]
+
+[dependencies]
+# The two sibling crates carrying the reusable primitives.
+nexus-search-common = { path = "../search-common" }
+nexus-rebac = { path = "../rebac" }
+
+# Async runtime — the dispatcher's whole shape is one join_all + a
+# semaphore + timeout on each leg.
+tokio = { version = "1", features = ["rt", "macros", "sync", "time"] }
+futures = "0.3"
+
+# `LocalSearchBackend` is an async trait — a dispatcher calling it
+# via `Arc<dyn LocalSearchBackend>` needs `async-trait` because
+# `async fn` in traits requires a nightly feature in stable Rust.
+async-trait = "0.1"
+
+# Structured errors.
+thiserror = "1"
+
+# For tracing spans on each leg — matches the http-api handlers so
+# the timing story is uniform.
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "test-util"] }
+# `lib::types::ReBACTuple` — the ReBACTuple type nexus-vfs's tier-
+# neutral `lib` crate owns.  Only tests need to construct it directly
+# (production code goes through nexus-rebac's tuple_key encoder).
+lib = { workspace = true }

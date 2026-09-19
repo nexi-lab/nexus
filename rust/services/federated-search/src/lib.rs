@@ -259,7 +259,10 @@ fn intersect_filter(zones: Vec<String>, filter: Option<&[String]>) -> Vec<String
         Some(allow) => {
             let allow_set: std::collections::HashSet<&str> =
                 allow.iter().map(String::as_str).collect();
-            zones.into_iter().filter(|z| allow_set.contains(z.as_str())).collect()
+            zones
+                .into_iter()
+                .filter(|z| allow_set.contains(z.as_str()))
+                .collect()
         }
     }
 }
@@ -385,10 +388,8 @@ mod tests {
             "eng".into(),
             vec![hit("/eng/a.md", 5.0, "eng"), hit("/eng/b.md", 3.0, "eng")],
         );
-        b.by_zone.insert(
-            "legal".into(),
-            vec![hit("/legal/x.md", 4.0, "legal")],
-        );
+        b.by_zone
+            .insert("legal".into(), vec![hit("/legal/x.md", 4.0, "legal")]);
         let d = dispatcher(b, rebac, DispatcherConfig::default());
         let out = d.search(("user", "alice"), req(), None).await;
         assert_eq!(out.zones_searched.len(), 2, "{out:?}");
@@ -406,7 +407,8 @@ mod tests {
         grant_zone(&rebac, "eng", "alice");
         grant_zone(&rebac, "legal", "alice");
         let mut b = FakeBackend::default();
-        b.by_zone.insert("eng".into(), vec![hit("/eng/a.md", 5.0, "eng")]);
+        b.by_zone
+            .insert("eng".into(), vec![hit("/eng/a.md", 5.0, "eng")]);
         b.error_zones.insert("legal".into());
         let d = dispatcher(b, rebac, DispatcherConfig::default());
         let out = d.search(("user", "alice"), req(), None).await;
@@ -422,10 +424,13 @@ mod tests {
         grant_zone(&rebac, "eng", "alice");
         grant_zone(&rebac, "legal", "alice");
         let mut b = FakeBackend::default();
-        b.by_zone.insert("eng".into(), vec![hit("/eng/a.md", 5.0, "eng")]);
+        b.by_zone
+            .insert("eng".into(), vec![hit("/eng/a.md", 5.0, "eng")]);
         // legal takes 10 s to answer; dispatcher timeout is 100 ms.
-        b.delay_zones.insert("legal".into(), Duration::from_secs(10));
-        b.by_zone.insert("legal".into(), vec![hit("/legal/x.md", 1.0, "legal")]);
+        b.delay_zones
+            .insert("legal".into(), Duration::from_secs(10));
+        b.by_zone
+            .insert("legal".into(), vec![hit("/legal/x.md", 1.0, "legal")]);
         let cfg = DispatcherConfig {
             zone_timeout: Duration::from_millis(100),
             ..DispatcherConfig::default()
@@ -449,13 +454,18 @@ mod tests {
         grant_zone(&rebac, "eng", "alice");
         grant_zone(&rebac, "legal", "alice");
         let mut b = FakeBackend::default();
-        b.by_zone.insert("eng".into(), vec![hit("/eng/a.md", 5.0, "eng")]);
-        b.by_zone.insert("legal".into(), vec![hit("/legal/x.md", 5.0, "legal")]);
+        b.by_zone
+            .insert("eng".into(), vec![hit("/eng/a.md", 5.0, "eng")]);
+        b.by_zone
+            .insert("legal".into(), vec![hit("/legal/x.md", 5.0, "legal")]);
         let d = dispatcher(b, rebac, DispatcherConfig::default());
         let filter = vec!["eng".to_string()];
         let out = d.search(("user", "alice"), req(), Some(&filter)).await;
         assert_eq!(out.zones_searched, vec!["eng".to_string()]);
-        assert!(out.results.iter().all(|h| h.zone_id.as_deref() == Some("eng")));
+        assert!(out
+            .results
+            .iter()
+            .all(|h| h.zone_id.as_deref() == Some("eng")));
     }
 
     #[tokio::test]
@@ -465,17 +475,18 @@ mod tests {
         let rebac = Arc::new(InMemoryReBACTupleStore::new());
         grant_zone(&rebac, "eng", "alice");
         let mut b = FakeBackend::default();
-        b.by_zone.insert("eng".into(), vec![hit("/eng/a.md", 5.0, "eng")]);
-        b.by_zone.insert(
-            "legal".into(),
-            vec![hit("/legal/never.md", 5.0, "legal")],
-        );
+        b.by_zone
+            .insert("eng".into(), vec![hit("/eng/a.md", 5.0, "eng")]);
+        b.by_zone
+            .insert("legal".into(), vec![hit("/legal/never.md", 5.0, "legal")]);
         let d = dispatcher(b, rebac, DispatcherConfig::default());
         let filter = vec!["eng".to_string(), "legal".to_string()];
         let out = d.search(("user", "alice"), req(), Some(&filter)).await;
         assert_eq!(out.zones_searched, vec!["eng".to_string()]);
         assert!(
-            out.results.iter().all(|h| h.zone_id.as_deref() == Some("eng")),
+            out.results
+                .iter()
+                .all(|h| h.zone_id.as_deref() == Some("eng")),
             "legal must not appear — token does not grant it",
         );
     }

@@ -3032,6 +3032,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "nexus-federated-search"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "lib",
+ "nexus-rebac",
+ "nexus-search-common",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "nexus-fuse-plugin"
 version = "0.1.0"
 dependencies = [

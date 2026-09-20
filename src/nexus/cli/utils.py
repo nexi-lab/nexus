@@ -651,3 +651,36 @@ def rpc_call(
             nx.close()
 
     return asyncio.run(_call())
+
+
+def api_call(
+    remote_url: str | None,
+    remote_api_key: str | None,
+    method: str,
+    path: str,
+    *,
+    json_body: dict[str, Any] | None = None,
+    idempotency_key: str | None = None,
+) -> Any:
+    """Call a public REST endpoint with the CLI's configured credentials."""
+    if not remote_url:
+        raise RuntimeError("Zone mutations require --remote-url or NEXUS_URL")
+    import httpx
+
+    headers: dict[str, str] = {}
+    if remote_api_key:
+        headers["Authorization"] = f"Bearer {remote_api_key}"
+    if idempotency_key:
+        headers["Idempotency-Key"] = idempotency_key
+    response = httpx.request(
+        method,
+        f"{remote_url.rstrip('/')}{path}",
+        json=json_body,
+        headers=headers,
+        timeout=30.0,
+    )
+    if response.is_error:
+        raise RuntimeError(f"Zone API {response.status_code}: {response.text}")
+    if response.status_code == 204:
+        return None
+    return response.json()

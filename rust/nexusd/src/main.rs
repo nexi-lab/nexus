@@ -108,8 +108,37 @@ fn main() -> anyhow::Result<()> {
         if let Some(decl) = rebac_enforcer_decl(rebac_store) {
             decls.push(decl);
         }
+        #[cfg(feature = "full")]
+        decls.push(full_zone_provider_gate(ctx.auth_armed));
         decls
     })
+}
+
+#[cfg(feature = "full")]
+fn full_zone_provider_gate(auth_armed: bool) -> kernel::kernel::ServiceDecl {
+    kernel::kernel::ServiceDecl {
+        name: "zone_contract_readiness".to_string(),
+        install: Box::new(move |kernel| {
+            validate_full_zone_providers(auth_armed, kernel.permission_provider_armed())
+                .map_err(|error| error.to_string())?;
+            tracing::info!(
+                auth = true,
+                rebac = true,
+                "Zone v1 mandatory Rust providers armed"
+            );
+            Ok(())
+        }),
+    }
+}
+
+#[cfg(feature = "full")]
+fn validate_full_zone_providers(auth_armed: bool, rebac_armed: bool) -> anyhow::Result<()> {
+    anyhow::ensure!(auth_armed, "full profile requires an armed auth provider");
+    anyhow::ensure!(
+        rebac_armed,
+        "full profile requires an armed ReBAC permission provider"
+    );
+    Ok(())
 }
 
 /// Build the shared `RaftReBACTupleStore` from the boot ctx.
@@ -309,4 +338,20 @@ fn rebac_enforcer_decl(
             Ok(())
         }),
     })
+}
+
+#[cfg(all(test, feature = "full"))]
+mod zone_readiness_tests {
+    use super::validate_full_zone_providers;
+
+    #[test]
+    fn full_profile_accepts_complete_authz_stack() {
+        validate_full_zone_providers(true, true).expect("all mandatory providers are armed");
+    }
+
+    #[test]
+    fn full_profile_refuses_missing_auth_or_rebac() {
+        assert!(validate_full_zone_providers(false, true).is_err());
+        assert!(validate_full_zone_providers(true, false).is_err());
+    }
 }

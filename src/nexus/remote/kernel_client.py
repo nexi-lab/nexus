@@ -39,6 +39,7 @@ logger = logging.getLogger(__name__)
 _DEFAULT_LOCAL_PORT = 2126
 _KERNEL_BINARY_ENV = "NEXUS_KERNEL_BINARY"
 _KERNEL_BINARY_CANDIDATES = ("nexus-cluster", "nexusd-cluster")
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 _KERNEL_DATA_DIR_FILE_FALLBACK_SUFFIX = ".kernel"
 # The kernel's metastore override env name has flip-flopped across
 # nexus-vfs revs: NEXUS_METASTORE_PATH (b04e0683, the original PR #43
@@ -69,6 +70,13 @@ def _resolve_kernel_binary() -> str:
         resolved = shutil.which(binary_name)
         if resolved:
             return resolved
+
+    executable_suffix = ".exe" if os.name == "nt" else ""
+    for profile in ("debug", "release"):
+        for binary_name in _KERNEL_BINARY_CANDIDATES:
+            candidate = _REPO_ROOT / "target" / profile / f"{binary_name}{executable_suffix}"
+            if candidate.is_file():
+                return str(candidate)
 
     return _KERNEL_BINARY_CANDIDATES[0]
 
@@ -291,7 +299,15 @@ class KernelClient:
         self._stderr_path: str | None = None
         self._transport: RPCTransport | None = None
         self._timeout = timeout
-        self._auth_token = auth_token or ""
+        # A local full-profile kernel may arm the same API-key credential
+        # plane as the Python HTTP server.  In that deployment the internal
+        # client must present the operator-provided key as well; otherwise the
+        # kernel correctly starts fail-closed and every bootstrap RPC is
+        # unauthenticated.  An explicit argument still wins, including an
+        # explicit empty string for callers that intentionally probe no-auth.
+        self._auth_token = (
+            auth_token if auth_token is not None else os.environ.get("NEXUS_API_KEY", "")
+        )
         self.requires_python_hooks = True
         self._hooks: dict[str, list[Any]] = {}
 
@@ -465,6 +481,23 @@ class KernelClient:
         """Generic Call RPC dispatch."""
         assert self._transport is not None
         return self._transport.call_rpc(method, params or {}, auth_token=self._auth_token)
+
+    def zone_runtime_call(
+        self,
+        method: str,
+        payload: dict[str, Any],
+        *,
+        timeout_s: float | None = None,
+    ) -> dict[str, Any]:
+        """Call the typed nexus-vfs ``ZoneRuntimeService``.
+
+        Keeping this public bridge on ``KernelClient`` prevents product code
+        from reaching into the client's private gRPC channel or falling back
+        to the untyped JSON ``Call`` RPC for lifecycle mutations.
+        """
+        if self._transport is None:
+            raise RuntimeError("kernel transport is not open")
+        return self._transport.zone_runtime_call(method, payload, timeout_s=timeout_s)
 
     def sys_read(
         self,

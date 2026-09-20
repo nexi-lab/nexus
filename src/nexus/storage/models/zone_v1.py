@@ -38,9 +38,12 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ._base import Base
+
+GRANTEE_JSON = JSON().with_variant(JSONB(), "postgresql")
 
 
 def _utcnow() -> datetime:
@@ -56,7 +59,7 @@ class ZoneGrantModel(Base):
         # tuple-matching "similar" grants.
         UniqueConstraint("source_type", "source_id", name="uq_zone_grant_source"),
         Index("ix_zone_grants_zone_status", "zone_id", "status"),
-        Index("ix_zone_grants_grantee", "grantee"),
+        Index("ix_zone_grants_grantee", "grantee", postgresql_using="gin"),
         Index("ix_zone_grants_expiry", "expires_at"),
     )
 
@@ -64,7 +67,7 @@ class ZoneGrantModel(Base):
     zone_id: Mapped[str] = mapped_column(
         String(64), ForeignKey("zones.zone_id", ondelete="RESTRICT"), nullable=False
     )
-    grantee: Mapped[dict] = mapped_column(JSON, nullable=False)
+    grantee: Mapped[dict] = mapped_column(GRANTEE_JSON, nullable=False)
     capabilities: Mapped[list] = mapped_column(JSON, nullable=False)
     resource_prefixes: Mapped[list | None] = mapped_column(JSON, nullable=True)
     source_type: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -113,7 +116,7 @@ class ZoneOperationModel(Base):
         DateTime(timezone=True), nullable=True
     )
     generation: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    fence: Mapped[str] = mapped_column(BigInteger, nullable=False, default=0)
+    fence: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     revision: Mapped[str | None] = mapped_column(String(64), nullable=True)
     result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     receipt: Mapped[dict | None] = mapped_column(JSON, nullable=True)

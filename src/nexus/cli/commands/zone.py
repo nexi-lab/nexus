@@ -16,6 +16,7 @@ Subcommands:
 """
 
 import sys
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -31,10 +32,10 @@ from nexus.cli.utils import (
     REMOTE_API_KEY_OPTION,
     REMOTE_URL_OPTION,
     add_backend_options,
+    api_call,
     console,
     get_filesystem,
     handle_error,
-    rpc_call,
 )
 from nexus.contracts.constants import DEFAULT_GRPC_BIND_ADDR
 
@@ -118,6 +119,8 @@ def _get_zone_manager(
     default=False,
     help="Succeed silently if zone already exists",
 )
+@REMOTE_URL_OPTION
+@REMOTE_API_KEY_OPTION
 @add_dry_run_option
 def create_zone_cmd(
     zone_id: str,
@@ -126,6 +129,8 @@ def create_zone_cmd(
     bind: str,
     peers: str | None,
     if_not_exists: bool,
+    remote_url: str | None,
+    remote_api_key: str | None,
     dry_run: bool,
 ) -> None:
     """Create a new Raft zone.
@@ -148,6 +153,7 @@ def create_zone_cmd(
 
     if hostname is None:
         hostname = socket.gethostname()
+    del data_dir, bind
 
     try:
         if dry_run:
@@ -157,27 +163,26 @@ def create_zone_cmd(
             render_dry_run(preview)
             return
 
-        peer_list = [p.strip() for p in peers.split(",")] if peers else []
-        mgr = _get_zone_manager(hostname, data_dir, bind, peers=peer_list)
-
         try:
-            store = mgr.create_zone(zone_id, peers=peer_list)
+            result = api_call(
+                remote_url,
+                remote_api_key,
+                "POST",
+                "/v2/zones",
+                json_body={"zone_id": zone_id, "display_name": zone_id},
+                idempotency_key=f"cli-create-{uuid.uuid4().hex}",
+            )
         except Exception as create_err:
-            if if_not_exists and "already exists" in str(create_err).lower():
+            if if_not_exists and (
+                "already exists" in str(create_err).lower()
+                or "zone_already_exists" in str(create_err).lower()
+            ):
                 console.print(f"[nexus.success]✓[/nexus.success] Zone already exists: {zone_id}")
-                mgr.shutdown()
                 return
             raise
 
-        console.print(f"[nexus.success]Zone '{zone_id}' created[/nexus.success]")
-        console.print(f"  Hostname: {hostname}")
-        console.print(f"  Data dir: {data_dir}/{zone_id}/")
-        console.print(f"  Bind: {bind}")
-        if peer_list:
-            console.print(f"  Peers: {', '.join(peer_list)}")
-
-        store.close()
-        mgr.shutdown()
+        console.print(f"[nexus.success]Zone '{zone_id}' accepted[/nexus.success]")
+        console.print(f"  Operation: {result.get('operation_id', 'unknown')}")
     except Exception as e:
         handle_error(e)
 
@@ -213,12 +218,16 @@ def create_zone_cmd(
     required=True,
     help="Comma-separated existing peer addresses (format: host:port)",
 )
+@REMOTE_URL_OPTION
+@REMOTE_API_KEY_OPTION
 def join_zone_cmd(
     zone_id: str,
     hostname: str | None,
     data_dir: str,
     bind: str,
     peers: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Join an existing zone as a new Voter.
 
@@ -232,19 +241,22 @@ def join_zone_cmd(
 
     if hostname is None:
         hostname = socket.gethostname()
+    del hostname, data_dir, bind
 
     try:
         peer_list = [p.strip() for p in peers.split(",")]
-        mgr = _get_zone_manager(hostname, data_dir, bind, peers=peer_list)
-        store = mgr.join_zone(zone_id, peers=peer_list)
+        result = api_call(
+            remote_url,
+            remote_api_key,
+            "POST",
+            f"/v2/zones/{zone_id}/joins",
+            json_body={"peers": peer_list, "learner": False},
+            idempotency_key=f"cli-join-{uuid.uuid4().hex}",
+        )
 
-        console.print(f"[nexus.success]Joined zone '{zone_id}'[/nexus.success]")
-        console.print(f"  Hostname: {hostname}")
+        console.print(f"[nexus.success]Join accepted for '{zone_id}'[/nexus.success]")
         console.print(f"  Peers: {', '.join(peer_list)}")
-        console.print("  Waiting for leader to send snapshot...")
-
-        store.close()
-        mgr.shutdown()
+        console.print(f"  Operation: {result.get('operation_id', 'unknown')}")
     except Exception as e:
         handle_error(e)
 
@@ -306,7 +318,7 @@ def list_zones_cmd(
         # for maintenance scenarios (no server running).
         if remote_url:
             with timing.phase("server"):
-                rpc_data = rpc_call(remote_url, remote_api_key, "federation_list_zones")
+                rpc_data = api_call(remote_url, remote_api_key, "GET", "/v2/zones")
             zones = [z.get("zone_id", "") for z in rpc_data.get("zones", [])]
         else:
             with timing.phase("server"):
@@ -374,6 +386,8 @@ def list_zones_cmd(
     show_default=True,
     help="gRPC bind address",
 )
+@REMOTE_URL_OPTION
+@REMOTE_API_KEY_OPTION
 @add_dry_run_option
 def mount_zone_cmd(
     mount_path: str,
@@ -382,6 +396,8 @@ def mount_zone_cmd(
     hostname: str | None,
     data_dir: str,
     bind: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
     dry_run: bool,
 ) -> None:
     """Mount a zone at a path (DT_MOUNT).
@@ -402,6 +418,7 @@ def mount_zone_cmd(
 
     if hostname is None:
         hostname = socket.gethostname()
+    del hostname, data_dir, bind
 
     try:
         if dry_run:
@@ -413,14 +430,24 @@ def mount_zone_cmd(
             render_dry_run(preview)
             return
 
-        mgr = _get_zone_manager(hostname, data_dir, bind)
-        mgr.mount(parent_zone, mount_path, target_zone)
+        result = api_call(
+            remote_url,
+            remote_api_key,
+            "POST",
+            "/v2/zone-mounts",
+            json_body={
+                "parent_zone_id": parent_zone,
+                "target_zone_id": target_zone,
+                "path": mount_path,
+            },
+            idempotency_key=f"cli-mount-{uuid.uuid4().hex}",
+        )
 
         console.print(
             f"[nexus.success]Mounted zone '{target_zone}' at '{mount_path}' in zone '{parent_zone}'[/nexus.success]"
         )
 
-        mgr.shutdown()
+        console.print(f"  Operation: {result.get('operation_id', 'unknown')}")
     except Exception as e:
         handle_error(e)
 
@@ -457,6 +484,8 @@ def mount_zone_cmd(
     show_default=True,
     help="gRPC bind address",
 )
+@REMOTE_URL_OPTION
+@REMOTE_API_KEY_OPTION
 @add_dry_run_option
 def unmount_zone_cmd(
     mount_path: str,
@@ -464,6 +493,8 @@ def unmount_zone_cmd(
     hostname: str | None,
     data_dir: str,
     bind: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
     dry_run: bool,
 ) -> None:
     """Remove a mount point (DT_MOUNT).
@@ -479,6 +510,7 @@ def unmount_zone_cmd(
 
     if hostname is None:
         hostname = socket.gethostname()
+    del hostname, data_dir, bind
 
     try:
         if dry_run:
@@ -490,14 +522,35 @@ def unmount_zone_cmd(
             render_dry_run(preview)
             return
 
-        mgr = _get_zone_manager(hostname, data_dir, bind)
-        mgr.unmount(parent_zone, mount_path)
+        listing = api_call(
+            remote_url,
+            remote_api_key,
+            "GET",
+            f"/v2/zone-mounts?zone_id={parent_zone}",
+        )
+        mount = next(
+            (
+                item
+                for item in listing.get("mounts", [])
+                if item.get("parent_zone_id") == parent_zone and item.get("path") == mount_path
+            ),
+            None,
+        )
+        if mount is None:
+            raise RuntimeError(f"No mount at {parent_zone}:{mount_path}")
+        result = api_call(
+            remote_url,
+            remote_api_key,
+            "DELETE",
+            f"/v2/zone-mounts/{mount['mount_id']}",
+            idempotency_key=f"cli-unmount-{uuid.uuid4().hex}",
+        )
 
         console.print(
             f"[nexus.success]Unmounted '{mount_path}' from zone '{parent_zone}'[/nexus.success]"
         )
 
-        mgr.shutdown()
+        console.print(f"  Operation: {result.get('operation_id', 'unknown')}")
     except Exception as e:
         handle_error(e)
 

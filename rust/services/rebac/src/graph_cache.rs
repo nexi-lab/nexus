@@ -97,6 +97,10 @@ impl ReBACGraphCache {
         }
     }
 
+    pub(crate) fn store(&self) -> &dyn ReBACTupleStore {
+        self.store.as_ref()
+    }
+
     /// Return the current graph for `zone`, rebuilding if the
     /// cached revision does not match the store's `zone_revision`.
     ///

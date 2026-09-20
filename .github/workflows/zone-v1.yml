@@ -1,0 +1,100 @@
+name: Zone v1
+
+on:
+  pull_request:
+    paths:
+      - "contracts/**"
+      - "src/nexus/services/zones/**"
+      - "src/nexus/remote/kernel_client.py"
+      - "src/nexus/remote/rpc_transport.py"
+      - "src/nexus/remote/zone_runtime_client.py"
+      - "src/nexus/server/api/v2/**zone*"
+      - "src/nexus/server/lifespan/zone_control.py"
+      - "rust/services/rebac/**"
+      - "rust/nexusd/**"
+      - "packages/nexus-api-client/**"
+      - "tests/e2e/conftest.py"
+      - "tests/e2e/server/test_zone*.py"
+      - "tests/e2e/server/test_full_profile_control_plane_e2e.py"
+      - ".github/workflows/zone-v1.yml"
+  push:
+    branches: [develop]
+    paths:
+      - "contracts/**"
+      - "src/nexus/services/zones/**"
+      - "src/nexus/remote/kernel_client.py"
+      - "src/nexus/remote/rpc_transport.py"
+      - "src/nexus/remote/zone_runtime_client.py"
+      - "src/nexus/server/api/v2/**zone*"
+      - "src/nexus/server/lifespan/zone_control.py"
+      - "rust/services/rebac/**"
+      - "rust/nexusd/**"
+      - "packages/nexus-api-client/**"
+      - "tests/e2e/conftest.py"
+      - "tests/e2e/server/test_zone*.py"
+      - "tests/e2e/server/test_full_profile_control_plane_e2e.py"
+
+jobs:
+  python-contract-and-service:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: nexus_zone_test
+          POSTGRES_PASSWORD: nexus
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d nexus_zone_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - run: uv sync --group dev
+      - run: uv run python contracts/tools/sync_vendor.py --check
+      - run: uv run python scripts/generate_zone_runtime_client.py --check
+      - run: uv run ruff check src/nexus/contracts/zone_v1.py src/nexus/services/zones src/nexus/server/api/v2 contracts/tools/sync_vendor.py scripts/generate_zone_runtime_client.py tests/contracts tests/unit/services/test_zone_service.py tests/unit/server/test_zone_v2_api.py
+      - name: Python contract, storage, and service tests
+        env:
+          NEXUS_E2E_DATABASE_URL: postgresql+psycopg2://postgres:nexus@127.0.0.1:5432/nexus_zone_test
+        run: uv run pytest -n 0 tests/contracts tests/migrations/test_zone_v1_storage.py tests/unit/services/test_zone_service.py tests/unit/server/test_zone_v2_api.py tests/unit/remote/test_zone_runtime_client.py
+      - name: Build full-profile kernel for real E2E
+        run: cargo build -p nexusd --features full
+      - name: Full-profile Zone HTTP E2E
+        env:
+          NEXUS_KERNEL_BINARY: ${{ github.workspace }}/target/debug/nexusd-cluster
+        run: uv run pytest -n 0 tests/e2e/server/test_zone_routes_e2e.py tests/e2e/server/test_zone_deprovision_e2e.py tests/e2e/server/test_full_profile_control_plane_e2e.py
+
+  typescript-sdk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/nexus-api-client
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: packages/nexus-api-client/package-lock.json
+      - run: npm ci
+      - run: npm test -- --run tests/zones.test.ts
+      - run: npm run lint
+
+  rust-production-profile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --all --check
+      - run: cargo test -p nexus-rebac
+      - run: cargo build -p nexusd --features full
+      - run: cargo test -p nexusd --features full

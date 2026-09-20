@@ -79,6 +79,11 @@ use lib::rebac::{compute_permission, ReBACGraph};
 use lib::types::Entity;
 
 use crate::graph_cache::ReBACGraphCache;
+use crate::store::ReBACTupleStoreError;
+use crate::tuple_key;
+
+const GRANT_META_PREFIX: &str = "__grant_source__";
+const AUTH_EPOCH_PREFIX: &str = "__authorization_epoch__";
 
 /// Relations that satisfy each `Permission` in the fixed v1 map.
 ///
@@ -136,6 +141,105 @@ impl RebacPermissionProvider {
             cache,
             namespaces: Arc::new(namespaces),
         }
+    }
+
+    /// Materialize grant-derived tuples while retaining provenance in the
+    /// tuple value. An existing empty/manual value is never converted into a
+    /// grant-only edge, so later revocation cannot delete an authoritative
+    /// relation that happens to have the same tuple identity.
+    pub fn apply_grant_projection(
+        &self,
+        zone: &str,
+        source_grant_id: &str,
+        tuples: &[lib::types::ReBACTuple],
+    ) -> Result<(), ReBACTupleStoreError> {
+        reject_meta_segment(zone)?;
+        reject_meta_segment(source_grant_id)?;
+        let store = self.cache.store();
+        let mut keys = Vec::with_capacity(tuples.len());
+        for tuple in tuples {
+            let key = tuple_key::encode(zone, tuple)?;
+            let existing = store.get(&key)?;
+            let mut owners = decode_owners(existing.as_deref());
+            if existing.as_deref().is_some_and(<[u8]>::is_empty) {
+                owners.insert("manual".to_string());
+            }
+            owners.insert(format!("grant:{source_grant_id}"));
+            store.put(&key, encode_owners(&owners).as_bytes())?;
+            keys.push(key);
+        }
+        store.put(
+            &grant_meta_key(zone, source_grant_id),
+            keys.join("\n").as_bytes(),
+        )?;
+        self.cache.invalidate(zone);
+        Ok(())
+    }
+
+    /// Revoke exactly one grant's derived references. A tuple remains when a
+    /// second grant or a manual/authoritative write still owns it.
+    pub fn revoke_grant_projection(
+        &self,
+        zone: &str,
+        source_grant_id: &str,
+    ) -> Result<usize, ReBACTupleStoreError> {
+        reject_meta_segment(zone)?;
+        reject_meta_segment(source_grant_id)?;
+        let store = self.cache.store();
+        let meta_key = grant_meta_key(zone, source_grant_id);
+        let Some(encoded_keys) = store.get(&meta_key)? else {
+            return Ok(0);
+        };
+        let text = String::from_utf8(encoded_keys)
+            .map_err(|error| ReBACTupleStoreError::Backend(error.to_string()))?;
+        let owner = format!("grant:{source_grant_id}");
+        let mut removed = 0;
+        for key in text.lines().filter(|line| !line.is_empty()) {
+            let mut owners = decode_owners(store.get(key)?.as_deref());
+            if owners.remove(&owner) {
+                removed += 1;
+            }
+            if owners.is_empty() {
+                store.delete(key)?;
+            } else {
+                store.put(key, encode_owners(&owners).as_bytes())?;
+            }
+        }
+        store.delete(&meta_key)?;
+        self.cache.invalidate(zone);
+        Ok(removed)
+    }
+
+    /// Advance and return the monotonic authorization epoch stored alongside
+    /// the ReBAC graph. Callers commit their canonical fact first; execution
+    /// boundaries reject stale observed epochs with [`Self::epoch_is_current`].
+    pub fn advance_authorization_epoch(&self, zone: &str) -> Result<u64, ReBACTupleStoreError> {
+        reject_meta_segment(zone)?;
+        let store = self.cache.store();
+        let key = authorization_epoch_key(zone);
+        let current = store
+            .get(&key)?
+            .as_deref()
+            .and_then(|bytes| std::str::from_utf8(bytes).ok())
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(0);
+        let next = current.saturating_add(1);
+        store.put(&key, next.to_string().as_bytes())?;
+        Ok(next)
+    }
+
+    pub fn epoch_is_current(
+        &self,
+        zone: &str,
+        observed_epoch: u64,
+    ) -> Result<bool, ReBACTupleStoreError> {
+        reject_meta_segment(zone)?;
+        let value = self.cache.store().get(&authorization_epoch_key(zone))?;
+        let current = value
+            .as_deref()
+            .and_then(|bytes| std::str::from_utf8(bytes).ok())
+            .and_then(|raw| raw.parse::<u64>().ok());
+        Ok(current.is_some_and(|epoch| epoch == observed_epoch))
     }
 
     /// Extract the subject `Entity` from an `OperationContext`.
@@ -218,6 +322,37 @@ impl RebacPermissionProvider {
         }
         false
     }
+}
+
+fn reject_meta_segment(value: &str) -> Result<(), ReBACTupleStoreError> {
+    if value.is_empty() || value.contains('|') || value.contains('\n') {
+        return Err(ReBACTupleStoreError::Backend(format!(
+            "invalid provenance key segment: {value:?}"
+        )));
+    }
+    Ok(())
+}
+
+fn grant_meta_key(zone: &str, source_grant_id: &str) -> String {
+    format!("{GRANT_META_PREFIX}|{zone}|{source_grant_id}")
+}
+
+fn authorization_epoch_key(zone: &str) -> String {
+    format!("{AUTH_EPOCH_PREFIX}|{zone}")
+}
+
+fn decode_owners(value: Option<&[u8]>) -> std::collections::BTreeSet<String> {
+    value
+        .and_then(|bytes| std::str::from_utf8(bytes).ok())
+        .unwrap_or_default()
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn encode_owners(owners: &std::collections::BTreeSet<String>) -> String {
+    owners.iter().cloned().collect::<Vec<_>>().join("\n")
 }
 
 impl PermissionProvider for RebacPermissionProvider {
@@ -555,5 +690,72 @@ mod tests {
     fn zone_of_falls_back_to_ctx_zone_id_when_no_route() {
         let c = ctx("alice", "home_zone");
         assert_eq!(RebacPermissionProvider::zone_of(&c, None), "home_zone");
+    }
+
+    #[test]
+    fn grant_projection_revoke_preserves_overlapping_owner() {
+        let store = Arc::new(InMemoryReBACTupleStore::new());
+        let cache = Arc::new(ReBACGraphCache::new(
+            Arc::clone(&store) as Arc<dyn ReBACTupleStore>
+        ));
+        let provider = RebacPermissionProvider::new(cache);
+        let edge = tuple("file", "/shared/*", "reader", "user", "alice");
+
+        provider
+            .apply_grant_projection("team", "grant-a", std::slice::from_ref(&edge))
+            .expect("grant-a");
+        provider
+            .apply_grant_projection("team", "grant-b", std::slice::from_ref(&edge))
+            .expect("grant-b");
+        provider
+            .revoke_grant_projection("team", "grant-a")
+            .expect("revoke-a");
+        let key = tuple_key::encode("team", &edge).expect("key");
+        assert!(store.get(&key).expect("get").is_some());
+
+        provider
+            .revoke_grant_projection("team", "grant-b")
+            .expect("revoke-b");
+        assert!(store.get(&key).expect("get").is_none());
+    }
+
+    #[test]
+    fn grant_projection_revoke_preserves_manual_relation() {
+        let store = Arc::new(InMemoryReBACTupleStore::new());
+        let edge = tuple("file", "/shared/*", "reader", "user", "alice");
+        let key = tuple_key::encode("team", &edge).expect("key");
+        store.put(&key, b"").expect("manual relation");
+        let cache = Arc::new(ReBACGraphCache::new(
+            Arc::clone(&store) as Arc<dyn ReBACTupleStore>
+        ));
+        let provider = RebacPermissionProvider::new(cache);
+
+        provider
+            .apply_grant_projection("team", "grant-a", &[edge])
+            .expect("grant-a");
+        provider
+            .revoke_grant_projection("team", "grant-a")
+            .expect("revoke-a");
+        assert_eq!(store.get(&key).expect("get"), Some(b"manual".to_vec()));
+    }
+
+    #[test]
+    fn authorization_epoch_rejects_stale_observation() {
+        let store = Arc::new(InMemoryReBACTupleStore::new());
+        let cache = Arc::new(ReBACGraphCache::new(store));
+        let provider = RebacPermissionProvider::new(cache);
+
+        let first = provider
+            .advance_authorization_epoch("team")
+            .expect("first epoch");
+        assert!(provider
+            .epoch_is_current("team", first)
+            .expect("current epoch"));
+        provider
+            .advance_authorization_epoch("team")
+            .expect("second epoch");
+        assert!(!provider
+            .epoch_is_current("team", first)
+            .expect("stale epoch"));
     }
 }

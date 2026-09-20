@@ -419,6 +419,22 @@ def build_v2_registry(
     except ImportError as e:
         logger.warning("Failed to import x402 routes: %s", e)
 
+    # ---- Zone v1 product surface (SW-20260915-002) ----
+    try:
+        from nexus.server.api.v2.routers.zone_grants import router as zone_grants_router
+        from nexus.server.api.v2.routers.zone_runtime import router as zone_runtime_router
+        from nexus.server.api.v2.routers.zones import router as zones_router
+
+        registry.add(RouterEntry(router=zones_router, name="zones_v2", endpoint_count=7))
+        registry.add(
+            RouterEntry(router=zone_grants_router, name="zone_grants_v2", endpoint_count=8)
+        )
+        registry.add(
+            RouterEntry(router=zone_runtime_router, name="zone_runtime_v2", endpoint_count=6)
+        )
+    except ImportError as e:
+        logger.warning("Failed to import Zone v2 routes: %s", e)
+
     return registry
 
 

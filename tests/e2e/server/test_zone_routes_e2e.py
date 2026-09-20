@@ -8,6 +8,7 @@ Tests the security fixes for zone endpoints:
 Run with: PYTHONPATH=src python -m pytest tests/e2e/test_zone_routes_e2e.py -v
 """
 
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -18,9 +19,23 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
+from nexus.remote.zone_runtime_client import RuntimeReceipt
 from nexus.server.auth.factory import create_auth_provider
 from nexus.server.auth.zone_routes import router as zone_router
+from nexus.server.lifespan.zone_control import arm_zone_services
 from nexus.storage.models._base import Base
+
+
+def _wait_for_operation(client, location: str, headers: dict[str, str]) -> dict:
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        response = client.get(location, headers=headers)
+        assert response.status_code == 200, response.text
+        operation = response.json()
+        if operation["state"] in {"succeeded", "failed"}:
+            return operation
+        time.sleep(0.1)
+    pytest.fail(f"operation did not complete: {location}")
 
 
 class TestZoneRoutesAuthentication:
@@ -95,8 +110,48 @@ def api_key_zone_app(request, monkeypatch):
         assert auth_provider is not None
 
     app = FastAPI()
+    app.state.api_key = None
     app.state.auth_provider = auth_provider
     app.state.session_factory = session_factory
+    runtime = SimpleNamespace(
+        probe_capabilities=lambda **_: (
+            "zone-runtime:create",
+            "zone-runtime:join",
+            "zone-runtime:status",
+            "zone-runtime:mount",
+            "zone-runtime:unmount",
+            "zone-runtime:deprovision",
+            "zone-runtime:operation-journal",
+        ),
+        create_zone=lambda **kwargs: RuntimeReceipt(
+            ok=True,
+            physical_identity=kwargs["zone_id"],
+            membership="RESIDENT",
+            raw={"zone_id": kwargs["zone_id"], "outcome": "CREATED"},
+        ),
+        zone_status=lambda **kwargs: RuntimeReceipt(
+            ok=True,
+            physical_identity=kwargs["zone_id"],
+            membership="RESIDENT",
+            runtime_revision="1:1:1",
+            raw={"zone_id": kwargs["zone_id"], "presence": "RESIDENT"},
+        ),
+        deprovision=lambda **kwargs: RuntimeReceipt(
+            ok=True,
+            physical_identity=kwargs["zone_id"],
+            membership="DELETED",
+            raw={"zone_id": kwargs["zone_id"], "outcome": "DEPROVISIONED"},
+        ),
+    )
+    arm_zone_services(
+        app,
+        session_factory=session_factory,
+        runtime=runtime,
+        rebac_check=lambda *_args: True,
+        projection_write=lambda *_args: None,
+        projection_delete=lambda *_args: None,
+        worker_enabled=True,
+    )
     app.include_router(zone_router)
 
     with TestClient(app) as client:
@@ -151,22 +206,9 @@ class TestZoneRoutesWithAuth:
     """Test zone routes with proper authentication."""
 
     @pytest.fixture
-    def auth_token(self, test_app):
-        """Register a user and get auth token."""
-        response = test_app.post(
-            "/auth/register",
-            json={
-                "email": "zone-test@example.com",
-                "password": "securepassword123",
-                "username": "zoneuser",
-                "display_name": "Zone Test User",
-            },
-        )
-        # Skip test if auth provider not configured (503)
-        if response.status_code == 503:
-            pytest.skip("Auth provider not configured in test environment")
-        assert response.status_code == 201, f"Registration failed: {response.text}"
-        return response.json()["token"]
+    def auth_token(self, nexus_server):
+        """Use the real key minted into both Python and Rust auth planes."""
+        return nexus_server["api_key"]
 
     def test_create_zone_with_auth(self, test_app, auth_token):
         """Test creating a zone with valid authentication."""
@@ -178,13 +220,21 @@ class TestZoneRoutesWithAuth:
             },
             headers={"Authorization": f"Bearer {auth_token}"},
         )
-        # Should succeed (201) or fail gracefully if ReBAC not configured (500)
-        assert response.status_code in (201, 500)
-        if response.status_code == 201:
-            data = response.json()
-            assert data["zone_id"] == "my-org"
-            assert data["name"] == "My Organization"
-            assert data["is_active"] is True
+        assert response.status_code == 202, response.text
+        operation = _wait_for_operation(
+            test_app,
+            response.headers["Location"],
+            {"Authorization": f"Bearer {auth_token}"},
+        )
+        assert operation["state"] == "succeeded", operation
+        current = test_app.get(
+            "/api/zones/my-org", headers={"Authorization": f"Bearer {auth_token}"}
+        )
+        assert current.status_code == 200, current.text
+        data = current.json()
+        assert data["zone_id"] == "my-org"
+        assert data["name"] == "My Organization"
+        assert data["is_active"] is True
 
     def test_list_zones_with_auth(self, test_app, auth_token):
         """Test listing zones with valid authentication."""
@@ -206,28 +256,16 @@ class TestZoneRoutesWithAuth:
         )
         # 403 = user doesn't have access (correct - access check before existence)
         # 404 = zone not found (also acceptable)
-        assert response.status_code in (403, 404)
+        assert response.status_code == 404
 
 
 class TestZoneCreatorOwnership:
     """Test that zone creator is assigned as owner."""
 
     @pytest.fixture
-    def auth_token(self, test_app):
-        """Register a user and get auth token."""
-        response = test_app.post(
-            "/auth/register",
-            json={
-                "email": "owner-test@example.com",
-                "password": "securepassword123",
-                "username": "owneruser",
-            },
-        )
-        # Skip test if auth provider not configured (503)
-        if response.status_code == 503:
-            pytest.skip("Auth provider not configured in test environment")
-        assert response.status_code == 201, f"Registration failed: {response.text}"
-        return response.json()["token"]
+    def auth_token(self, nexus_server):
+        """Use the real key minted into both Python and Rust auth planes."""
+        return nexus_server["api_key"]
 
     def test_creator_can_access_created_zone(self, test_app, auth_token):
         """Test that the zone creator can access their created zone."""
@@ -241,9 +279,13 @@ class TestZoneCreatorOwnership:
             headers={"Authorization": f"Bearer {auth_token}"},
         )
 
-        # Skip test if creation failed (ReBAC not available)
-        if create_response.status_code != 201:
-            pytest.skip("Zone creation failed - ReBAC may not be configured")
+        assert create_response.status_code == 202, create_response.text
+        operation = _wait_for_operation(
+            test_app,
+            create_response.headers["Location"],
+            {"Authorization": f"Bearer {auth_token}"},
+        )
+        assert operation["state"] == "succeeded", operation
 
         # Creator should be able to get the zone
         get_response = test_app.get(
@@ -263,3 +305,122 @@ class TestZoneCreatorOwnership:
         data = list_response.json()
         zone_ids = [t["zone_id"] for t in data["zones"]]
         assert "owner-test-org" in zone_ids
+
+
+def test_v2_create_delegation_revoke_and_deprovision(nexus_server, test_app) -> None:
+    """Exercise the public /v2 saga with a user's own short-lived delegation."""
+    admin_headers = {"Authorization": f"Bearer {nexus_server['api_key']}"}
+    zone_id = "v2-delegation-zone"
+
+    capabilities = test_app.get("/v2/zone-capabilities", headers=admin_headers)
+    assert capabilities.status_code == 200, capabilities.text
+    providers = capabilities.json()["providers"]
+    assert providers["composite_armed"] is True
+    assert providers["auth_armed"] is True
+    assert providers["rebac_armed"] is True
+
+    created = test_app.post(
+        "/v2/zones",
+        headers={**admin_headers, "Idempotency-Key": "create-v2-delegation-zone"},
+        json={"zone_id": zone_id, "display_name": "V2 Delegation Zone"},
+    )
+    assert created.status_code == 202, created.text
+    create_operation = _wait_for_operation(test_app, created.headers["Location"], admin_headers)
+    assert create_operation["state"] == "succeeded", create_operation
+
+    service_key_response = test_app.post(
+        "/api/v2/auth/keys",
+        headers=admin_headers,
+        json={
+            "label": "moss-e2e",
+            "subject_type": "service",
+            "subject_id": "moss-e2e",
+            "zone_id": "root",
+            "is_admin": True,
+        },
+    )
+    assert service_key_response.status_code == 201, service_key_response.text
+    service_key = service_key_response.json()["key"]
+
+    user_key_response = test_app.post(
+        "/api/v2/auth/keys",
+        headers=admin_headers,
+        json={
+            "label": "delegated-user",
+            "subject_type": "user",
+            "subject_id": "delegated-user",
+            "zone_id": zone_id,
+            "is_admin": False,
+        },
+    )
+    assert user_key_response.status_code == 201, user_key_response.text
+    user_key = user_key_response.json()["key"]
+
+    grant_response = test_app.post(
+        f"/v2/zones/{zone_id}/grants",
+        headers={**admin_headers, "Idempotency-Key": "grant-v2-org"},
+        json={
+            "grantee": {"subject_type": "organization", "subject_id": "org-e2e"},
+            "capabilities": ["zone.data.read"],
+            "resource_prefixes": ["/"],
+            "source": {"source_type": "moss_org_binding", "source_id": "binding-e2e"},
+            "reason": "accepted organization binding",
+        },
+    )
+    assert grant_response.status_code == 202, grant_response.text
+    grant_operation = _wait_for_operation(
+        test_app, grant_response.headers["Location"], admin_headers
+    )
+    assert grant_operation["state"] == "succeeded", grant_operation
+
+    grants_response = test_app.get(f"/v2/zones/{zone_id}/grants", headers=admin_headers)
+    assert grants_response.status_code == 200, grants_response.text
+    org_grant = next(
+        grant
+        for grant in grants_response.json()["grants"]
+        if grant["grantee"]["subject_id"] == "org-e2e"
+    )
+    assert org_grant["status"] == "active"
+
+    delegation_response = test_app.post(
+        "/v2/auth/zone-delegations",
+        headers={"Authorization": f"Bearer {service_key}", "Idempotency-Key": "delegate-e2e"},
+        json={
+            "user_id": "delegated-user",
+            "org_id": "org-e2e",
+            "membership_version": "membership-v1",
+            "zone_id": zone_id,
+            "audience": "nexus-api",
+            "ttl_s": 300,
+        },
+    )
+    assert delegation_response.status_code == 201, delegation_response.text
+    delegation_id = delegation_response.json()["delegation_id"]
+
+    user_headers = {
+        "Authorization": f"Bearer {user_key}",
+        "X-Nexus-Zone-Delegation": delegation_id,
+    }
+    assert test_app.get(f"/v2/zones/{zone_id}", headers=user_headers).status_code == 200
+
+    revoked = test_app.delete(
+        f"/v2/zones/{zone_id}/grants/{org_grant['grant_id']}",
+        headers={**admin_headers, "Idempotency-Key": "revoke-v2-org"},
+    )
+    assert revoked.status_code == 202, revoked.text
+    denied = test_app.get(f"/v2/zones/{zone_id}", headers=user_headers)
+    assert denied.status_code == 403, denied.text
+
+    deleted = test_app.delete(
+        f"/v2/zones/{zone_id}",
+        headers={
+            **admin_headers,
+            "Idempotency-Key": "delete-v2-delegation-zone",
+            "X-Nexus-Confirm-Zone": zone_id,
+        },
+    )
+    assert deleted.status_code == 202, (
+        deleted.text + "\n" + "".join(nexus_server["stderr_lines"][-120:])
+    )
+    delete_operation = _wait_for_operation(test_app, deleted.headers["Location"], admin_headers)
+    assert delete_operation["state"] == "succeeded", delete_operation

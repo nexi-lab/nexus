@@ -3,12 +3,15 @@ provenance isolation, no-cascade-delete, and the legacy mapper's §10.3 rules.""
 
 from __future__ import annotations
 
+import os
+import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
 import sqlalchemy as sa
 from alembic.config import Config
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.pool import NullPool
 
 from alembic import command
 from nexus.storage.models._base import Base
@@ -20,6 +23,16 @@ from nexus.storage.zone_migration import (
 )
 
 REPO_ROOT = __import__("pathlib").Path(__file__).resolve().parents[2]
+ZONE_V1_TABLES = {
+    "zone_grants",
+    "zone_operations",
+    "zone_mounts",
+    "zone_runtime_outbox",
+    "zone_grant_projection_outbox",
+    "zone_authorization_epochs",
+    "zone_delegations",
+    "rebac_relation_sources",
+}
 
 
 @pytest.fixture()
@@ -64,23 +77,59 @@ def _columns(engine, table: str) -> set[str]:
 
 
 def test_upgrade_and_fresh_agree_on_zone_v1_tables(upgraded_sqlite, fresh_sqlite):
-    zone_v1_tables = {
-        "zone_grants",
-        "zone_operations",
-        "zone_mounts",
-        "zone_runtime_outbox",
-        "zone_grant_projection_outbox",
-        "zone_authorization_epochs",
-        "zone_delegations",
-        "rebac_relation_sources",
-    }
     for engine in (upgraded_sqlite, fresh_sqlite):
-        assert zone_v1_tables <= _table_names(engine)
+        assert _table_names(engine) >= ZONE_V1_TABLES
     assert _columns(upgraded_sqlite, "zone_grants") == _columns(fresh_sqlite, "zone_grants")
     assert _columns(upgraded_sqlite, "zone_operations") == _columns(fresh_sqlite, "zone_operations")
     assert _columns(upgraded_sqlite, "rebac_relation_sources") == _columns(
         fresh_sqlite, "rebac_relation_sources"
     )
+
+
+@pytest.mark.postgres
+def test_postgresql_upgrade_and_fresh_agree_on_zone_v1_tables():
+    """Run the real Alembic chain and ORM metadata in isolated PG schemas."""
+    database_url = os.environ.get("NEXUS_E2E_DATABASE_URL")
+    if not database_url:
+        pytest.skip("NEXUS_E2E_DATABASE_URL is not configured")
+
+    suffix = uuid.uuid4().hex[:12]
+    upgraded_schema = f"zone_v1_upgrade_{suffix}"
+    fresh_schema = f"zone_v1_fresh_{suffix}"
+    admin = sa.create_engine(database_url, isolation_level="AUTOCOMMIT", poolclass=NullPool)
+
+    def scoped_engine(schema: str):
+        return sa.create_engine(
+            database_url,
+            connect_args={"options": f"-csearch_path={schema}"},
+            poolclass=NullPool,
+            future=True,
+        )
+
+    with admin.begin() as conn:
+        conn.execute(sa.schema.CreateSchema(upgraded_schema))
+        conn.execute(sa.schema.CreateSchema(fresh_schema))
+    upgraded = scoped_engine(upgraded_schema)
+    fresh = scoped_engine(fresh_schema)
+    try:
+        cfg = Config(str(REPO_ROOT / "alembic" / "alembic.ini"))
+        cfg.set_main_option("script_location", str(REPO_ROOT / "alembic"))
+        with upgraded.begin() as conn:
+            cfg.attributes["connection"] = conn
+            command.upgrade(cfg, "head")
+        Base.metadata.create_all(fresh)
+
+        assert _table_names(upgraded) >= ZONE_V1_TABLES
+        assert _table_names(fresh) >= ZONE_V1_TABLES
+        for table in ZONE_V1_TABLES:
+            assert _columns(upgraded, table) == _columns(fresh, table)
+    finally:
+        upgraded.dispose()
+        fresh.dispose()
+        with admin.begin() as conn:
+            conn.execute(sa.schema.DropSchema(upgraded_schema, cascade=True))
+            conn.execute(sa.schema.DropSchema(fresh_schema, cascade=True))
+        admin.dispose()
 
 
 def test_zones_canonical_columns_are_expand_only(upgraded_sqlite):
@@ -128,13 +177,13 @@ def test_grant_source_uniqueness_enforced(upgraded_sqlite):
         )
     with pytest.raises(IntegrityError), upgraded_sqlite.begin() as conn:
         conn.execute(
-                sa.text(
-                    "INSERT INTO zone_grants (grant_id, zone_id, grantee, capabilities, source_type, source_id,"
-                    " issued_by, reason, policy_version, revision, status, created_at)"
-                    " VALUES ('g2', 'z-alpha-1', '{}', '[]', 'manual', 's-1', '{}', 'r', 'p', 'v1', 'active', :t)"
-                ),
-                {"t": datetime.now(UTC)},
-            )
+            sa.text(
+                "INSERT INTO zone_grants (grant_id, zone_id, grantee, capabilities, source_type, source_id,"
+                " issued_by, reason, policy_version, revision, status, created_at)"
+                " VALUES ('g2', 'z-alpha-1', '{}', '[]', 'manual', 's-1', '{}', 'r', 'p', 'v1', 'active', :t)"
+            ),
+            {"t": datetime.now(UTC)},
+        )
 
 
 def test_operation_idempotency_key_conflicts_rejected(upgraded_sqlite):
@@ -151,13 +200,13 @@ def test_operation_idempotency_key_conflicts_rejected(upgraded_sqlite):
         )
     with pytest.raises(IntegrityError), upgraded_sqlite.begin() as conn:
         conn.execute(
-                sa.text(
-                    "INSERT INTO zone_operations (operation_id, action, zone_id, state, step, retryable,"
-                    " idempotency_scope, idempotency_key, request_hash, generation, fence, created_at, updated_at)"
-                    " VALUES ('op2', 'create', 'z-alpha-1', 'queued', 'validate', 0, 'scope-1', 'key-1', 'hash-B', 0, 0, :t, :t)"
-                ),
-                {"t": now},
-            )
+            sa.text(
+                "INSERT INTO zone_operations (operation_id, action, zone_id, state, step, retryable,"
+                " idempotency_scope, idempotency_key, request_hash, generation, fence, created_at, updated_at)"
+                " VALUES ('op2', 'create', 'z-alpha-1', 'queued', 'validate', 0, 'scope-1', 'key-1', 'hash-B', 0, 0, :t, :t)"
+            ),
+            {"t": now},
+        )
 
 
 def test_overlapping_grant_edges_survive_one_revoke(upgraded_sqlite):

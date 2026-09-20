@@ -122,6 +122,8 @@ def seeded_zones():
     Skips if the admin key is not set. Cleans up on teardown by
     deleting the created zones (keys cascade).
     """
+    import time
+
     import httpx
 
     admin_url = os.environ.get("NEXUS_ADMIN_URL", "http://localhost:38630")
@@ -142,17 +144,28 @@ def seeded_zones():
             zone_id = f"mcph{i:02d}"
             marker = f"MARKER_MCP_{i:02d}"
 
-            # Best-effort zone create. Some presets (`shared`) lack a DB auth
-            # provider and return 503 on /api/zones; the demo preset's /api/v2
-            # key endpoint accepts any zone_id and sets up ReBAC scoping on
-            # the first key creation anyway. 200/201/409/503 all acceptable.
+            # Provision through the canonical v2 operation surface.  The
+            # compatibility route is intentionally not a second writer.
             resp = client.post(
-                "/api/zones",
-                json={"name": f"mcp-http-{i:02d}", "zone_id": zone_id},
+                "/v2/zones",
+                headers={"Idempotency-Key": f"mcp-http-create-{zone_id}"},
+                json={"display_name": f"mcp-http-{i:02d}", "zone_id": zone_id},
             )
-            if resp.status_code in (200, 201):
+            if resp.status_code == 202:
                 created_zone_ids.append(zone_id)
-            elif resp.status_code not in (409, 503):
+                location = resp.headers["Location"]
+                deadline = time.monotonic() + 30
+                while time.monotonic() < deadline:
+                    operation = client.get(location)
+                    operation.raise_for_status()
+                    if operation.json()["state"] == "succeeded":
+                        break
+                    if operation.json()["state"] == "failed":
+                        raise AssertionError(operation.json())
+                    time.sleep(0.1)
+                else:
+                    raise AssertionError(f"zone create did not complete: {location}")
+            elif resp.status_code != 409:
                 resp.raise_for_status()
 
             # Issue a zone-scoped API key with viewer + editor grants on root.
@@ -187,8 +200,6 @@ def seeded_zones():
             zones.append({"zone_id": zone_id, "api_key": api_key, "marker": marker})
 
         # Let zoekt/bm25s index the new files briefly before tests run.
-        import time
-
         time.sleep(2)
 
         os.environ["MCP_HTTP_SEEDED_ZONES"] = "true"
@@ -197,7 +208,13 @@ def seeded_zones():
         # Teardown: delete zones we created this session.
         for zid in created_zone_ids:
             try:
-                client.delete(f"/api/zones/{zid}")
+                client.delete(
+                    f"/v2/zones/{zid}",
+                    headers={
+                        "Idempotency-Key": f"mcp-http-delete-{zid}",
+                        "X-Nexus-Confirm-Zone": zid,
+                    },
+                )
             except Exception:
                 pass
         os.environ.pop("MCP_HTTP_SEEDED_ZONES", None)

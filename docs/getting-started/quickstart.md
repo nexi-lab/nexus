@@ -52,7 +52,7 @@ source-checkout setup.
 Expected output:
 
 ```text
-Hello, Nexus!
+Hello, Nexusai!
 ```
 
 ## Local CLI Quickstart

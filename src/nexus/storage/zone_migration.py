@@ -90,7 +90,7 @@ def map_legacy_zone(
             return LegacyZoneMapping(
                 zone_id=zone_id,
                 outcome="blocker",
-                blockers=("phase=Terminated without deleted_at timestamp"),
+                blockers=("phase=Terminated without deleted_at timestamp",),
             )
         if deletion_tombstone_verifiable and replica_receipts_complete:
             return LegacyZoneMapping(zone_id=zone_id, outcome="mapped", canonical_status="deleted")
@@ -98,12 +98,12 @@ def map_legacy_zone(
             return LegacyZoneMapping(
                 zone_id=zone_id,
                 outcome="blocker",
-                blockers=("Terminated without a verifiable deletion tombstone"),
+                blockers=("Terminated without a verifiable deletion tombstone",),
             )
         return LegacyZoneMapping(
             zone_id=zone_id,
             outcome="blocker",
-            blockers=("terminated zone has live physical replicas — reconcile before mapping"),
+            blockers=("terminated zone has live physical replicas — reconcile before mapping",),
         )
     return LegacyZoneMapping(
         zone_id=zone_id,

@@ -20,7 +20,7 @@ import sys
 import threading
 import time
 import uuid
-from contextlib import closing, suppress
+from contextlib import suppress
 from pathlib import Path
 
 import httpx
@@ -43,12 +43,72 @@ if str(_src_path) not in sys.path:
     sys.path.insert(0, str(_src_path))
 
 
-def find_free_port() -> int:
-    """Find a free port on localhost."""
-    with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
-        s.bind(("", 0))
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        return s.getsockname()[1]
+def find_free_port(width: int = 1) -> int:
+    """Find a free consecutive port range beginning on localhost."""
+    for _ in range(100):
+        sockets: list[socket.socket] = []
+        try:
+            first = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sockets.append(first)
+            first.bind(("127.0.0.1", 0))
+            port = first.getsockname()[1]
+            if port + width > 65536:
+                continue
+            for offset in range(1, width):
+                candidate = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sockets.append(candidate)
+                candidate.bind(("127.0.0.1", port + offset))
+            return port
+        except OSError:
+            continue
+        finally:
+            for candidate in sockets:
+                candidate.close()
+    raise RuntimeError(f"could not reserve {width} consecutive loopback ports")
+
+
+def _mint_kernel_admin_key(env: dict[str, str], tmp_path: Path) -> str:
+    """Mint the full-profile test key into the exact kernel data directory."""
+    from nexus.remote.kernel_client import _resolve_kernel_binary
+
+    kernel_binary = _resolve_kernel_binary()
+    kernel_data_dir = tmp_path / "metastore"
+    identity_dir = tmp_path / "kernel-identity"
+    env["NEXUS_API_KEY_SECRET"] = "test-e2e-kernel-secret-12345"
+    env["NEXUS_IDENTITY_DIR"] = str(identity_dir)
+    env["NEXUS_NO_TLS"] = "true"
+
+    mint_env = env.copy()
+    mint_env["NEXUS_DATA_DIR"] = str(kernel_data_dir)
+    result = subprocess.run(
+        [
+            kernel_binary,
+            "auth",
+            "mint",
+            "--subject-type",
+            "user",
+            "--subject-id",
+            "e2e-admin",
+            "--admin",
+            "--name",
+            "python-e2e",
+        ],
+        env=mint_env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
+        check=False,
+    )
+    tokens = [line.strip() for line in result.stdout.splitlines() if line.strip().startswith("sk-")]
+    if result.returncode != 0 or len(tokens) != 1:
+        pytest.fail(
+            "Failed to mint the Rust-kernel E2E admin key.\n"
+            f"stdout: {result.stdout}\n"
+            f"stderr: {result.stderr}"
+        )
+    return tokens[0]
 
 
 def _drain_pipe(pipe, lines: list[str], ready: "threading.Event | None" = None):
@@ -128,7 +188,9 @@ def nexus_server(isolated_db, tmp_path):
     home_path = tmp_path / "home"
     home_path.mkdir(exist_ok=True)
 
-    port = find_free_port()
+    # The Python HTTP server uses ``port``; its internal kernel and public
+    # gRPC face use the next two ports.
+    port = find_free_port(3)
     base_url = f"http://127.0.0.1:{port}"
 
     # Environment for the server process
@@ -139,8 +201,11 @@ def nexus_server(isolated_db, tmp_path):
     env["NEXUS_DATABASE_URL"] = os.environ.get("NEXUS_E2E_DATABASE_URL", f"sqlite:///{isolated_db}")
     env["PYTHONPATH"] = str(_src_path)
 
-    # Set API key for authenticated tests
-    env["NEXUS_API_KEY"] = "test-e2e-api-key-12345"
+    # Full-profile startup requires a real credential provider.  Mint one key
+    # into the same Rust data directory the local KernelClient will open, then
+    # use that key for both the Python HTTP auth adapter and internal gRPC.
+    env["NEXUS_API_KEY"] = _mint_kernel_admin_key(env, tmp_path)
+    env["NEXUS_ZONE_DELEGATION_ISSUERS"] = "moss-e2e"
 
     # Issue #788: Lower min chunk size for e2e tests (default 5MB too large for test payloads)
     env["NEXUS_UPLOAD_MIN_CHUNK_SIZE"] = "1"
@@ -166,11 +231,15 @@ def nexus_server(isolated_db, tmp_path):
         [
             sys.executable,
             "-c",
-            (
-                f"from nexus.daemon.main import main; "
-                f"main(['--host', '127.0.0.1', '--port', '{port}', "
-                f"'--data-dir', '{tmp_path}', '--profile', 'full'])"
-            ),
+            "from nexus.daemon.main import main; import sys; main(sys.argv[1:])",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            "--data-dir",
+            str(tmp_path),
+            "--profile",
+            "full",
         ],
         env=env,
         stdout=subprocess.PIPE,
@@ -215,6 +284,8 @@ def nexus_server(isolated_db, tmp_path):
         "process": process,
         "db_path": isolated_db,
         "storage_path": storage_path,
+        "api_key": env["NEXUS_API_KEY"],
+        "stderr_lines": stderr_lines,
     }
 
     # Cleanup: kill server process and all children
@@ -222,7 +293,14 @@ def nexus_server(isolated_db, tmp_path):
         with suppress(ProcessLookupError, PermissionError):
             os.killpg(os.getpgid(process.pid), signal.SIGTERM)
     else:
-        process.terminate()
+        # Terminating only the Python parent leaves its Rust kernel child
+        # running on Windows.  Kill the exact process tree created by this
+        # fixture so repeated full-profile tests do not leak daemons/ports.
+        subprocess.run(
+            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+            capture_output=True,
+            check=False,
+        )
 
     try:
         process.wait(timeout=5)

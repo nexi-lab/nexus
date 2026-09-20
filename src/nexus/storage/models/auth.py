@@ -8,7 +8,17 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import (
+    JSON,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from nexus.contracts.constants import ROOT_ZONE_ID
@@ -371,7 +381,9 @@ class ZoneModel(Base):
     labels: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     runtime_observed_receipt: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     runtime_health: Mapped[str | None] = mapped_column(String(16), nullable=True)
-    runtime_observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    runtime_observed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=lambda: datetime.now(UTC), index=True

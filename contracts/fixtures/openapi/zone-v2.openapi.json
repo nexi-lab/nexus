@@ -1,0 +1,22 @@
+{
+  "openapi": "3.1.0",
+  "info": { "title": "Nexus Zone v1 API", "version": "0.1.0" },
+  "paths": {
+    "/v2/zone-capabilities": { "get": {} },
+    "/v2/zones": { "get": {}, "post": {} },
+    "/v2/zones/{zone_id}": { "get": {}, "patch": {}, "delete": {} },
+    "/v2/zones/{zone_id}/status": { "get": {} },
+    "/v2/zones/{zone_id}:suspend": { "post": {} },
+    "/v2/zones/{zone_id}:resume": { "post": {} },
+    "/v2/zone-operations/{operation_id}": { "get": {} },
+    "/v2/zones/{zone_id}/grants": { "get": {}, "post": {} },
+    "/v2/zones/{zone_id}/grants/{grant_id}": { "get": {}, "delete": {} },
+    "/v2/auth/zone-delegations": { "post": {} },
+    "/v2/auth/zone-delegations/{delegation_id}": { "get": {}, "delete": {} },
+    "/v2/zones/{zone_id}/joins": { "post": {} },
+    "/v2/zone-mounts": { "get": {}, "post": {} },
+    "/v2/zone-mounts/{mount_id}": { "delete": {} },
+    "/v2/zone-transfers": { "post": {} },
+    "/v2/zone-transfers/{operation_id}": { "get": {} }
+  }
+}

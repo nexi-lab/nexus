@@ -10,9 +10,9 @@ The plan originally sketched calling ``GET /zones/<id>/health`` from a
 operator approves. Two reasons we stay with the gRPC pattern from Task 21:
 
   1. The hub zone-access gate (Task 19) is wired at
-     ``GET /api/zones/{zone_id}`` in ``src/nexus/server/auth/zone_routes.py``,
-     not ``/zones/<id>/health``. The plan's path doesn't match the
-     real route.
+   ``GET /v2/zones/{zone_id}`` through the canonical Zone authorization
+   service, not ``/zones/<id>/health``. The plan's path doesn't match that
+   real route.
   2. There is no ``restricted_token`` fixture exposed by
      ``tests/e2e/self_contained/conftest.py`` — only ``admin_token``.
      Building a scoped ReBAC token in this environment requires

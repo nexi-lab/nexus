@@ -30,6 +30,7 @@ from collections.abc import Sequence
 from typing import Union
 
 import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import JSONB
 
 from alembic import op
 
@@ -38,6 +39,8 @@ revision: str = "add_zone_v1_canonical_storage"
 down_revision: Union[str, Sequence[str], None] = "oplog_snapshot_hash_text"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
+
+GRANTEE_JSON = sa.JSON().with_variant(JSONB(), "postgresql")
 
 
 def upgrade() -> None:
@@ -69,7 +72,7 @@ def upgrade() -> None:
             sa.ForeignKey("zones.zone_id", ondelete="RESTRICT"),
             nullable=False,
         ),
-        sa.Column("grantee", sa.JSON(), nullable=False),
+        sa.Column("grantee", GRANTEE_JSON, nullable=False),
         sa.Column("capabilities", sa.JSON(), nullable=False),
         sa.Column("resource_prefixes", sa.JSON(), nullable=True),
         sa.Column("source_type", sa.String(length=32), nullable=False),
@@ -88,7 +91,12 @@ def upgrade() -> None:
         sa.UniqueConstraint("source_type", "source_id", name="uq_zone_grant_source"),
     )
     op.create_index("ix_zone_grants_zone_status", "zone_grants", ["zone_id", "status"])
-    op.create_index("ix_zone_grants_grantee", "zone_grants", ["grantee"])
+    if op.get_bind().dialect.name == "postgresql":
+        op.create_index(
+            "ix_zone_grants_grantee", "zone_grants", ["grantee"], postgresql_using="gin"
+        )
+    else:
+        op.create_index("ix_zone_grants_grantee", "zone_grants", ["grantee"])
     op.create_index("ix_zone_grants_expiry", "zone_grants", ["expires_at"])
 
     op.create_table(

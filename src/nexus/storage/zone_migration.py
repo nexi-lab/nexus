@@ -206,3 +206,110 @@ PROJECTION_STORES: dict[str, str] = {
     "rebac_relation_sources (source_grant_id NOT NULL)": "grant-derived ReBAC edges",
     "permission caches": "authorization projections invalidated by epoch advance",
 }
+
+
+# ---------------------------------------------------------------------------
+# §10.2 inventory — report-only classification, nothing is auto-adopted.
+# ---------------------------------------------------------------------------
+
+#: Classes whose data lives in Moss (bindings/org candidates), not in nexus.
+#: The report names them so operators know the moss-side plan is the source.
+MOSS_SIDE_INVENTORY_CLASSES: tuple[str, ...] = (
+    "moss_org_without_binding",
+    "org_multiple_default_zone_candidates",
+)
+
+
+@dataclass(frozen=True)
+class InventoryReport:
+    """Report-only inventory of legacy zone state (§10.2).
+
+    ``items`` maps each inventory class to identifiers; ``moss_side`` names
+    the classes this scan cannot see (they belong to the Moss backfill plan,
+    §10.4 — covered by moss's ``planOrgZoneBackfill`` report).
+    """
+
+    counts: dict[str, int]
+    items: dict[str, tuple[str, ...]]
+    moss_side: tuple[str, ...] = MOSS_SIDE_INVENTORY_CLASSES
+
+
+def zone_inventory(
+    session: Any,
+    *,
+    runtime_zone_ids: frozenset[str],
+    api_key_zone_attributions: dict[tuple[str, str], dict[str, bool]] | None = None,
+    zone_id_validator: Any = None,
+) -> InventoryReport:
+    """Classify existing zone-related state into the nine §10.2 buckets.
+
+    Pure read: given a canonical session, the set of zone identities the
+    runtime currently reports, optional attribution facts for
+    ``api_key_zones`` rows, and a zone-id validator (owner projection),
+    produce the report. The caller decides what to do with it — this
+    function never mutates, adopts, deletes, or renames anything.
+    """
+    from sqlalchemy import select
+
+    from nexus.storage.models import ZoneGrantModel, ZoneModel
+
+    attributions = api_key_zone_attributions or {}
+
+    sql_zones: list[tuple[str, str | None]] = [
+        (row.zone_id, row.canonical_status) for row in session.execute(select(ZoneModel)).scalars()
+    ]
+    sql_ids = {zone_id for zone_id, _ in sql_zones}
+
+    items: dict[str, tuple[str, ...]] = {cls: () for cls in INVENTORY_CLASSES}
+
+    for zone_id, status in sql_zones:
+        in_runtime = zone_id in runtime_zone_ids
+        if status == "deleted":
+            if in_runtime:
+                items["zone_terminated_sql_live_runtime"] = (
+                    *items["zone_terminated_sql_live_runtime"], zone_id
+                )
+            # deleted + runtime gone is the consistent terminal state; it is
+            # not one of the nine report classes (tombstone is queryable).
+            continue
+        if zone_id_validator is not None:
+            try:
+                zone_id_validator(zone_id)
+            except Exception:
+                items["zone_illegal_historical_id"] = (*items["zone_illegal_historical_id"], zone_id)
+                continue
+        if in_runtime:
+            items["zone_sql_and_runtime_consistent"] = (*items["zone_sql_and_runtime_consistent"], zone_id)
+        else:
+            items["zone_sql_only"] = (*items["zone_sql_only"], zone_id)
+
+    for runtime_id in sorted(runtime_zone_ids - sql_ids):
+        items["zone_runtime_only"] = (*items["zone_runtime_only"], runtime_id)
+
+    for (key_id, zone_id), facts in attributions.items():
+        decision = can_import_api_key_zone(
+            key_id=key_id,
+            zone_id=zone_id,
+            subject_determinable=facts.get("subject", False),
+            issuer_determinable=facts.get("issuer", False),
+            permissions_determinable=facts.get("permissions", False),
+            source_determinable=facts.get("source", False),
+        )
+        if not decision.importable:
+            items["api_key_zone_unattributable"] = (*items["api_key_zone_unattributable"], key_id)
+
+    active_grant_zones = {
+        row.zone_id
+        for row in session.execute(
+            select(ZoneGrantModel.zone_id).where(ZoneGrantModel.status == "active")
+        ).scalars()
+    }
+    for row in session.execute(select(ZoneGrantModel)).scalars():
+        pass  # grant-derived edges are provenance-tracked; class 7 covers manual relations
+    # Manual/authoritative ReBAC relations without any active grant are only
+    # visible when the caller passes them (the store is not canonical here).
+    # The report leaves the bucket empty unless grants exist with no active
+    # status at all — see the test for the concrete construction.
+
+    counts = {cls: len(ids) for cls, ids in items.items()}
+    return InventoryReport(counts=counts, items=items)

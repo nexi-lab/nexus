@@ -165,3 +165,15 @@ from nexus.storage.models.zone_v1 import (
 from nexus.storage.models.zone_v1 import ZoneMountModel as ZoneMountModel
 from nexus.storage.models.zone_v1 import ZoneOperationModel as ZoneOperationModel
 from nexus.storage.models.zone_v1 import ZoneRuntimeOutboxModel as ZoneRuntimeOutboxModel
+
+from .session_v1 import SESSION_RECORD_KINDS as SESSION_RECORD_KINDS
+
+# ── P1a session/runtime zone models (SW-20260915-002 §8.9) ─────────────────
+from .session_v1 import SessionDataRecordModel as SessionDataRecordModel
+from .session_v1 import SessionModel as SessionModel
+from .session_v1 import (
+    SessionRuntimeRunModel as SessionRuntimeRunModel,
+)
+from .session_v1 import (
+    SessionZoneDependencyModel as SessionZoneDependencyModel,
+)

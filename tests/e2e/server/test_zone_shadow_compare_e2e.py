@@ -25,7 +25,9 @@ _LEGACY_TO_CANONICAL_STATUS = {
 }
 
 
-def _wait_operation(client: httpx.Client, op_id: str, headers: dict, timeout_s: float = 60.0) -> dict:
+def _wait_operation(
+    client: httpx.Client, op_id: str, headers: dict, timeout_s: float = 60.0
+) -> dict:
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         r = client.get(f"/v2/zone-operations/{op_id}", headers=headers)
@@ -51,7 +53,9 @@ def test_shadow_compare_legacy_and_v2_reads_agree(nexus_server, test_app) -> Non
     legacy = test_app.get("/api/zones", headers=headers)
     assert legacy.status_code == 200, legacy.text
     legacy_body = legacy.json()
-    legacy_zones = legacy_body.get("zones", legacy_body) if isinstance(legacy_body, dict) else legacy_body
+    legacy_zones = (
+        legacy_body.get("zones", legacy_body) if isinstance(legacy_body, dict) else legacy_body
+    )
 
     v2 = test_app.get("/v2/zones", headers=headers, params={"limit": 200})
     assert v2.status_code == 200, v2.text

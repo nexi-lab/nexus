@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.sudo.dev/schemas/runtime/v2/runtime-run.schema.json",
+  "title": "RuntimeRun",
+  "description": "P1a runtime/PID descriptor (SW-20260915-002 §8.9). Extends ADR-001 (Proposed) §3.3 with execution_zone_id and delegation/grant/epoch references — a recorded P1a amendment, not a freeze. Defaults to the session's home zone; a cross-zone run must record the explicit policy decision (decision_reason/policy_version).",
+  "type": "object",
+  "properties": {
+    "api_version": {
+      "const": "runtime.sudo.dev/v2"
+    },
+    "kind": {
+      "const": "RuntimeRun"
+    },
+    "pid": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Platform-level opaque runtime id (ADR-001 §2.3), not an OS PID."
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "execution_zone_id": {
+      "$ref": "https://nexus-vfs.dev/contracts/zone-id/existing-zone-id-ref.schema.gen.json"
+    },
+    "delegation_ref": {
+      "type": "string",
+      "description": "Short-lived Nexus delegation reference the run operates under (P1a amendment)."
+    },
+    "grant_ref": {
+      "type": "string",
+      "description": "ZoneGrant the run depends on (P1a amendment)."
+    },
+    "authorization_epoch": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Zone authorization epoch the run was admitted under (P1a amendment)."
+    },
+    "decision_reason": {
+      "type": "string",
+      "description": "Required when execution_zone_id differs from the session home zone: the explicit policy decision reason."
+    },
+    "policy_version": {
+      "type": "string"
+    },
+    "state": {
+      "enum": ["registered", "warming_up", "ready", "busy", "awaiting_input", "revocation_pending", "terminated"]
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "ended_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": ["api_version", "kind", "pid", "session_id", "execution_zone_id", "state", "started_at"],
+  "additionalProperties": true
+}

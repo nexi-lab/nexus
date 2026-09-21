@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.sudo.dev/schemas/runtime/v2/session-metadata.schema.json",
+  "title": "SessionMetadata",
+  "description": "P1a session record (SW-20260915-002 §8.9). home_zone_id is written once by the authenticated ingress/policy and is immutable afterwards; the canonical store is the Nexus SessionStore. Semantics derive from ADR-001 (Proposed) §3.1; the P1a subset is recorded in contracts/manifests/runtime-v2-p1a-amendment.json — not a freeze.",
+  "type": "object",
+  "properties": {
+    "api_version": {
+      "const": "runtime.sudo.dev/v2"
+    },
+    "kind": {
+      "const": "SessionMetadata"
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "owner": {
+      "$ref": "https://contracts.sudo.dev/schemas/common/v1/principal-ref.schema.json"
+    },
+    "home_zone_id": {
+      "$ref": "https://nexus-vfs.dev/contracts/zone-id/existing-zone-id-ref.schema.gen.json",
+      "description": "Immutable: Session metadata/Transcript/Context/Artifact/Verify records default-write into this zone."
+    },
+    "state": {
+      "enum": ["active", "archived", "deleted"]
+    },
+    "agent_principal": {
+      "type": "string",
+      "description": "Opaque agent principal reference (ADR-001 AgentPrincipalRef carried as an opaque string in the P1a subset)."
+    },
+    "task_ids": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "P1a records the gap explicitly when Tasks are not yet introduced; the field stays empty rather than fabricating records."
+    },
+    "current_attempt_id": {
+      "type": "string"
+    },
+    "current_pid": {
+      "type": "string"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": ["api_version", "kind", "session_id", "owner", "home_zone_id", "state", "created_at", "updated_at"],
+  "additionalProperties": true
+}

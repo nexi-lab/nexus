@@ -77,6 +77,34 @@ def arm_zone_services(
     app.state.zone_session_factory = session_factory
     app.state.zone_runtime = runtime
 
+    # P1a SessionRuntimeService (§8.9): home-zone record routing goes through
+    # the typed kernel — real VFS bytes with a zone-scoped OperationContext,
+    # never SQL columns standing in for zone I/O.
+    fs = getattr(app.state, "nexus_fs", None)
+
+    def _zone_fs_writer(path: str, buf: bytes, zone_id: str) -> int:
+        if fs is None:  # pragma: no cover - guarded by composite arming
+            raise RuntimeError("zone filesystem unavailable")
+        from nexus.contracts.types import OperationContext
+
+        ctx = OperationContext(
+            user_id="session-runtime",
+            subject_type="service",
+            subject_id="session-runtime",
+            zone_id=zone_id,
+            zone_perms=((zone_id, "rw"),),
+            is_admin=False,
+            groups=[],
+        )
+        fs.write(path=path, buf=buf, context=ctx)
+        return len(buf)
+
+    from nexus.services.zones.session_runtime import SessionRuntimeService
+
+    app.state.session_runtime_service = SessionRuntimeService(
+        session_factory, fs_writer=_zone_fs_writer if fs is not None else None
+    )
+
     report = {
         "zone_store": session_factory is not None,
         "auth_armed": auth_armed,

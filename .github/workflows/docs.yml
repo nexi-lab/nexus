@@ -25,6 +25,14 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          # Full history: `git-revision-date-localized` derives each page's
+          # "last updated" from git, and a depth-1 clone gives it one commit
+          # to work from — so it stamps every page with the same date and
+          # warns about it. `build_docs_site.py` builds `--strict`, which
+          # turns that warning into a failed build. docs-nexus-fs.yml, which
+          # loads the same plugin, has carried this since it was written.
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5

@@ -36,11 +36,18 @@ MAX_ATTEMPTS = 8
 
 class ZoneOperationWorker:
     def __init__(
-        self, session_factory: Callable[[], Any], runtime: ZoneRuntimePort, service: Any
+        self,
+        session_factory: Callable[[], Any],
+        runtime: ZoneRuntimePort,
+        service: Any,
+        session_runtime: Any = None,
+        runtime_dependency_validator: Callable[[str, str, str, int], bool] | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._runtime = runtime
         self._service = service  # ZoneApplicationService, for saga continuation
+        self._session_runtime = session_runtime
+        self._runtime_dependency_validator = runtime_dependency_validator
 
     # ── outbox pumping ───────────────────────────────────────────────────────
 
@@ -49,6 +56,10 @@ class ZoneOperationWorker:
         processed = 0
         processed += self._pump_outbox(ZoneRuntimeOutboxModel, self._do_runtime_event)
         processed += self._pump_outbox(ZoneGrantProjectionOutboxModel, self._do_projection_event)
+        if self._session_runtime is not None and self._runtime_dependency_validator is not None:
+            self._session_runtime.revalidate_runtime_dependencies(
+                self._runtime_dependency_validator
+            )
         return processed
 
     def _pump_outbox(self, model: type[Any], handler: Callable[[dict[str, Any]], bool]) -> int:
@@ -181,6 +192,12 @@ class ZoneOperationWorker:
         kind = event.get("event_type")
         if kind == "grant.cleanup_projections":
             self._service.cleanup_grant_projection(grant_id=grant_id)
+            if self._session_runtime is not None:
+                self._session_runtime.park_runs_for_revocation(
+                    zone_id=str(event.get("zone_id") or ""),
+                    grant_ref=str(grant_id),
+                    authorization_epoch=int(event.get("authorization_epoch") or 0),
+                )
             return True
         # activation: epoch advances only when the mandatory projections exist
         return bool(self._service.complete_grant_projection(grant_id=grant_id))

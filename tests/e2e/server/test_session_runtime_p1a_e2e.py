@@ -25,6 +25,18 @@ import httpx
 from tests.e2e.server.test_zone_v2_fault_injection_e2e import ServerHarness
 
 
+def _wait_operation(
+    client: httpx.Client, operation_id: str, headers: dict, timeout_s: float = 60.0
+) -> dict:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        response = client.get(f"/v2/zone-operations/{operation_id}", headers=headers)
+        if response.status_code == 200 and response.json().get("state") in ("succeeded", "failed"):
+            return response.json()
+        time.sleep(0.5)
+    raise AssertionError(f"operation {operation_id} not settled")
+
+
 def _create_zone(client: httpx.Client, headers: dict, zone_id: str, key: str) -> None:
     created = client.post(
         "/v2/zones",
@@ -32,14 +44,88 @@ def _create_zone(client: httpx.Client, headers: dict, zone_id: str, key: str) ->
         json={"zone_id": zone_id, "display_name": zone_id},
     )
     assert created.status_code == 202, created.text
-    deadline = time.monotonic() + 60
-    while time.monotonic() < deadline:
-        op = client.get(f"/v2/zone-operations/{created.json()['operation_id']}", headers=headers)
-        if op.status_code == 200 and op.json().get("state") in ("succeeded", "failed"):
-            assert op.json()["state"] == "succeeded", op.text
-            return
-        time.sleep(0.5)
-    raise AssertionError("create operation not settled")
+    op = _wait_operation(client, created.json()["operation_id"], headers)
+    assert op["state"] == "succeeded", op
+
+
+def _create_runtime_delegation(
+    client: httpx.Client,
+    admin_headers: dict,
+    *,
+    zone_id: str,
+    org_id: str,
+    user_id: str,
+    key: str,
+) -> tuple[str, str, int]:
+    grant_response = client.post(
+        f"/v2/zones/{zone_id}/grants",
+        headers={**admin_headers, "Idempotency-Key": f"{key}-grant"},
+        json={
+            "grantee": {"subject_type": "organization", "subject_id": org_id},
+            "capabilities": ["zone.data.read", "zone.data.write", "zone.runtime.execute"],
+            "resource_prefixes": ["/"],
+            "source": {"source_type": "moss_org_binding", "source_id": f"{key}-source"},
+            "reason": "P1a runtime delegation",
+        },
+    )
+    assert grant_response.status_code == 202, grant_response.text
+    grant_op = _wait_operation(
+        client, grant_response.headers["Location"].split("/")[-1], admin_headers
+    )
+    assert grant_op["state"] == "succeeded", grant_op
+    grants = client.get(f"/v2/zones/{zone_id}/grants", headers=admin_headers).json()["grants"]
+    grant = next(row for row in grants if row["source"]["source_id"] == f"{key}-source")
+
+    service_key_response = client.post(
+        "/api/v2/auth/keys",
+        headers=admin_headers,
+        json={
+            "label": f"{key}-moss",
+            "subject_type": "service",
+            "subject_id": "moss-e2e",
+            "zone_id": "root",
+            "is_admin": True,
+        },
+    )
+    assert service_key_response.status_code == 201, service_key_response.text
+    service_headers = {"Authorization": f"Bearer {service_key_response.json()['key']}"}
+    delegated = client.post(
+        "/v2/auth/zone-delegations",
+        headers={**service_headers, "Idempotency-Key": f"{key}-delegation"},
+        json={
+            "user_id": user_id,
+            "org_id": org_id,
+            "membership_version": "active:user",
+            "zone_id": zone_id,
+            "audience": "nexus-api",
+            "ttl_s": 300,
+        },
+    )
+    assert delegated.status_code == 201, delegated.text
+    delegation_body = delegated.json()
+    return (
+        delegation_body["delegation_id"],
+        grant["grant_id"],
+        int(delegation_body["authorization_epoch"]),
+    )
+
+
+def _mint_user_key(
+    client: httpx.Client, admin_headers: dict, *, user_id: str, zone_id: str, key: str
+) -> str:
+    response = client.post(
+        "/api/v2/auth/keys",
+        headers=admin_headers,
+        json={
+            "label": key,
+            "subject_type": "user",
+            "subject_id": user_id,
+            "zone_id": zone_id,
+            "is_admin": False,
+        },
+    )
+    assert response.status_code == 201, response.text
+    return response.json()["key"]
 
 
 def test_p1a_session_home_zone_and_record_routing(nexus_server, test_app) -> None:
@@ -129,6 +215,22 @@ def test_p1a_runtime_run_zones_and_cancellation(nexus_server, test_app) -> None:
     other = "p1a-run-other"
     _create_zone(test_app, headers, zone, "p1a-run-z1")
     _create_zone(test_app, headers, other, "p1a-run-z2")
+    home_delegation, home_grant, home_epoch = _create_runtime_delegation(
+        test_app,
+        headers,
+        zone_id=zone,
+        org_id="p1a-run-org",
+        user_id="p1a-run-user",
+        key="p1a-run-home",
+    )
+    other_delegation, _, _ = _create_runtime_delegation(
+        test_app,
+        headers,
+        zone_id=other,
+        org_id="p1a-run-org",
+        user_id="p1a-run-user",
+        key="p1a-run-other",
+    )
     test_app.post(
         "/v2/sessions", headers=headers, json={"session_id": "p1a-sess-2", "home_zone_id": zone}
     )
@@ -136,21 +238,19 @@ def test_p1a_runtime_run_zones_and_cancellation(nexus_server, test_app) -> None:
     # (2) execution zone defaults to home; refs solidified
     started = test_app.post(
         "/v2/runtime/start",
-        headers=headers,
+        headers={**headers, "X-Nexus-Zone-Delegation": home_delegation},
         json={
             "pid": "p1a-pid-1",
             "session_id": "p1a-sess-2",
-            "delegation_ref": "dlg-p1a",
-            "grant_ref": "grant-p1a",
-            "authorization_epoch": 3,
+            "delegation_ref": home_delegation,
         },
     )
     assert started.status_code == 201, started.text
     run = started.json()
     assert run["execution_zone_id"] == zone
-    assert run["delegation_ref"] == "dlg-p1a"
-    assert run["grant_ref"] == "grant-p1a"
-    assert run["authorization_epoch"] == 3
+    assert run["delegation_ref"] == home_delegation
+    assert run["grant_ref"] == home_grant
+    assert run["authorization_epoch"] == home_epoch
 
     fetched = test_app.get("/v2/runtime/runs/p1a-pid-1", headers=headers)
     assert fetched.status_code == 200 and fetched.json()["execution_zone_id"] == zone
@@ -167,7 +267,7 @@ def test_p1a_runtime_run_zones_and_cancellation(nexus_server, test_app) -> None:
     # with the decision recorded, the cross-zone run lands in the other zone
     cross = test_app.post(
         "/v2/runtime/start",
-        headers=headers,
+        headers={**headers, "X-Nexus-Zone-Delegation": other_delegation},
         json={
             "pid": "p1a-pid-2",
             "session_id": "p1a-sess-2",
@@ -179,6 +279,29 @@ def test_p1a_runtime_run_zones_and_cancellation(nexus_server, test_app) -> None:
     assert cross.status_code == 201, cross.text
     assert cross.json()["execution_zone_id"] == other
     assert cross.json()["decision_reason"] == "policy: heavy data locality"
+
+    terminated_cross = test_app.post(
+        "/v2/runtime/runs/p1a-pid-2/cancel", headers=headers, json={"mode": "terminate"}
+    )
+    assert terminated_cross.status_code == 200, terminated_cross.text
+    resumed = test_app.post(
+        "/v2/runtime/resume",
+        headers={**headers, "X-Nexus-Zone-Delegation": other_delegation},
+        json={"pid": "p1a-pid-2-resumed", "session_id": "p1a-sess-2"},
+    )
+    assert resumed.status_code == 201, resumed.text
+    assert resumed.json()["execution_zone_id"] == other
+    drift = test_app.post(
+        "/v2/runtime/resume",
+        headers={**headers, "X-Nexus-Zone-Delegation": home_delegation},
+        json={
+            "pid": "p1a-pid-2-drift",
+            "session_id": "p1a-sess-2",
+            "execution_zone_id": zone,
+        },
+    )
+    assert drift.status_code == 409, drift.text
+    assert drift.json()["detail"]["code"] == "ZONE_IDENTITY_DRIFT"
 
     # (5) revocation_pending blocks new record acquisition
     pending = test_app.post(
@@ -210,6 +333,109 @@ def test_p1a_runtime_run_zones_and_cancellation(nexus_server, test_app) -> None:
     assert resumed_ok.status_code == 201, resumed_ok.text
 
 
+def test_p1a_runtime_delegation_revalidation_and_revoke_isolation(nexus_server, test_app) -> None:
+    admin_headers = {"Authorization": f"Bearer {nexus_server['api_key']}"}
+    zone = "p1a-delegated-zone"
+    org = "p1a-delegated-org"
+    user = "p1a-delegated-user"
+    _create_zone(test_app, admin_headers, zone, "p1a-delegated-create")
+    delegation, grant_id, epoch = _create_runtime_delegation(
+        test_app,
+        admin_headers,
+        zone_id=zone,
+        org_id=org,
+        user_id=user,
+        key="p1a-delegated",
+    )
+    user_key = _mint_user_key(
+        test_app, admin_headers, user_id=user, zone_id=zone, key="p1a-runtime-user"
+    )
+    user_headers = {
+        "Authorization": f"Bearer {user_key}",
+        "X-Nexus-Zone-Delegation": delegation,
+    }
+
+    created = test_app.post(
+        "/v2/sessions",
+        headers=admin_headers,
+        json={"session_id": "p1a-delegated-session", "home_zone_id": zone},
+    )
+    assert created.status_code == 201, created.text
+    no_runtime_delegation = test_app.post(
+        "/v2/runtime/start",
+        headers=admin_headers,
+        json={"pid": "p1a-delegated-none", "session_id": "p1a-delegated-session"},
+    )
+    assert no_runtime_delegation.status_code == 403, no_runtime_delegation.text
+    assert no_runtime_delegation.json()["detail"]["code"] == "GRANT_NOT_ACTIVE"
+
+    spoofed = test_app.post(
+        "/v2/runtime/start",
+        headers={**admin_headers, "X-Nexus-Zone-Delegation": delegation},
+        json={
+            "pid": "p1a-delegated-spoof",
+            "session_id": "p1a-delegated-session",
+            "delegation_ref": delegation,
+            "grant_ref": "attacker-grant",
+            "authorization_epoch": epoch,
+        },
+    )
+    assert spoofed.status_code == 403, spoofed.text
+
+    started = test_app.post(
+        "/v2/runtime/start",
+        headers={**admin_headers, "X-Nexus-Zone-Delegation": delegation},
+        json={
+            "pid": "p1a-delegated-pid",
+            "session_id": "p1a-delegated-session",
+            "delegation_ref": delegation,
+            "grant_ref": grant_id,
+            "authorization_epoch": epoch,
+        },
+    )
+    assert started.status_code == 201, started.text
+    assert started.json()["grant_ref"] == grant_id
+    assert started.json()["authorization_epoch"] == epoch
+
+    no_delegation = test_app.post(
+        "/v2/sessions/p1a-delegated-session/records",
+        headers={"Authorization": f"Bearer {user_key}"},
+        json={"record_kind": "context", "data": '{"authorized":false}'},
+    )
+    assert no_delegation.status_code == 403, no_delegation.text
+    assert no_delegation.json()["detail"]["code"] == "GRANT_NOT_ACTIVE"
+
+    allowed = test_app.post(
+        "/v2/sessions/p1a-delegated-session/records",
+        headers=user_headers,
+        json={"record_kind": "context", "data": '{"authorized":true}'},
+    )
+    assert allowed.status_code == 201, allowed.text
+
+    revoked = test_app.delete(
+        f"/v2/zones/{zone}/grants/{grant_id}",
+        headers={**admin_headers, "Idempotency-Key": "p1a-runtime-revoke"},
+    )
+    assert revoked.status_code == 202, revoked.text
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        state = test_app.get("/v2/runtime/runs/p1a-delegated-pid", headers=admin_headers).json()[
+            "state"
+        ]
+        if state == "revocation_pending":
+            break
+        time.sleep(0.25)
+    assert state == "revocation_pending"
+
+    denied = test_app.post(
+        "/v2/sessions/p1a-delegated-session/records",
+        headers=user_headers,
+        json={"record_kind": "context", "data": '{"authorized":false}'},
+    )
+    assert denied.status_code == 403, denied.text
+    assert denied.json()["detail"]["code"] == "GRANT_REVOKED"
+
+
 def test_p1a_zones_survive_full_restart(tmp_path) -> None:
     """(§11.4 rows 9/10) home/execution zones do not drift across a hard
     restart over the same data dir, and the routing ledger still proves
@@ -221,6 +447,14 @@ def test_p1a_zones_survive_full_restart(tmp_path) -> None:
         with harness.client() as client:
             harness.poke_until_up(client, headers)
             _create_zone(client, headers, "p1a-restart-home", "p1a-restart-z")
+            delegation, _, _ = _create_runtime_delegation(
+                client,
+                headers,
+                zone_id="p1a-restart-home",
+                org_id="p1a-restart-org",
+                user_id="p1a-restart-user",
+                key="p1a-restart",
+            )
             created = client.post(
                 "/v2/sessions",
                 headers=headers,
@@ -229,8 +463,12 @@ def test_p1a_zones_survive_full_restart(tmp_path) -> None:
             assert created.status_code == 201, created.text
             run = client.post(
                 "/v2/runtime/start",
-                headers=headers,
-                json={"pid": "p1a-restart-pid", "session_id": "p1a-restart-sess"},
+                headers={**headers, "X-Nexus-Zone-Delegation": delegation},
+                json={
+                    "pid": "p1a-restart-pid",
+                    "session_id": "p1a-restart-sess",
+                    "delegation_ref": delegation,
+                },
             )
             assert run.status_code == 201, run.text
             rec = client.post(

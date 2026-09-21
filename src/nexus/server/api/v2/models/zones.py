@@ -136,6 +136,9 @@ class DelegationView(BaseModel):
     user_id: str
     org_id: str
     zone_id: str
+    grant_id: str
+    grant_revision: str
+    authorization_epoch: int
     audience: str
     expires_at: str
     status: str

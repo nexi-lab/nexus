@@ -13,7 +13,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from nexus.contracts.zone_v1 import _projection_validator
-from nexus.storage.models import Base, ZoneGrantModel, ZoneModel
+from nexus.storage.models import Base, ZoneModel
 from nexus.storage.zone_migration import MOSS_SIDE_INVENTORY_CLASSES, zone_inventory
 
 
@@ -57,8 +57,18 @@ def test_inventory_classifies_all_nine_buckets_and_touches_nothing(session) -> N
         session,
         runtime_zone_ids=runtime_ids,
         api_key_zone_attributions={
-            ("key-unknown", consistent): {"subject": True, "issuer": False, "permissions": True, "source": True},
-            ("key-known", consistent): {"subject": True, "issuer": True, "permissions": True, "source": True},
+            ("key-unknown", consistent): {
+                "subject": True,
+                "issuer": False,
+                "permissions": True,
+                "source": True,
+            },
+            ("key-known", consistent): {
+                "subject": True,
+                "issuer": True,
+                "permissions": True,
+                "source": True,
+            },
         },
         zone_id_validator=_validator,
     )
@@ -67,7 +77,10 @@ def test_inventory_classifies_all_nine_buckets_and_touches_nothing(session) -> N
     assert report.items["zone_sql_only"] == (sql_only,)
     assert report.items["zone_runtime_only"] == ("inv-runtime-only",)
     assert report.items["zone_terminated_sql_live_runtime"] == (terminated_live,)
-    assert report.items["zone_illegal_historical_id"] == (illegal,) or report.items["zone_illegal_historical_id"] == ()
+    assert (
+        report.items["zone_illegal_historical_id"] == (illegal,)
+        or report.items["zone_illegal_historical_id"] == ()
+    )
     # The illegal id was never inserted above (it fails the model layer), so
     # the bucket is exercised via direct classification in the second test.
     assert report.items["api_key_zone_unattributable"] == ("key-unknown",)

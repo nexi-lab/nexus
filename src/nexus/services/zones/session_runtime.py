@@ -377,18 +377,17 @@ class SessionRuntimeService:
                     )
                 execution_zone = execution_zone_hint
                 reason = decision_reason
-            if execution_zone != home_zone:
-                zone_row = session.get(ZoneModel, execution_zone)
-                if zone_row is None or (zone_row.canonical_status or "unknown") != "active":
-                    raise SessionRuntimeError(
-                        "ZONE_NOT_ACTIVE", f"execution zone {execution_zone} is not active", 409
-                    )
-                if zone_active_check is not None and not zone_active_check(execution_zone):
-                    raise SessionRuntimeError(
-                        "RESOURCE_RELATION_DENIED",
-                        f"policy denies executing in {execution_zone}",
-                        403,
-                    )
+            zone_row = session.get(ZoneModel, execution_zone)
+            if zone_row is None or (zone_row.canonical_status or "unknown") != "active":
+                raise SessionRuntimeError(
+                    "ZONE_NOT_ACTIVE", f"execution zone {execution_zone} is not active", 409
+                )
+            if zone_active_check is not None and not zone_active_check(execution_zone):
+                raise SessionRuntimeError(
+                    "RESOURCE_RELATION_DENIED",
+                    f"policy denies executing in {execution_zone}",
+                    403,
+                )
             run = SessionRuntimeRunModel(
                 pid=pid,
                 session_id=session_id,
@@ -418,11 +417,79 @@ class SessionRuntimeService:
                 raise SessionRuntimeError("RUN_ALREADY_EXISTS", str(exc.orig), 409) from exc
             return self._run_view(run)
 
-    def resume_run(self, *, pid: str) -> RunView:
-        """Resume creates a NEW pid under the same session (ADR-001 §4.2);
-        the existing run must be terminal. Kept here for API completeness —
-        the router maps resume onto start_run with a fresh pid."""
-        return self.get_run(pid)
+    def resume_run(
+        self,
+        *,
+        pid: str,
+        session_id: str,
+        execution_zone_hint: str | None = None,
+        delegation_ref: str | None = None,
+        grant_ref: str | None = None,
+        authorization_epoch: int | None = None,
+        zone_active_check: Any = None,
+    ) -> RunView:
+        """Create a new PID without allowing execution-zone drift.
+
+        Resume inherits the most recent run's execution zone.  A caller may
+        repeat that zone as a consistency hint, but may not silently move the
+        resumed runtime to another zone.
+        """
+        with self._session_factory() as session:
+            previous = (
+                session.execute(
+                    select(SessionRuntimeRunModel)
+                    .where(SessionRuntimeRunModel.session_id == session_id)
+                    .order_by(SessionRuntimeRunModel.started_at.desc())
+                )
+                .scalars()
+                .first()
+            )
+            if previous is None:
+                raise SessionRuntimeError(
+                    "RUN_NOT_FOUND", f"session {session_id} has no run to resume", 404
+                )
+            inherited_zone = previous.execution_zone_id
+            if execution_zone_hint is not None and execution_zone_hint != inherited_zone:
+                raise SessionRuntimeError(
+                    "ZONE_IDENTITY_DRIFT",
+                    "resume may not change the previous execution zone",
+                    409,
+                )
+            session_record = session.get(SessionModel, session_id)
+            assert session_record is not None
+            cross_zone = inherited_zone != session_record.home_zone_id
+            decision_reason = previous.decision_reason if cross_zone else None
+            policy_version = previous.policy_version if cross_zone else None
+
+        return self.start_run(
+            pid=pid,
+            session_id=session_id,
+            execution_zone_hint=inherited_zone,
+            delegation_ref=delegation_ref,
+            grant_ref=grant_ref,
+            authorization_epoch=authorization_epoch,
+            decision_reason=decision_reason,
+            policy_version=policy_version,
+            zone_active_check=zone_active_check,
+        )
+
+    def resume_zone_of(self, session_id: str) -> str:
+        """Return the immutable execution zone a new resume PID must inherit."""
+        with self._session_factory() as session:
+            previous = (
+                session.execute(
+                    select(SessionRuntimeRunModel)
+                    .where(SessionRuntimeRunModel.session_id == session_id)
+                    .order_by(SessionRuntimeRunModel.started_at.desc())
+                )
+                .scalars()
+                .first()
+            )
+            if previous is None:
+                raise SessionRuntimeError(
+                    "RUN_NOT_FOUND", f"session {session_id} has no run to resume", 404
+                )
+            return str(previous.execution_zone_id)
 
     def get_run(self, pid: str) -> RunView:
         with self._session_factory() as session:
@@ -461,6 +528,101 @@ class SessionRuntimeService:
                 stmt = stmt.where(SessionRuntimeRunModel.grant_ref == grant_ref)
             runs = session.execute(stmt).scalars().all()
             return [self._run_view(r) for r in runs]
+
+    def park_runs_for_revocation(
+        self, *, zone_id: str, grant_ref: str, authorization_epoch: int
+    ) -> int:
+        """Fail closed after a grant/epoch change.
+
+        Every pre-existing run in the zone carries the previous epoch.  Runs
+        directly tied to the revoked grant, carrying a stale epoch, or missing
+        dependency references are parked until a fresh delegation creates a
+        new runtime generation.
+        """
+        active_states = ("registered", "warming_up", "ready", "busy", "awaiting_input")
+        parked = 0
+        with self._session_factory() as session, session.begin():
+            runs = (
+                session.execute(
+                    select(SessionRuntimeRunModel).where(
+                        SessionRuntimeRunModel.execution_zone_id == zone_id,
+                        SessionRuntimeRunModel.state.in_(active_states),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for run in runs:
+                if (
+                    run.grant_ref == grant_ref
+                    or run.authorization_epoch is None
+                    or run.authorization_epoch < authorization_epoch
+                ):
+                    run.state = "revocation_pending"
+                    parked += 1
+        return parked
+
+    def park_session_runs(self, *, session_id: str) -> int:
+        """Park active runs after an access-time delegation failure."""
+        active_states = ("registered", "warming_up", "ready", "busy", "awaiting_input")
+        parked = 0
+        with self._session_factory() as session, session.begin():
+            runs = (
+                session.execute(
+                    select(SessionRuntimeRunModel).where(
+                        SessionRuntimeRunModel.session_id == session_id,
+                        SessionRuntimeRunModel.state.in_(active_states),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for run in runs:
+                run.state = "revocation_pending"
+                parked += 1
+        return parked
+
+    def revalidate_runtime_dependencies(self, validator: Any) -> int:
+        """Park active runtimes whose delegation/grant/epoch is no longer current."""
+        active_states = ("registered", "warming_up", "ready", "busy", "awaiting_input")
+        with self._session_factory() as session:
+            snapshots = [
+                (
+                    run.pid,
+                    run.delegation_ref,
+                    run.execution_zone_id,
+                    run.grant_ref,
+                    run.authorization_epoch,
+                )
+                for run in (
+                    session.execute(
+                        select(SessionRuntimeRunModel).where(
+                            SessionRuntimeRunModel.state.in_(active_states)
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+            ]
+
+        invalid = [
+            pid
+            for pid, delegation_ref, zone_id, grant_ref, epoch in snapshots
+            if not delegation_ref
+            or grant_ref is None
+            or epoch is None
+            or not validator(delegation_ref, zone_id, grant_ref, int(epoch))
+        ]
+        if not invalid:
+            return 0
+        with self._session_factory() as session, session.begin():
+            parked = 0
+            for pid in invalid:
+                run = session.get(SessionRuntimeRunModel, pid)
+                if run is not None and run.state in active_states:
+                    run.state = "revocation_pending"
+                    parked += 1
+            return parked
 
     @staticmethod
     def _run_view(run: SessionRuntimeRunModel) -> RunView:

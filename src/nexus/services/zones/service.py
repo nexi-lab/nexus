@@ -794,6 +794,7 @@ class ZoneApplicationService:
                         "grant_id": grant_id,
                         "zone_id": zone_id,
                         "authorization_revision": authorization_revision,
+                        "authorization_epoch": epoch_row.epoch,
                     },
                 )
             )

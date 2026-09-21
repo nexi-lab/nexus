@@ -421,10 +421,14 @@ def build_v2_registry(
 
     # ---- Zone v1 product surface (SW-20260915-002) ----
     try:
+        from nexus.server.api.v2.routers.sessions import router as sessions_router
         from nexus.server.api.v2.routers.zone_grants import router as zone_grants_router
         from nexus.server.api.v2.routers.zone_runtime import router as zone_runtime_router
         from nexus.server.api.v2.routers.zones import router as zones_router
 
+        registry.add(
+            RouterEntry(router=sessions_router, name="sessions_runtime_v2", endpoint_count=8)
+        )
         registry.add(RouterEntry(router=zones_router, name="zones_v2", endpoint_count=7))
         registry.add(
             RouterEntry(router=zone_grants_router, name="zone_grants_v2", endpoint_count=8)

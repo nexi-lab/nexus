@@ -68,7 +68,12 @@ class ServerHarness:
                 return hit
         repo_root = Path(__file__).resolve().parents[3]
         for profile in ("debug", "release"):
-            candidate = repo_root / "target" / profile / ("nexusd-cluster.exe" if os.name == "nt" else "nexusd-cluster")
+            candidate = (
+                repo_root
+                / "target"
+                / profile
+                / ("nexusd-cluster.exe" if os.name == "nt" else "nexusd-cluster")
+            )
             if candidate.is_file():
                 return str(candidate)
         raise AssertionError("kernel binary not found")
@@ -82,7 +87,18 @@ class ServerHarness:
             "NEXUS_DATA_DIR": str(self.metastore),
         }
         minted = subprocess.run(
-            [self._kernel_binary(), "auth", "mint", "--subject-type", "user", "--subject-id", "fault-admin", "--admin", "--name", "fault"],
+            [
+                self._kernel_binary(),
+                "auth",
+                "mint",
+                "--subject-type",
+                "user",
+                "--subject-id",
+                "fault-admin",
+                "--admin",
+                "--name",
+                "fault",
+            ],
             env=env,
             capture_output=True,
             text=True,
@@ -121,10 +137,14 @@ class ServerHarness:
                 sys.executable,
                 "-c",
                 "from nexus.daemon.main import main; import sys; main(sys.argv[1:])",
-                "--host", "127.0.0.1",
-                "--port", str(port),
-                "--data-dir", str(self.data_dir),
-                "--profile", "full",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(port),
+                "--data-dir",
+                str(self.data_dir),
+                "--profile",
+                "full",
             ],
             env=self._env(),
             stdout=subprocess.PIPE,
@@ -148,7 +168,9 @@ class ServerHarness:
 
     def kill(self) -> None:
         if self.proc and self.proc.poll() is None:
-            subprocess.run(["taskkill", "/PID", str(self.proc.pid), "/T", "/F"], capture_output=True)
+            subprocess.run(
+                ["taskkill", "/PID", str(self.proc.pid), "/T", "/F"], capture_output=True
+            )
             self.proc.wait(timeout=30)
 
     def client(self) -> httpx.Client:
@@ -164,7 +186,9 @@ class ServerHarness:
                 time.sleep(1)
 
 
-def _wait_operation(client: httpx.Client, op_id: str, headers: dict, timeout_s: float = 90.0) -> dict:
+def _wait_operation(
+    client: httpx.Client, op_id: str, headers: dict, timeout_s: float = 90.0
+) -> dict:
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         r = client.get(f"/v2/zone-operations/{op_id}", headers=headers)
@@ -178,7 +202,7 @@ def _wait_operation(client: httpx.Client, op_id: str, headers: dict, timeout_s: 
 
 def test_fault_classes_1_2_3_create_crashed_mid_flight_recovers_exactly_once(tmp_path) -> None:
     harness = ServerHarness(tmp_path / "f123")
-    port = harness.start()
+    harness.start()
     headers = {"Authorization": f"Bearer {harness.api_key}"}
     try:
         with harness.client() as client:
@@ -197,8 +221,7 @@ def test_fault_classes_1_2_3_create_crashed_mid_flight_recovers_exactly_once(tmp
         # share this window; recovery must be truthful and exactly-once.
         harness.kill()
 
-        port2 = harness.start()
-        assert port2 != port or True  # a fresh ephemeral port is typical, not required
+        harness.start()
         with harness.client() as client:
             harness.poke_until_up(client, headers)
             op = _wait_operation(client, op_id, headers)
@@ -254,12 +277,24 @@ def test_fault_classes_6_7_revoke_killed_before_broadcast_stays_fail_closed(tmp_
             svc = client.post(
                 "/api/v2/auth/keys",
                 headers=headers,
-                json={"label": "f67-svc", "subject_type": "service", "subject_id": "moss-e2e", "zone_id": "root", "is_admin": True},
+                json={
+                    "label": "f67-svc",
+                    "subject_type": "service",
+                    "subject_id": "moss-e2e",
+                    "zone_id": "root",
+                    "is_admin": True,
+                },
             ).json()["key"]
             user_key = client.post(
                 "/api/v2/auth/keys",
                 headers=headers,
-                json={"label": "f67-user", "subject_type": "user", "subject_id": "f67-user", "zone_id": zone, "is_admin": False},
+                json={
+                    "label": "f67-user",
+                    "subject_type": "user",
+                    "subject_id": "f67-user",
+                    "zone_id": zone,
+                    "is_admin": False,
+                },
             ).json()["key"]
             delegation = client.post(
                 "/v2/auth/zone-delegations",
@@ -275,7 +310,9 @@ def test_fault_classes_6_7_revoke_killed_before_broadcast_stays_fail_closed(tmp_
             ).json()["delegation_id"]
 
             grants = client.get(f"/v2/zones/{zone}/grants", headers=headers).json()["grants"]
-            grant_id = next(g["grant_id"] for g in grants if g["grantee"]["subject_id"] == "f67-org")
+            grant_id = next(
+                g["grant_id"] for g in grants if g["grantee"]["subject_id"] == "f67-org"
+            )
 
         # Kill immediately after the revoke request is accepted — the durable
         # facts (revoked + epoch + invalidation outbox) may be committed while
@@ -294,9 +331,14 @@ def test_fault_classes_6_7_revoke_killed_before_broadcast_stays_fail_closed(tmp_
             _wait_operation(client, revoked.json()["operation_id"], headers)
             denied = client.get(
                 f"/v2/zones/{zone}",
-                headers={"Authorization": f"Bearer {user_key}", "X-Nexus-Zone-Delegation": delegation},
+                headers={
+                    "Authorization": f"Bearer {user_key}",
+                    "X-Nexus-Zone-Delegation": delegation,
+                },
             )
-            assert denied.status_code == 403, f"old delegation must stay denied after crash: {denied.status_code}"
+            assert denied.status_code == 403, (
+                f"old delegation must stay denied after crash: {denied.status_code}"
+            )
             # And nothing new can be minted from the revoked grant.
             refused = client.post(
                 "/v2/auth/zone-delegations",
@@ -325,7 +367,12 @@ def test_fault_class_12_contract_mismatch_rejected(nexus_server, test_app) -> No
     mismatch = test_app.post(
         "/v2/zones",
         headers={**headers, "Idempotency-Key": "f12-major"},
-        json={"api_version": "auth.sudo.dev/v999", "kind": "ZoneCreateRequest", "zone_id": "f12-zone", "display_name": "x"},
+        json={
+            "api_version": "auth.sudo.dev/v999",
+            "kind": "ZoneCreateRequest",
+            "zone_id": "f12-zone",
+            "display_name": "x",
+        },
     )
     assert mismatch.status_code == 202, mismatch.text
     body = mismatch.json()

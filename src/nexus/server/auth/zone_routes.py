@@ -355,6 +355,7 @@ def _get_session_factory(request: Request) -> Any:
 @router.get("", response_model=ZoneListResponse)
 async def list_zones(
     request: Request,
+    response: Response,
     auth_result: dict[str, Any] = Depends(require_auth),
     limit: int = 100,
     offset: int = 0,
@@ -375,6 +376,8 @@ async def list_zones(
     Raises:
         401: Not authenticated
     """
+    # §6.8: every legacy-route response carries deprecation markers.
+    _deprecation_headers(response)
     is_admin = auth_result.get("is_admin", False)
 
     _zone_service(request)

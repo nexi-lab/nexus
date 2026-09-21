@@ -35,12 +35,13 @@ import time
 from pathlib import Path
 
 import httpx
-import pytest
 
 _SRC = Path(__file__).resolve().parents[2].parents[1] / "src"
 
 
-def _wait_operation(client: httpx.Client, op_id: str, headers: dict, timeout_s: float = 60.0) -> dict:
+def _wait_operation(
+    client: httpx.Client, op_id: str, headers: dict, timeout_s: float = 60.0
+) -> dict:
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         r = client.get(f"/v2/zone-operations/{op_id}", headers=headers)
@@ -64,7 +65,9 @@ def _create_zone(client: httpx.Client, headers: dict, zone_id: str, key: str) ->
     return op
 
 
-def _create_grant(client: httpx.Client, headers: dict, zone_id: str, org: str, key: str, source_id: str) -> str:
+def _create_grant(
+    client: httpx.Client, headers: dict, zone_id: str, org: str, key: str, source_id: str
+) -> str:
     """Issue an organization grant; returns the grant_id once active.
 
     The grant is looked up by ``source.source_id`` so that two overlapping
@@ -88,11 +91,15 @@ def _create_grant(client: httpx.Client, headers: dict, zone_id: str, org: str, k
     return next(
         g["grant_id"]
         for g in grants
-        if g["grantee"]["subject_id"] == org and g["status"] == "active" and g["source"]["source_id"] == source_id
+        if g["grantee"]["subject_id"] == org
+        and g["status"] == "active"
+        and g["source"]["source_id"] == source_id
     )
 
 
-def _issue_delegation(client: httpx.Client, headers: dict, user: str, org: str, zone: str, key: str) -> str:
+def _issue_delegation(
+    client: httpx.Client, headers: dict, user: str, org: str, zone: str, key: str
+) -> str:
     r = client.post(
         "/v2/auth/zone-delegations",
         headers={**headers, "Idempotency-Key": key},
@@ -113,7 +120,13 @@ def _mint_user_key(client: httpx.Client, headers: dict, user: str, zone: str) ->
     r = client.post(
         "/api/v2/auth/keys",
         headers=headers,
-        json={"label": user, "subject_type": "user", "subject_id": user, "zone_id": zone, "is_admin": False},
+        json={
+            "label": user,
+            "subject_type": "user",
+            "subject_id": user,
+            "zone_id": zone,
+            "is_admin": False,
+        },
     )
     assert r.status_code == 201, r.text
     return r.json()["key"]
@@ -129,7 +142,9 @@ def _access(client: httpx.Client, zone: str, user_key: str, delegation_id: str) 
 def test_p0_scenario_2_create_zone_and_org_grant(nexus_server, test_app) -> None:
     headers = {"Authorization": f"Bearer {nexus_server['api_key']}"}
     _create_zone(test_app, headers, "p0m-s2-zone", "p0m-s2-create")
-    grant_id = _create_grant(test_app, headers, "p0m-s2-zone", "p0m-org-a", "p0m-s2-grant", "p0m-s2-src")
+    grant_id = _create_grant(
+        test_app, headers, "p0m-s2-zone", "p0m-org-a", "p0m-s2-grant", "p0m-s2-src"
+    )
     assert grant_id
 
 
@@ -144,14 +159,24 @@ def test_p0_scenario_6_same_zone_granted_to_second_org(nexus_server, test_app) -
     svc = test_app.post(
         "/api/v2/auth/keys",
         headers=headers,
-        json={"label": "p0m-svc", "subject_type": "service", "subject_id": "moss-e2e", "zone_id": "root", "is_admin": True},
+        json={
+            "label": "p0m-svc",
+            "subject_type": "service",
+            "subject_id": "moss-e2e",
+            "zone_id": "root",
+            "is_admin": True,
+        },
     ).json()["key"]
     svc_headers = {"Authorization": f"Bearer {svc}"}
 
     key_a = _mint_user_key(test_app, headers, "p0m-s6-user-a", zone)
     key_b = _mint_user_key(test_app, headers, "p0m-s6-user-b", zone)
-    del_a = _issue_delegation(test_app, svc_headers, "p0m-s6-user-a", "p0m-org-a", zone, "p0m-s6-d1")
-    del_b = _issue_delegation(test_app, svc_headers, "p0m-s6-user-b", "p0m-org-b", zone, "p0m-s6-d2")
+    del_a = _issue_delegation(
+        test_app, svc_headers, "p0m-s6-user-a", "p0m-org-a", zone, "p0m-s6-d1"
+    )
+    del_b = _issue_delegation(
+        test_app, svc_headers, "p0m-s6-user-b", "p0m-org-b", zone, "p0m-s6-d2"
+    )
     assert _access(test_app, zone, key_a, del_a) == 200
     assert _access(test_app, zone, key_b, del_b) == 200
 
@@ -165,11 +190,19 @@ def test_p0_scenario_7_either_side_missing_denies(nexus_server, test_app) -> Non
     svc = test_app.post(
         "/api/v2/auth/keys",
         headers=headers,
-        json={"label": "p0m-svc", "subject_type": "service", "subject_id": "moss-e2e", "zone_id": "root", "is_admin": True},
+        json={
+            "label": "p0m-svc",
+            "subject_type": "service",
+            "subject_id": "moss-e2e",
+            "zone_id": "root",
+            "is_admin": True,
+        },
     ).json()["key"]
     svc_headers = {"Authorization": f"Bearer {svc}"}
     user_key = _mint_user_key(test_app, headers, "p0m-s7-user", zone)
-    delegation = _issue_delegation(test_app, svc_headers, "p0m-s7-user", "p0m-org-a", zone, "p0m-s7-d1")
+    delegation = _issue_delegation(
+        test_app, svc_headers, "p0m-s7-user", "p0m-org-a", zone, "p0m-s7-d1"
+    )
     assert _access(test_app, zone, user_key, delegation) == 200
 
     # (a) grant active, ReBAC relation removed → deny. The projection writes
@@ -200,7 +233,8 @@ def test_p0_scenario_7_either_side_missing_denies(nexus_server, test_app) -> Non
     grants = test_app.get(f"/v2/zones/{zone}/grants", headers=headers).json()["grants"]
     grant_id = next(g["grant_id"] for g in grants if g["grantee"]["subject_id"] == "p0m-org-a")
     rev = test_app.delete(
-        f"/v2/zones/{zone}/grants/{grant_id}", headers={**headers, "Idempotency-Key": "p0m-s7-revoke"}
+        f"/v2/zones/{zone}/grants/{grant_id}",
+        headers={**headers, "Idempotency-Key": "p0m-s7-revoke"},
     )
     assert rev.status_code == 202, rev.text
     op = _wait_operation(test_app, rev.headers["Location"].split("/")[-1], headers)
@@ -209,7 +243,9 @@ def test_p0_scenario_7_either_side_missing_denies(nexus_server, test_app) -> Non
     assert _access(test_app, zone, user_key, delegation) == 403
 
 
-def test_p0_scenario_10_overlapping_grants_and_independent_relations(nexus_server, test_app) -> None:
+def test_p0_scenario_10_overlapping_grants_and_independent_relations(
+    nexus_server, test_app
+) -> None:
     headers = {"Authorization": f"Bearer {nexus_server['api_key']}"}
     zone = "p0m-s10-zone"
     _create_zone(test_app, headers, zone, "p0m-s10-create")
@@ -219,16 +255,29 @@ def test_p0_scenario_10_overlapping_grants_and_independent_relations(nexus_serve
     svc = test_app.post(
         "/api/v2/auth/keys",
         headers=headers,
-        json={"label": "p0m-svc", "subject_type": "service", "subject_id": "moss-e2e", "zone_id": "root", "is_admin": True},
+        json={
+            "label": "p0m-svc",
+            "subject_type": "service",
+            "subject_id": "moss-e2e",
+            "zone_id": "root",
+            "is_admin": True,
+        },
     ).json()["key"]
     user_key = _mint_user_key(test_app, headers, "p0m-s10-user", zone)
     delegation = _issue_delegation(
-        test_app, {"Authorization": f"Bearer {svc}"}, "p0m-s10-user", "p0m-org-a", zone, "p0m-s10-d1"
+        test_app,
+        {"Authorization": f"Bearer {svc}"},
+        "p0m-s10-user",
+        "p0m-org-a",
+        zone,
+        "p0m-s10-d1",
     )
     assert _access(test_app, zone, user_key, delegation) == 200
 
     # Revoke ONE of the two grants deriving the shared relation.
-    rev = test_app.delete(f"/v2/zones/{zone}/grants/{g1}", headers={**headers, "Idempotency-Key": "p0m-s10-r1"})
+    rev = test_app.delete(
+        f"/v2/zones/{zone}/grants/{g1}", headers={**headers, "Idempotency-Key": "p0m-s10-r1"}
+    )
     assert rev.status_code == 202, rev.text
     _wait_operation(test_app, rev.headers["Location"].split("/")[-1], headers)
 
@@ -240,13 +289,20 @@ def test_p0_scenario_10_overlapping_grants_and_independent_relations(nexus_serve
     # NOT removed (reference-counted provenance). A freshly issued delegation
     # under the new epoch proves the overlapping grant still authorizes.
     delegation2 = _issue_delegation(
-        test_app, {"Authorization": f"Bearer {svc}"}, "p0m-s10-user", "p0m-org-a", zone, "p0m-s10-d2"
+        test_app,
+        {"Authorization": f"Bearer {svc}"},
+        "p0m-s10-user",
+        "p0m-org-a",
+        zone,
+        "p0m-s10-d2",
     )
     assert _access(test_app, zone, user_key, delegation2) == 200
 
     # Revoking the second (last) grant now denies for good — no accidental
     # shared-tuple survival after both sources are gone.
-    rev2 = test_app.delete(f"/v2/zones/{zone}/grants/{g2}", headers={**headers, "Idempotency-Key": "p0m-s10-r2"})
+    rev2 = test_app.delete(
+        f"/v2/zones/{zone}/grants/{g2}", headers={**headers, "Idempotency-Key": "p0m-s10-r2"}
+    )
     assert rev2.status_code == 202, rev2.text
     _wait_operation(test_app, rev2.headers["Location"].split("/")[-1], headers)
     assert _access(test_app, zone, user_key, delegation2) == 403
@@ -275,7 +331,9 @@ def test_p0_scenario_13_suspend_blocks_new_grants_resume_restores(nexus_server, 
 
     # suspend executes inline (202 with a settled operation body — no
     # Location round-trip in this deployment mode).
-    suspended = test_app.post(f"/v2/zones/{zone}:suspend", headers={**headers, "Idempotency-Key": "p0m-s13-sus"})
+    suspended = test_app.post(
+        f"/v2/zones/{zone}:suspend", headers={**headers, "Idempotency-Key": "p0m-s13-sus"}
+    )
     assert suspended.status_code == 202, suspended.text
     assert suspended.json()["state"] == "succeeded", suspended.text
 
@@ -293,13 +351,17 @@ def test_p0_scenario_13_suspend_blocks_new_grants_resume_restores(nexus_server, 
     assert blocked.status_code in (403, 409, 422, 503), blocked.text
     assert blocked.status_code != 202, "new grant must not be accepted while the zone is suspended"
 
-    resumed = test_app.post(f"/v2/zones/{zone}:resume", headers={**headers, "Idempotency-Key": "p0m-s13-res"})
+    resumed = test_app.post(
+        f"/v2/zones/{zone}:resume", headers={**headers, "Idempotency-Key": "p0m-s13-res"}
+    )
     assert resumed.status_code == 202, resumed.text
     assert resumed.json()["state"] == "succeeded", resumed.text
     _create_grant(test_app, headers, zone, "p0m-org-a", "p0m-s13-g", "p0m-s13-s")
 
 
-def test_p0_scenario_14_transfer_validates_both_sides_and_fails_closed(nexus_server, test_app) -> None:
+def test_p0_scenario_14_transfer_validates_both_sides_and_fails_closed(
+    nexus_server, test_app
+) -> None:
     headers = {"Authorization": f"Bearer {nexus_server['api_key']}"}
     src_zone = "p0m-s14-src"
     dst_zone = "p0m-s14-dst"
@@ -307,8 +369,18 @@ def test_p0_scenario_14_transfer_validates_both_sides_and_fails_closed(nexus_ser
     _create_zone(test_app, headers, dst_zone, "p0m-s14-c2")
 
     transfer_body = {
-        "source": {"api_version": "common.sudo.dev/v1", "kind": "ResourceRef", "zone_id": src_zone, "path": "/a.txt"},
-        "target": {"api_version": "common.sudo.dev/v1", "kind": "ResourceRef", "zone_id": dst_zone, "path": "/b.txt"},
+        "source": {
+            "api_version": "common.sudo.dev/v1",
+            "kind": "ResourceRef",
+            "zone_id": src_zone,
+            "path": "/a.txt",
+        },
+        "target": {
+            "api_version": "common.sudo.dev/v1",
+            "kind": "ResourceRef",
+            "zone_id": dst_zone,
+            "path": "/b.txt",
+        },
     }
 
     # Capability checks must run per-side for non-admin principals (admin keys
@@ -316,7 +388,13 @@ def test_p0_scenario_14_transfer_validates_both_sides_and_fails_closed(nexus_ser
     svc = test_app.post(
         "/api/v2/auth/keys",
         headers=headers,
-        json={"label": "p0m-svc", "subject_type": "service", "subject_id": "moss-e2e", "zone_id": "root", "is_admin": True},
+        json={
+            "label": "p0m-svc",
+            "subject_type": "service",
+            "subject_id": "moss-e2e",
+            "zone_id": "root",
+            "is_admin": True,
+        },
     ).json()["key"]
     user_key = _mint_user_key(test_app, headers, "p0m-s14-user", src_zone)
 
@@ -331,7 +409,12 @@ def test_p0_scenario_14_transfer_validates_both_sides_and_fails_closed(nexus_ser
     # (2) source read granted, target write not → still denied.
     _create_grant(test_app, headers, src_zone, "p0m-org-a", "p0m-s14-g1", "p0m-s14-s1")
     delegation = _issue_delegation(
-        test_app, {"Authorization": f"Bearer {svc}"}, "p0m-s14-user", "p0m-org-a", src_zone, "p0m-s14-d1"
+        test_app,
+        {"Authorization": f"Bearer {svc}"},
+        "p0m-s14-user",
+        "p0m-org-a",
+        src_zone,
+        "p0m-s14-d1",
     )
     half = test_app.post(
         "/v2/zone-transfers",
@@ -363,7 +446,8 @@ def test_p0_scenarios_15_16_deprovision_blocker_and_tombstone(nexus_server, test
 
     # 15: an active grant blocks deprovision.
     blocked = test_app.delete(
-        f"/v2/zones/{zone}", headers={**headers, "Idempotency-Key": "p0m-s15-del", "X-Nexus-Confirm-Zone": zone}
+        f"/v2/zones/{zone}",
+        headers={**headers, "Idempotency-Key": "p0m-s15-del", "X-Nexus-Confirm-Zone": zone},
     )
     assert blocked.status_code in (202, 409), blocked.text
     if blocked.status_code == 202:
@@ -371,7 +455,9 @@ def test_p0_scenarios_15_16_deprovision_blocker_and_tombstone(nexus_server, test
         assert op["state"] == "failed", f"deprovision must not succeed with an active grant: {op}"
         assert op.get("error", {}).get("code") in ("ZONE_DELETE_BLOCKED", "ZONE_IN_USE"), op
     else:
-        assert blocked.json()["detail"]["code"] in ("ZONE_DELETE_BLOCKED", "ZONE_IN_USE"), blocked.text
+        assert blocked.json()["detail"]["code"] in ("ZONE_DELETE_BLOCKED", "ZONE_IN_USE"), (
+            blocked.text
+        )
 
     # Clear the blocker, then deprovision to completion.
     grants = test_app.get(f"/v2/zones/{zone}/grants", headers=headers).json()["grants"]
@@ -379,16 +465,20 @@ def test_p0_scenarios_15_16_deprovision_blocker_and_tombstone(nexus_server, test
         if g["status"] != "active":
             continue
         rev = test_app.delete(
-            f"/v2/zones/{zone}/grants/{g['grant_id']}", headers={**headers, "Idempotency-Key": f"p0m-s15-r-{g['grant_id']}"}
+            f"/v2/zones/{zone}/grants/{g['grant_id']}",
+            headers={**headers, "Idempotency-Key": f"p0m-s15-r-{g['grant_id']}"},
         )
         assert rev.status_code == 202, rev.text
         _wait_operation(test_app, rev.headers["Location"].split("/")[-1], headers)
 
     deleted = test_app.delete(
-        f"/v2/zones/{zone}", headers={**headers, "Idempotency-Key": "p0m-s15-del2", "X-Nexus-Confirm-Zone": zone}
+        f"/v2/zones/{zone}",
+        headers={**headers, "Idempotency-Key": "p0m-s15-del2", "X-Nexus-Confirm-Zone": zone},
     )
     assert deleted.status_code == 202, deleted.text
-    op = _wait_operation(test_app, deleted.headers["Location"].split("/")[-1], headers, timeout_s=120.0)
+    op = _wait_operation(
+        test_app, deleted.headers["Location"].split("/")[-1], headers, timeout_s=120.0
+    )
     assert op["state"] == "succeeded", op
 
     # 16: the tombstone stays queryable.
@@ -432,7 +522,12 @@ def test_p0_scenario_17_state_survives_full_restart(tmp_path) -> None:
                 return hit
         repo_root = Path(__file__).resolve().parents[3]
         for profile in ("debug", "release"):
-            candidate = repo_root / "target" / profile / ("nexusd-cluster.exe" if os.name == "nt" else "nexusd-cluster")
+            candidate = (
+                repo_root
+                / "target"
+                / profile
+                / ("nexusd-cluster.exe" if os.name == "nt" else "nexusd-cluster")
+            )
             if candidate.is_file():
                 return str(candidate)
         raise AssertionError("kernel binary not found")
@@ -444,7 +539,18 @@ def test_p0_scenario_17_state_survives_full_restart(tmp_path) -> None:
         "NEXUS_DATA_DIR": str(metastore),
     }
     minted = subprocess.run(
-        [_kernel_binary(), "auth", "mint", "--subject-type", "user", "--subject-id", "e2e-admin", "--admin", "--name", "s17"],
+        [
+            _kernel_binary(),
+            "auth",
+            "mint",
+            "--subject-type",
+            "user",
+            "--subject-id",
+            "e2e-admin",
+            "--admin",
+            "--name",
+            "s17",
+        ],
         env={**os.environ, **mint_env},
         capture_output=True,
         text=True,
@@ -478,10 +584,14 @@ def test_p0_scenario_17_state_survives_full_restart(tmp_path) -> None:
                 sys.executable,
                 "-c",
                 "from nexus.daemon.main import main; import sys; main(sys.argv[1:])",
-                "--host", "127.0.0.1",
-                "--port", str(port),
-                "--data-dir", str(data_dir),
-                "--profile", "full",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(port),
+                "--data-dir",
+                str(data_dir),
+                "--profile",
+                "full",
             ],
             env=env,
             stdout=subprocess.PIPE,
@@ -508,7 +618,9 @@ def test_p0_scenario_17_state_survives_full_restart(tmp_path) -> None:
     _wait_ready(proc)
     try:
         headers = {"Authorization": f"Bearer {api_key}"}
-        with httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=30.0, trust_env=False) as client:
+        with httpx.Client(
+            base_url=f"http://127.0.0.1:{port}", timeout=30.0, trust_env=False
+        ) as client:
             # 连接就绪在 Windows 上有间歇性首连拒绝——小重试（同 moss harness 结论）。
             for _attempt in range(15):
                 try:
@@ -522,15 +634,28 @@ def test_p0_scenario_17_state_survives_full_restart(tmp_path) -> None:
             svc = client.post(
                 "/api/v2/auth/keys",
                 headers=headers,
-                json={"label": "p0m-svc", "subject_type": "service", "subject_id": "moss-e2e", "zone_id": "root", "is_admin": True},
+                json={
+                    "label": "p0m-svc",
+                    "subject_type": "service",
+                    "subject_id": "moss-e2e",
+                    "zone_id": "root",
+                    "is_admin": True,
+                },
             ).json()["key"]
             user_key = _mint_user_key(client, headers, "p0m-s17-user", zone)
             delegation = _issue_delegation(
-                client, {"Authorization": f"Bearer {svc}"}, "p0m-s17-user", "p0m-org-a", zone, "p0m-s17-d1"
+                client,
+                {"Authorization": f"Bearer {svc}"},
+                "p0m-s17-user",
+                "p0m-org-a",
+                zone,
+                "p0m-s17-d1",
             )
             assert _access(client, zone, user_key, delegation) == 200
             grants = client.get(f"/v2/zones/{zone}/grants", headers=headers).json()["grants"]
-            grant_id = next(g["grant_id"] for g in grants if g["grantee"]["subject_id"] == "p0m-org-a")
+            grant_id = next(
+                g["grant_id"] for g in grants if g["grantee"]["subject_id"] == "p0m-org-a"
+            )
             rev = client.delete(
                 f"/v2/zones/{zone}/grants/{grant_id}",
                 headers={**headers, "Idempotency-Key": "p0m-s17-r"},
@@ -547,7 +672,9 @@ def test_p0_scenario_17_state_survives_full_restart(tmp_path) -> None:
         port2 = _find_port()
         proc2 = _spawn(port2)
         _wait_ready(proc2)
-        with httpx.Client(base_url=f"http://127.0.0.1:{port2}", timeout=30.0, trust_env=False) as client:
+        with httpx.Client(
+            base_url=f"http://127.0.0.1:{port2}", timeout=30.0, trust_env=False
+        ) as client:
             for _attempt in range(15):
                 try:
                     client.get("/v2/zone-capabilities", headers=headers)
@@ -561,15 +688,18 @@ def test_p0_scenario_17_state_survives_full_restart(tmp_path) -> None:
             # 17b: the committed revocation still denies after restart.
             r = client.get(
                 f"/v2/zones/{zone}",
-                headers={"Authorization": f"Bearer {user_key}", "X-Nexus-Zone-Delegation": delegation},
+                headers={
+                    "Authorization": f"Bearer {user_key}",
+                    "X-Nexus-Zone-Delegation": delegation,
+                },
             )
-            assert r.status_code == 403, f"revocation must survive restart: {r.status_code} {r.text}"
+            assert r.status_code == 403, (
+                f"revocation must survive restart: {r.status_code} {r.text}"
+            )
         subprocess.run(["taskkill", "/PID", str(proc2.pid), "/T", "/F"], capture_output=True)
     finally:
         if proc.poll() is None:
             subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True)
-
-
 
 
 def test_p0_scenario_18_idempotency_semantics(nexus_server, test_app) -> None:
@@ -624,7 +754,13 @@ def test_p0_c2_truth_table_supplements(nexus_server, test_app) -> None:
     svc = test_app.post(
         "/api/v2/auth/keys",
         headers=headers,
-        json={"label": "p0m-svc", "subject_type": "service", "subject_id": "moss-e2e", "zone_id": "root", "is_admin": True},
+        json={
+            "label": "p0m-svc",
+            "subject_type": "service",
+            "subject_id": "moss-e2e",
+            "zone_id": "root",
+            "is_admin": True,
+        },
     ).json()["key"]
     svc_headers = {"Authorization": f"Bearer {svc}"}
 
@@ -634,7 +770,9 @@ def test_p0_c2_truth_table_supplements(nexus_server, test_app) -> None:
     # asserted through the transfer's target-write check (write side).
     _create_grant(test_app, headers, zone, "p0m-org-a", "p0m-c2-g1", "p0m-c2-s1")  # read-only grant
     ro_user_key = _mint_user_key(test_app, headers, "p0m-c2-user", zone)
-    ro_delegation = _issue_delegation(test_app, svc_headers, "p0m-c2-user", "p0m-org-a", zone, "p0m-c2-d1")
+    ro_delegation = _issue_delegation(
+        test_app, svc_headers, "p0m-c2-user", "p0m-org-a", zone, "p0m-c2-d1"
+    )
     # The same user tries a transfer TARGETING the read-only zone: the
     # target-side write capability must reject the read-only delegation.
     write_denied = test_app.post(
@@ -645,8 +783,18 @@ def test_p0_c2_truth_table_supplements(nexus_server, test_app) -> None:
             "Idempotency-Key": "p0m-c2-t1",
         },
         json={
-            "source": {"api_version": "common.sudo.dev/v1", "kind": "ResourceRef", "zone_id": other_zone, "path": "/x.txt"},
-            "target": {"api_version": "common.sudo.dev/v1", "kind": "ResourceRef", "zone_id": zone, "path": "/y.txt"},
+            "source": {
+                "api_version": "common.sudo.dev/v1",
+                "kind": "ResourceRef",
+                "zone_id": other_zone,
+                "path": "/x.txt",
+            },
+            "target": {
+                "api_version": "common.sudo.dev/v1",
+                "kind": "ResourceRef",
+                "zone_id": zone,
+                "path": "/y.txt",
+            },
         },
     )
     assert write_denied.status_code == 403, write_denied.text
@@ -670,12 +818,19 @@ def test_p0_c2_truth_table_supplements(nexus_server, test_app) -> None:
     assert narrow.status_code == 202, narrow.text
     _wait_operation(test_app, narrow.headers["Location"].split("/")[-1], headers)
     nb_user_key = _mint_user_key(test_app, headers, "p0m-c2-user-b", zone)
-    nb_delegation = _issue_delegation(test_app, svc_headers, "p0m-c2-user-b", "p0m-org-b", zone, "p0m-c2-d2")
+    nb_delegation = _issue_delegation(
+        test_app, svc_headers, "p0m-c2-user-b", "p0m-org-b", zone, "p0m-c2-d2"
+    )
     outside = test_app.get(
         f"/v2/zones/{zone}",
-        headers={"Authorization": f"Bearer {nb_user_key}", "X-Nexus-Zone-Delegation": nb_delegation},
+        headers={
+            "Authorization": f"Bearer {nb_user_key}",
+            "X-Nexus-Zone-Delegation": nb_delegation,
+        },
     )
-    assert outside.status_code == 403, f"path knowledge must not bypass prefixes: {outside.status_code}"
+    assert outside.status_code == 403, (
+        f"path knowledge must not bypass prefixes: {outside.status_code}"
+    )
 
     # (3) zone header spoofing: X-Nexus-Zone-ID cannot borrow another zone
     # (dependencies.py applies it only when the token is authorized for it).
@@ -683,7 +838,9 @@ def test_p0_c2_truth_table_supplements(nexus_server, test_app) -> None:
         f"/v2/zones/{zone}",
         headers={"Authorization": f"Bearer {ro_user_key}", "X-Nexus-Zone-ID": other_zone},
     )
-    assert spoof.status_code in (401, 403), f"spoofed zone header must not grant: {spoof.status_code}"
+    assert spoof.status_code in (401, 403), (
+        f"spoofed zone header must not grant: {spoof.status_code}"
+    )
 
     # (4) zone-less non-admin: a user key bound to no usable zone is refused
     # on zone endpoints (no grant, no delegation → deny).
@@ -692,7 +849,9 @@ def test_p0_c2_truth_table_supplements(nexus_server, test_app) -> None:
         f"/v2/zones/{zone}",
         headers={"Authorization": f"Bearer {zoneless_key}"},
     )
-    assert zoneless.status_code in (401, 403), f"zone-less non-admin must be refused: {zoneless.status_code}"
+    assert zoneless.status_code in (401, 403), (
+        f"zone-less non-admin must be refused: {zoneless.status_code}"
+    )
 
     # (5) root/control independence: root zone must not be deletable through
     # the public API even by the admin key (§4.5 root/control 禁删).
@@ -701,5 +860,4 @@ def test_p0_c2_truth_table_supplements(nexus_server, test_app) -> None:
         headers={**headers, "Idempotency-Key": "p0m-c2-root-del", "X-Nexus-Confirm-Zone": "root"},
     )
     assert root_delete.status_code in (400, 403, 404, 409, 422), root_delete.text
-    root_check = test_app.get("/v2/zones/root", headers=headers)
-    assert root_check.status_code != 404 or True  # root may not be enumerable here; deletion is the assertion
+    # root delete rejection above is the assertion (§4.5 root 禁删).

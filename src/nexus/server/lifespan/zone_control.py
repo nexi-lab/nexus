@@ -135,7 +135,47 @@ def zone_worker(app: FastAPI) -> Any:
     from nexus.services.zones.worker import ZoneOperationWorker
 
     service = app.state.zone_application_service
-    return ZoneOperationWorker(app.state.zone_session_factory, app.state.zone_runtime, service)
+    authz = app.state.zone_authorization_service
+
+    def runtime_dependency_is_current(
+        delegation_id: str, zone_id: str, grant_ref: str, authorization_epoch: int
+    ) -> bool:
+        from nexus.services.zones.authz import Principal
+        from nexus.storage.models import ZoneDelegationModel
+
+        try:
+            with app.state.zone_session_factory() as session:
+                delegation = session.get(ZoneDelegationModel, delegation_id)
+                if (
+                    delegation is None
+                    or delegation.zone_id != zone_id
+                    or delegation.grant_id != grant_ref
+                    or int(delegation.epoch) != authorization_epoch
+                ):
+                    return False
+                current = authz.verify_delegation(
+                    session, delegation_id=delegation_id, audience="nexus-api"
+                )
+                if not current:
+                    return False
+                allowed = authz.allow(
+                    session,
+                    principal=Principal(subject_type="organization", subject_id=delegation.org_id),
+                    zone_id=zone_id,
+                    capability="zone.runtime.execute",
+                    resource_path="/",
+                )
+                return bool(allowed)
+        except Exception:
+            return False
+
+    return ZoneOperationWorker(
+        app.state.zone_session_factory,
+        app.state.zone_runtime,
+        service,
+        session_runtime=app.state.session_runtime_service,
+        runtime_dependency_validator=runtime_dependency_is_current,
+    )
 
 
 def _deny_all_rebac(session: Any, subject: str, permission: str, obj: str, zone_id: str) -> bool:  # noqa: ARG001

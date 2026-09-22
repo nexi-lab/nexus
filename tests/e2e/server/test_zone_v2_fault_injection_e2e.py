@@ -127,44 +127,59 @@ class ServerHarness:
             "PYTHONPATH": str(_SRC),
         }
 
-    def start(self) -> int:
-        port = 0
-        with socket.socket() as s:
-            s.bind(("127.0.0.1", 0))
-            port = s.getsockname()[1]
-        self.proc = subprocess.Popen(
-            [
-                sys.executable,
-                "-c",
-                "from nexus.daemon.main import main; import sys; main(sys.argv[1:])",
-                "--host",
-                "127.0.0.1",
-                "--port",
-                str(port),
-                "--data-dir",
-                str(self.data_dir),
-                "--profile",
-                "full",
-            ],
-            env=self._env(),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+    def start(self, attempts: int = 2) -> int:
+        """Spawn and wait for readiness.
+
+        The fault-injection restart can race the OS releasing the killed
+        process's sqlite handles: the server then aborts during lifespan
+        before uvicorn reports ready. That is an environment window, not the
+        behaviour under test, so a failed spawn is retried once on a fresh
+        port before giving up.
+        """
+        last_tail = ""
+        for _attempt in range(1, attempts + 1):
+            port = 0
+            with socket.socket() as s:
+                s.bind(("127.0.0.1", 0))
+                port = s.getsockname()[1]
+            self.proc = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-c",
+                    "from nexus.daemon.main import main; import sys; main(sys.argv[1:])",
+                    "--host",
+                    "127.0.0.1",
+                    "--port",
+                    str(port),
+                    "--data-dir",
+                    str(self.data_dir),
+                    "--profile",
+                    "full",
+                ],
+                env=self._env(),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            ready = threading.Event()
+            tail: list[str] = []
+
+            def drain(stream, _tail=tail, _ready=ready) -> None:  # noqa: B008
+                for line in iter(stream.readline, b""):
+                    text = line.decode("utf-8", "replace")
+                    _tail.append(text)
+                    if "Application startup complete" in text:
+                        _ready.set()
+
+            threading.Thread(target=drain, args=(self.proc.stderr,), daemon=True).start()
+            threading.Thread(target=drain, args=(self.proc.stdout,), daemon=True).start()
+            if ready.wait(120):
+                self.port = port
+                return port
+            last_tail = "".join(tail[-20:])
+            self.kill()
+        raise AssertionError(
+            f"server did not become ready after {attempts} attempts: {last_tail}"
         )
-        ready = threading.Event()
-        tail: list[str] = []
-
-        def drain(stream) -> None:
-            for line in iter(stream.readline, b""):
-                text = line.decode("utf-8", "replace")
-                tail.append(text)
-                if "Application startup complete" in text:
-                    ready.set()
-
-        threading.Thread(target=drain, args=(self.proc.stderr,), daemon=True).start()
-        threading.Thread(target=drain, args=(self.proc.stdout,), daemon=True).start()
-        assert ready.wait(120), "server did not become ready: " + "".join(tail[-20:])
-        self.port = port
-        return port
 
     def kill(self) -> None:
         if self.proc and self.proc.poll() is None:
@@ -172,6 +187,30 @@ class ServerHarness:
                 ["taskkill", "/PID", str(self.proc.pid), "/T", "/F"], capture_output=True
             )
             self.proc.wait(timeout=30)
+        # Belt for leaked kernels: `taskkill /T` relies on the process-tree
+        # relationship, and a kernel spawned early in the server's lifespan can
+        # survive it. An orphaned nexusd-cluster keeps ports/files busy and
+        # poisons every later fault test's restart window (observed 2026-09-22:
+        # accumulated orphans turned retries-exhausted failures into the
+        # steady state; clearing them restored green). Kill only kernels whose
+        # command line carries OUR data dir, never foreign ones.
+        try:
+            listing = subprocess.run(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-Command",
+                    "Get-CimInstance Win32_Process -Filter \"Name='nexusd-cluster.exe'\" "
+                    "| Where-Object { $_.CommandLine -like '*"
+                    + str(self.data_dir).replace("'", "''")
+                    + "*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }",
+                ],
+                capture_output=True,
+                timeout=30,
+            )
+            del listing
+        except Exception:  # noqa: BLE001 — cleanup must never fail the test
+            pass
 
     def client(self) -> httpx.Client:
         return httpx.Client(base_url=f"http://127.0.0.1:{self.port}", timeout=30.0, trust_env=False)

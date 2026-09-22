@@ -98,7 +98,12 @@ nexus-federated-search = { path = "../federated-search", optional = true }
 # axum handler's `impl From<Hit> for QueryHit` bridge lives in
 # `handlers/search_bridge.rs`; the bridge is unreachable without
 # rebac (see above), so this dep rides on the same gate.
-nexus-search-common = { path = "../search-common", optional = true }
+# `transport` sub-feature pulls the shared
+# `PeerChannelCache` (tonic Channel-per-peer cache) the
+# `backends::tonic_remote` cross-daemon impl uses.  Same SSOT
+# `nexus-search-plugin::peer_fanout` reads through, so a dial-time
+# rule tweak lands in ONE place.
+nexus-search-common = { path = "../search-common", optional = true, features = ["transport"] }
 # `PluginLocalSearchBackend` impls the federated dispatcher's
 # async-trait `LocalSearchBackend`; `async-trait` is required by
 # the trait's own macro.  Same 0.1 pin the federated-search crate

@@ -88,10 +88,26 @@ nexus-rebac = { path = "../rebac", optional = true }
 # anyway, so linking it under `rebac` is a re-share, not a new
 # resolution.)
 lib = { workspace = true, optional = true }
+# Cross-zone dispatcher — fans a `/v2/search/query` out to every
+# zone the caller can read from, fuses per-zone hits via RRF.
+# Feature-gated because the dispatcher's zone-discovery step reads
+# ReBAC tuples; a slim non-rebac build cannot compute the readable
+# zone set, so the federated branch is unreachable there.
+nexus-federated-search = { path = "../federated-search", optional = true }
+# `Hit` — the algorithm-side working type federated returns.  The
+# axum handler's `impl From<Hit> for QueryHit` bridge lives in
+# `handlers/search_bridge.rs`; the bridge is unreachable without
+# rebac (see above), so this dep rides on the same gate.
+nexus-search-common = { path = "../search-common", optional = true }
+# `PluginLocalSearchBackend` impls the federated dispatcher's
+# async-trait `LocalSearchBackend`; `async-trait` is required by
+# the trait's own macro.  Same 0.1 pin the federated-search crate
+# uses (see `rust/services/federated-search/Cargo.toml`).
+async-trait = { version = "0.1", optional = true }
 
 [features]
 default = []
-rebac = ["dep:nexus-rebac", "dep:lib"]
+rebac = ["dep:nexus-rebac", "dep:lib", "dep:nexus-federated-search", "dep:nexus-search-common", "dep:async-trait"]
 
 [build-dependencies]
 # Client-only proto codegen from the workspace's search proto SSOT

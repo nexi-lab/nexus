@@ -30,7 +30,7 @@ use nexus_http_api::search_proto::{
     RefreshRequest, RefreshResponse, RemoveIndexedDirectoryRequest, RemoveIndexedDirectoryResponse,
     SetZoneIndexingModeRequest, SetZoneIndexingModeResponse, StatsRequest, StatsResponse,
 };
-use nexus_http_api::{bind_and_serve, AppState, SearchBackend};
+use nexus_http_api::{bind_and_serve, AppState};
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use tokio_stream::wrappers::TcpListenerStream;
@@ -189,27 +189,11 @@ struct Harness {
 impl Harness {
     async fn start(auth: Arc<dyn AuthProvider>) -> Self {
         let (grpc_target, log) = spawn_mock_grpc().await;
-        let state = AppState {
-            search: SearchBackend::new(grpc_target),
-            auth,
-            // Empty in-memory `AuthKeyStore` — this middleware
-            // suite never hits `/v2/auth/keys`, so any store is fine.
-            auth_key_store: std::sync::Arc::new(
-                nexus_http_api::middleware::auth::empty_auth_key_store_for_tests(),
-            ),
-            api_key_secret: None,
-            // Fence backend — this suite never sends X-Nexus-Min-Revision,
-            // so `ZeroGenKernel` (always reports gen 0, matches the
-            // no-kernel-attached default) never actually runs.
-            kernel: std::sync::Arc::new(nexus_http_api::middleware::revision::ZeroGenKernel),
-            // Under `--features rebac` (nexusd's `full` build path
-            // exercises this harness transitively via CI), AppState
-            // gains a `rebac_store` field.  Use the same in-memory
-            // default the `for_tests` helper wires — this middleware
-            // suite never hits `/v2/rebac/*`, so any store is fine.
-            #[cfg(feature = "rebac")]
-            rebac_store: std::sync::Arc::new(nexus_rebac::InMemoryReBACTupleStore::new()),
-        };
+        // Wire through `AppState::for_tests` so every field the
+        // struct grows lands here without touching this harness —
+        // this suite ONLY overrides `auth`.
+        let mut state = AppState::for_tests(grpc_target);
+        state.auth = auth;
         let (addr, fut) = bind_and_serve("127.0.0.1:0".parse().unwrap(), state)
             .await
             .expect("bind");

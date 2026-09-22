@@ -51,6 +51,7 @@ use axum::Router;
 use tokio::net::TcpListener;
 use transport::auth::AuthProvider;
 
+pub mod backends;
 pub mod handlers;
 pub mod middleware;
 pub mod revision;
@@ -69,6 +70,24 @@ pub mod search_proto {
 
 pub use handlers::status::StatusResponse;
 pub use search_backend::{BackendError, SearchBackend};
+
+/// Concrete federated dispatcher this crate wires into
+/// [`AppState::federated`] under `--features rebac`.
+///
+/// The generic parameter is fixed: [`PluginLocalSearchBackend`] +
+/// [`NoOpRemoteSearchBackend`] behind [`RoutingBackend`].  Every
+/// zone the caller can read from routes to this daemon's OWN plugin
+/// today — cross-daemon dial is a follow-up when a
+/// [`TonicRemoteSearchBackend`] impl lands (see the module doc on
+/// [`backends`]).  The type alias means swapping the remote backend
+/// then is one line here + one line at the composition root.
+#[cfg(feature = "rebac")]
+pub type DefaultFederatedDispatcher = nexus_federated_search::FederatedSearchDispatcher<
+    nexus_federated_search::RoutingBackend<
+        crate::backends::plugin_local::PluginLocalSearchBackend,
+        nexus_federated_search::NoOpRemoteSearchBackend,
+    >,
+>;
 
 /// Shared state handed to every axum handler through
 /// `axum::extract::State`.  Cheap to clone (`Arc` fields inside
@@ -119,6 +138,28 @@ pub struct AppState {
     /// permission check without a second SSOT.
     #[cfg(feature = "rebac")]
     pub rebac_store: Arc<dyn nexus_rebac::ReBACTupleStore>,
+    /// Cross-zone search dispatcher — fans a `/v2/search/query` out
+    /// to every zone the caller can read from, fuses per-zone hits
+    /// via RRF (`nexus-federated-search`).  Wired only under
+    /// `--features rebac` because zone discovery reads ReBAC tuples;
+    /// a non-rebac build has no way to compute the readable zone set
+    /// and takes the single-zone fast path instead.
+    ///
+    /// The `/v2/search/query` handler decides whether to dispatch
+    /// federated by checking the caller's accessible zone count: 0
+    /// or 1 zone ⇒ single-zone path (unchanged); >1 zone ⇒ dispatch
+    /// through here for fanout + fusion.  Single-zone callers pay
+    /// nothing extra.
+    #[cfg(feature = "rebac")]
+    pub federated: Arc<DefaultFederatedDispatcher>,
+    /// The per-subject "which zones can this caller read from"
+    /// TTL cache the federated dispatcher's zone discovery uses.
+    /// Shared with the `/v2/search/query` handler so the "should
+    /// I federate?" precheck and the actual dispatch pull from the
+    /// same cache — one round-trip to ReBAC per (subject, TTL)
+    /// window regardless of whether the request federates.
+    #[cfg(feature = "rebac")]
+    pub accessible_zones: Arc<nexus_rebac::list_zones::AccessibleZonesCache>,
 }
 
 impl AppState {
@@ -138,8 +179,55 @@ impl AppState {
     /// route tests can exercise grant / list / revoke without a
     /// live raft cluster.
     pub fn for_tests(grpc_target: impl Into<Arc<str>>) -> Self {
+        let grpc_target: Arc<str> = grpc_target.into();
+        let search = SearchBackend::new(Arc::clone(&grpc_target));
+        #[cfg(feature = "rebac")]
+        let rebac_store: Arc<dyn nexus_rebac::ReBACTupleStore> =
+            Arc::new(nexus_rebac::InMemoryReBACTupleStore::new());
+        #[cfg(feature = "rebac")]
+        let accessible_zones = Arc::new(nexus_rebac::list_zones::AccessibleZonesCache::new());
+        #[cfg(feature = "rebac")]
+        let federated = {
+            use nexus_federated_search::{
+                DispatcherConfig, FederatedSearchDispatcher, NoOpRemoteSearchBackend,
+                RoutingBackend,
+            };
+            use nexus_search_common::InMemoryZoneSearchRegistry;
+            let local = Arc::new(
+                crate::backends::plugin_local::PluginLocalSearchBackend::new(search.clone()),
+            );
+            let remote = Arc::new(NoOpRemoteSearchBackend);
+            // Empty registry — every zone falls through to the local
+            // backend.  Real deployments populate this from a
+            // per-zone plugin-target env var (see the composition
+            // root in `nexusd`).
+            let registry: Arc<nexus_search_common::InMemoryZoneSearchRegistry> =
+                Arc::new(InMemoryZoneSearchRegistry::new());
+            let routing = RoutingBackend::new(
+                local,
+                remote,
+                Arc::clone(&registry) as Arc<dyn nexus_search_common::ZoneSearchRegistry>,
+                // Test daemon self-id.  Real deployments read this
+                // from identity.json.
+                "test",
+                // The plugin target itself is "local" so a registry
+                // that pointed a zone at ourselves stays local.
+                std::iter::once(grpc_target.as_ref().to_string()),
+            );
+            Arc::new(FederatedSearchDispatcher::new(
+                Arc::new(routing),
+                Arc::clone(&rebac_store),
+                // Share ONE cache with the AppState field so the
+                // handler's "should I federate?" precheck and the
+                // dispatch itself both hit the same warm entry — one
+                // ReBAC round-trip per (subject, TTL) window.
+                Arc::clone(&accessible_zones),
+                registry,
+                DispatcherConfig::default(),
+            ))
+        };
         Self {
-            search: SearchBackend::new(grpc_target),
+            search,
             auth: middleware::auth::default_no_auth_provider(),
             // Empty in-memory store for `/v2/auth/keys` tests.  The
             // real composition root pulls the raft-backed store from
@@ -153,7 +241,11 @@ impl AppState {
             // closure (see `service_decl`).
             kernel: Arc::new(middleware::revision::ZeroGenKernel),
             #[cfg(feature = "rebac")]
-            rebac_store: Arc::new(nexus_rebac::InMemoryReBACTupleStore::new()),
+            rebac_store,
+            #[cfg(feature = "rebac")]
+            federated,
+            #[cfg(feature = "rebac")]
+            accessible_zones,
         }
     }
 }
@@ -390,14 +482,58 @@ pub fn install_impl(
     kernel: Arc<dyn middleware::revision::StatGen>,
     #[cfg(feature = "rebac")] rebac_store: Arc<dyn nexus_rebac::ReBACTupleStore>,
 ) -> Result<(), String> {
+    let search = SearchBackend::new(upstream_grpc);
+    #[cfg(feature = "rebac")]
+    let accessible_zones = Arc::new(nexus_rebac::list_zones::AccessibleZonesCache::new());
+    #[cfg(feature = "rebac")]
+    let federated = {
+        use nexus_federated_search::{
+            DispatcherConfig, FederatedSearchDispatcher, NoOpRemoteSearchBackend, RoutingBackend,
+        };
+        use nexus_search_common::InMemoryZoneSearchRegistry;
+        let local =
+            Arc::new(crate::backends::plugin_local::PluginLocalSearchBackend::new(search.clone()));
+        let remote = Arc::new(NoOpRemoteSearchBackend);
+        // Empty registry — every zone the caller reads from routes
+        // through the local plugin.  The cross-daemon transport is a
+        // follow-up (see `crate::backends`); wiring the empty
+        // registry today means a multi-zone caller against a
+        // single-daemon deployment gets fanout + fusion over the one
+        // plugin, which IS the correct behaviour for the current
+        // production topology (one daemon per site).
+        let registry: Arc<InMemoryZoneSearchRegistry> = Arc::new(InMemoryZoneSearchRegistry::new());
+        let routing = RoutingBackend::new(
+            local,
+            remote,
+            Arc::clone(&registry) as Arc<dyn nexus_search_common::ZoneSearchRegistry>,
+            // Composition-root self-id.  The kernel-provided
+            // `AuthProvider` implicitly identifies this daemon
+            // via its mTLS peer identity; the value here shows up
+            // on `SearchDelegation::source_zone_id` for audit
+            // trails when the cross-daemon path lands.
+            "local",
+            std::iter::empty::<String>(),
+        );
+        Arc::new(FederatedSearchDispatcher::new(
+            Arc::new(routing),
+            Arc::clone(&rebac_store),
+            Arc::clone(&accessible_zones),
+            registry,
+            DispatcherConfig::default(),
+        ))
+    };
     let state = AppState {
-        search: SearchBackend::new(upstream_grpc),
+        search,
         auth,
         auth_key_store,
         api_key_secret,
         kernel,
         #[cfg(feature = "rebac")]
         rebac_store,
+        #[cfg(feature = "rebac")]
+        federated,
+        #[cfg(feature = "rebac")]
+        accessible_zones,
     };
     // Bind synchronously so `install` surfaces the failure —
     // port-in-use / EACCES / bad interface all become an

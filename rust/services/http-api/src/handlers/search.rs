@@ -451,6 +451,22 @@ fn hit_from_proto(r: ProtoQueryResult) -> QueryHit {
 /// simple cases but the request shape (hybrid knobs + recency
 /// tuple + `path_prefix_boosts` map) is JSON-shaped in practice,
 /// so a POST body keeps the wire honest.
+///
+/// # Federated vs single-zone dispatch
+///
+/// Under `--features rebac`, the handler consults the caller's
+/// ReBAC-derived readable zone set:
+///
+/// * **0 or 1 zone** ⇒ single-zone fast path (unchanged).  The
+///   common case pays nothing: one tonic call to the local plugin.
+/// * **>1 zone** AND the wire body did NOT pin `zone_id` ⇒
+///   dispatch through [`nexus_federated_search::FederatedSearchDispatcher`]:
+///   fan out per zone, fuse via RRF, return one unified list.
+/// * **>1 zone** BUT the wire body pinned `zone_id` ⇒ single-zone
+///   path (the caller explicitly narrowed the scope).
+///
+/// A non-rebac build is unconditionally single-zone — the readable
+/// zone set is not derivable there.
 pub async fn query(
     State(state): State<AppState>,
     Extension(ctx): Extension<OperationContext>,
@@ -463,6 +479,29 @@ pub async fn query(
     // #4740: the index zone is the caller's zone, never a wire-supplied
     // one (admins may still name a zone explicitly).
     let zone_id = effective_zone(&ctx, &body.zone_id)?;
+
+    // Federated fast-out (rebac-only): a caller with ReBAC access to
+    // multiple zones who did NOT pin `zone_id` on the request body
+    // gets a cross-zone fanout.  See the handler docstring for the
+    // three cases.  Fence enforcement happens INSIDE the federated
+    // branch so we fence against the caller's index zone (which the
+    // dispatcher may itself override per leg in a future cross-zone
+    // impl — for now every leg reads the local plugin so one fence
+    // suffices).
+    #[cfg(feature = "rebac")]
+    {
+        if body.zone_id.is_empty() {
+            let subject = subject_for(&ctx);
+            let accessible = state
+                .accessible_zones
+                .lookup(&*state.rebac_store, subject)
+                .unwrap_or_default();
+            if accessible.len() > 1 {
+                return dispatch_federated(state, ctx, fence, body, &zone_id).await;
+            }
+        }
+    }
+
     // Issue #4737: wait for the fenced revision to be applied on this
     // node BEFORE running the search, so a read-after-write against a
     // co-hosted cluster observes the just-committed row.  No-op when
@@ -503,6 +542,98 @@ pub async fn query(
         crate::middleware::revision::stamp_revision(&mut response, &tok);
     }
     Ok(response)
+}
+
+/// Dispatch a multi-zone query through the federated dispatcher.
+/// Called ONLY from the federated fast-out in [`query`] above — the
+/// caller has already confirmed the caller's readable zone set has
+/// more than one entry and no wire `zone_id` narrows the scope.
+///
+/// Fences against `fence_zone` (the caller's index zone from
+/// `effective_zone`) so a read-after-write in the caller's default
+/// zone still sees its own writes.  Per-leg fencing across every
+/// federated zone is a follow-up when the cross-daemon leg lands
+/// (it needs its own revision plumbing).
+#[cfg(feature = "rebac")]
+async fn dispatch_federated(
+    state: AppState,
+    ctx: OperationContext,
+    fence: crate::middleware::revision::RevisionFence,
+    body: QueryBody,
+    fence_zone: &str,
+) -> Result<Response, SearchError> {
+    let observed = fence
+        .enforce(std::sync::Arc::clone(&state.kernel), fence_zone)
+        .await
+        .map_err(SearchError::Fence)?;
+    let subject = subject_for(&ctx);
+    let limit = if body.limit == 0 {
+        10
+    } else {
+        body.limit as usize
+    };
+    let req = nexus_federated_search::SearchRequest {
+        query: body.q,
+        search_type: body.query_type,
+        limit,
+        path_filter: (!body.path_filter.is_empty()).then_some(body.path_filter),
+        // Overwritten by the dispatcher from `subject` — the field
+        // must exist on construction.
+        subject: (String::new(), String::new()),
+    };
+    let resp = state.federated.search(subject, req, None).await;
+    let results = resp
+        .results
+        .into_iter()
+        .map(crate::handlers::search::QueryHit::from)
+        .collect();
+    // The federated envelope carries zones_searched / zones_failed
+    // that a caller may want to inspect; today the wire shape stays
+    // the plain `{results, error}` for byte-compat with the single-
+    // zone path.  Surfacing the per-zone breakdown is a wire-level
+    // addition (needs a caller who reads it) — deferred.
+    let error = (!resp.zones_failed.is_empty()).then(|| {
+        format!(
+            "{} zone(s) failed: {}",
+            resp.zones_failed.len(),
+            resp.zones_failed
+                .iter()
+                .map(|f| format!("{}={}", f.zone_id, f.error))
+                .collect::<Vec<_>>()
+                .join("; ")
+        )
+    });
+    let mut response = Json(QueryResponseBody { results, error }).into_response();
+    if let Some(tok) = observed {
+        crate::middleware::revision::stamp_revision(&mut response, &tok);
+    }
+    Ok(response)
+}
+
+/// Extract a `(subject_type, subject_id)` pair from the caller's
+/// [`OperationContext`].  `OperationContext` already models the
+/// ReBAC subject with two typed fields — `subject_type` (defaults to
+/// `"user"`) and `subject_id` (the id string; `None` for the legacy
+/// user_id-only path).  Empty / absent id maps to `("user",
+/// "anonymous")` — matches the Python delegation-mint fallback and
+/// keeps the "who is this?" question always answerable.
+#[cfg(feature = "rebac")]
+fn subject_for(ctx: &OperationContext) -> (&str, &str) {
+    let subject_type = if ctx.subject_type.is_empty() {
+        "user"
+    } else {
+        ctx.subject_type.as_str()
+    };
+    // Prefer the typed subject_id; fall back to user_id when the
+    // caller went through the legacy no-typed-subject path.  Empty
+    // in both maps to the anonymous fallback.
+    let subject_id: &str = ctx.subject_id.as_deref().unwrap_or(ctx.user_id.as_str());
+    let subject_id = if subject_id.is_empty() {
+        "anonymous"
+    } else {
+        subject_id
+    };
+    (subject_type, subject_id)
 }
 
 // ── Router + shared error ────────────────────────────────────────

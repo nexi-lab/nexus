@@ -62,14 +62,6 @@ pub mod audit_node;
 // Durable task queue engine (fjall-backed).
 #[cfg(feature = "service-tasks")]
 pub mod tasks;
-// Matrix Client-Server v3 adapter — exposes nexus chat-with-me
-// DT_STREAMs as Matrix rooms so stock chat clients (Element /
-// FluffyChat / Cinny) participate in nexus conversations through the
-// existing kernel surface. End-state spec lives in
-// `sudowork-2/docs/tech/nexus-integration-architecture.md` §4.2; D1
-// here lands skeleton + auth (`login` / `logout` / `whoami`).
-#[cfg(feature = "service-matrix-adapter")]
-pub mod matrix_adapter;
 // PasswordVaultService — domain-wrapper gRPC service over the password
 // vault (namespace="passwords"). Phase 1 Rust impl per #3923 integration
 // doc. Hosted by the `vault` service-plugin dylib (`rust/services/vault/`),

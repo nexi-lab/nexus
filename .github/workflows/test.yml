@@ -715,22 +715,30 @@ jobs:
         if: needs.detect-changes.outputs.code_changed == 'true'
         # The production cluster binary is size-gated (KERNEL-ARCHITECTURE §7;
         # mirrors nexus-vfs cluster-binary-build.yml's linux budget). The
-        # nexus-vfs gate only covers the PURE cluster binary; production ships
-        # this nexus-local one (cluster profile + managed_agent), so it needs
-        # its own guard. managed_agent is a small control-plane addition
-        # (~14.9 MiB release/stripped); driver-s3 / connectors must NOT leak
-        # into the default (slim) build — that leak is the #36 regression this
-        # gate exists to catch.
+        # nexus-vfs gates the PURE cluster binary; production ships this
+        # assembly of it plus the nexus services, so it needs its own guard.
+        # driver-s3 / connectors must NOT leak into the default (slim) build —
+        # that leak is the #36 regression this gate exists to catch.
         run: |
           BIN="$HOME/.cargo/bin/nexusd-cluster"
-          # 16.5 MiB. Tracks the nexus-vfs linux cluster budget (17039360 =
-          # 16.25 MiB at pin b98c08e62, itself raised for the DT_STREAM P3
-          # series) PLUS the managed_agent control-plane overhead this
-          # nexus-local binary adds on top. Raised from 15.5 MiB when the
-          # nexus-vfs pin advanced to b98c08e62 (P3 kernel growth). Still a
-          # tight leak-catcher: a driver/connector leaking into the slim build
-          # is far more than the ~0.2 MiB headroom here.
-          MAX=17301504
+          # 17.0 MiB = the nexus-vfs linux cluster budget (17563648 = 16.75
+          # MiB) plus 0.25 MiB for what this assembly adds on top: the nexus
+          # service crates, and the managed-agent `subprocess-host` feature
+          # that the vfs cluster build does not enable. It is DERIVED from the
+          # nexus-vfs number rather than measured here, so a pin bump that
+          # legitimately grows the kernel moves both budgets together instead
+          # of failing this gate for growth nexus-vfs already accepted.
+          #
+          # Raised from 16.5 MiB when the pin advanced to 191fa0efa: nexus-vfs
+          # raised its own budget from 16.25 to 16.75 MiB for the managed-agent
+          # control plane relocated INTO nexusd-cluster (nexus-vfs#241), while
+          # this cap still tracked the pre-relocation number. That relocation
+          # is also why managed_agent is no longer a nexus-local crate — it
+          # arrives inside the vfs dependency.
+          #
+          # Still a leak-catcher. driver-s3 and the connectors are megabytes,
+          # so the ~0.5 MiB of slack this leaves cannot hide one.
+          MAX=17825792
           actual=$(stat -c%s "$BIN")
           echo "nexusd-cluster size: $actual bytes (max: $MAX)"
           if [ "$actual" -gt "$MAX" ]; then

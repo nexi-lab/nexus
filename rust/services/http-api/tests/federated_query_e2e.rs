@@ -275,10 +275,11 @@ async fn spawn_harness(zones: &[&str]) -> (String, RequestLog) {
             DispatcherConfig, FederatedSearchDispatcher, NoOpRemoteSearchBackend, RoutingBackend,
         };
         use nexus_search_common::InMemoryZoneSearchRegistry;
-        let local =
-            Arc::new(nexus_http_api::backends::plugin_local::PluginLocalSearchBackend::new(
+        let local = Arc::new(
+            nexus_http_api::backends::plugin_local::PluginLocalSearchBackend::new(
                 state.search.clone(),
-            ));
+            ),
+        );
         let remote = Arc::new(NoOpRemoteSearchBackend);
         let registry: Arc<InMemoryZoneSearchRegistry> = Arc::new(InMemoryZoneSearchRegistry::new());
         let routing = RoutingBackend::new(
@@ -348,7 +349,10 @@ async fn multi_zone_caller_with_empty_zone_id_fans_out() {
     // request), both surviving the RRF fusion + bridge.
     let results = json["results"].as_array().expect("results");
     assert_eq!(results.len(), 2, "want 2 fused hits, got {results:?}");
-    let mut paths: Vec<&str> = results.iter().map(|r| r["path"].as_str().unwrap()).collect();
+    let mut paths: Vec<&str> = results
+        .iter()
+        .map(|r| r["path"].as_str().unwrap())
+        .collect();
     paths.sort();
     assert_eq!(paths, vec!["/eng/hit.md", "/legal/hit.md"]);
     // Each hit's zone_id survives the bridge — federated dispatch

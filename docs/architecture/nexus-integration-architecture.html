@@ -231,7 +231,7 @@ graph TD
   <tbody>
     <tr><td><code>/agents/{name}/</code></td><td>Persistent</td><td>Profile: <code>config.toml</code>, <code>prompts/</code>, <code>skills/</code>, <code>memory/</code>, <code>sessions/</code> (DT_LINK index into <code>/sessions/</code>)</td><td>Metastore (DT_FILE / DT_DIR)</td></tr>
     <tr><td><code>/sessions/{session-id}/</code></td><td>Persistent</td><td>Transcript SSOT (jsonl) + <code>owner</code> attribute + repo DT_LINKs &mdash; flat, session-id the only structural key</td><td>Metastore (DT_FILE / DT_LINK)</td></tr>
-    <tr><td><code>/proc/{pid}/</code></td><td>Ephemeral</td><td>Runtime presence: <code>status</code>, <code>agent</code> link, <code>chat-with-me</code>, <code>workspace/</code></td><td>In-memory + WAL while pid alive</td></tr>
+    <tr><td><code>/proc/{pid}/</code></td><td>Ephemeral</td><td>Runtime presence: <code>status</code>, <code>agent</code> link, <code>workspace/</code></td><td>In-memory + WAL while pid alive</td></tr>
   </tbody>
 </table>
 
@@ -259,9 +259,7 @@ graph TD
 <pre><code>/proc/{pid}/
    status                        &larr; virtual file: AgentStatusResolver renders descriptor JSON
    agent                         &larr; DT_LINK &rarr; /agents/{name}/   (Linux /proc/{pid}/exe analogue)
-   chat-with-me                  &larr; DT_STREAM: node-local pipe to this pid (&sect;3.2)
    workspace/                    &larr; DT_DIR (agent cwd)
-      chat-with-me               &larr; DT_LINK &rarr; /proc/{pid}/chat-with-me
       project-x/                 &larr; DT_LINK &rarr; host repo path from desc.repos
       project-y/                 &larr; DT_LINK &rarr; host repo path from desc.repos</code></pre>
 
@@ -303,7 +301,7 @@ sequenceDiagram
 
 <p>A worker boots by reading its profile from <code>/agents/{name}/</code> and the requested <code>--session-id</code> transcript from <code>/sessions/&lt;session-id&gt;/</code> (&sect;2.1), works (appending to its session transcript and to its conversations), and exits; the <code>/proc/{pid}/</code> subtree is reaped. Resuming re-reads the same session-id under a fresh pid &mdash; persistent state lives in <code>/agents/{name}/</code> and <code>/sessions/</code>, not in a long-running process. Out-of-band termination (SIGTERM / SIGKILL / orphan reap) flows through <code>AgentRegistry::on_terminate</code>, which reaps <code>/proc/{pid}/</code> and aborts the worker via its <code>SpawnHandle</code>; <code>cancel(pid)</code> calls <code>AgentRegistry::kill(pid, 0)</code> for the same outcome.</p>
 
-<p>After spawn, prompts and responses flow over the same A2A surfaces every agent uses (&sect;3), in the direction each one is for. sudowork writes prompts to <code>/proc/{pid}/chat-with-me</code> &mdash; it is driving one specific running worker on this node, which is exactly what the pid pipe addresses (&sect;3.2) &mdash; and the worker <code>sys_watch</code>es it. Responses go the other way, into the conversation the worker shares with the user (&sect;3.1), which the UI tails. The asymmetry is deliberate: a prompt is meaningless once its worker is gone, while the answer is the durable half, so a reloaded UI reattaches and resumes from its reader register instead of from wherever the stream happens to be.</p>
+<p>After spawn, prompts and responses flow over the same A2A surface every agent uses: the conversation the user shares with the worker (&sect;3.1). sudowork appends prompts to it and <code>sys_watch</code>es it for replies, and the worker does the mirror image. Both directions are durable, so a reloaded UI reattaches and resumes from its reader register rather than from wherever the stream happens to be, and a prompt sent while the worker is between pids is waiting for it when it next runs.</p>
 
 <p><strong>ManagedAgentService surface</strong> (over <code>NexusVFSService.Call</code>):</p>
 <ul>
@@ -372,18 +370,9 @@ sequenceDiagram
 
 <p>Transcripts and registers are ordinary VFS objects, so the usual machinery applies unchanged: ReBAC governs access, <code>sys_watch</code> wakes a tailing reader, and federation raft replicates them across zone members (&sect;4.1). <code>REPLICATED_PREFIXES</code> is the contract naming which prefixes must arrive already replicated.</p>
 
-<h3>3.2 The node-local pipe</h3>
+<h3>3.2 Sender identity</h3>
 
-<pre><code>/proc/{pid}/chat-with-me            DT_STREAM  &mdash; node-local; lifetime of the pid
-/proc/{pid}/workspace/chat-with-me  DT_LINK    &rarr;  /proc/{pid}/chat-with-me</code></pre>
-
-<p>Distinct from a conversation, and deliberately narrower: a pid-scoped pipe for addressing <em>one running process</em> on <em>this node</em>. It is not replicated, it carries no pair identity, and it dies with the pid. Use it to hand work to a local sub-agent; use a conversation for anything that must outlive the process, reach another machine, or be resumed by a reader that was not running when the message was sent.</p>
-
-<p>The workspace entry is a plain DT_LINK row in the metastore, stamped at <code>start_session</code>, so an agent standing inside a workspace can address that workspace's owner relative to where it stands.</p>
-
-<h3>3.3 Sender identity</h3>
-
-<p>Every write to a conversation transcript or a <code>chat-with-me</code> pipe carries an unforgeable sender identity. The kernel rewrites the message envelope's structured <code>from</code> field to the caller's authenticated <code>agent_id</code> before the write reaches the backend, so a sender's <code>from</code> is always its own identity. Identity itself is established by the auth layer &mdash; an agent's identity certificate resolves to the <code>agent_id</code> (see <a href="https://s.shareone.vip/s/nexus-auth-architecture">nexus-auth-architecture</a>); the stamp binds that identity onto the message. A write with no authenticated <code>agent_id</code> is rejected, so the guarantee is fail-closed.</p>
+<p>Every write to a conversation transcript carries an unforgeable sender identity. The kernel rewrites the message envelope's structured <code>from</code> field to the caller's authenticated <code>agent_id</code> before the write reaches the backend, so a sender's <code>from</code> is always its own identity. Identity itself is established by the auth layer &mdash; an agent's identity certificate resolves to the <code>agent_id</code> (see <a href="https://s.shareone.vip/s/nexus-auth-architecture">nexus-auth-architecture</a>); the stamp binds that identity onto the message. A write with no authenticated <code>agent_id</code> is rejected, so the guarantee is fail-closed.</p>
 
 <p>The rewrite happens at the origin write, before Raft replication (&sect;4). Every replica and every reader then sees the same stamped <code>from</code> without re-verifying, so a message's origin travels intact to another machine: agent A on one node writes <code>from:A</code> locally, the bytes replicate, and a reader on another node reads <code>from:A</code> as authored.</p>
 
@@ -399,7 +388,7 @@ sequenceDiagram
     participant Stream as DT_STREAM
 
     A->>Kernel: write envelope {to: "scode-standard", body: "ping"}
-    Kernel->>Kernel: has_mutating_hook_match("/chat-with-me") &rarr; true
+    Kernel->>Kernel: has_mutating_hook_match("/transcript") &rarr; true
     Kernel->>Kernel: clone content into WriteHookCtx
     Kernel->>Hook: on_pre(ctx)
     Hook->>Hook: reads ctx.agent_id = "human-ethan"
@@ -410,7 +399,9 @@ sequenceDiagram
 
 <p>The rewrite is a registered <code>NativeInterceptHook</code> (<code>MailboxStampingHook</code>) that delegates the envelope policy to <code>mailbox_stamping_policy::maybe_stamp_chat_envelope</code>. Both live in the kernel-tier <code>a2a</code> crate (<code>nexus-vfs/rust/a2a/</code>) and are armed once at daemon boot via <code>install_a2a_stamp_hook</code>. Placing the <code>from</code> guarantee at the substrate makes it universal: every writer to a message surface is stamped through the same point &mdash; managed agents, external clients, and Matrix humans alike &mdash; because identity must be enforced where every write converges, not per frontend. The hook struct owns "how to be a hook" (dispatch wiring + content-clone bypass); the policy module owns "what to rewrite" (envelope schema, identity guarantee). The hook trait supports content rewriting &mdash; <code>on_pre</code> returns <code>Result&lt;HookOutcome, String&gt;</code>, where <code>HookOutcome::Replace(bytes)</code> substitutes write content; accept/reject hooks (audit, permission, workspace boundary) return <code>HookOutcome::Pass</code>.</p>
 
-<p>The stamped surfaces are declared once, as <code>MAILBOX_WRITE_SUFFIXES</code> (<code>/transcript</code>, <code>/chat-with-me</code>), and the policy re-confirms the match: a <code>/transcript</code> is stamped only when it sits under a <code>/conversations/</code> segment, so an unrelated file whose name happens to end in <code>transcript</code> is not mistaken for a message surface. One declaration drives both the dispatcher bypass and the policy, so a new surface cannot arm one without the other.</p>
+<p>The stamped surfaces are declared once, as <code>MAILBOX_WRITE_SUFFIXES</code> (<code>/transcript</code>), and the policy re-confirms the match: a <code>/transcript</code> is stamped only when it sits under a <code>/conversations/</code> segment, so an unrelated file whose name happens to end in <code>transcript</code> is not mistaken for a message surface. One declaration drives both the dispatcher bypass and the policy, so a new surface cannot arm one without the other.</p>
+
+<p>A single predicate answers both &quot;stamp this?&quot; and &quot;reject an unauthenticated write?&quot;. They were once different questions: the per-pid pipe was stamped but never rejected, because a write to a node-local stream could not reach another machine. Every message log is replicated now, so the two scopes coincide &mdash; and keeping two names for one set would leave the next reader to prove they still agree.</p>
 
 <p>To keep the hot path allocation-free for the writes that don't need rewriting, hooks declare those suffixes and the dispatcher uses them as a double bypass:</p>
 
@@ -419,33 +410,31 @@ sequenceDiagram
   <li><strong>Layer 2 (mutating hook registered, write path doesn't match):</strong> suffix scan returns false, dispatcher still passes <code>vec![]</code>. Only writes whose path ends in a registered suffix pay the content clone.</li>
 </ul>
 
-<h3>3.4 Boundary teaching UX</h3>
+<h3>3.3 Boundary teaching UX</h3>
 
 <p><code>WorkspaceBoundaryHook</code> is registered as an <code>INTERCEPT pre-write</code> hook scoped to <code>/proc/{pid}/workspace/{...}</code>. It compares the caller's <code>agent_id</code> to the workspace owner derived from the path (<code>pid &rarr; AgentRegistry.lookup(pid).name</code>). On mismatch the hook returns <code>Err(EPERM)</code> with a structured payload:</p>
 
 <pre><code>EPERM at /proc/p_scode/workspace/projects/nexus/src/main.rs:
-  This workspace is owned by agent 'scode-standard' (pid p_scode).
-  You are 'human-ethan'. To send a message about this workspace, write to:
-     /proc/p_scode/workspace/chat-with-me
-  (DT_LINK to /proc/p_scode/chat-with-me.)</code></pre>
+  this workspace belongs to pid 'p_scode' and is private.
+  You are 'human-ethan'. Messages are not written into a workspace - they go
+  to the conversation you share with the other agent. List your conversations
+  at /agents/human-ethan/conversations/ and append to that peer's transcript.</code></pre>
 
 <p>The error is intentionally instructive. LLMs that hit it once learn the convention without memory or system-prompt edits.</p>
 
-<h3>3.5 Same primitive across humans and agents</h3>
+<h3>3.4 Same primitive across humans and agents</h3>
 
 <p>A human is an ordinary participant. <code>conversation_id("human-ethan", "scode-standard")</code> names the thread between them, and it is reached identically from either end &mdash; no human-specific path, no pid indirection, no separate inbox to keep in sync. Whether a participant is a person, a managed agent, or a third-party Matrix client changes only who holds the credential that the <code>from</code> stamp binds.</p>
 
-<h3>3.6 Addressing non-human agents</h3>
+<h3>3.5 Addressing non-human agents</h3>
 
-<p>An agent <em>name</em> can map to zero, one, or many running pids in parallel, so the two surfaces address different things and the choice between them is not a matter of taste:</p>
-<ul>
-  <li><strong>By name</strong> &mdash; <code>conversation_id(self, peer)</code>. Durable and replicated, and it outlives every pid. Addressing a name that is not currently running is normal: the message waits in the transcript, and the peer resumes from its reader register the next time it runs.</li>
-  <li><strong>By pid</strong> &mdash; <code>/proc/{pid}/chat-with-me</code> (&sect;3.2). Node-local and ephemeral; addresses one specific process.</li>
-</ul>
+<p>There is one way to address an agent, and it is its <strong>name</strong>: <code>conversation_id(self, peer)</code>. Durable and replicated, and it outlives every pid &mdash; addressing a name that is not currently running is normal, because the message waits in the transcript and the peer resumes from its reader register the next time it runs.</p>
 
-<h3>3.7 Message contract</h3>
+<p>A pid is deliberately NOT an address. The registry does permit two live pids under one name, which is the one thing a per-process address could disambiguate, but identity is minted per name: those two pids authenticate as the same actor, write the same <code>from</code>, and share one conversation. Giving them separate mailboxes would describe a distinction nothing else in the system makes, so a per-pid message surface was removed rather than kept for symmetry.</p>
 
-<p>A message envelope is a JSON object: the substrate manages the reserved <code>from</code> field (&sect;3.3) and the participants agree on the payload. A2A payloads follow a shared contract so a receiver can act on a message from its content alone. A task assignment (copilot &rarr; worker) carries at least three parts:</p>
+<h3>3.6 Message contract</h3>
+
+<p>A message envelope is a JSON object: the substrate manages the reserved <code>from</code> field (&sect;3.2) and the participants agree on the payload. A2A payloads follow a shared contract so a receiver can act on a message from its content alone. A task assignment (copilot &rarr; worker) carries at least three parts:</p>
 
 <ul>
   <li><strong>context</strong> &mdash; what the task is and the state it starts from.</li>
@@ -511,7 +500,7 @@ that has never been written to, and <code>POST /createRoom</code> becomes the sa
 <table>
   <thead><tr><th>PDU field</th><th>Envelope field</th><th>Notes</th></tr></thead>
   <tbody>
-    <tr><td><code>sender</code></td><td><code>from</code></td><td>Stamped by <code>MailboxStampingHook</code> (&sect;3.3) &mdash; the adapter cannot forge it, and is not trusted to supply it</td></tr>
+    <tr><td><code>sender</code></td><td><code>from</code></td><td>Stamped by <code>MailboxStampingHook</code> (&sect;3.2) &mdash; the adapter cannot forge it, and is not trusted to supply it</td></tr>
     <tr><td><code>content.body</code></td><td><code>body</code></td><td><code>m.room.message</code> text; pass-through</td></tr>
     <tr><td><code>content.msgtype</code></td><td><code>msgtype</code></td><td><code>m.text</code>, <code>m.image</code>, etc.</td></tr>
     <tr><td><code>origin_server_ts</code></td><td><code>ts_ms</code></td><td>Unix ms</td></tr>
@@ -613,7 +602,7 @@ graph TB
   <thead><tr><th>Entry type</th><th>Used for</th><th>Metadata channel</th><th>Content channel</th></tr></thead>
   <tbody>
     <tr><td><strong>DT_FILE</strong></td><td>sessions, profile configs, task lists</td><td>Raft (intra-zone, strongly consistent)</td><td>Local CAS + on-miss lazy fetch from a peer over the CAS transport</td></tr>
-    <tr><td><strong>DT_STREAM</strong> (via <code>WalStreamBackend</code>)</td><td><code>/conversations/{cid}/transcript</code>, <code>/proc/{pid}/chat-with-me</code>, <code>/__sys__/audit/traces/</code></td><td>Raft (intra-zone)</td><td>Same raft log &mdash; total order across voters; offset assigned at apply (linearizable, multi-writer-safe)</td></tr>
+    <tr><td><strong>DT_STREAM</strong> (via <code>WalStreamBackend</code>)</td><td><code>/conversations/{cid}/transcript</code>, <code>/__sys__/audit/traces/</code></td><td>Raft (intra-zone)</td><td>Same raft log &mdash; total order across voters; offset assigned at apply (linearizable, multi-writer-safe)</td></tr>
   </tbody>
 </table>
 

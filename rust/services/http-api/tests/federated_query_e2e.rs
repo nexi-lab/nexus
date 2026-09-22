@@ -271,16 +271,20 @@ async fn spawn_harness(zones: &[&str]) -> (String, RequestLog) {
     // and swapping `rebac_store` here would otherwise leave the
     // dispatcher pointed at the original empty one.
     {
-        use nexus_federated_search::{
-            DispatcherConfig, FederatedSearchDispatcher, NoOpRemoteSearchBackend, RoutingBackend,
-        };
+        use nexus_federated_search::{DispatcherConfig, FederatedSearchDispatcher, RoutingBackend};
+        use nexus_search_common::transport::{PeerChannelCache, PeerChannelConfig};
         use nexus_search_common::InMemoryZoneSearchRegistry;
         let local = Arc::new(
             nexus_http_api::backends::plugin_local::PluginLocalSearchBackend::new(
                 state.search.clone(),
             ),
         );
-        let remote = Arc::new(NoOpRemoteSearchBackend);
+        // Same `TonicRemoteSearchBackend` production wires; never
+        // dialed in this test because the registry stays empty.
+        let peer_cache = Arc::new(PeerChannelCache::new(PeerChannelConfig::default()));
+        let remote = Arc::new(
+            nexus_http_api::backends::tonic_remote::TonicRemoteSearchBackend::new(peer_cache),
+        );
         let registry: Arc<InMemoryZoneSearchRegistry> = Arc::new(InMemoryZoneSearchRegistry::new());
         let routing = RoutingBackend::new(
             local,

@@ -783,7 +783,7 @@ class TestSearchStreams:
         absolute paths.
 
         Frames are newline-terminated — the shape of every real searchable log
-        stream (audit records, JSON-lines, chat-with-me messages). `sys_read`
+        stream (audit records, JSON-lines, conversation messages). `sys_read`
         returns the frames' payloads CONCATENATED (a stream's whole log), so
         without the trailing newline the last word of one frame would glue to the
         first of the next into a single FTS token (grep's substring match would

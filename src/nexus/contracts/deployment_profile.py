@@ -333,7 +333,7 @@ _EMBEDDED_DRIVERS: frozenset[str] = LOCAL_DEFAULT_DRIVERS
 _LITE_DRIVERS: frozenset[str] = LOCAL_DEFAULT_DRIVERS
 
 # Sandbox — agent sandbox with Nostr cross-instance messaging + LLM
-# connectors so chat-with-me / model calls work end-to-end.  Includes
+# connectors so A2A messaging / model calls work end-to-end.  Includes
 # local-host backends so agents can read/write the host filesystem.
 _SANDBOX_CONNECTORS: frozenset[str] = frozenset(
     {

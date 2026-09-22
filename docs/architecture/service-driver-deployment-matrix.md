@@ -26,8 +26,8 @@ across `dlopen` boundaries.
 | Hook | Repo | Module | Mode | Notes |
 |------|------|--------|------|-------|
 | AuditHook | nexus-vfs | `rust/services/src/audit/` | Compiled-in | File operation audit trail |
-| MailboxStampingHook | nexus-vfs | `rust/services/src/managed_agent/` | Compiled-in | `/chat-with-me` mailbox stamping |
-| WorkspaceBoundaryHook | nexus-vfs | `rust/services/src/managed_agent/` | Compiled-in | Agent workspace boundary enforcement |
+| MailboxStampingHook | nexus-vfs | `rust/a2a/` | Compiled-in | Conversation transcript `from` stamping |
+| WorkspaceBoundaryHook | nexus-vfs | `rust/managed_agent/` | Compiled-in | Agent workspace boundary enforcement |
 | RebacPermissionCheckHook | nexus | `src/nexus/bricks/rebac/` | Compiled-in | Permission pre-check |
 | SyncPermissionWriteHook | nexus | `src/nexus/bricks/rebac/` | Compiled-in | Permission sync on write |
 | DeferredPermissionHook | nexus | `src/nexus/bricks/rebac/` | Compiled-in | Deferred permission buffering |

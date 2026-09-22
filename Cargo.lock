@@ -3067,6 +3067,7 @@ dependencies = [
 name = "nexus-http-api"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "auth",
  "axum",
  "contracts",
@@ -3074,7 +3075,9 @@ dependencies = [
  "http-body-util",
  "kernel",
  "lib",
+ "nexus-federated-search",
  "nexus-rebac",
+ "nexus-search-common",
  "parking_lot",
  "prost 0.14.4",
  "protoc-bin-vendored",

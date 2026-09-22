@@ -8,9 +8,9 @@
 //!   * `PUT  /_matrix/client/v3/rooms/{rid}/send/{event_type}/{txn_id}` — append message
 //!   * `POST /_matrix/client/v3/rooms/{rid}/join`               — ReBAC grant (stub at D2)
 //!   * `POST /_matrix/client/v3/rooms/{rid}/leave`              — ReBAC revoke (stub at D2)
-//!   * `POST /_matrix/client/v3/createRoom`                     — bind new chat-with-me
+//!   * `POST /_matrix/client/v3/createRoom`                     — bind a conversation
 //!
-//! Read endpoints walk the chat-with-me DT_STREAM through
+//! Read endpoints walk the conversation transcript through
 //! `kernel.sys_read`; write endpoints go through `kernel.sys_write` so
 //! `MailboxStampingHook` rewrites the envelope's `from` field. Room
 //! state is synthesised from the path + (D3) ReBAC membership rather
@@ -51,6 +51,10 @@ pub(super) fn ctx_from_session(session: &AuthSession) -> kernel::kernel::Operati
         subject_type: "user".into(),
         subject_id: None,
         request_id: format!("matrix-{}", session.access_token),
+        // A Matrix client is a DOMESTIC caller: it authenticated to this node,
+        // not through another organisation's CA. `None` is what tells the
+        // foreign-containment gate to short-circuit rather than confine it.
+        trust_domain: None,
         context_zone_id: None,
         zone_perms: vec![],
         propagates_cross_node: false,
@@ -227,7 +231,7 @@ pub async fn joined_members<K: kernel::kernel::syscall::KernelSyscall>(
 // ── write endpoints ────────────────────────────────────────────────
 
 /// `PUT /_matrix/client/v3/rooms/{rid}/send/{event_type}/{txn_id}` —
-/// append the message to the chat-with-me DT_STREAM. The kernel's
+/// append the message to the conversation transcript. The kernel's
 /// MailboxStampingHook rewrites `from` from OperationContext, so the
 /// adapter cannot forge sender even if the client's PDU body claims
 /// otherwise.
@@ -278,17 +282,24 @@ pub async fn room_send<K: kernel::kernel::syscall::KernelSyscall>(
 
 #[derive(Debug, Deserialize)]
 pub struct CreateRoomRequest {
-    /// Bind the new room to `/agents/{name}/chat-with-me` — `name`
-    /// matches the agent profile name (e.g. `human-bob`). D2 keeps
-    /// the surface narrow; richer create flags (`preset`,
-    /// `room_version`, `topic`, …) come later.
+    /// The PEER this room talks to — an agent profile name (e.g.
+    /// `human-bob`). The room binds to the conversation between that peer
+    /// and the authenticated Matrix user, so `name` names the other side
+    /// rather than the room's owner. D2 keeps the surface narrow; richer
+    /// create flags (`preset`, `room_version`, `topic`, …) come later.
     pub name: String,
 }
 
-/// `POST /_matrix/client/v3/createRoom` — bind a new
-/// `/agents/{name}/chat-with-me` DT_STREAM. The Matrix client sees a
-/// fresh room_id; subsequent `/send` writes round-trip through the
-/// path-based codec.
+/// `POST /_matrix/client/v3/createRoom` — bind the conversation between
+/// the authenticated user and `name`. The Matrix client sees a fresh
+/// room_id; subsequent `/send` writes round-trip through the path-based
+/// codec.
+///
+/// A room is a PAIR, which is what a conversation is, so the two map
+/// directly: both parties append to one transcript and each reads it from
+/// its own position. This used to bind `/agents/{name}/chat-with-me` — one
+/// stream per recipient, with no notion of who the other side was — which
+/// no agent reads any more.
 pub async fn create_room<K: kernel::kernel::syscall::KernelSyscall>(
     State(state): State<AdapterState<K>>,
     Extension(_session): Extension<AuthSession>,
@@ -298,13 +309,25 @@ pub async fn create_room<K: kernel::kernel::syscall::KernelSyscall>(
         return Err(AdapterError::BadJson("createRoom: name is required".into()));
     }
     let kernel = require_kernel(&state)?;
-    let stream_path = format!("/agents/{}/chat-with-me", req.name);
-    // io_profile=memory at D2 — D3 picks wal when federation is up,
-    // matching managed_agent::proc_entry::chat_stream_profile.
+    // Derived from the pair, the same way both sides derive it — never spelled.
+    let stream_path =
+        a2a::conversation_transcript_path(&a2a::conversation_id(&_session.user_id, &req.name));
+    // Through the a2a provisioner rather than a hand-built stream: it also
+    // files the chat-list entry under BOTH names, which is how the agent on
+    // the other side discovers the conversation at all. A transcript with no
+    // index is a room whose messages nobody is tailing.
     let kernel_for_create = Arc::clone(kernel);
-    let stream_path_for_create = stream_path.clone();
+    let ctx_for_create = ctx_from_session(&_session);
+    let user_for_create = _session.user_id.clone();
+    let peer_for_create = req.name.clone();
     tokio::task::spawn_blocking(move || {
-        create_chat_stream(&kernel_for_create, &stream_path_for_create)
+        a2a::ensure_conversation(
+            &*kernel_for_create,
+            &ctx_for_create,
+            &user_for_create,
+            &peer_for_create,
+        )
+        .map_err(|e| AdapterError::Internal(format!("createRoom ensure_conversation: {e}")))
     })
     .await
     .map_err(|e| AdapterError::Internal(format!("spawn_blocking join: {e}")))??;
@@ -390,31 +413,6 @@ fn synth_state_events(stream_path: &str, server_name: &str, user_id: &str) -> Ve
     ]
 }
 
-/// Plant the canonical chat-with-me DT_STREAM at `path`. Mirrors
-/// `services::managed_agent::proc_entry::create_dt_stream` — the two
-/// callers (managed-agent spawn vs Matrix createRoom) share the same
-/// DT_STREAM contract, just at different paths.
-fn create_chat_stream<K: kernel::kernel::syscall::KernelSyscall>(
-    kernel: &std::sync::Arc<K>,
-    path: &str,
-) -> Result<(), AdapterError> {
-    const DT_STREAM: i32 = 4;
-    const CAPACITY: usize = 65_536;
-    kernel
-        .sys_setattr(
-            path, DT_STREAM, /* backend_name */ "", /* backend */ None,
-            /* metastore */ None, /* raft_backend */ None,
-            /* io_profile */ "memory", /* zone_id */ "root",
-            /* is_external */ false, CAPACITY, /* read_fd */ None,
-            /* write_fd */ None, /* mime_type */ None, /* modified_at_ms */ None,
-            /* content_id */ None, /* size */ None, /* version */ None,
-            /* created_at_ms */ None, /* link_target */ None, /* source */ None,
-            /* remote_metastore */ None,
-        )
-        .map(|_| ())
-        .map_err(|e| AdapterError::Internal(format!("createRoom sys_setattr({path}): {e:?}")))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -428,6 +426,17 @@ mod tests {
 
     const SERVER: &str = "nexus.local";
 
+    /// The transcript the logged-in test user shares with `peer`, derived the
+    /// way `createRoom` derives it. A literal path here would assert against a
+    /// location nothing binds — which is exactly how these went stale when the
+    /// mailbox moved off `/agents/<name>/chat-with-me`.
+    ///
+    /// Every test below logs in as `ethan`; the Matrix user id is what the
+    /// conversation is keyed on, not the bare localpart.
+    fn transcript_with(peer: &str) -> String {
+        a2a::conversation_transcript_path(&a2a::conversation_id(&format!("@ethan:{SERVER}"), peer))
+    }
+
     /// Shared kernel for the rooms test suite. Lives across all tests
     /// in this module so the `Arc<Kernel>` is never dropped inside an
     /// async test body — `Kernel::drop` shuts down its inner tokio
@@ -440,6 +449,10 @@ mod tests {
             .get_or_init(|| {
                 let k = Arc::new(Kernel::new());
                 k.vfs_router_arc().add_mount("/agents", "root", None, false);
+                // A transcript lives under `/conversations`; unmounted it falls back
+                // to the root zone and the room reads nothing back.
+                k.vfs_router_arc()
+                    .add_mount("/conversations", "root", None, false);
                 k.vfs_router_arc().add_mount("/proc", "root", None, false);
                 let handle = k
                     .enlist_hook_only_service("mailbox-stamping")
@@ -518,7 +531,7 @@ mod tests {
         let (_kernel, app) = fixture_with_kernel(&[("ethan", "hunter2")]);
         let token = login_and_get_token(&app, "ethan", "hunter2").await;
 
-        // createRoom binds /agents/human-bob/chat-with-me.
+        // createRoom binds the conversation with human-bob.
         let (status, body) = json_request(
             &app,
             Method::POST,
@@ -531,7 +544,7 @@ mod tests {
         let room_id = body["room_id"].as_str().unwrap().to_string();
         assert_eq!(
             room_id,
-            encode_room_id("/agents/human-bob/chat-with-me", SERVER)
+            encode_room_id(&transcript_with("human-bob"), SERVER)
         );
 
         // Send a message — kernel stamps `from` from the resolved
@@ -584,7 +597,7 @@ mod tests {
     async fn room_state_returns_synthesised_create_and_member_events() {
         let (_kernel, app) = fixture_with_kernel(&[("ethan", "hunter2")]);
         let token = login_and_get_token(&app, "ethan", "hunter2").await;
-        let room_id = encode_room_id("/agents/human-bob/chat-with-me", SERVER);
+        let room_id = encode_room_id(&transcript_with("human-bob"), SERVER);
 
         let uri = format!("/_matrix/client/v3/rooms/{room_id}/state");
         let (status, body) = json_request(&app, Method::GET, &uri, &token, None).await;
@@ -604,7 +617,7 @@ mod tests {
     async fn room_state_event_filters_by_type_and_key() {
         let (_kernel, app) = fixture_with_kernel(&[("ethan", "hunter2")]);
         let token = login_and_get_token(&app, "ethan", "hunter2").await;
-        let room_id = encode_room_id("/agents/human-bob/chat-with-me", SERVER);
+        let room_id = encode_room_id(&transcript_with("human-bob"), SERVER);
 
         let uri =
             format!("/_matrix/client/v3/rooms/{room_id}/state/m.room.member/@ethan:nexus.local");
@@ -626,7 +639,7 @@ mod tests {
     async fn joined_members_returns_resolving_user() {
         let (_kernel, app) = fixture_with_kernel(&[("ethan", "hunter2")]);
         let token = login_and_get_token(&app, "ethan", "hunter2").await;
-        let room_id = encode_room_id("/agents/human-bob/chat-with-me", SERVER);
+        let room_id = encode_room_id(&transcript_with("human-bob"), SERVER);
 
         let uri = format!("/_matrix/client/v3/rooms/{room_id}/joined_members");
         let (status, body) = json_request(&app, Method::GET, &uri, &token, None).await;
@@ -639,7 +652,7 @@ mod tests {
     async fn join_and_leave_validate_room_id_but_dont_persist() {
         let (_kernel, app) = fixture_with_kernel(&[("ethan", "hunter2")]);
         let token = login_and_get_token(&app, "ethan", "hunter2").await;
-        let room_id = encode_room_id("/agents/human-bob/chat-with-me", SERVER);
+        let room_id = encode_room_id(&transcript_with("human-bob"), SERVER);
 
         let join_uri = format!("/_matrix/client/v3/rooms/{room_id}/join");
         let (status, body) = json_request(&app, Method::POST, &join_uri, &token, None).await;

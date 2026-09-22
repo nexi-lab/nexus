@@ -1,4 +1,4 @@
-//! Matrix Client-Server v3 adapter — exposes nexus chat-with-me
+//! Matrix Client-Server v3 adapter — exposes nexus conversation
 //! DT_STREAMs as Matrix rooms so stock chat clients (Element,
 //! FluffyChat, Cinny) participate in nexus conversations without a
 //! bespoke client. End-state spec lives in

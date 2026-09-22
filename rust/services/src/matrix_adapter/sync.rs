@@ -281,6 +281,10 @@ mod tests {
             .get_or_init(|| {
                 let k = Arc::new(Kernel::new());
                 k.vfs_router_arc().add_mount("/agents", "root", None, false);
+                // A transcript lives under `/conversations`; unmounted it falls back
+                // to the root zone and the room reads nothing back.
+                k.vfs_router_arc()
+                    .add_mount("/conversations", "root", None, false);
                 k.vfs_router_arc().add_mount("/proc", "root", None, false);
                 let handle = k
                     .enlist_hook_only_service("mailbox-stamping")

@@ -101,6 +101,9 @@ pub async fn upload<K: kernel::kernel::syscall::KernelSyscall>(
             context_zone_id: None,
             zone_perms: vec![],
             propagates_cross_node: false,
+            // The adapter itself, not a caller arriving through another
+            // organisation's CA — containment short-circuits on `None`.
+            trust_domain: None,
         };
         // Plant a DT_STREAM at the media path big enough to hold the
         // upload, then push the bytes as a single entry. DT_STREAM is
@@ -220,6 +223,9 @@ pub async fn download<K: kernel::kernel::syscall::KernelSyscall>(
                 context_zone_id: None,
                 zone_perms: vec![],
                 propagates_cross_node: false,
+                // The adapter itself, not a caller arriving through another
+                // organisation's CA — containment short-circuits on `None`.
+                trust_domain: None,
             };
             let read_result =
                 kernel_for_read.sys_read(&media_path_for_read, &ctx, /* timeout_ms */ 0, 0);

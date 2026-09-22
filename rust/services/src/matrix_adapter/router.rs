@@ -85,7 +85,7 @@ pub fn build_router<K: kernel::kernel::syscall::KernelSyscall>(state: AdapterSta
 
     // Token-protected. `whoami` is the canonical "is my token still
     // valid?" probe; `logout` invalidates the token in the backend;
-    // the rooms surface routes every chat-with-me read/write through
+    // the rooms surface routes every transcript read/write through
     // the kernel.
     let protected = Router::new()
         .route("/_matrix/client/v3/account/whoami", get(whoami))

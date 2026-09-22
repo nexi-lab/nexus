@@ -3,7 +3,7 @@
 //! Per integration doc §4.2 the adapter translates between Matrix
 //! Persistent Data Units (the wire shape Matrix clients send and
 //! receive over `/send` and `/sync`) and the chat envelope JSON the
-//! kernel persists in chat-with-me DT_STREAMs. Both sides are JSON
+//! kernel persists in conversation transcripts. Both sides are JSON
 //! and the field mapping is small enough to do field-by-field on the
 //! hot path:
 //!

@@ -63,7 +63,8 @@ pub mod transport;
 // without knowing the module split — the split is an internal
 // organisation, not a public API contract.
 pub use delegation::{
-    DelegationError, SearchDelegation, DEFAULT_TTL_SECONDS, SEARCH_DELEGATION_METHODS,
+    DelegationError, SearchDelegation, DEFAULT_TTL_SECONDS, DELEGATION_METADATA_KEY,
+    SEARCH_DELEGATION_METHODS,
 };
 pub use federated::{is_all_peers_failed, FederatedSearchResponse, ZoneFailure};
 pub use fusion::{rrf_multi_fusion, FusionConfig, FusionMethod, RRF_TOP1_BONUS, RRF_TOP3_BONUS};

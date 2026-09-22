@@ -50,20 +50,12 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use nexus_federated_search::{BackendError, RemoteSearchBackend, SearchRequest};
 use nexus_search_common::transport::PeerChannelCache;
-use nexus_search_common::{Hit, SearchDelegation};
+use nexus_search_common::{Hit, SearchDelegation, DELEGATION_METADATA_KEY};
 use tonic::metadata::MetadataValue;
 
 use crate::backends::proto_bridge::hit_from_proto;
 use crate::search_proto::search_service_client::SearchServiceClient;
 use crate::search_proto::{QueryRequest, QueryType};
-
-/// gRPC metadata key the wire uses for the on-the-wire
-/// [`SearchDelegation`] blob.  `-bin` suffix per gRPC convention —
-/// tonic transparently base64-encodes / decodes so the caller sees
-/// raw bytes on both sides.  Kept as a `pub const` because the
-/// servicer-side extractor (stage 3) needs to read the exact same
-/// key.
-pub const DELEGATION_METADATA_KEY: &str = "x-nexus-search-delegation-bin";
 
 /// Dials peer daemons over tonic, stamps a [`SearchDelegation`] on
 /// every leg.  Cheap to clone — the underlying
@@ -562,7 +554,15 @@ mod tests {
         // `MetadataValue::from_bytes` + `insert_bin` require.  A
         // typo here would silently break the wire (tonic would
         // route the value through the ASCII path, base64 gets
-        // double-encoded, receiver's decode fails).
+        // double-encoded, receiver's decode fails).  Also
+        // regression-pins the const's location (shared in
+        // nexus-search-common so the servicer-side extractor reads
+        // through the same symbol).
         assert!(DELEGATION_METADATA_KEY.ends_with("-bin"));
+        assert_eq!(
+            DELEGATION_METADATA_KEY,
+            nexus_search_common::DELEGATION_METADATA_KEY,
+            "the crate-local re-export must match the SSOT const",
+        );
     }
 }

@@ -3861,6 +3861,37 @@ impl SearchService for SearchServiceImpl {
         &self,
         request: Request<QueryRequest>,
     ) -> Result<Response<QueryResponse>, Status> {
+        // Cross-daemon SearchDelegation gate.  Runs FIRST because
+        // an invalid delegation MUST refuse before any work — a
+        // leaked or expired credential cannot slip through by
+        // riding on an otherwise-well-formed request.  A missing
+        // delegation (`NoDelegation`) is the normal single-daemon
+        // path and falls through untouched.  A valid delegation
+        // logs the source-side subject; the search itself continues
+        // through the existing pipeline unchanged (subject-based
+        // authorisation happens at kernel-tier ReBAC checks that
+        // sit above this handler — the gate here is purely a
+        // credential-freshness + zone-allowlist + method-allowlist
+        // check on the delegation itself).
+        match crate::delegation_gate::extract_and_validate(
+            &request,
+            "search",
+            crate::service::resolve_zone(&request.get_ref().zone_id),
+        ) {
+            Ok(crate::delegation_gate::GateOutcome::NoDelegation) => {}
+            Ok(crate::delegation_gate::GateOutcome::Accepted { delegation }) => {
+                tracing::info!(
+                    delegation_id = %delegation.delegation_id,
+                    source_zone_id = %delegation.source_zone_id,
+                    subject_type = %delegation.subject.0,
+                    subject_id = %delegation.subject.1,
+                    zone_id = %request.get_ref().zone_id,
+                    "search-plugin: accepted SearchDelegation from peer daemon",
+                );
+            }
+            Err(status) => return Err(status),
+        }
+
         // Outer-middleware guard.  Both peer fan-out and LLM query
         // expansion are outer-most wrappers that MUST NOT run when
         // this Query is an internal server-to-server call (either

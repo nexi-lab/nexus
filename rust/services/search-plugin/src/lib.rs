@@ -56,6 +56,11 @@ pub mod ann_flush;
 pub mod ann_index;
 pub mod chunker;
 pub mod contextual_chunker;
+/// Servicer-side extract + validation of the `SearchDelegation` a
+/// peer daemon stamps on `SearchService.Query` metadata.  See the
+/// module docstring for the caller contract (used by
+/// `SearchServiceImpl::query`).
+pub mod delegation_gate;
 pub mod embed_cache;
 pub mod embedder;
 pub mod fts_index;

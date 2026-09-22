@@ -29,6 +29,18 @@ use serde::{Deserialize, Serialize};
 /// dispatch table — a leaked delegation cannot be widened.
 pub const SEARCH_DELEGATION_METHODS: &[&str] = &["search", "semantic_search"];
 
+/// gRPC metadata key both the source-side stamper
+/// (`nexus-http-api::backends::tonic_remote`) and the destination-
+/// side extractor (`nexus-search-plugin::delegation_gate`) key on.
+/// `-bin` suffix per the gRPC metadata spec — tonic transparently
+/// base64-encodes / decodes so both sides see raw JSON bytes.
+///
+/// Kept next to [`SearchDelegation`] itself so a rename lands in
+/// ONE place; a caller reading the wire needs both symbols and
+/// pairing them here removes the "which crate holds the key
+/// string" question.
+pub const DELEGATION_METADATA_KEY: &str = "x-nexus-search-delegation-bin";
+
 /// TTL a delegation carries when the caller does not override it.
 /// Matches the Python contract so a Python-to-Rust cluster does not
 /// see a policy skew mid-migration.

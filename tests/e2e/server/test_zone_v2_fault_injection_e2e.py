@@ -32,7 +32,6 @@ No SQL inserts, no direct service calls — only real HTTP to real processes.
 from __future__ import annotations
 
 import os
-import socket
 import subprocess
 import sys
 import threading
@@ -41,6 +40,8 @@ from pathlib import Path
 from shutil import which
 
 import httpx
+
+from tests.e2e.conftest import find_free_port
 
 _SRC = Path(__file__).resolve().parents[2].parents[1] / "src"
 
@@ -59,6 +60,8 @@ class ServerHarness:
         self.api_key = self._mint_key()
         self.proc: subprocess.Popen | None = None
         self.port = 0
+        self.stdout_lines: list[str] = []
+        self.stderr_lines: list[str] = []
 
     # ── key material ────────────────────────────────────────────────────────
     def _kernel_binary(self) -> str:
@@ -138,10 +141,7 @@ class ServerHarness:
         """
         last_tail = ""
         for _attempt in range(1, attempts + 1):
-            port = 0
-            with socket.socket() as s:
-                s.bind(("127.0.0.1", 0))
-                port = s.getsockname()[1]
+            port = find_free_port(3)
             self.proc = subprocess.Popen(
                 [
                     sys.executable,
@@ -162,6 +162,9 @@ class ServerHarness:
             )
             ready = threading.Event()
             tail: list[str] = []
+            stdout: list[str] = []
+            self.stderr_lines = tail
+            self.stdout_lines = stdout
 
             def drain(stream, _tail=tail, _ready=ready) -> None:  # noqa: B008
                 for line in iter(stream.readline, b""):
@@ -171,22 +174,49 @@ class ServerHarness:
                         _ready.set()
 
             threading.Thread(target=drain, args=(self.proc.stderr,), daemon=True).start()
-            threading.Thread(target=drain, args=(self.proc.stdout,), daemon=True).start()
+            threading.Thread(
+                target=drain, args=(self.proc.stdout, stdout, threading.Event()), daemon=True
+            ).start()
             if ready.wait(120):
                 self.port = port
                 return port
             last_tail = "".join(tail[-20:])
             self.kill()
-        raise AssertionError(
-            f"server did not become ready after {attempts} attempts: {last_tail}"
-        )
+        raise AssertionError(f"server did not become ready after {attempts} attempts: {last_tail}")
 
     def kill(self) -> None:
+        owned_kernel_pids: list[int] = []
         if self.proc and self.proc.poll() is None:
+            try:
+                children = subprocess.run(
+                    [
+                        "powershell",
+                        "-NoProfile",
+                        "-Command",
+                        "Get-CimInstance Win32_Process "
+                        f"| Where-Object {{ $_.ParentProcessId -eq {self.proc.pid} "
+                        "-and $_.Name -eq 'nexusd-cluster.exe' }} "
+                        "| Select-Object -ExpandProperty ProcessId",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                owned_kernel_pids = [
+                    int(line.strip())
+                    for line in children.stdout.splitlines()
+                    if line.strip().isdigit()
+                ]
+            except (OSError, subprocess.SubprocessError, ValueError):
+                owned_kernel_pids = []
             subprocess.run(
                 ["taskkill", "/PID", str(self.proc.pid), "/T", "/F"], capture_output=True
             )
             self.proc.wait(timeout=30)
+        for child_pid in owned_kernel_pids:
+            subprocess.run(
+                ["taskkill", "/PID", str(child_pid), "/F"], capture_output=True, check=False
+            )
         # Belt for leaked kernels: `taskkill /T` relies on the process-tree
         # relationship, and a kernel spawned early in the server's lifespan can
         # survive it. An orphaned nexusd-cluster keeps ports/files busy and
@@ -264,7 +294,15 @@ def test_fault_classes_1_2_3_create_crashed_mid_flight_recovers_exactly_once(tmp
         with harness.client() as client:
             harness.poke_until_up(client, headers)
             op = _wait_operation(client, op_id, headers)
-            assert op["state"] == "succeeded", op
+            diagnostics = "".join(
+                line
+                for line in harness.stderr_lines
+                if any(
+                    marker in line.lower()
+                    for marker in ("error", "failed", "exception", "runtime unavailable")
+                )
+            )
+            assert op["state"] == "succeeded", f"operation={op}\nserver diagnostics:\n{diagnostics}"
 
             # Exactly once: the zone exists once, and replaying the create
             # with the SAME idempotency key returns the SAME operation.

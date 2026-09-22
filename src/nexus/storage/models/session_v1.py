@@ -80,11 +80,15 @@ class SessionRuntimeRunModel(Base):
     __table_args__ = (
         Index("ix_runtime_runs_session", "session_id"),
         Index("ix_runtime_runs_zone", "execution_zone_id"),
+        Index("ix_runtime_runs_attempt", "attempt_id"),
     )
 
     pid: Mapped[str] = mapped_column(String(64), primary_key=True)
     session_id: Mapped[str] = mapped_column(
         String(64), ForeignKey("sessions.session_id", ondelete="RESTRICT"), nullable=False
+    )
+    attempt_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("task_attempts.attempt_id", ondelete="RESTRICT"), nullable=True
     )
     execution_zone_id: Mapped[str] = mapped_column(String(64), nullable=False)
     delegation_ref: Mapped[str | None] = mapped_column(String(128), nullable=True)

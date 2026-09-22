@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.sudo.dev/schemas/task/v1/task-execution-resolution.schema.json",
+  "title": "TaskExecutionResolution",
+  "description": "P1b immutable decision record for an implicit runtime task.",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "api_version": { "const": "task.sudo.dev/v1" },
+        "kind": { "const": "TaskExecutionResolution" },
+        "resolution_id": { "type": "string", "minLength": 1 },
+        "task_id": { "type": "string", "minLength": 1 },
+        "status": { "const": "accepted" },
+        "attempt_id": { "type": "string", "minLength": 1 },
+        "execution_zone_id": {
+          "$ref": "https://nexus-vfs.dev/contracts/zone-id/existing-zone-id-ref.schema.gen.json"
+        },
+        "reason_code": { "type": "string", "minLength": 1 },
+        "reason": { "type": "string", "minLength": 1 },
+        "policy_version": { "type": "string", "minLength": 1 },
+        "decided_at": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "api_version",
+        "kind",
+        "resolution_id",
+        "task_id",
+        "status",
+        "attempt_id",
+        "execution_zone_id",
+        "reason_code",
+        "reason",
+        "policy_version",
+        "decided_at"
+      ],
+      "additionalProperties": true
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": { "const": "task.sudo.dev/v1" },
+        "kind": { "const": "TaskExecutionResolution" },
+        "resolution_id": { "type": "string", "minLength": 1 },
+        "task_id": { "type": "string", "minLength": 1 },
+        "status": { "const": "rejected" },
+        "reason_code": { "type": "string", "minLength": 1 },
+        "reason": { "type": "string", "minLength": 1 },
+        "policy_version": { "type": "string", "minLength": 1 },
+        "decided_at": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "api_version",
+        "kind",
+        "resolution_id",
+        "task_id",
+        "status",
+        "reason_code",
+        "reason",
+        "policy_version",
+        "decided_at"
+      ],
+      "additionalProperties": true
+    }
+  ]
+}

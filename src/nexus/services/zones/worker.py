@@ -41,12 +41,14 @@ class ZoneOperationWorker:
         runtime: ZoneRuntimePort,
         service: Any,
         session_runtime: Any = None,
+        session_tasks: Any = None,
         runtime_dependency_validator: Callable[[str, str, str, int], bool] | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._runtime = runtime
         self._service = service  # ZoneApplicationService, for saga continuation
         self._session_runtime = session_runtime
+        self._session_tasks = session_tasks
         self._runtime_dependency_validator = runtime_dependency_validator
 
     # ── outbox pumping ───────────────────────────────────────────────────────
@@ -60,6 +62,8 @@ class ZoneOperationWorker:
             self._session_runtime.revalidate_runtime_dependencies(
                 self._runtime_dependency_validator
             )
+            if self._session_tasks is not None:
+                self._session_tasks.park_attempts_for_revocation()
         return processed
 
     def _pump_outbox(self, model: type[Any], handler: Callable[[dict[str, Any]], bool]) -> int:
@@ -198,6 +202,8 @@ class ZoneOperationWorker:
                     grant_ref=str(grant_id),
                     authorization_epoch=int(event.get("authorization_epoch") or 0),
                 )
+                if self._session_tasks is not None:
+                    self._session_tasks.park_attempts_for_revocation()
             return True
         # activation: epoch advances only when the mandatory projections exist
         return bool(self._service.complete_grant_projection(grant_id=grant_id))

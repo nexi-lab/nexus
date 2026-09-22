@@ -74,18 +74,23 @@ pub use search_backend::{BackendError, SearchBackend};
 /// Concrete federated dispatcher this crate wires into
 /// [`AppState::federated`] under `--features rebac`.
 ///
-/// The generic parameter is fixed: [`PluginLocalSearchBackend`] +
-/// [`NoOpRemoteSearchBackend`] behind [`RoutingBackend`].  Every
-/// zone the caller can read from routes to this daemon's OWN plugin
-/// today — cross-daemon dial is a follow-up when a
-/// [`TonicRemoteSearchBackend`] impl lands (see the module doc on
-/// [`backends`]).  The type alias means swapping the remote backend
-/// then is one line here + one line at the composition root.
+/// The generic parameter is fixed:
+/// [`crate::backends::plugin_local::PluginLocalSearchBackend`] +
+/// [`crate::backends::tonic_remote::TonicRemoteSearchBackend`] behind
+/// [`nexus_federated_search::RoutingBackend`].  A zone the caller
+/// can read from routes local unless the
+/// [`nexus_search_common::ZoneSearchRegistry`] hands the router a
+/// per-zone remote target — in which case
+/// [`crate::backends::tonic_remote::TonicRemoteSearchBackend`] dials
+/// the peer daemon over tonic with a [`nexus_search_common::SearchDelegation`]
+/// stamped onto request metadata.  A composition root that keeps the
+/// registry empty (single-daemon deployment) never touches the
+/// remote path.
 #[cfg(feature = "rebac")]
 pub type DefaultFederatedDispatcher = nexus_federated_search::FederatedSearchDispatcher<
     nexus_federated_search::RoutingBackend<
         crate::backends::plugin_local::PluginLocalSearchBackend,
-        nexus_federated_search::NoOpRemoteSearchBackend,
+        crate::backends::tonic_remote::TonicRemoteSearchBackend,
     >,
 >;
 
@@ -189,14 +194,22 @@ impl AppState {
         #[cfg(feature = "rebac")]
         let federated = {
             use nexus_federated_search::{
-                DispatcherConfig, FederatedSearchDispatcher, NoOpRemoteSearchBackend,
-                RoutingBackend,
+                DispatcherConfig, FederatedSearchDispatcher, RoutingBackend,
             };
+            use nexus_search_common::transport::{PeerChannelCache, PeerChannelConfig};
             use nexus_search_common::InMemoryZoneSearchRegistry;
             let local = Arc::new(
                 crate::backends::plugin_local::PluginLocalSearchBackend::new(search.clone()),
             );
-            let remote = Arc::new(NoOpRemoteSearchBackend);
+            // Real tonic-remote backend backed by a fresh
+            // `PeerChannelCache`.  Never dialed under `for_tests`
+            // because the registry below is empty — every zone
+            // routes local via `RoutingBackend`.  Wired here so a
+            // test that populates the registry gets end-to-end
+            // remote dispatch without swapping the backend type.
+            let peer_cache = Arc::new(PeerChannelCache::new(PeerChannelConfig::default()));
+            let remote =
+                Arc::new(crate::backends::tonic_remote::TonicRemoteSearchBackend::new(peer_cache));
             // Empty registry — every zone falls through to the local
             // backend.  Real deployments populate this from a
             // per-zone plugin-target env var (see the composition
@@ -487,20 +500,27 @@ pub fn install_impl(
     let accessible_zones = Arc::new(nexus_rebac::list_zones::AccessibleZonesCache::new());
     #[cfg(feature = "rebac")]
     let federated = {
-        use nexus_federated_search::{
-            DispatcherConfig, FederatedSearchDispatcher, NoOpRemoteSearchBackend, RoutingBackend,
-        };
+        use nexus_federated_search::{DispatcherConfig, FederatedSearchDispatcher, RoutingBackend};
+        use nexus_search_common::transport::{PeerChannelCache, PeerChannelConfig};
         use nexus_search_common::InMemoryZoneSearchRegistry;
         let local =
             Arc::new(crate::backends::plugin_local::PluginLocalSearchBackend::new(search.clone()));
-        let remote = Arc::new(NoOpRemoteSearchBackend);
+        // Real tonic-remote backend backed by a fresh
+        // `PeerChannelCache` — one Channel-per-peer cache the
+        // `RoutingBackend` uses when the `ZoneSearchRegistry` hands
+        // it a remote target.  Never dialed today because the
+        // registry starts empty; wired so a future deployment that
+        // populates the registry (env var, kernel-provided config)
+        // gets end-to-end cross-daemon dispatch without a
+        // composition-root refactor.
+        let peer_cache = Arc::new(PeerChannelCache::new(PeerChannelConfig::default()));
+        let remote =
+            Arc::new(crate::backends::tonic_remote::TonicRemoteSearchBackend::new(peer_cache));
         // Empty registry — every zone the caller reads from routes
-        // through the local plugin.  The cross-daemon transport is a
-        // follow-up (see `crate::backends`); wiring the empty
-        // registry today means a multi-zone caller against a
-        // single-daemon deployment gets fanout + fusion over the one
-        // plugin, which IS the correct behaviour for the current
-        // production topology (one daemon per site).
+        // through the local plugin.  Populating this from a
+        // per-zone plugin-target env var (or a kernel-tier
+        // discovery hook) unlocks the cross-daemon path — the
+        // registry is the ONE knob.
         let registry: Arc<InMemoryZoneSearchRegistry> = Arc::new(InMemoryZoneSearchRegistry::new());
         let routing = RoutingBackend::new(
             local,

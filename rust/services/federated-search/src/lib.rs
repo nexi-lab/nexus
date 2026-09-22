@@ -50,7 +50,11 @@ use tokio::sync::Semaphore;
 use tracing::warn;
 
 pub mod backend;
-pub use backend::{BackendError, LocalSearchBackend, SearchRequest};
+pub mod routing;
+pub use backend::{
+    BackendError, LocalSearchBackend, NoOpRemoteSearchBackend, RemoteSearchBackend, SearchRequest,
+};
+pub use routing::RoutingBackend;
 
 /// Knobs a caller may tune per dispatcher instance.  Defaults match
 /// the Python `FederatedSearchConfig` so a Python-to-Rust swap does
@@ -138,10 +142,17 @@ impl<B: LocalSearchBackend + 'static> FederatedSearchDispatcher<B> {
     pub async fn search(
         &self,
         subject: Subject<'_>,
-        req: SearchRequest,
+        mut req: SearchRequest,
         zone_filter: Option<&[String]>,
     ) -> FederatedSearchResponse {
         let start = Instant::now();
+
+        // Stamp the subject onto the request so the routing
+        // backend has it available for delegation minting on
+        // remote legs (see `RoutingBackend::mint_delegation`).
+        // Cheap owned strings — the per-leg spawn clones the
+        // request anyway.
+        req.subject = (subject.0.to_string(), subject.1.to_string());
 
         // 1. Zone discovery.  Failure here is unusual (store
         // unreachable); we treat it as "no accessible zones" — the
@@ -365,6 +376,10 @@ mod tests {
             search_type: "hybrid".into(),
             limit: 10,
             path_filter: None,
+            // Overwritten by the dispatcher before spawning legs
+            // (see `FederatedSearchDispatcher::search`) — the
+            // fixture value is a placeholder proving that path.
+            subject: (String::new(), String::new()),
         }
     }
 
@@ -489,6 +504,51 @@ mod tests {
                 .all(|h| h.zone_id.as_deref() == Some("eng")),
             "legal must not appear — token does not grant it",
         );
+    }
+
+    #[tokio::test]
+    async fn dispatcher_stamps_the_caller_subject_onto_every_leg_request() {
+        // Regression pin for PR 4: `RoutingBackend::mint_delegation`
+        // reads `req.subject` when producing a per-remote-leg
+        // credential — the dispatcher MUST stamp the caller's
+        // subject before spawning legs, or the credential lands
+        // with the fixture's empty subject and audit trails record
+        // the wrong actor.
+        use std::sync::Mutex;
+
+        #[derive(Default)]
+        struct SubjectRecorder {
+            seen: Mutex<Vec<(String, String)>>,
+        }
+        #[async_trait]
+        impl LocalSearchBackend for SubjectRecorder {
+            async fn search_zone(
+                &self,
+                _zone_id: &str,
+                req: &SearchRequest,
+            ) -> Result<Vec<Hit>, BackendError> {
+                self.seen.lock().unwrap().push(req.subject.clone());
+                Ok(vec![])
+            }
+        }
+
+        let rebac = Arc::new(InMemoryReBACTupleStore::new());
+        grant_zone(&rebac, "eng", "alice");
+        grant_zone(&rebac, "legal", "alice");
+        let recorder = Arc::new(SubjectRecorder::default());
+        let d = FederatedSearchDispatcher::new(
+            Arc::clone(&recorder),
+            rebac,
+            Arc::new(AccessibleZonesCache::new()),
+            Arc::new(InMemoryZoneSearchRegistry::new()),
+            DispatcherConfig::default(),
+        );
+        let _ = d.search(("user", "alice"), req(), None).await;
+        let seen = recorder.seen.lock().unwrap();
+        assert_eq!(seen.len(), 2);
+        for subj in seen.iter() {
+            assert_eq!(subj, &("user".to_string(), "alice".to_string()));
+        }
     }
 
     #[tokio::test]

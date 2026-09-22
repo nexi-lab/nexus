@@ -86,6 +86,7 @@ def arm_zone_services(
         if fs is None:  # pragma: no cover - guarded by composite arming
             raise RuntimeError("zone filesystem unavailable")
         from nexus.contracts.types import OperationContext
+        from nexus.lib.zone_scoping import scope_single_path
 
         ctx = OperationContext(
             user_id="session-runtime",
@@ -96,12 +97,17 @@ def arm_zone_services(
             is_admin=False,
             groups=[],
         )
-        fs.write(path=path, buf=buf, context=ctx)
+        scoped_path = scope_single_path(path, f"/zone/{zone_id}", zone_id)
+        fs.write(path=scoped_path, buf=buf, context=ctx)
         return len(buf)
 
     from nexus.services.zones.session_runtime import SessionRuntimeService
+    from nexus.services.zones.session_tasks import SessionTaskService
 
     app.state.session_runtime_service = SessionRuntimeService(
+        session_factory, fs_writer=_zone_fs_writer if fs is not None else None
+    )
+    app.state.session_task_service = SessionTaskService(
         session_factory, fs_writer=_zone_fs_writer if fs is not None else None
     )
 
@@ -174,6 +180,7 @@ def zone_worker(app: FastAPI) -> Any:
         app.state.zone_runtime,
         service,
         session_runtime=app.state.session_runtime_service,
+        session_tasks=app.state.session_task_service,
         runtime_dependency_validator=runtime_dependency_is_current,
     )
 

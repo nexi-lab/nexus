@@ -40,6 +40,7 @@ from nexus.storage.models import (
     SessionModel,
     SessionRuntimeRunModel,
     SessionZoneDependencyModel,
+    TaskAttemptModel,
     ZoneModel,
 )
 
@@ -88,6 +89,8 @@ class SessionView:
 class RunView:
     pid: str
     session_id: str
+    task_id: str | None
+    attempt_id: str | None
     execution_zone_id: str
     state: str
     delegation_ref: str | None
@@ -104,6 +107,8 @@ class RunView:
             "kind": "RuntimeRun",
             "pid": self.pid,
             "session_id": self.session_id,
+            "task_id": self.task_id,
+            "attempt_id": self.attempt_id,
             "execution_zone_id": self.execution_zone_id,
             "state": self.state,
             "delegation_ref": self.delegation_ref,
@@ -344,6 +349,7 @@ class SessionRuntimeService:
         authorization_epoch: int | None = None,
         decision_reason: str | None = None,
         policy_version: str | None = None,
+        attempt_id: str | None = None,
         zone_active_check: Any = None,
     ) -> RunView:
         """Register a run; solidify execution_zone_id and dependency refs.
@@ -391,6 +397,7 @@ class SessionRuntimeService:
             run = SessionRuntimeRunModel(
                 pid=pid,
                 session_id=session_id,
+                attempt_id=attempt_id,
                 execution_zone_id=execution_zone,
                 delegation_ref=delegation_ref,
                 grant_ref=grant_ref,
@@ -415,7 +422,7 @@ class SessionRuntimeService:
                 session.commit()
             except IntegrityError as exc:
                 raise SessionRuntimeError("RUN_ALREADY_EXISTS", str(exc.orig), 409) from exc
-            return self._run_view(run)
+            return self._run_view(session, run)
 
     def resume_run(
         self,
@@ -426,6 +433,7 @@ class SessionRuntimeService:
         delegation_ref: str | None = None,
         grant_ref: str | None = None,
         authorization_epoch: int | None = None,
+        attempt_id: str | None = None,
         zone_active_check: Any = None,
     ) -> RunView:
         """Create a new PID without allowing execution-zone drift.
@@ -470,6 +478,7 @@ class SessionRuntimeService:
             authorization_epoch=authorization_epoch,
             decision_reason=decision_reason,
             policy_version=policy_version,
+            attempt_id=attempt_id,
             zone_active_check=zone_active_check,
         )
 
@@ -496,7 +505,7 @@ class SessionRuntimeService:
             run = session.get(SessionRuntimeRunModel, pid)
             if run is None:
                 raise SessionRuntimeError("RUN_NOT_FOUND", f"run {pid} not found", 404)
-            return self._run_view(run)
+            return self._run_view(session, run)
 
     def cancel_run(self, *, pid: str, mode: str = "terminate") -> RunView:
         """Cancel a run. ``terminate`` marks it terminated; ``pending`` parks
@@ -512,7 +521,7 @@ class SessionRuntimeService:
             if mode == "terminate":
                 run.ended_at = _utcnow()
             session.commit()
-            return self._run_view(run)
+            return self._run_view(session, run)
 
     def runs_depending_on(self, *, zone_id: str, grant_ref: str | None = None) -> list[RunView]:
         """Dependency-index query: active runs bound to a zone/grant — the
@@ -527,7 +536,7 @@ class SessionRuntimeService:
             if grant_ref is not None:
                 stmt = stmt.where(SessionRuntimeRunModel.grant_ref == grant_ref)
             runs = session.execute(stmt).scalars().all()
-            return [self._run_view(r) for r in runs]
+            return [self._run_view(session, r) for r in runs]
 
     def park_runs_for_revocation(
         self, *, zone_id: str, grant_ref: str, authorization_epoch: int
@@ -625,10 +634,16 @@ class SessionRuntimeService:
             return parked
 
     @staticmethod
-    def _run_view(run: SessionRuntimeRunModel) -> RunView:
+    def _run_view(session: Session, run: SessionRuntimeRunModel) -> RunView:
+        task_id = None
+        if run.attempt_id is not None:
+            attempt = session.get(TaskAttemptModel, run.attempt_id)
+            task_id = attempt.task_id if attempt is not None else None
         return RunView(
             pid=run.pid,
             session_id=run.session_id,
+            task_id=task_id,
+            attempt_id=run.attempt_id,
             execution_zone_id=run.execution_zone_id,
             state=run.state,
             delegation_ref=run.delegation_ref,

@@ -3132,9 +3132,12 @@ dependencies = [
 name = "nexus-search-common"
 version = "0.1.0"
 dependencies = [
+ "dashmap",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
+ "tokio",
+ "tonic 0.14.6",
 ]
 
 [[package]]
@@ -3151,6 +3154,7 @@ dependencies = [
  "libloading 0.8.9",
  "mimalloc",
  "nexus-plugin-abi",
+ "nexus-search-common",
  "ort",
  "parking_lot",
  "prost 0.14.4",

@@ -2,9 +2,10 @@
 # mailbox, hosted in the `nexusd-cluster-cohost` daemon (the assembly binary
 # built `--features cohost-sudocode`). Proves the daemon path end to end:
 #   Call managed_agent.start_session_v1 → SudoCodeSpawnAdapter.spawn →
-#   spawn_managed_agent → agent binds A2aInbox /agents/<name>/chat-with-me →
-#   reads a seeded MailboxEnvelope → REAL LLM turn → send_message reply to the
-#   peer's A2A inbox.
+#   spawn_managed_agent → agent discovers its peers via
+#   /agents/<name>/conversations/ → tails the shared transcript → reads a
+#   seeded MailboxEnvelope → REAL LLM turn → send_message reply into the same
+#   conversation.
 #
 # The Docker counterpart of the in-process unit proof
 # (sudocode `tools/tests/cohost_live_llm.rs`) — same factory, but over a real

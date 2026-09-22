@@ -177,7 +177,7 @@ WantedBy=multi-user.target
 
 ### What cross-org authN does on connect
 
-A foreign agent (CA_B-signed cert) dials `broker.sudoprivacy.com:8443` → the broker validates its cert against the registered CA_B → `classify_peer_cert` resolves it to `{trust_domain}/agent/{name}` (e.g. `sudoedge-dgx-dev/agent/worker`) → the a2a `ForeignAgentMailboxOnly` provider confines it to its `*/chat-with-me` mailbox (can't touch `/proc`, etc.); `MailboxStampingHook` rewrites the envelope `from` to the authenticated id (unforgeable). This is the end-to-end tamper-proof ID. The broker is otherwise a full nexus daemon (VFS, federation zones, agent mint via `auth`, node enroll, the a2a mailbox substrate).
+A foreign agent (CA_B-signed cert) dials `broker.sudoprivacy.com:8443` → the broker validates its cert against the registered CA_B → `classify_peer_cert` resolves it to `{trust_domain}/agent/{name}` (e.g. `sudoedge-dgx-dev/agent/worker`) → the a2a `ForeignAgentMailboxOnly` provider confines it to the conversation transcripts it participates in (can't touch `/proc`, etc.); `MailboxStampingHook` rewrites the envelope `from` to the authenticated id (unforgeable). This is the end-to-end tamper-proof ID. The broker is otherwise a full nexus daemon (VFS, federation zones, agent mint via `auth`, node enroll, the a2a messaging substrate).
 
 ---
 

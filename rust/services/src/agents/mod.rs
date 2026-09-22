@@ -11,9 +11,8 @@
 //!   impls `kernel::core::dispatch::PathResolver`.
 //!
 //! `mailbox_stamping` used to live here; it moved to
-//! `kernel::managed_agent::mailbox_stamping_policy` because the policy
-//! belongs alongside the `ManagedAgentService` that owns the
-//! chat-with-me mailbox surface — it's a managed-agent concern, not
-//! a generic agent-registry concern.
+//! `a2a::mailbox_stamping_policy` because the `from` guarantee belongs to
+//! the A2A substrate every message write converges on — it is not a
+//! generic agent-registry concern.
 
 pub mod status_resolver;

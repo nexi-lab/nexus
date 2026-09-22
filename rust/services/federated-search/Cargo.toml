@@ -30,6 +30,11 @@ thiserror = "1"
 # the timing story is uniform.
 tracing = "0.1"
 
+# Random delegation ids.  v4 only — matches the Python
+# `uuid.uuid4().hex[:12]` shape in `bricks/search/federated_search.py`
+# so mixed-language deployments have one delegation-id form in logs.
+uuid = { version = "1", features = ["v4"] }
+
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "test-util"] }
 # `lib::types::ReBACTuple` — the ReBACTuple type nexus-vfs's tier-

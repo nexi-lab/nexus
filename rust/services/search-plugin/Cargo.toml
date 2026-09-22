@@ -29,6 +29,15 @@ semantic = ["dep:fastembed", "dep:ort"]
 # `declare_service_plugin!` macro + KernelHandle live here.
 nexus-plugin-abi = { workspace = true }
 
+# Shared tonic `Channel`-per-peer cache — the SSOT for cross-daemon
+# dial semantics (TLS opt-in, plaintext-off-loopback refusal,
+# timeouts, sharded Channel cache).  `peer_fanout` uses this; the
+# axum daemon's cross-daemon backend uses it too, so the dial rules
+# stay identical across the two callers.  `transport` feature pulls
+# tonic + dashmap into the search-common crate only for callers who
+# ask.
+nexus-search-common = { path = "../search-common", features = ["transport"] }
+
 # Proto message + tonic server stubs for SearchService.  Generated
 # in build.rs from `../proto/nexus/search/v1/search.proto`.
 prost = { workspace = true }

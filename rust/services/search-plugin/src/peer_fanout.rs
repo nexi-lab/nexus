@@ -29,20 +29,23 @@
 //!
 //! # Transport
 //!
-//! `tonic::transport::Channel` per peer, built on first use and
-//! cached.  A dead peer's channel stays cached — reconnection is
-//! `tonic`'s job under the hood.  TLS is opt-in via
-//! `NEXUS_SEARCH_PEER_TLS=true`; plaintext to a non-loopback peer is
-//! REFUSED unless `NEXUS_SEARCH_ALLOW_INSECURE_PEER=true` per the
-//! standing "refuse plaintext off-loopback" rule.
+//! Delegates every dial + Channel-caching concern to
+//! [`nexus_search_common::transport::PeerChannelCache`] — the shared
+//! SSOT so this dispatcher AND the axum daemon's cross-daemon backend
+//! (nexus-http-api) both dial by ONE set of rules (TLS opt-in,
+//! plaintext-off-loopback refusal, connect + request timeouts,
+//! sharded Channel cache).  TLS is opt-in via `NEXUS_SEARCH_PEER_TLS=true`;
+//! plaintext to a non-loopback peer is REFUSED unless
+//! `NEXUS_SEARCH_ALLOW_INSECURE_PEER=true` — enforced INSIDE the
+//! shared cache, not here.
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use dashmap::DashMap;
-use tonic::transport::{Channel, ClientTlsConfig, Endpoint};
+use nexus_search_common::transport::{DialError, PeerChannelCache, PeerChannelConfig};
+use tonic::transport::Channel;
 
-use crate::peer_registry::{PeerAddress, PeerRegistry};
+use crate::peer_registry::PeerRegistry;
 use crate::search_proto::search_service_client::SearchServiceClient;
 use crate::search_proto::{QueryRequest, QueryResponse, QueryResult};
 
@@ -52,20 +55,23 @@ use crate::search_proto::{QueryRequest, QueryResponse, QueryResult};
 /// [`crate::internal_call::INTERNAL_CALL_HEADER`].
 pub use crate::internal_call::INTERNAL_CALL_HEADER as PEER_FANOUT_MARKER_HEADER;
 
-/// Per-peer dial timeout — the connect side of the gRPC channel.
-/// Kept tight so a hosed peer stops the fan-out fast instead of
-/// stretching the caller's p99.
-const CONNECT_TIMEOUT: Duration = Duration::from_millis(1_500);
-
-/// Per-peer request timeout — the send + response wait side.
-/// Larger than CONNECT so a legitimately heavy semantic query has
-/// room to complete, but still bounded to keep the fan-out latency
-/// predictable.
+/// Per-peer request timeout for the RPC itself — larger than the
+/// shared cache's connect timeout so a legitimately heavy semantic
+/// query has room to complete, but still bounded to keep fan-out
+/// latency predictable.  Applied per-RPC via
+/// [`tonic::Request::set_timeout`] (on top of the cache's
+/// endpoint-level timeout).
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(8);
 
 /// Errors surfaced to callers of [`PeerFanoutDispatcher::query`].
 /// Kept simple — all callers log-and-drop, so the enum is a debugging
 /// aid rather than a control-flow signal.
+///
+/// The dial-time variants ([`PeerFanoutError::BadEndpoint`],
+/// [`PeerFanoutError::PlaintextOffLoopback`], [`PeerFanoutError::ConnectFailed`])
+/// wrap the shared [`nexus_search_common::transport::DialError`] variants
+/// verbatim — the caller-facing shape stays identical to before the
+/// DRY-refactor, only the source module of the underlying enum moved.
 #[derive(Debug, thiserror::Error)]
 pub enum PeerFanoutError {
     /// A peer was configured with a scheme/URL that tonic couldn't
@@ -81,7 +87,7 @@ pub enum PeerFanoutError {
 
     /// Plaintext dial to a non-loopback peer, with no explicit opt-in
     /// via `NEXUS_SEARCH_ALLOW_INSECURE_PEER=true`.  Per the standing
-    /// TLS rule.
+    /// TLS rule; enforced by the shared cache and forwarded here.
     #[error(
         "refusing plaintext dial to non-loopback peer {peer} — set \
          NEXUS_SEARCH_PEER_TLS=true (recommended) or \
@@ -110,26 +116,53 @@ pub enum PeerFanoutError {
     },
 }
 
+impl PeerFanoutError {
+    /// Bridge a shared [`DialError`] into this crate's caller-facing
+    /// enum without losing the `peer`-labelled Display messages the
+    /// pre-refactor codepath emitted.  One place to keep the two
+    /// shapes aligned.
+    fn from_dial(err: DialError) -> Self {
+        match err {
+            DialError::BadEndpoint { target, source } => Self::BadEndpoint {
+                peer: target,
+                source,
+            },
+            DialError::PlaintextOffLoopback { target } => {
+                Self::PlaintextOffLoopback { peer: target }
+            }
+            DialError::ConnectFailed { target, source } => Self::ConnectFailed {
+                peer: target,
+                source,
+            },
+        }
+    }
+}
+
 /// Live peer-fanout dispatcher — one per [`SearchServiceImpl`].
 /// Cheap to construct; expensive work (dialing peers, holding
-/// channels) is lazy and cached.
+/// channels) is delegated to the shared
+/// [`nexus_search_common::transport::PeerChannelCache`].
 pub struct PeerFanoutDispatcher {
     registry: PeerRegistry,
-    /// Per-peer cached `Channel`.  DashMap shards per bucket so
-    /// independent peers dial concurrently — a slow peer's dial
-    /// does not stall a fast peer's cache hit, and readers hold
-    /// their shard's lock for only a hash + clone.  See
-    /// [`Self::get_or_dial`] for the race-vs-starvation trade
-    /// on concurrent misses.
-    channels: DashMap<PeerAddress, Channel>,
+    /// Shared per-peer Channel cache.  Same abstraction the axum
+    /// daemon's cross-daemon backend uses, so a dial-time rules
+    /// tweak lands in ONE place (`nexus_search_common::transport`).
+    channels: PeerChannelCache,
 }
 
 impl PeerFanoutDispatcher {
-    /// Wrap a registry.  No I/O happens here.
+    /// Wrap a registry.  No I/O happens here.  Builds the shared
+    /// [`PeerChannelCache`] against the registry's TLS + insecure
+    /// posture so the two run in lockstep.
     pub fn new(registry: PeerRegistry) -> Self {
+        let config = PeerChannelConfig {
+            require_tls: registry.require_tls(),
+            allow_insecure_peer: registry.allow_insecure_peer(),
+            ..PeerChannelConfig::default()
+        };
         Self {
             registry,
-            channels: DashMap::new(),
+            channels: PeerChannelCache::new(config),
         }
     }
 
@@ -209,71 +242,22 @@ impl PeerFanoutDispatcher {
         out
     }
 
-    /// Lazy channel lookup — dial once per peer, reuse the `Channel`
-    /// forever.  The cache is a [`DashMap`] so independent peer
-    /// lookups never contend, and the read-fast-path holds a per-
-    /// bucket shard lock for the length of a single hash + clone.
-    ///
-    /// Race note: two concurrent misses on the same peer can BOTH
-    /// dial before either publishes.  We accept the extra dial (it
-    /// is bounded by [`CONNECT_TIMEOUT`] and the winner just replaces
-    /// itself in the map) — using [`DashMap::entry`] to serialise
-    /// dials would hold a shard write-lock across an `.await`, which
-    /// would starve every other peer sharing that shard.  Redundant
-    /// dial → transient bandwidth; held lock across await → deadlock
-    /// risk for the sibling peers.  Trade the former.
-    async fn get_or_dial(&self, peer: &PeerAddress) -> Result<Channel, PeerFanoutError> {
-        if let Some(c) = self.channels.get(peer) {
-            return Ok(c.clone());
-        }
-        let channel = self.dial(peer).await?;
-        Ok(self.channels.entry(peer.clone()).or_insert(channel).clone())
-    }
-
-    /// Build a Channel to `peer`, gated by the TLS + loopback rules.
-    async fn dial(&self, peer: &PeerAddress) -> Result<Channel, PeerFanoutError> {
-        let tls = self.registry.require_tls();
-        // Standing rule — plaintext to a non-loopback peer is
-        // REFUSED unless explicitly opted out.  The escape hatch
-        // exists because tests + short-lived dev clusters on the
-        // loopback interface must not fight the gate.
-        if !tls && !peer.is_loopback() && !self.registry.allow_insecure_peer() {
-            return Err(PeerFanoutError::PlaintextOffLoopback {
-                peer: format!("{}:{}", peer.host, peer.port),
-            });
-        }
-        let url = peer.url(tls);
-        let mut endpoint =
-            Endpoint::from_shared(url.clone()).map_err(|e| PeerFanoutError::BadEndpoint {
-                peer: url.clone(),
-                source: e,
-            })?;
-        endpoint = endpoint
-            .connect_timeout(CONNECT_TIMEOUT)
-            .timeout(REQUEST_TIMEOUT)
-            .tcp_keepalive(Some(Duration::from_secs(30)));
-        if tls {
-            // `with_enabled_roots` opts in to the platform trust
-            // roots enabled at build time (webpki-roots on tls-ring)
-            // — the same posture the wider tonic 0.14 tree uses for
-            // outbound clients on this repo.
-            let tls_config = ClientTlsConfig::new().with_enabled_roots();
-            endpoint =
-                endpoint
-                    .tls_config(tls_config)
-                    .map_err(|e| PeerFanoutError::BadEndpoint {
-                        peer: url.clone(),
-                        source: e,
-                    })?;
-        }
-        let channel = endpoint
-            .connect()
+    /// Lazy channel lookup — delegates to the shared
+    /// [`PeerChannelCache`] so the dial rules (TLS, plaintext-off-
+    /// loopback refusal, connect + request timeouts) stay in
+    /// lockstep with the axum daemon's cross-daemon backend.  A
+    /// dead peer's Channel stays cached: tonic handles reconnection
+    /// internally, so the caller-visible signal is "the RPC failed",
+    /// not "the cached Channel is stale".
+    async fn get_or_dial(
+        &self,
+        peer: &crate::peer_registry::PeerAddress,
+    ) -> Result<Channel, PeerFanoutError> {
+        let url = peer.url(self.registry.require_tls());
+        self.channels
+            .get_or_dial(&url)
             .await
-            .map_err(|e| PeerFanoutError::ConnectFailed {
-                peer: url,
-                source: e,
-            })?;
-        Ok(channel)
+            .map_err(PeerFanoutError::from_dial)
     }
 }
 
@@ -375,8 +359,8 @@ mod tests {
         // log-and-drop, hiding the specific error variant.
         let reg = registry_with(vec![("example.internal", 2126)], vec!["root"], false, false);
         let d = PeerFanoutDispatcher::new(reg);
-        let peer = &d.registry.peers()[0].clone();
-        let err = d.dial(peer).await.unwrap_err();
+        let peer = d.registry.peers()[0].clone();
+        let err = d.get_or_dial(&peer).await.unwrap_err();
         assert!(matches!(err, PeerFanoutError::PlaintextOffLoopback { .. }));
     }
 
@@ -388,8 +372,8 @@ mod tests {
         // but the failure is ConnectFailed, NOT PlaintextOffLoopback.
         let reg = registry_with(vec![("127.0.0.1", 1)], vec!["root"], false, false);
         let d = PeerFanoutDispatcher::new(reg);
-        let peer = &d.registry.peers()[0].clone();
-        let err = d.dial(peer).await.unwrap_err();
+        let peer = d.registry.peers()[0].clone();
+        let err = d.get_or_dial(&peer).await.unwrap_err();
         assert!(
             matches!(err, PeerFanoutError::ConnectFailed { .. }),
             "loopback plaintext must pass the gate; got {err:?}"
@@ -400,8 +384,8 @@ mod tests {
     async fn dial_allows_plaintext_off_loopback_with_escape_flag() {
         let reg = registry_with(vec![("example.internal", 2126)], vec!["root"], false, true);
         let d = PeerFanoutDispatcher::new(reg);
-        let peer = &d.registry.peers()[0].clone();
-        let res = d.dial(peer).await;
+        let peer = d.registry.peers()[0].clone();
+        let res = d.get_or_dial(&peer).await;
         // The ONLY thing under test is the security gate: with
         // allow_insecure_peer=true the plaintext-off-loopback refusal
         // must NOT fire. Whatever happens downstream is environment-

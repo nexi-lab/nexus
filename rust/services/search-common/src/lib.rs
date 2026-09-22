@@ -51,6 +51,13 @@ pub mod federated;
 pub mod fusion;
 pub mod registry;
 pub mod results;
+/// Shared tonic `Channel`-per-peer cache — the ONE dial+cache impl
+/// every cross-daemon caller uses.  Feature-gated because tonic +
+/// dashmap are network deps a pure-algorithm consumer (fusion, RRF)
+/// has no reason to pull.  See the module docstring for the two
+/// callers this exists to unify.
+#[cfg(feature = "transport")]
+pub mod transport;
 
 // Re-exports so downstream callers can `use nexus_search_common::{...}`
 // without knowing the module split — the split is an internal

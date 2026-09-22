@@ -1,0 +1,51 @@
+{
+  "schema": "task-v1-p1b-amendment",
+  "work_item": "SW-20260915-002-NEXUS-RUNTIME-ZONE (P1b)",
+  "recorded_at": "2026-09-22",
+  "status": "p1b-recorded-amendment",
+  "frozen_adr_revisions": {
+    "repository": "sudoprivacy/sudostack",
+    "revision": "11985e8d53eb19e3402aaae941278f988ffc0049",
+    "documents": [
+      "docs/adr/ADR-001-identifiers-and-lifecycle.md",
+      "docs/adr/ADR-004-task-and-execution-resolution.md"
+    ]
+  },
+  "implements_from_adr004": {
+    "section_2_3": "A write-once, server-derived implicit TaskSpec for each Session.",
+    "section_2_5": "Append-only accepted/rejected TaskExecutionResolution records; accepted Resolution and TaskAttempt rows are committed in one database transaction.",
+    "section_2_10": "A true TaskAttempt with immutable execution_zone_id and PID history distinct from RuntimeRun/PID state."
+  },
+  "p1b_amendments": [
+    {
+      "decision": "implicit_writer",
+      "detail": "For the P1b implicit path only, the Nexus Session Runtime Service is the authorized writer of TaskSpec, TaskExecutionResolution and TaskAttempt. Explicit Task ingress remains reserved for later Moss/Local productization."
+    },
+    {
+      "decision": "task_family",
+      "detail": "Nexus owns task.sudo.dev/v1 locally. With no external consumer in P1b, it is not added to the sudostack derived schema set."
+    },
+    {
+      "decision": "attempt_state_reachability",
+      "detail": "An Attempt is created queued, becomes running after PID attachment, becomes failed when an accepted start fails, and becomes cancelled through revoke linkage. PID cancellation does not mutate Attempt state."
+    },
+    {
+      "decision": "implicit_task_cardinality",
+      "detail": "task_specs UNIQUE(session_id) enforces exactly one implicit Task per Session. Explicit multi-Task support requires a later schema migration."
+    },
+    {
+      "decision": "audit_and_authority",
+      "detail": "TaskSpec is the first-start write-once request snapshot; Resolution is the final decision record. Database rows are authoritative. VFS JSON is an immutable creation snapshot and may lag after a process crash."
+    }
+  ],
+  "recorded_gaps": [
+    "No public Task write ingress or Moss Task API is introduced; interactive, Cron, IM, Team and explicit retry product paths remain future work.",
+    "The resolver covers requester/session authorization, declared resource/Zone grants, execution-zone decision and zone liveness. Agent resolution/approval, required runtime capabilities, classification/egress, local-only handling, organization requested-mode policy, deadline, budget and approval remain future work.",
+    "The start request omits ADR-001 task_id and attempt_id because the implicit service generates them.",
+    "workspace_refs is omitted and input.resource_refs is represented by the optional start-body resource_refs field; an omitted field does not trigger resource validation.",
+    "TaskSpec omits request_source, agent, data_classification, required_capabilities, workspace_refs, input.parameters, constraints, output_contract, parent_task_id and supersedes_task_id.",
+    "Accepted Resolution omits resolved_runtime, resolution_mode and agent.",
+    "TaskAttempt omits agent, output_refs, evidence_refs and verify_result_ref. starting, awaiting_input, output_ready, verifying and completed are schema-valid but unreachable in P1b.",
+    "Resource refs supplied on later non-resume starts are validated but are not written back into the write-once TaskSpec or Resolution."
+  ]
+}

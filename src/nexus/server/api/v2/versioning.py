@@ -427,7 +427,7 @@ def build_v2_registry(
         from nexus.server.api.v2.routers.zones import router as zones_router
 
         registry.add(
-            RouterEntry(router=sessions_router, name="sessions_runtime_v2", endpoint_count=8)
+            RouterEntry(router=sessions_router, name="sessions_runtime_v2", endpoint_count=9)
         )
         registry.add(RouterEntry(router=zones_router, name="zones_v2", endpoint_count=7))
         registry.add(

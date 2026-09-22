@@ -259,7 +259,7 @@ graph TD
 <pre><code>/proc/{pid}/
    status                        &larr; virtual file: AgentStatusResolver renders descriptor JSON
    agent                         &larr; DT_LINK &rarr; /agents/{name}/   (Linux /proc/{pid}/exe analogue)
-   chat-with-me                  &larr; DT_STREAM: this pid's conversation
+   chat-with-me                  &larr; DT_STREAM: node-local pipe to this pid (&sect;3.2)
    workspace/                    &larr; DT_DIR (agent cwd)
       chat-with-me               &larr; DT_LINK &rarr; /proc/{pid}/chat-with-me
       project-x/                 &larr; DT_LINK &rarr; host repo path from desc.repos
@@ -297,13 +297,13 @@ sequenceDiagram
 
 <p>Three identity layers, durable vs ephemeral: <code>agent-name</code> (durable principal), <code>session-id</code> (durable UUID &mdash; the transcript key you <code>--resume</code>, spanning many pids), and <code>pid</code> (ephemeral &mdash; one boot/run of a worker, the AgentRegistry handle). <strong>session-id &ne; pid</strong>: a session outlives any single process, so the two cannot be the same value. On <code>start_session</code>, <code>ManagedAgentService</code> mints a new session-id (or echoes the resumed one), registers a pid, plants the per-pid <code>AgentDescriptor</code> &mdash; the spawn-time SSOT (<code>agent_id</code> &rarr; <code>desc.name</code>, <code>model</code> &rarr; <code>desc.labels["model"]</code>, workspace list &rarr; <code>desc.repos</code>) &mdash; stamps the <code>/proc/{pid}/</code> entries (&sect;2.2), and returns <code>{session_id, pid, workspace_path}</code> to the caller.</p>
 
-<p><code>ManagedAgentService</code> hands off to the runtime through the <code>SpawnTask&lt;K: KernelSyscall&gt;</code> DI seam &mdash; one indirect call per session start. The binary edge is <code>nexusd-cluster</code> (<code>rust/nexusd</code>, nexus repo): it injects sudocode's concrete <code>SpawnTask&lt;Kernel&gt;</code> adapter (<code>sudocode_tools::managed_agent::SudoCodeSpawnAdapter</code>, which wraps <code>spawn_managed_agent</code> &rarr; <code>spawn_task</code>) via <code>install_managed_agent_with_spawn(kernel, adapter)</code>. <code>start_session</code> calls <code>provider.spawn(kernel, desc, observer)</code> through <code>Arc&lt;dyn SpawnTask&lt;K&gt;&gt;</code>: exactly one vtable dispatch per session, and the returned <code>Box&lt;dyn SpawnHandle&gt;</code> lands in the service's <code>spawn_handles</code> sidecar. Inside the spawn body the surface is plain monomorphic Rust: <code>spawn_task::&lt;Kernel&gt;</code> and its inner <code>run_loop</code> are generic over <code>K: KernelSyscall</code>, specialised against the concrete <code>Kernel</code> at the binary edge, so every <code>sys_read</code> / <code>sys_write</code> / <code>sys_watch</code> in the mailbox loop is an inline direct call. The services rlib depends on the <code>SpawnTask</code> trait only; pure-Rust slim builds call <code>install_managed_agent</code> (no spawn provider, no per-pid task).</p>
+<p><code>ManagedAgentService</code> hands off to the runtime through the <code>SpawnTask&lt;K: KernelSyscall&gt;</code> DI seam &mdash; one indirect call per session start. The binary edge is <code>nexusd-cluster</code> (<code>rust/nexusd</code>, nexus repo): it injects sudocode's concrete <code>SpawnTask&lt;Kernel&gt;</code> adapter (<code>sudocode_tools::managed_agent::SudoCodeSpawnAdapter</code>, which wraps <code>spawn_managed_agent</code> &rarr; <code>spawn_task</code>) via <code>install_managed_agent_with_spawn(kernel, adapter)</code>. <code>start_session</code> calls <code>provider.spawn(kernel, desc, observer)</code> through <code>Arc&lt;dyn SpawnTask&lt;K&gt;&gt;</code>: exactly one vtable dispatch per session, and the returned <code>Box&lt;dyn SpawnHandle&gt;</code> lands in the service's <code>spawn_handles</code> sidecar. Inside the spawn body the surface is plain monomorphic Rust: <code>spawn_task::&lt;Kernel&gt;</code> and its inner <code>run_loop</code> are generic over <code>K: KernelSyscall</code>, specialised against the concrete <code>Kernel</code> at the binary edge, so every <code>sys_read</code> / <code>sys_write</code> / <code>sys_watch</code> in the message loop is an inline direct call. The services rlib depends on the <code>SpawnTask</code> trait only; pure-Rust slim builds call <code>install_managed_agent</code> (no spawn provider, no per-pid task).</p>
 
 <p>The <strong>production</strong> <code>nexusd-cluster</code> is built in <strong>nexus-vfs</strong> (<code>rust/profiles/cluster</code>): its <code>run()</code> composes the cluster boot with <code>a2a</code> + the <code>managed_agent</code> control plane &mdash; both kernel-tier nexus-vfs crates &mdash; so a minted agent's spawn/get/cancel + the raw ACP-subprocess tunnel work on the stock binary, with <em>no</em> <code>sudocode</code> linked. <code>rust/nexusd</code> (nexus repo) is the <strong>co-host</strong> build: the same composition plus the one <code>nexus &rarr; sudocode</code> edge &mdash; a concrete <code>SpawnTask&lt;Kernel&gt;</code> adapter (<code>SudoCodeSpawnAdapter</code>) that lives in <code>sudocode</code>'s <code>tools</code> crate, next to the <code>spawn_managed_agent</code> loop it wraps; this binary only <em>injects</em> it (<code>Arc::new(SudoCodeSpawnAdapter)</code>) via <code>install_managed_agent_with_spawn</code> under the <code>cohost-sudocode</code> feature, monomorphising the spawn body in-process &mdash; there is no nexus-side co-host glue. The adapter lives in sudocode (not nexus, not nexus-vfs) because <code>sudocode &rarr; kernel</code>; hosting it in nexus-vfs would form a cycle. So there is no dependency cycle: <code>nexusd &rarr; {sudocode-tools, managed-agent, nexus-cluster}</code>; the reusable crates stay agent-runtime-free (they know only the <code>SpawnTask</code> DI trait, never <code>sudocode</code>). The co-host build requires nexus and sudocode to resolve to <strong>one</strong> nexus-vfs <code>kernel</code> rev, else <code>SpawnTask&lt;Kernel&gt;</code> is two distinct types. <code>scode</code> stays a standalone CLI.</p>
 
-<p>A worker boots by reading its profile from <code>/agents/{name}/</code> and the requested <code>--session-id</code> transcript from <code>/sessions/&lt;session-id&gt;/</code> (&sect;2.1), works (appending to the transcript and the mailbox), and exits; the <code>/proc/{pid}/</code> subtree is reaped. Resuming re-reads the same session-id under a fresh pid &mdash; persistent state lives in <code>/agents/{name}/</code> and <code>/sessions/</code>, not in a long-running process. Out-of-band termination (SIGTERM / SIGKILL / orphan reap) flows through <code>AgentRegistry::on_terminate</code>, which reaps <code>/proc/{pid}/</code> and aborts the worker via its <code>SpawnHandle</code>; <code>cancel(pid)</code> calls <code>AgentRegistry::kill(pid, 0)</code> for the same outcome.</p>
+<p>A worker boots by reading its profile from <code>/agents/{name}/</code> and the requested <code>--session-id</code> transcript from <code>/sessions/&lt;session-id&gt;/</code> (&sect;2.1), works (appending to its session transcript and to its conversations), and exits; the <code>/proc/{pid}/</code> subtree is reaped. Resuming re-reads the same session-id under a fresh pid &mdash; persistent state lives in <code>/agents/{name}/</code> and <code>/sessions/</code>, not in a long-running process. Out-of-band termination (SIGTERM / SIGKILL / orphan reap) flows through <code>AgentRegistry::on_terminate</code>, which reaps <code>/proc/{pid}/</code> and aborts the worker via its <code>SpawnHandle</code>; <code>cancel(pid)</code> calls <code>AgentRegistry::kill(pid, 0)</code> for the same outcome.</p>
 
-<p>After spawn, prompts and responses flow over the chat-with-me VFS surface &mdash; the same A2A primitive every agent uses (&sect;3). sudowork writes prompts to <code>/proc/{pid}/chat-with-me</code>; the worker <code>sys_watch</code>es it and writes responses to <code>/agents/{user}/chat-with-me</code>, which sudowork's UI watches in turn.</p>
+<p>After spawn, prompts and responses flow over the same A2A surfaces every agent uses (&sect;3), in the direction each one is for. sudowork writes prompts to <code>/proc/{pid}/chat-with-me</code> &mdash; it is driving one specific running worker on this node, which is exactly what the pid pipe addresses (&sect;3.2) &mdash; and the worker <code>sys_watch</code>es it. Responses go the other way, into the conversation the worker shares with the user (&sect;3.1), which the UI tails. The asymmetry is deliberate: a prompt is meaningless once its worker is gone, while the answer is the durable half, so a reloaded UI reattaches and resumes from its reader register instead of from wherever the stream happens to be.</p>
 
 <p><strong>ManagedAgentService surface</strong> (over <code>NexusVFSService.Call</code>):</p>
 <ul>
@@ -312,7 +312,7 @@ sequenceDiagram
   <li><code>get_session_v1</code> &mdash; <code>{pid}</code> &rarr; <code>{session_id, pid, agent_id, workspace_path, model, state}</code>. Queries a live run by <code>pid</code>; <code>state</code> is the runtime FSM state, <code>session_id</code> the durable transcript it is attached to.</li>
 </ul>
 
-<p>Prompt / event flow reuses <code>sys_write</code> / <code>sys_watch</code> / <code>sys_read</code> over the chat-with-me paths; the A2A surface carries it without a bespoke SendPrompt or SubscribeEvents gRPC.</p>
+<p>Prompt / event flow reuses <code>sys_write</code> / <code>sys_watch</code> / <code>sys_read</code> over the A2A surfaces (&sect;3); they carry it without a bespoke SendPrompt or SubscribeEvents gRPC.</p>
 
 <p><code>AgentState</code> FSM: <code>REGISTERED &rarr; WARMING_UP &rarr; READY &harr; BUSY &rarr; SUSPENDED &rarr; TERMINATED</code>. <code>AgentRegistry</code> is the SSOT: <code>update_state(&amp;pid, new_state)</code> (<code>kernel/src/core/agents/registry.rs</code>) is the only runtime-path writer &mdash; it enforces the FSM via <code>can_transition_to</code>, updates <code>updated_at_ms</code>, and fires <code>on_terminate</code> on TERMINATED. The writer is a state-observer closure that <code>ManagedAgentService::start_session</code> constructs (capturing <code>Arc&lt;AgentRegistry&gt;</code> + pid) and passes through the <code>SpawnTask::spawn</code> seam. The spawn body reports an <code>AgentState</code> directly &mdash; the running-state subset WARMING_UP/READY/BUSY (the REGISTERED / SUSPENDED / TERMINATED bookends are service-set at plant/teardown) &mdash; so the observer forwards it straight to <code>update_state</code> with <strong>no enum map</strong>, and the adapter never touches <code>AgentRegistry</code> otherwise. <code>kernel.agent_wait(pid, target_state, timeout_ms)</code> parks on the per-pid condvar for event-driven waits.</p>
 
@@ -348,21 +348,42 @@ sequenceDiagram
 <!-- ================================================================ -->
 <h2 id="a2a">3. A2A Communication</h2>
 
-<p>A2A, H2A, and A2H share one primitive: write a message to the recipient's <code>chat-with-me</code>.</p>
+<p>A2A, H2A, and A2H share one primitive: <strong>append to the conversation you share with the recipient</strong>. A conversation is the unit of addressing, of ordering, and of read position &mdash; one object, named the same way everywhere. (Matrix calls this object a <em>room</em>; that word appears below only as the name of a Matrix wire field, never as a second concept.)</p>
 
-<h3>3.1 Mailbox</h3>
+<h3>3.1 The conversation</h3>
 
-<p><code>/agents/{name}/chat-with-me</code> and <code>/proc/{pid}/chat-with-me</code> are append-only message streams. They are normal DT_STREAMs that any caller can write to and the owner can read with <code>sys_watch</code>. Federation Raft replicates them across zone members; reach to clients outside the federation goes through the Matrix C-S adapter (&sect;4).</p>
+<p>A conversation belongs to an unordered <strong>pair</strong> of participants and is addressed by an id derived from their names:</p>
 
-<h3>3.2 The chat-with-me link inside a workspace</h3>
+<pre><code>cid = blake3(min(a,b) || 0x00 || max(a,b))[..32]
 
-<pre><code>/proc/{pid}/workspace/chat-with-me  &rarr;  /proc/{pid}/chat-with-me</code></pre>
+/conversations/{cid}/transcript        DT_STREAM  &mdash; append-only; both participants append and read
+/conversations/{cid}/readers/{agent}   register   &mdash; {holder, lease_expires_at, read_offset}
+/agents/{name}/conversations/{peer}    entry      &mdash; {name}'s chat list, one entry per correspondent</code></pre>
 
-<p>An agent inside another's workspace writes to <code>chat-with-me</code> relative to wherever it stands; resolution follows back to the workspace owner's stream. The link is a plain DT_LINK row in the metastore, stamped at <code>start_session</code>.</p>
+<p>The id is <strong>derived, not allocated</strong>. Both sides compute it from the two names alone, so <code>send(to = "bob")</code> resolves to a conversation with no coordination, no registry lookup, and no requirement that either party ran first &mdash; whoever writes first creates it, idempotently. Sorting the pair makes it order-free (<code>f(a,b) == f(b,a)</code>), which is what yields chat-app semantics: exactly <em>one</em> thread per pair. The two names are separated by a NUL because agent names are user-chosen &mdash; under a <code>-</code> separator the pairs <code>("a-b", "c")</code> and <code>("a", "b-c")</code> hash identically, silently merging two conversations.</p>
+
+<p><strong>Why per-pair and not per-agent.</strong> A per-agent inbox interleaves every correspondent into one log, and a reader holds one offset into it. That single offset cannot express "caught up with A, still behind on B": draining the inbox to answer A also marks B's messages read. Ordering is global where the meaningful order is per-conversation. Splitting by pair gives each thread its own order and its own position &mdash; and makes the object one a chat client already knows how to render.</p>
+
+<p><strong>A read position is a register, not a frame.</strong> A position is mutable state with one current value; a transcript is an append-only log. Welding them would mean recovering a position by scanning <em>backward</em> for your own last receipt, and a DT_STREAM is forward offset-addressed &mdash; O(tail scan) where a register is O(1). The three fields are stored as <strong>one</strong> value, so a reader always observes a consistent triple rather than a position from one moment and a lease from another. The register lives beside the transcript rather than on the reader's machine, which makes the position a property of the <em>agent</em>: a peer can observe readiness directly, and a lost client config home is a non-event instead of an agent that looks brand new.</p>
+
+<p><strong>A first read starts at offset 0.</strong> There is deliberately no seek-to-tail: a transcript carries one pair's conversation, so its backlog is the context a joining reader needs, not noise to skip past.</p>
+
+<p>The chat list under <code>/agents/{name}/conversations/</code> is the discovery index &mdash; listing it answers "who am I talking to" without scanning conversation ids. Each entry is a <strong>plain write</strong> holding the conversation root, not a DT_LINK: the gRPC <code>SetattrRequest</code> carries no link target, so a standalone client cannot create a link, and an index only one backend can write is not an index.</p>
+
+<p>Transcripts and registers are ordinary VFS objects, so the usual machinery applies unchanged: ReBAC governs access, <code>sys_watch</code> wakes a tailing reader, and federation raft replicates them across zone members (&sect;4.1). <code>REPLICATED_PREFIXES</code> is the contract naming which prefixes must arrive already replicated.</p>
+
+<h3>3.2 The node-local pipe</h3>
+
+<pre><code>/proc/{pid}/chat-with-me            DT_STREAM  &mdash; node-local; lifetime of the pid
+/proc/{pid}/workspace/chat-with-me  DT_LINK    &rarr;  /proc/{pid}/chat-with-me</code></pre>
+
+<p>Distinct from a conversation, and deliberately narrower: a pid-scoped pipe for addressing <em>one running process</em> on <em>this node</em>. It is not replicated, it carries no pair identity, and it dies with the pid. Use it to hand work to a local sub-agent; use a conversation for anything that must outlive the process, reach another machine, or be resumed by a reader that was not running when the message was sent.</p>
+
+<p>The workspace entry is a plain DT_LINK row in the metastore, stamped at <code>start_session</code>, so an agent standing inside a workspace can address that workspace's owner relative to where it stands.</p>
 
 <h3>3.3 Sender identity</h3>
 
-<p>Every write to a <code>chat-with-me</code> mailbox carries an unforgeable sender identity. The kernel rewrites the message envelope's structured <code>from</code> field to the caller's authenticated <code>agent_id</code> before the write reaches the backend, so a sender's <code>from</code> is always its own identity. Identity itself is established by the auth layer &mdash; an agent's identity certificate resolves to the <code>agent_id</code> (see <a href="https://s.shareone.vip/s/nexus-auth-architecture">nexus-auth-architecture</a>); the stamp binds that identity onto the message. A mailbox write with no authenticated <code>agent_id</code> is rejected, so the guarantee is fail-closed.</p>
+<p>Every write to a conversation transcript or a <code>chat-with-me</code> pipe carries an unforgeable sender identity. The kernel rewrites the message envelope's structured <code>from</code> field to the caller's authenticated <code>agent_id</code> before the write reaches the backend, so a sender's <code>from</code> is always its own identity. Identity itself is established by the auth layer &mdash; an agent's identity certificate resolves to the <code>agent_id</code> (see <a href="https://s.shareone.vip/s/nexus-auth-architecture">nexus-auth-architecture</a>); the stamp binds that identity onto the message. A write with no authenticated <code>agent_id</code> is rejected, so the guarantee is fail-closed.</p>
 
 <p>The rewrite happens at the origin write, before Raft replication (&sect;4). Every replica and every reader then sees the same stamped <code>from</code> without re-verifying, so a message's origin travels intact to another machine: agent A on one node writes <code>from:A</code> locally, the bytes replicate, and a reader on another node reads <code>from:A</code> as authored.</p>
 
@@ -387,13 +408,15 @@ sequenceDiagram
     Kernel->>Stream: append (stamped envelope)
 </pre>
 
-<p>The rewrite is a registered <code>NativeInterceptHook</code> (<code>MailboxStampingHook</code>) that delegates the envelope policy to <code>mailbox_stamping_policy::maybe_stamp_chat_envelope</code>. Both live in the kernel-tier <code>a2a</code> crate (<code>nexus-vfs/rust/a2a/</code>) and are armed once at daemon boot via <code>install_a2a_stamp_hook</code>. Placing the <code>from</code> guarantee at the substrate makes it universal: every writer to a <code>*/chat-with-me</code> mailbox is stamped through the same point &mdash; managed agents, external clients, and Matrix humans alike &mdash; because identity must be enforced where every write converges, not per frontend. The hook struct owns "how to be a hook" (dispatch wiring + content-clone bypass); the policy module owns "what to rewrite" (envelope schema, identity guarantee). The hook trait supports content rewriting &mdash; <code>on_pre</code> returns <code>Result&lt;HookOutcome, String&gt;</code>, where <code>HookOutcome::Replace(bytes)</code> substitutes write content; accept/reject hooks (audit, permission, workspace boundary) return <code>HookOutcome::Pass</code>.</p>
+<p>The rewrite is a registered <code>NativeInterceptHook</code> (<code>MailboxStampingHook</code>) that delegates the envelope policy to <code>mailbox_stamping_policy::maybe_stamp_chat_envelope</code>. Both live in the kernel-tier <code>a2a</code> crate (<code>nexus-vfs/rust/a2a/</code>) and are armed once at daemon boot via <code>install_a2a_stamp_hook</code>. Placing the <code>from</code> guarantee at the substrate makes it universal: every writer to a message surface is stamped through the same point &mdash; managed agents, external clients, and Matrix humans alike &mdash; because identity must be enforced where every write converges, not per frontend. The hook struct owns "how to be a hook" (dispatch wiring + content-clone bypass); the policy module owns "what to rewrite" (envelope schema, identity guarantee). The hook trait supports content rewriting &mdash; <code>on_pre</code> returns <code>Result&lt;HookOutcome, String&gt;</code>, where <code>HookOutcome::Replace(bytes)</code> substitutes write content; accept/reject hooks (audit, permission, workspace boundary) return <code>HookOutcome::Pass</code>.</p>
 
-<p>To keep the hot path allocation-free for the writes that don't need rewriting, hooks declare a <code>mutating_path_suffix</code> and the dispatcher uses it as a double bypass:</p>
+<p>The stamped surfaces are declared once, as <code>MAILBOX_WRITE_SUFFIXES</code> (<code>/transcript</code>, <code>/chat-with-me</code>), and the policy re-confirms the match: a <code>/transcript</code> is stamped only when it sits under a <code>/conversations/</code> segment, so an unrelated file whose name happens to end in <code>transcript</code> is not mistaken for a message surface. One declaration drives both the dispatcher bypass and the policy, so a new surface cannot arm one without the other.</p>
+
+<p>To keep the hot path allocation-free for the writes that don't need rewriting, hooks declare those suffixes and the dispatcher uses them as a double bypass:</p>
 
 <ul>
   <li><strong>Layer 1 (no mutating hooks registered):</strong> empty-Vec check, dispatcher goes straight to <code>WriteHookCtx::content = vec![]</code> &mdash; identical to the pre-widening cost.</li>
-  <li><strong>Layer 2 (mutating hook registered, write path doesn't match):</strong> suffix scan returns false, dispatcher still passes <code>vec![]</code>. Only writes whose path ends in a registered suffix (<code>*/chat-with-me</code>) pay the content clone.</li>
+  <li><strong>Layer 2 (mutating hook registered, write path doesn't match):</strong> suffix scan returns false, dispatcher still passes <code>vec![]</code>. Only writes whose path ends in a registered suffix pay the content clone.</li>
 </ul>
 
 <h3>3.4 Boundary teaching UX</h3>
@@ -410,19 +433,19 @@ sequenceDiagram
 
 <h3>3.5 Same primitive across humans and agents</h3>
 
-<p><code>/agents/human-ethan/chat-with-me</code> is the canonical address &mdash; "human" identities have no spawn lifecycle so the path resolves directly to a long-lived DT_STREAM, no pid indirection needed.</p>
+<p>A human is an ordinary participant. <code>conversation_id("human-ethan", "scode-standard")</code> names the thread between them, and it is reached identically from either end &mdash; no human-specific path, no pid indirection, no separate inbox to keep in sync. Whether a participant is a person, a managed agent, or a third-party Matrix client changes only who holds the credential that the <code>from</code> stamp binds.</p>
 
 <h3>3.6 Addressing non-human agents</h3>
 
-<p>Non-human agent names can map to zero, one, or many running pids in parallel. The chat-with-me surface for these agents is per-pid:</p>
+<p>An agent <em>name</em> can map to zero, one, or many running pids in parallel, so the two surfaces address different things and the choice between them is not a matter of taste:</p>
 <ul>
-  <li><code>/proc/{pid}/chat-with-me</code> &mdash; direct DT_STREAM at the per-pid path.</li>
-  <li><code>/proc/{pid}/workspace/chat-with-me</code> &mdash; DT_LINK to the same stream.</li>
+  <li><strong>By name</strong> &mdash; <code>conversation_id(self, peer)</code>. Durable and replicated, and it outlives every pid. Addressing a name that is not currently running is normal: the message waits in the transcript, and the peer resumes from its reader register the next time it runs.</li>
+  <li><strong>By pid</strong> &mdash; <code>/proc/{pid}/chat-with-me</code> (&sect;3.2). Node-local and ephemeral; addresses one specific process.</li>
 </ul>
 
 <h3>3.7 Message contract</h3>
 
-<p>A mailbox envelope is a JSON object: the substrate manages the reserved <code>from</code> field (&sect;3.3) and the participants agree on the payload. A2A payloads follow a shared contract so a receiver can act on a message from its content alone. A task assignment (copilot &rarr; worker) carries at least three parts:</p>
+<p>A message envelope is a JSON object: the substrate manages the reserved <code>from</code> field (&sect;3.3) and the participants agree on the payload. A2A payloads follow a shared contract so a receiver can act on a message from its content alone. A task assignment (copilot &rarr; worker) carries at least three parts:</p>
 
 <ul>
   <li><strong>context</strong> &mdash; what the task is and the state it starts from.</li>
@@ -437,24 +460,38 @@ sequenceDiagram
 <!-- ================================================================ -->
 <h2 id="transport">4. Cross-instance Transport</h2>
 
-<p>Two layers compose. <strong>Within</strong> a federation, raft replicates the chat-with-me DT_STREAM across every nexus instance. <strong>Outside</strong> the federation, a Matrix Client-Server adapter exposes the same DT_STREAMs over Matrix REST so unmodified third-party clients (Element, FluffyChat, Cinny) can join conversations.</p>
+<p>Two layers compose. <strong>Within</strong> a federation, raft replicates the conversation transcript across every nexus instance. <strong>Outside</strong> the federation, a Matrix Client-Server adapter is how unmodified third-party clients (Element, FluffyChat, Cinny) are meant to reach those same conversations.</p>
 
 <h3>4.1 Federation-internal &mdash; raft replication</h3>
 
-<p>Every chat-with-me DT_STREAM lives inside its zone's raft cluster. The write path is <code>sys_write</code> &rarr; <code>WalStreamCore</code> &rarr; <code>Command::AppendStreamEntry</code> &rarr; raft commit &rarr; state-machine apply on every voter.</p>
+<p>Every conversation transcript lives inside its zone's raft cluster. The write path is <code>sys_write</code> &rarr; <code>WalStreamCore</code> &rarr; <code>Command::AppendStreamEntry</code> &rarr; raft commit &rarr; state-machine apply on every voter.</p>
 
-<p>The stream is a <strong>linearizable log: the state machine assigns each entry's offset at the raft apply</strong>, in committed order &mdash; the caller passes only the stream, never a sequence number. Because raft serializes every writer through one log, two agents writing the same mailbox (a follower's write forwards to the leader) land at distinct, gap-free offsets and every replica converges to one byte-identical ordered log &mdash; no writer can overwrite another. A write returns the offset it was assigned; a reader reads from an offset; the application never tracks sequence numbers. Being an ordered log, the mailbox is strong-consistency: a write needs a raft quorum (a total order needs a single sequencer), so a fully-isolated writer with no reachable quorum fails loud rather than silently accepting an unorderable write. Order-agnostic mutable state (presence, liveness) uses an eventually-consistent metadata register instead &mdash; never the stream.</p>
+<p>The stream is a <strong>linearizable log: the state machine assigns each entry's offset at the raft apply</strong>, in committed order &mdash; the caller passes only the stream, never a sequence number. Because raft serializes every writer through one log, both participants writing the same transcript (a follower's write forwards to the leader) land at distinct, gap-free offsets and every replica converges to one byte-identical ordered log &mdash; no writer can overwrite another. A write returns the offset it was assigned; a reader reads from an offset; the application never tracks sequence numbers. Being an ordered log, the transcript is strong-consistency: a write needs a raft quorum (a total order needs a single sequencer), so a fully-isolated writer with no reachable quorum fails loud rather than silently accepting an unorderable write. Order-agnostic mutable state &mdash; presence, liveness, and a reader's position (&sect;3.1) &mdash; uses an eventually-consistent metadata register instead, never the stream.</p>
 
 <h3>4.2 Federation-external &mdash; Matrix C-S adapter</h3>
+
+<p>Federation carries a conversation between nexus instances. It does not carry it to a person holding a phone, and we do not want to build and ship a
+chat client to get there. A Matrix Client-Server adapter is the answer to that: speak enough of an existing protocol that unmodified clients
+(Element, FluffyChat, Cinny) are usable front-ends, so a human joins a conversation with software they already have.</p>
 
 <pre class="mermaid">
 graph LR
     E["Element / FluffyChat / Cinny"]
-    A["services::matrix_adapter"]
-    K["nexus kernel<br/><em>sys_read · sys_write · stream_read_batch</em><br/>on chat-with-me DT_STREAMs"]
+    A["Matrix C-S adapter"]
+    K["nexus kernel<br/><em>sys_read &middot; sys_write &middot; stream_read_batch &middot; sys_watch</em><br/>on conversation transcripts"]
 
-    E -->|"HTTP REST + JSON"| A -->|"in-process Rust"| K
+    E --&gt;|"HTTP REST + JSON"| A --&gt;|"in-process Rust"| K
 </pre>
+
+<h4>A Matrix room is a conversation</h4>
+
+<p>Not a mapping between two entities &mdash; the same object, under the name its protocol uses. That makes the room id the conversation id:</p>
+
+<pre><code>room_id = !{cid}:nexus.local        cid = conversation_id(a, b)   (&sect;3.1)</code></pre>
+
+<p>The id needs no encoding scheme of its own: a cid is already opaque, fixed-width, and path-safe, which is exactly what a room id has to be. It is
+also derived from the participant names, so both ends compute the same room id without either having to ask &mdash; a client can open a conversation
+that has never been written to, and <code>POST /createRoom</code> becomes the same idempotent first-write that any other participant performs.</p>
 
 <h4>Endpoint scope</h4>
 
@@ -462,43 +499,47 @@ graph LR
   <thead><tr><th>Group</th><th>Endpoints</th><th>Backed by</th></tr></thead>
   <tbody>
     <tr><td><strong>Auth</strong></td><td><code>POST /login</code>, <code>POST /logout</code>, <code>GET /whoami</code></td><td><code>AuthService</code>; Matrix access token = AuthService session token</td></tr>
-    <tr><td><strong>Sync</strong></td><td><code>GET /sync</code> (long-poll, since-token paging)</td><td><code>sys_watch</code> on joined chat-with-me streams</td></tr>
-    <tr><td><strong>Rooms &mdash; read</strong></td><td><code>GET /state</code>, <code>GET /messages</code>, <code>GET /joined_members</code></td><td><code>stream_read_batch</code> over chat-with-me DT_STREAM</td></tr>
+    <tr><td><strong>Sync</strong></td><td><code>GET /sync</code> (long-poll, since-token paging)</td><td><code>sys_watch</code> on the transcripts of joined conversations</td></tr>
+    <tr><td><strong>Rooms &mdash; read</strong></td><td><code>GET /state</code>, <code>GET /messages</code>, <code>GET /joined_members</code></td><td><code>stream_read_batch</code> over the transcript</td></tr>
     <tr><td><strong>Rooms &mdash; write</strong></td><td><code>PUT /send</code>, <code>POST /join</code>, <code>POST /leave</code>, <code>POST /createRoom</code></td><td><code>sys_write</code>; join/leave write ReBAC mutations</td></tr>
     <tr><td><strong>Media</strong></td><td><code>GET /download</code>, <code>POST /upload</code>, <code>GET /thumbnail</code></td><td>DT_FILE under <code>/media/{media_id}</code>; CAS storage</td></tr>
   </tbody>
 </table>
 
-<h4>Room &harr; chat-with-me mapping</h4>
-
-<pre><code>!{base32(stream_path)}:nexus.local
-  e.g. /agents/human-bob/chat-with-me
-       &harr; !MFRGS43FORZS6ZTPMVQHIYLUMRZA:nexus.local</code></pre>
-
-<h4>PDU envelope &harr; chat envelope</h4>
+<h4>PDU envelope &harr; message envelope</h4>
 
 <table>
-  <thead><tr><th>PDU field</th><th>Chat envelope field</th><th>Notes</th></tr></thead>
+  <thead><tr><th>PDU field</th><th>Envelope field</th><th>Notes</th></tr></thead>
   <tbody>
-    <tr><td><code>sender</code></td><td><code>from</code></td><td>Stamped by <code>MailboxStampingHook</code> &mdash; adapter cannot forge</td></tr>
+    <tr><td><code>sender</code></td><td><code>from</code></td><td>Stamped by <code>MailboxStampingHook</code> (&sect;3.3) &mdash; the adapter cannot forge it, and is not trusted to supply it</td></tr>
     <tr><td><code>content.body</code></td><td><code>body</code></td><td><code>m.room.message</code> text; pass-through</td></tr>
     <tr><td><code>content.msgtype</code></td><td><code>msgtype</code></td><td><code>m.text</code>, <code>m.image</code>, etc.</td></tr>
     <tr><td><code>origin_server_ts</code></td><td><code>ts_ms</code></td><td>Unix ms</td></tr>
-    <tr><td><code>event_id</code></td><td>derived from DT_STREAM offset</td><td><code>$offset_{n}:nexus.local</code> &mdash; stable</td></tr>
-    <tr><td><code>room_id</code></td><td>derived from path</td><td>See above</td></tr>
+    <tr><td><code>event_id</code></td><td>transcript offset</td><td><code>$offset_{n}:nexus.local</code> &mdash; stable, because the offset is assigned once at raft apply (&sect;4.1)</td></tr>
+    <tr><td><code>room_id</code></td><td>conversation id</td><td>See above</td></tr>
   </tbody>
 </table>
 
+<h4>Read position</h4>
+
+<p>Matrix already has the concept the conversation contract stores in <code>readers/{agent}</code>: a read receipt and a <code>/sync</code> since-token are
+a participant's position in a thread. They resolve to the same register (&sect;3.1) rather than to adapter-side state, so a human reading on a phone and an
+agent reading through a syscall report their progress the same way, and neither can be ahead of a position the other cannot see.</p>
+
 <h4>Storage</h4>
 
-<p>Adapter is <strong>stateless</strong> &mdash; every read/write goes through the kernel. Three things in-memory (rebuilt on restart): active <code>/sync</code> long-poll registrations, access-token &rarr; user-id map, room id &rarr; stream path decoding.</p>
+<p>The adapter is <strong>stateless</strong> &mdash; every read and write goes through the kernel, and nothing about a conversation is authoritative inside
+it. What it holds in memory is rebuilt on restart: active <code>/sync</code> long-poll registrations and the access-token &rarr; user-id map. Room ids need no
+decoding table, since a room id is a conversation id.</p>
+
+<p><strong>Status.</strong> Not implemented &mdash; the section above is the design to build against, not a description of running code. An earlier adapter was removed rather than carried forward, because it bound a room to a per-agent inbox and that is the part conversations replaced.</p>
 
 <h3>4.3 Properties retained across both layers</h3>
 
 <ul>
-  <li><strong>Permissions</strong> &mdash; ReBAC on the DT_STREAM path governs who may write/read. Matrix room membership is derived from the same ReBAC decision.</li>
+  <li><strong>Permissions</strong> &mdash; ReBAC on the transcript path governs who may write and read. Matrix room membership is derived from the same ReBAC decision rather than tracked separately.</li>
   <li><strong>Audit</strong> &mdash; Every Matrix-originated write reaches the kernel through <code>sys_write</code>, so <code>AuditHook</code> captures it like any other VFS write.</li>
-  <li><strong>Single SSOT</strong> &mdash; The DT_STREAM is authoritative. None of the three clients maintain a parallel store.</li>
+  <li><strong>Single SSOT</strong> &mdash; The transcript is authoritative, and a reader's position lives in its register. No client maintains a parallel store of either.</li>
 </ul>
 
 <hr>
@@ -572,7 +613,7 @@ graph TB
   <thead><tr><th>Entry type</th><th>Used for</th><th>Metadata channel</th><th>Content channel</th></tr></thead>
   <tbody>
     <tr><td><strong>DT_FILE</strong></td><td>sessions, profile configs, task lists</td><td>Raft (intra-zone, strongly consistent)</td><td>Local CAS + on-miss lazy fetch from a peer over the CAS transport</td></tr>
-    <tr><td><strong>DT_STREAM</strong> (via <code>WalStreamBackend</code>)</td><td><code>chat-with-me</code>, <code>/__sys__/audit/traces/</code></td><td>Raft (intra-zone)</td><td>Same raft log &mdash; total order across voters; offset assigned at apply (linearizable, multi-writer-safe)</td></tr>
+    <tr><td><strong>DT_STREAM</strong> (via <code>WalStreamBackend</code>)</td><td><code>/conversations/{cid}/transcript</code>, <code>/proc/{pid}/chat-with-me</code>, <code>/__sys__/audit/traces/</code></td><td>Raft (intra-zone)</td><td>Same raft log &mdash; total order across voters; offset assigned at apply (linearizable, multi-writer-safe)</td></tr>
   </tbody>
 </table>
 
@@ -581,15 +622,15 @@ graph TB
 <!-- ================================================================ -->
 <h2 id="messenger">7. Messenger Surface</h2>
 
-<p>Three clients sit over the same chat-with-me DT_STREAMs:</p>
+<p>Every client sits over the same conversation transcripts:</p>
 
 <ul>
   <li><strong>sudowork chat UI</strong> &mdash; talks gRPC directly to nexus.</li>
-  <li><strong>Stock Matrix clients</strong> (Element, FluffyChat, Cinny) &mdash; connect to the Matrix C-S adapter over HTTP.</li>
+  <li><strong>Stock Matrix clients</strong> (Element, FluffyChat, Cinny) &mdash; connect over HTTP to the Matrix C-S adapter (&sect;4.2).</li>
   <li><strong>sudocode agent tasks</strong> &mdash; in-process tokio tasks read/write via direct kernel syscalls.</li>
 </ul>
 
-<p>The chat-with-me DT_STREAM is the SSOT. None of the three clients maintain a parallel inbox.</p>
+<p>The transcript is the SSOT and the reader register is the position. A client renders a conversation; it does not keep one.</p>
 
 <hr>
 

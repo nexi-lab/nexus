@@ -177,3 +177,8 @@ from .session_v1 import (
 from .session_v1 import (
     SessionZoneDependencyModel as SessionZoneDependencyModel,
 )
+
+# ── P1b implicit Task/Resolution/Attempt models (SW-20260915-002 §8.9) ─────
+from .task_v1 import TaskAttemptModel as TaskAttemptModel
+from .task_v1 import TaskResolutionModel as TaskResolutionModel
+from .task_v1 import TaskSpecModel as TaskSpecModel

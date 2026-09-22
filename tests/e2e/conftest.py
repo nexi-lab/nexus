@@ -44,16 +44,18 @@ if str(_src_path) not in sys.path:
 
 
 def find_free_port(width: int = 1) -> int:
-    """Find a free consecutive port range beginning on localhost."""
-    for _ in range(100):
+    """Find a free consecutive low port range outside Windows' ephemeral pool."""
+    first_port = 25_000
+    last_port = 45_000 - width + 1
+    span = last_port - first_port + 1
+    start = first_port + (uuid.uuid4().int % span)
+    for offset_from_start in range(span):
         sockets: list[socket.socket] = []
         try:
+            port = first_port + ((start - first_port + offset_from_start) % span)
             first = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sockets.append(first)
-            first.bind(("127.0.0.1", 0))
-            port = first.getsockname()[1]
-            if port + width > 65536:
-                continue
+            first.bind(("127.0.0.1", port))
             for offset in range(1, width):
                 candidate = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sockets.append(candidate)
@@ -64,7 +66,7 @@ def find_free_port(width: int = 1) -> int:
         finally:
             for candidate in sockets:
                 candidate.close()
-    raise RuntimeError(f"could not reserve {width} consecutive loopback ports")
+    raise RuntimeError(f"could not reserve {width} consecutive loopback ports in 25000-45000")
 
 
 def _mint_kernel_admin_key(env: dict[str, str], tmp_path: Path) -> str:
@@ -128,6 +130,31 @@ def _drain_pipe(pipe, lines: list[str], ready: "threading.Event | None" = None):
         pass  # pipe closed
     finally:
         pipe.close()
+
+
+def _windows_child_kernel_pids(parent_pid: int) -> list[int]:
+    """Capture the exact kernel children before a Windows tree kill can orphan them."""
+    if os.name != "nt":
+        return []
+    try:
+        result = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                "Get-CimInstance Win32_Process "
+                f"| Where-Object {{ $_.ParentProcessId -eq {parent_pid} "
+                "-and $_.Name -eq 'nexusd-cluster.exe' }} "
+                "| Select-Object -ExpandProperty ProcessId",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        return [int(line.strip()) for line in result.stdout.splitlines() if line.strip().isdigit()]
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return []
 
 
 # Aggressive cleanup to prevent SQLite "database is locked" errors
@@ -296,11 +323,18 @@ def nexus_server(isolated_db, tmp_path):
         # Terminating only the Python parent leaves its Rust kernel child
         # running on Windows.  Kill the exact process tree created by this
         # fixture so repeated full-profile tests do not leak daemons/ports.
+        child_kernel_pids = _windows_child_kernel_pids(process.pid)
         subprocess.run(
             ["taskkill", "/PID", str(process.pid), "/T", "/F"],
             capture_output=True,
             check=False,
         )
+        for child_pid in child_kernel_pids:
+            subprocess.run(
+                ["taskkill", "/PID", str(child_pid), "/F"],
+                capture_output=True,
+                check=False,
+            )
 
     try:
         process.wait(timeout=5)

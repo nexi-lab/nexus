@@ -15,14 +15,18 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from pydantic import ValidationError
 
+from nexus.contracts.zone_v1 import ResourceRef
 from nexus.server.api.v2.zone_security import (
+    VerifiedZoneDelegation,
     principal_dict,
     require_runtime_delegation,
     require_zone_capability,
 )
 from nexus.server.dependencies import require_auth
 from nexus.services.zones.session_runtime import SessionRuntimeError, SessionRuntimeService
+from nexus.services.zones.session_tasks import SessionTaskError, SessionTaskService
 
 router = APIRouter(prefix="/v2", tags=["sessions-runtime-v2"])
 
@@ -37,10 +41,97 @@ def _service(request: Request) -> SessionRuntimeService:
     return svc
 
 
+def _task_service(request: Request) -> SessionTaskService:
+    svc = getattr(request.app.state, "session_task_service", None)
+    if svc is None:
+        raise HTTPException(
+            status_code=503, detail={"code": "SESSION_TASK_UNAVAILABLE", "retryable": False}
+        )
+    assert isinstance(svc, SessionTaskService)
+    return svc
+
+
 def _svc_error(exc: SessionRuntimeError) -> HTTPException:
     return HTTPException(
         status_code=exc.status_code,
         detail={"code": exc.code, "message": exc.message, "retryable": False},
+    )
+
+
+def _task_svc_error(exc: SessionTaskError) -> HTTPException:
+    return HTTPException(
+        status_code=exc.status_code,
+        detail={"code": exc.code, "message": exc.message, "retryable": False},
+    )
+
+
+def _runtime_delegation_ref(request: Request, body: dict[str, Any]) -> str:
+    body_ref = str(body.get("delegation_ref") or "").strip()
+    header_ref = str(request.headers.get("X-Nexus-Zone-Delegation") or "").strip()
+    if body_ref and header_ref and body_ref != header_ref:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "RESOURCE_RELATION_DENIED",
+                "message": "runtime delegation header/body mismatch",
+                "retryable": False,
+            },
+        )
+    return header_ref or body_ref
+
+
+def _requester(auth_result: dict[str, Any]) -> dict[str, Any]:
+    principal = principal_dict(auth_result)
+    return {
+        key: principal[key]
+        for key in ("subject_type", "subject_id", "trust_domain")
+        if principal.get(key) is not None
+    }
+
+
+def _resource_refs(body: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = body.get("resource_refs", [])
+    if not isinstance(raw, list):
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "INVALID_TASK_SPEC", "message": "resource_refs must be a list"},
+        )
+    try:
+        return [
+            ResourceRef.model_validate(item).model_dump(mode="json", exclude_none=True)
+            for item in raw
+        ]
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "INVALID_TASK_SPEC", "message": str(exc)},
+        ) from exc
+
+
+def _minimum_task_write_gate(
+    request: Request,
+    auth_result: dict[str, Any],
+    *,
+    home_zone_id: str,
+    execution_zone_id: str,
+    delegation_ref: str,
+) -> VerifiedZoneDelegation | None:
+    if auth_result.get("is_admin", False):
+        require_zone_capability(
+            request,
+            auth_result,
+            zone_id=home_zone_id,
+            capability="zone.data.write",
+            resource_path="/",
+        )
+        return None
+    return require_runtime_delegation(
+        request,
+        auth_result,
+        delegation_id=delegation_ref,
+        zone_id=execution_zone_id,
+        capability="zone.runtime.execute",
+        resource_path="/",
     )
 
 
@@ -180,6 +271,7 @@ def _start(
     resume: bool = False,
 ) -> dict[str, Any]:
     svc = _service(request)
+    task_svc = _task_service(request)
     pid = str(body.get("pid") or "").strip()
     session_id = str(body.get("session_id") or "").strip()
     if not pid or not session_id:
@@ -194,6 +286,8 @@ def _start(
         )
     except SessionRuntimeError as exc:
         raise _svc_error(exc) from exc
+    delegation_ref = _runtime_delegation_ref(request, body)
+    resource_refs = _resource_refs(body)
     requested_execution_zone = body.get("execution_zone_id")
     if resume and requested_execution_zone and str(requested_execution_zone) != execution_zone:
         raise HTTPException(
@@ -205,23 +299,32 @@ def _start(
         and execution_zone != session_view.home_zone_id
         and (not body.get("decision_reason") or not body.get("policy_version"))
     ):
+        _minimum_task_write_gate(
+            request,
+            auth_result,
+            home_zone_id=session_view.home_zone_id,
+            execution_zone_id=execution_zone,
+            delegation_ref=delegation_ref,
+        )
+        try:
+            task = task_svc.ensure_implicit_task(
+                session_id=session_id,
+                requested_by=_requester(auth_result),
+                resource_refs=resource_refs,
+            )
+            task_svc.reject(
+                task_id=task.task_id,
+                reason_code="INVALID_TASK_SPEC",
+                reason="cross-zone execution requires decision_reason and policy_version",
+                policy_version=str(body.get("policy_version") or task.policy_version),
+            )
+        except SessionTaskError as exc:
+            raise _task_svc_error(exc) from exc
         raise HTTPException(
             status_code=422,
             detail={"code": "CROSS_ZONE_DECISION_REQUIRED", "retryable": False},
         )
 
-    body_delegation = str(body.get("delegation_ref") or "").strip()
-    header_delegation = str(request.headers.get("X-Nexus-Zone-Delegation") or "").strip()
-    if body_delegation and header_delegation and body_delegation != header_delegation:
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "code": "RESOURCE_RELATION_DENIED",
-                "message": "runtime delegation header/body mismatch",
-                "retryable": False,
-            },
-        )
-    delegation_ref = header_delegation or body_delegation
     verified = require_runtime_delegation(
         request,
         auth_result,
@@ -253,6 +356,17 @@ def _start(
 
     try:
         if resume:
+            latest_attempt = task_svc.latest_attempt(session_id=session_id)
+            if latest_attempt is not None and latest_attempt.state in {
+                "completed",
+                "failed",
+                "cancelled",
+            }:
+                raise SessionTaskError(
+                    "ATTEMPT_NOT_ACTIVE",
+                    f"attempt {latest_attempt.attempt_id} is {latest_attempt.state}",
+                    409,
+                )
             view = svc.resume_run(
                 pid=pid,
                 session_id=session_id,
@@ -262,25 +376,104 @@ def _start(
                 delegation_ref=verified.delegation_id,
                 grant_ref=verified.grant_id,
                 authorization_epoch=verified.authorization_epoch,
+                attempt_id=latest_attempt.attempt_id if latest_attempt is not None else None,
                 zone_active_check=zone_active_check,
             )
+            if latest_attempt is not None:
+                task_svc.attach_pid(attempt_id=latest_attempt.attempt_id, pid=pid)
         else:
-            view = svc.start_run(
-                pid=pid,
+            task = task_svc.ensure_implicit_task(
                 session_id=session_id,
-                execution_zone_hint=str(requested_execution_zone)
-                if requested_execution_zone
-                else None,
-                delegation_ref=verified.delegation_id,
-                grant_ref=verified.grant_id,
-                authorization_epoch=verified.authorization_epoch,
-                decision_reason=body.get("decision_reason") or None,
-                policy_version=body.get("policy_version") or None,
-                zone_active_check=zone_active_check,
+                requested_by=_requester(auth_result),
+                resource_refs=resource_refs,
             )
+            for resource_ref in resource_refs:
+                try:
+                    if auth_result.get("is_admin", False):
+                        require_zone_capability(
+                            request,
+                            auth_result,
+                            zone_id=str(resource_ref["zone_id"]),
+                            capability="zone.data.read",
+                            resource_path=str(resource_ref["path"]),
+                        )
+                    else:
+                        require_runtime_delegation(
+                            request,
+                            auth_result,
+                            delegation_id=verified.delegation_id,
+                            zone_id=str(resource_ref["zone_id"]),
+                            capability="zone.data.read",
+                            resource_path=str(resource_ref["path"]),
+                        )
+                except HTTPException as exc:
+                    task_svc.reject(
+                        task_id=task.task_id,
+                        reason_code="ZONE_ACCESS_DENIED",
+                        reason="a declared resource reference is not accessible",
+                        policy_version=str(body.get("policy_version") or task.policy_version),
+                    )
+                    raise HTTPException(
+                        status_code=403,
+                        detail={
+                            "code": "ZONE_ACCESS_DENIED",
+                            "message": "a declared resource reference is not accessible",
+                            "retryable": False,
+                        },
+                    ) from exc
+
+            cross_zone = execution_zone != session_view.home_zone_id
+            attempt = task_svc.create_attempt(
+                task_id=task.task_id,
+                execution_zone_id=execution_zone,
+                reason_code="CROSS_ZONE_POLICY_ACCEPTED" if cross_zone else "HOME_ZONE_DEFAULT",
+                reason=str(body.get("decision_reason") or "session home zone default"),
+                policy_version=str(body.get("policy_version") or task.policy_version),
+            )
+            try:
+                view = svc.start_run(
+                    pid=pid,
+                    session_id=session_id,
+                    execution_zone_hint=str(requested_execution_zone)
+                    if requested_execution_zone
+                    else None,
+                    delegation_ref=verified.delegation_id,
+                    grant_ref=verified.grant_id,
+                    authorization_epoch=verified.authorization_epoch,
+                    decision_reason=body.get("decision_reason") or None,
+                    policy_version=body.get("policy_version") or None,
+                    attempt_id=attempt.attempt_id,
+                    zone_active_check=zone_active_check,
+                )
+            except SessionRuntimeError as exc:
+                task_svc.mark_failed(attempt_id=attempt.attempt_id, error=exc)
+                raise
+            task_svc.attach_pid(attempt_id=attempt.attempt_id, pid=pid)
+    except SessionTaskError as exc:
+        raise _task_svc_error(exc) from exc
     except SessionRuntimeError as exc:
         raise _svc_error(exc) from exc
     return view.as_json()
+
+
+@router.get("/sessions/{session_id}/tasks/{task_id}")
+def get_task(
+    session_id: str,
+    task_id: str,
+    request: Request,
+    auth_result: dict[str, Any] = Depends(require_auth),
+) -> dict[str, Any]:
+    try:
+        payload = _task_service(request).get_task(session_id=session_id, task_id=task_id)
+        _require_runtime_access(
+            request,
+            auth_result,
+            zone_id=str(payload["spec"]["storage"]["zone_id"]),
+            capability="zone.data.read",
+        )
+        return payload
+    except SessionTaskError as exc:
+        raise _task_svc_error(exc) from exc
 
 
 @router.post("/runtime/start", status_code=201)

@@ -5035,10 +5035,8 @@ dependencies = [
 name = "services"
 version = "0.1.0"
 dependencies = [
- "a2a 0.1.0 (git+https://github.com/nexi-lab/nexus-vfs?rev=191fa0efaecf91ed5cc35a021fc13d81c1df3153)",
  "aes-gcm",
  "async-trait",
- "axum",
  "base32",
  "bincode",
  "chrono",
@@ -5064,7 +5062,6 @@ dependencies = [
  "tonic 0.14.6",
  "tonic-prost",
  "tonic-prost-build",
- "tower",
  "tracing",
  "uuid",
 ]

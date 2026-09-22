@@ -10,7 +10,7 @@ crate-type = ["rlib"]
 
 [dependencies]
 # axum HTTP surface.  Feature set matches the sibling
-# `service-matrix-adapter` axum pin in rust/services/Cargo.toml
+# axum pin (kept in step with the http-api surface)
 # (0.8 + json/http1/tokio/matched-path/query) so both crates
 # share the same tower + hyper stack when linked into the same
 # binary.

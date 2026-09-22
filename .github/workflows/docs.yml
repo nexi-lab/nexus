@@ -3,18 +3,40 @@ name: Documentation
 on:
   push:
     branches: [main, develop]
+  # Build on PRs too, so a docs break is caught before it lands. Without
+  # this the site was only ever built after merge, and a build that went red
+  # from an upstream plugin release sat red on develop for five days while
+  # unrelated PRs merged on top of it.
+  #
+  # Path-filtered because it can be: the site is built from `docs/**`
+  # markdown, with no mkdocstrings plugin, so nothing under `src/` can break
+  # it. Everything that CAN is listed here.
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - "scripts/build_docs_site.py"
+      - "scripts/render_api_surface_coverage.py"
+      - "scripts/surface_coverage/**"
+      - "packages/nexus-fs/requirements-docs.txt"
+      - "pyproject.toml"
+      - ".github/workflows/docs.yml"
   workflow_dispatch:
 
+# Least privilege: only `deploy` publishes, and it asks for what it needs.
+# A PR build has no reason to hold a Pages write token.
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 env:
   PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
 
+# Per-ref, not one global "pages" group: a queue of PR builds must not delay
+# a develop deploy. Deploys still serialize against each other — they share
+# the develop ref — which is the reason the group exists.
 concurrency:
-  group: "pages"
+  group: pages-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -71,7 +93,9 @@ jobs:
           cp docs/surface-coverage/api-rpc-surface-coverage.html site/surface-coverage/
           cp -r docs/surface-coverage/_vendor site/surface-coverage/_vendor
 
+      # Only the deploying runs need an artifact; a PR build is a check.
       - name: Upload artifact
+        if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v3
         with:
           path: site
@@ -79,6 +103,11 @@ jobs:
   deploy:
     name: Deploy to GitHub Pages
     if: github.ref == 'refs/heads/develop'
+    # The only job that publishes, so the only one holding a Pages token.
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

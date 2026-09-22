@@ -13,9 +13,8 @@ imports (bricks/<X>/ importing from nexus.bricks.<Y>) are also forbidden.
 This hook is the authority on what a brick may import; the prose below it is
 a pointer, not the rule.
 
-Reference: docs/archive/design/NEXUS-LEGO-ARCHITECTURE.md §1.2, Principle 3
-(under archive/ after a docs sweep kept only docs/architecture/ — the model
-is current, see src/nexus/bricks/__init__.py).
+Reference: docs/archive/design/NEXUS-LEGO-ARCHITECTURE.md §1.2, Principle 3,
+for the rationale; src/nexus/bricks/__init__.py for what a brick is.
 """
 
 import re

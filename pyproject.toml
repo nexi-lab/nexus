@@ -290,11 +290,16 @@ dev = [
     "import-linter>=2.11",  # Architecture boundary enforcement (Issue #2286)
     "maturin-import-hook>=0.3.0",  # Auto-rebuild Rust extensions on source change (Issue #3712)
 
-    # Documentation
-    "mkdocs>=1.6.1",
-    "mkdocs-material>=9.7.6",
-    "mkdocs-git-revision-date-localized-plugin>=1.5.1",
-    "mkdocs-minify-plugin>=0.8.0",
+    # Documentation. The site builds `--strict`, so ANY warning a plugin
+    # learns to emit fails the build — `mkdocs-git-revision-date-localized-
+    # plugin` 1.6.0 added one and turned develop red with no change on our
+    # side. Upper-bounded at the next major so that class of surprise needs a
+    # deliberate bump; the real guard is that docs.yml now builds on PRs, so
+    # a minor release doing the same lands as a red PR, not a red develop.
+    "mkdocs>=1.6.1,<2",
+    "mkdocs-material>=9.7.6,<10",
+    "mkdocs-git-revision-date-localized-plugin>=1.6.0,<2",
+    "mkdocs-minify-plugin>=0.8.0,<1",
 
     # Type stubs
     "types-pyyaml>=6.0.12.20260408",

@@ -27,13 +27,12 @@ or the term retired.
 
 Bricks are wired by ``factory.py`` (the Composition Root) and loaded on demand
 via config gates. The long-form rationale — four-tier model, lifecycle, how to
-add one — is ``docs/archive/design/NEXUS-LEGO-ARCHITECTURE.md`` §3. It sits
-under ``archive/`` because a docs sweep kept only ``docs/architecture/``, not
-because the model was retired; its Principle 3 is the rule the checker above
-enforces today. Its catalogs and readiness tables are a snapshot of a past
-migration and have drifted — trust the tree and the checker over those.
+add one — is ``docs/archive/design/NEXUS-LEGO-ARCHITECTURE.md`` §3. Read its
+principles, not its tables: §3.3's rules are what the checker above enforces,
+while its brick catalog and readiness columns are counts from an older tree.
+The tree and the checker are authoritative over both.
 
-The set of bricks is the set of sub-packages here; this docstring does not
-list them, because a hand-kept list goes stale the first time someone adds
-one (it did: it named nine of the twenty-seven on disk).
+The set of bricks is the set of sub-packages here. A list kept by hand in
+this docstring would go stale the first time someone adds one, so there
+isn't one.
 """

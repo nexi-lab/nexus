@@ -34,6 +34,7 @@ from nexus.bricks.rebac.batch.bulk_checker import BulkPermissionChecker
 from nexus.bricks.rebac.cache.leopard_facade import LeopardFacade
 from nexus.bricks.rebac.cache.result_cache import ReBACPermissionCache
 from nexus.bricks.rebac.cache.tiger.facade import TigerFacade
+from nexus.bricks.rebac.cache.zone_check_cache import ZoneRevisionCheckCache
 from nexus.bricks.rebac.consistency.metastore_version_store import MetastoreVersionStore
 from nexus.bricks.rebac.consistency.revision import (
     get_zone_revision_for_grant,
@@ -200,6 +201,16 @@ class ReBACManager:
             revision_quantization_window=10,
         )
         self._l1_cache.set_revision_fetcher(lambda zone_id: self.get_zone_revision(zone_id))
+
+        # Zone-aware single-check decisions, valid only at the zone revision
+        # they were computed at (see ``rebac_check_detailed``).
+        # ``NEXUS_REBAC_CHECK_CACHE=0`` disables it.
+        self._zone_check_cache: ZoneRevisionCheckCache | None = None
+        if os.environ.get("NEXUS_REBAC_CHECK_CACHE", "1").lower() not in ("0", "false", "off"):
+            self._zone_check_cache = ZoneRevisionCheckCache(
+                max_entries=max(1, int(os.environ.get("NEXUS_REBAC_CHECK_CACHE_SIZE", "50000"))),
+                ttl_seconds=float(cache_ttl_seconds),
+            )
 
         # SQLAlchemy sessionmaker for proper connection management
         from sqlalchemy.orm import sessionmaker
@@ -387,6 +398,7 @@ class ReBACManager:
             cache_ttl_seconds=self.cache_ttl_seconds,
             get_tuple_version=lambda: self._tuple_version,
             set_tuple_version=lambda v: setattr(self, "_tuple_version", v),
+            increment_zone_revision=self._increment_zone_revision,
             # Issue #3192: DT_STREAM + Pub/Sub
             invalidation_stream=self._create_invalidation_stream(),
             pubsub=self._create_pubsub(),
@@ -897,21 +909,41 @@ class ReBACManager:
 
         # Context-sensitive ABAC checks cannot use the context-free cache key.
         # Issue #4739: strong consistency never serves a cached decision.
-        if context is None and not is_strong_consistency(consistency):
-            # Cached (eventual) consistency: Use cache (up to cache_ttl_seconds staleness)
-            cached = self._get_cached_check_zone_aware(
-                subject_entity, permission, object_entity, zone_id
-            )
-            if cached is not None:
+        # The revision is read BEFORE computing: a decision is served only
+        # while the zone is still at that revision, and every tuple mutation
+        # (including expired-tuple cleanup above) bumps it.
+        cache_key = (
+            zone_id,
+            subject_entity.entity_type,
+            subject_entity.entity_id,
+            permission,
+            object_entity.entity_type,
+            object_entity.entity_id,
+        )
+        revision: tuple[int, int] | None = None
+        if (
+            self._zone_check_cache is not None
+            and context is None
+            and not is_strong_consistency(consistency)
+        ):
+            revision = self._check_cache_revision(zone_id)
+            cached = None
+            if revision is not None:
+                cached = self._zone_check_cache.get(cache_key, revision)
+            if revision is not None and cached is not None:
                 if logger.isEnabledFor(logging.DEBUG):
                     logger.debug(f"  -> CACHE HIT: returning cached result={cached}")
                 decision_time_ms = (time.perf_counter() - start_time) * 1000
                 return CheckResult(
                     allowed=cached,
-                    consistency_token=self._get_version_token(zone_id),
+                    consistency_token=(
+                        self._get_version_token(zone_id)
+                        if self._version_store is not None
+                        else f"v{revision[0]}"
+                    ),
                     decision_time_ms=decision_time_ms,
                     cached=True,
-                    cache_age_ms=None,  # Could be up to cache_ttl_seconds old
+                    cache_age_ms=None,
                     traversal_stats=None,
                 )
         logger.debug("  -> CACHE MISS: computing fresh result")
@@ -920,11 +952,24 @@ class ReBACManager:
         result = self._fresh_compute(
             subject_entity, permission, object_entity, zone_id, start_time, context
         )
-        if context is None:
-            self._cache_check_result_zone_aware(
-                subject_entity, permission, object_entity, zone_id, result.allowed
-            )
+        # An indeterminate (graph-limit) decision is not cached.
+        if revision is not None and self._zone_check_cache is not None and not result.indeterminate:
+            self._zone_check_cache.put(cache_key, revision, result.allowed)
         return result
+
+    def _check_cache_revision(self, zone_id: str) -> tuple[int, int] | None:
+        """``(zone revision, tuple version)`` read before computing a check.
+
+        Writes, deletes and expired-tuple cleanup bump the zone revision;
+        path renames bump the in-process tuple version.  ``None`` (revision
+        unreadable) disables caching for this check.
+        """
+        tuple_version = self._tuple_version
+        try:
+            return self.get_zone_revision(zone_id), tuple_version
+        except Exception:  # cache is an optimisation — never fail the check
+            logger.debug("zone revision unavailable; check not cached", exc_info=True)
+            return None
 
     def _fresh_compute(
         self,
@@ -1701,25 +1746,6 @@ class ReBACManager:
             for row in cursor.fetchall():
                 results.append((row["subject_type"], row["subject_id"]))
             return results
-
-    def _get_cached_check_zone_aware(
-        self, subject: Entity, permission: str, obj: Entity, zone_id: str
-    ) -> bool | None:
-        """Get cached permission check result (zone-aware cache key).
-
-        Note: L2 SQL cache (rebac_check_cache) removed — always returns None (cache miss).
-        L1 in-memory cache is checked by callers before this method.
-        """
-        return None
-
-    def _cache_check_result_zone_aware(
-        self, subject: Entity, permission: str, obj: Entity, zone_id: str, result: bool
-    ) -> None:
-        """Cache permission check result (zone-aware cache key).
-
-        Note: L2 SQL cache (rebac_check_cache) removed — no-op.
-        L1 in-memory caching is handled by callers.
-        """
 
     # ============================================================================
     # End Zone-Aware Methods
@@ -3324,9 +3350,7 @@ class ReBACManager:
         if self._namespace_store is not None:
             deleted = self._namespace_store.delete(object_type)
             if deleted:
-                cache = getattr(self, "_cache", None)
-                if cache is not None:
-                    cache.clear()
+                self._invalidate_cache_for_namespace(object_type)
             return deleted
 
         conn = self._get_connection()
@@ -3348,10 +3372,7 @@ class ReBACManager:
             )
             conn.commit()
 
-            # Invalidate cache if available
-            cache = getattr(self, "_cache", None)
-            if cache is not None:
-                cache.clear()
+            self._invalidate_cache_for_namespace(object_type)
 
             return True
         finally:
@@ -4308,6 +4329,10 @@ class ReBACManager:
     def _invalidate_cache_for_namespace(self, object_type: str) -> None:
         """Invalidate caches for namespace change. Delegates to CacheCoordinator."""
         self._cache_coordinator.invalidate_for_namespace_change(object_type)
+        # A schema change reshapes every derived decision without bumping any
+        # tuple revision.
+        if self._zone_check_cache is not None:
+            self._zone_check_cache.clear()
 
     # ====================================================================================
     # Maintenance Methods
@@ -4365,6 +4390,8 @@ class ReBACManager:
     def clear_permission_cache(self) -> bool:
         """Clear the L1 permission cache (nuclear invalidate). Returns True."""
         self._cache_coordinator.invalidate_all()
+        if self._zone_check_cache is not None:
+            self._zone_check_cache.clear()
         return True
 
     def clear_tiger_cache(self) -> bool:

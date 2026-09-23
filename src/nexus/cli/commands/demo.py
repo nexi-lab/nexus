@@ -1211,6 +1211,18 @@ try:
                 )
                 conn.commit()
                 deleted += result.rowcount
+                if result.rowcount:
+                    # Raw deletes bypass the ReBAC writer: bump the zone
+                    # revision so the server's cached decisions retire.
+                    conn.execute(
+                        text(
+                            "UPDATE rebac_version_sequences "
+                            "SET current_version = current_version + 1 "
+                            "WHERE zone_id = :zid"
+                        ),
+                        {"zid": z},
+                    )
+                    conn.commit()
         except Exception:
             pass
     print(deleted)

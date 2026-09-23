@@ -972,16 +972,46 @@ mod tests {
         // edit around the live node.  They filled the fixed over-fetch
         // window and the live chunk (and every hit behind it) vanished;
         // the widening must dig past them.
-        let idx = with_distractors(16);
-        let mut last = Vec::new();
-        for i in 0..300 {
-            // Each step is well past REUSE_MAX_DISTANCE — a real edit.
-            last = vec_dir(16, 1.0 + i as f32 * 0.02);
-            idx.delete_all_chunks("/sentinel.md");
-            idx.add_vector("/sentinel.md", 0, &last).unwrap();
+        //
+        // hnsw_rs's unseeded RNG builds this clump with some nodes lacking
+        // in-edges — unreachable at any `ef`, an HNSW limitation rather
+        // than the shadow filter under test.  So the bar is the raw graph
+        // at an exhaustive `ef`: the live node must come first whenever
+        // the graph reaches it (rebuild the rare ~4% where it doesn't),
+        // and results fill up to the live nodes it reaches.
+        for _ in 0..8 {
+            let idx = with_distractors(16);
+            let mut last = Vec::new();
+            for i in 0..300 {
+                // Each step is well past REUSE_MAX_DISTANCE — a real edit.
+                last = vec_dir(16, 1.0 + i as f32 * 0.02);
+                idx.delete_all_chunks("/sentinel.md");
+                idx.add_vector("/sentinel.md", 0, &last).unwrap();
+            }
+            let raw = idx.hnsw.search(&last, idx.hnsw.get_nb_point(), 5_000);
+            if raw.first().is_none_or(|n| n.distance > 1e-6) {
+                continue;
+            }
+            let reachable_live = {
+                let side = idx.sidecar.read();
+                assert_eq!(side.shadowed.len(), 299);
+                raw.iter()
+                    .filter(|n| !side.shadowed.contains(&n.d_id))
+                    .count()
+            };
+            for k in [1, 5, 10] {
+                let hits = idx.search(&last, k).expect("search");
+                assert_eq!(hits.len(), k.min(reachable_live), "k={k}: {hits:?}");
+                assert_eq!(hits[0].path, "/sentinel.md", "k={k}: {hits:?}");
+                assert_eq!(
+                    hits.iter().filter(|h| h.path == "/sentinel.md").count(),
+                    1,
+                    "shadows never surface: {hits:?}"
+                );
+            }
+            return;
         }
-        assert_eq!(idx.sidecar.read().shadowed.len(), 299);
-        assert_sentinel_first(&idx, &last);
+        panic!("live node unreachable in every rebuilt graph");
     }
 
     #[test]

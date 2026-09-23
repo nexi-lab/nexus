@@ -28,6 +28,7 @@ use crate::fusion::{self, DEFAULT_ALPHA, DEFAULT_RRF_K};
 use crate::index_manager::IndexManager;
 use crate::internal_call::{is_internal_call, INSIDE_MIDDLEWARE};
 use crate::kernel_io::{self, DirEntry, KernelIoError, DT_DIR, DT_REG, DT_STREAM};
+use crate::path_scope::PathScope;
 use crate::peer_fanout::{build_default_dispatcher, merge_ranked, SharedPeerFanoutDispatcher};
 use crate::query_expansion::{build_default_expander, ExpansionCache, QueryExpander};
 use crate::search_proto::search_service_server::SearchService;
@@ -637,7 +638,12 @@ impl SearchServiceImpl {
                 );
             }
         }
-        for resp in peer_responses {
+        // A peer older than `path_filters` ignores the field and
+        // answers for `path_filter` alone (or unscoped) — keep only
+        // in-scope hits so the union never widens past the request.
+        let scope = PathScope::from_request(&req.path_filter, &req.path_filters);
+        for mut resp in peer_responses {
+            resp.results.retain(|r| scope.matches(&r.path));
             if resp.error.is_none() && !resp.results.is_empty() {
                 lists.push(resp.results);
             }
@@ -1266,20 +1272,14 @@ fn do_keyword_query(
     q: &str,
     zone_id: &str,
     limit: usize,
-    path_filter: &str,
+    scope: &PathScope,
 ) -> Result<Vec<QueryResult>, String> {
     let index = manager
         .get_or_open(zone_id)
         .map_err(|e| format!("open index for zone {zone_id:?}: {e}"))?;
 
-    let prefix = if path_filter.is_empty() {
-        None
-    } else {
-        Some(path_filter)
-    };
-
     let hits = index
-        .search(q, limit, prefix)
+        .search(q, limit, Some(scope))
         .map_err(|e| format!("search: {e}"))?;
 
     Ok(hits
@@ -1347,16 +1347,16 @@ fn do_semantic_query(
     q: &str,
     zone_id: &str,
     limit: usize,
-    path_filter: &str,
+    scope: &PathScope,
 ) -> Result<Vec<QueryResult>, String> {
-    do_semantic_query_inner(
+    do_semantic_query_scoped(
         manager,
         embedder,
         embed_cache,
         q,
         zone_id,
         limit,
-        path_filter,
+        scope,
         ann_filter_max_fetch(),
         ann_exact_max_chunks(),
     )
@@ -1389,6 +1389,8 @@ fn do_semantic_query_bounded(
     )
 }
 
+/// Single-prefix form of [`do_semantic_query_scoped`] for tests.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 fn do_semantic_query_inner(
     manager: &IndexManager,
@@ -1398,6 +1400,31 @@ fn do_semantic_query_inner(
     zone_id: &str,
     limit: usize,
     path_filter: &str,
+    max_fetch: usize,
+    exact_max: usize,
+) -> Result<Vec<QueryResult>, String> {
+    do_semantic_query_scoped(
+        manager,
+        embedder,
+        embed_cache,
+        q,
+        zone_id,
+        limit,
+        &PathScope::new([path_filter]),
+        max_fetch,
+        exact_max,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn do_semantic_query_scoped(
+    manager: &IndexManager,
+    embedder: &Arc<dyn Embedder>,
+    embed_cache: &QueryEmbedCache,
+    q: &str,
+    zone_id: &str,
+    limit: usize,
+    scope: &PathScope,
     max_fetch: usize,
     exact_max: usize,
 ) -> Result<Vec<QueryResult>, String> {
@@ -1414,16 +1441,21 @@ fn do_semantic_query_inner(
     // stores only vectors + paths, but the RPC contract carries the
     // full QueryResult shape so callers don't need a follow-up read.
     let fts = manager.get_or_open(zone_id).ok();
+    // Per-query memo of each hit path's stored chunks: ANN hits are
+    // keyed by (path, chunk_index) and several hits commonly share a
+    // path, so each path's chunks are read at most once per query
+    // (including across widening rounds).
+    let mut chunk_memo = ChunkTextMemo::default();
 
     // A scoped query can return at most as many hits as the subtree
     // has live chunks: an empty subtree needs no ANN search at all
     // (Koodle's per-workspace `notes` / `private-inbox` scopes are
     // mostly empty), and a small one lets the widening stop as soon
     // as every chunk it owns has been found.
-    let target = if path_filter.is_empty() {
+    let target = if scope.is_unscoped() {
         limit
     } else {
-        let under = ann.live_chunks_under(path_filter);
+        let under = ann.live_chunks_in(scope);
         if under == 0 {
             return Ok(Vec::new());
         }
@@ -1432,11 +1464,11 @@ fn do_semantic_query_inner(
             // than any graph fetch that has to be wide enough to
             // catch them, and not bounded by a ceiling.
             let hits = ann
-                .exact_search_under(&query_vec, path_filter, limit)
+                .exact_search_in(&query_vec, scope, limit)
                 .map_err(|e| format!("ann exact search: {e}"))?;
             return Ok(hits
                 .into_iter()
-                .filter_map(|hit| enrich_ann_hit(fts.as_deref(), hit, zone_id))
+                .filter_map(|hit| enrich_ann_hit(fts.as_deref(), &mut chunk_memo, hit, zone_id))
                 .collect());
         }
         limit.min(under)
@@ -1445,7 +1477,7 @@ fn do_semantic_query_inner(
     // Over-fetch when a path prefix is set — the post-scoring
     // filter would otherwise underfill the response.
     let max_fetch = max_fetch.max(limit);
-    let mut fetch = if path_filter.is_empty() {
+    let mut fetch = if scope.is_unscoped() {
         limit
     } else {
         limit
@@ -1461,7 +1493,7 @@ fn do_semantic_query_inner(
 
         let mut out = Vec::with_capacity(limit);
         for hit in ann_hits {
-            if !path_filter.is_empty() && !hit.path.starts_with(path_filter) {
+            if !scope.matches(&hit.path) {
                 continue;
             }
             // Orphan guard (review residual, follow-up landed): an ANN
@@ -1471,7 +1503,7 @@ fn do_semantic_query_inner(
             // the unknown ones at read time).  Dropped, not served.
             // When FTS itself is unavailable the hit is UNVERIFIABLE and
             // kept — availability over a drift-window false negative.
-            if let Some(result) = enrich_ann_hit(fts.as_deref(), hit, zone_id) {
+            if let Some(result) = enrich_ann_hit(fts.as_deref(), &mut chunk_memo, hit, zone_id) {
                 out.push(result);
                 if out.len() >= limit {
                     break;
@@ -1481,7 +1513,7 @@ fn do_semantic_query_inner(
         // Done when the response is full (or holds every chunk the
         // subtree has), no filter starved it, the graph ran out of
         // candidates, or the ceiling is reached.
-        if path_filter.is_empty() || out.len() >= target || returned < fetch || fetch >= max_fetch {
+        if scope.is_unscoped() || out.len() >= target || returned < fetch || fetch >= max_fetch {
             return Ok(out);
         }
         fetch = fetch.saturating_mul(ANN_FILTER_FETCH_MULT).min(max_fetch);
@@ -1489,10 +1521,11 @@ fn do_semantic_query_inner(
 }
 
 /// Enrich an ANN hit with FTS-side text/mtime.  Returns None when the
-/// FTS index is OPEN but has no row for the path — the orphan-vector
-/// read guard; see the caller comment.
+/// FTS index is OPEN but has no row for the hit's (path, chunk_index)
+/// — the orphan-vector read guard; see the caller comment.
 fn enrich_ann_hit(
     fts: Option<&crate::fts_index::FtsIndex>,
+    memo: &mut ChunkTextMemo,
     hit: AnnHit,
     zone_id: &str,
 ) -> Option<QueryResult> {
@@ -1501,11 +1534,12 @@ fn enrich_ann_hit(
     // rely on.  ANN returns distance in [0, 2]; score falls in [-1, 1].
     let score = 1.0 - hit.distance;
     let (chunk_text, mtime_ms) = match fts {
-        Some(f) => match lookup_fts_by_path(f, &hit.path) {
+        Some(f) => match lookup_fts_chunk(f, memo, &hit.path, hit.chunk_index) {
             Some(pair) => pair,
             None => {
                 tracing::debug!(
                     path = %hit.path,
+                    chunk_index = hit.chunk_index,
                     "semantic hit dropped: ANN vector has no FTS row (orphan guard)",
                 );
                 return None;
@@ -1530,6 +1564,44 @@ fn enrich_ann_hit(
         recency_boost: None,
         expansion_variant_index: None,
     })
+}
+
+/// Each path's stored chunks (sorted by `chunk_index`, as
+/// `get_chunks_by_path` returns them), filled on first use within one
+/// semantic query.
+#[derive(Default)]
+struct ChunkTextMemo(std::collections::HashMap<String, Vec<FtsHit>>);
+
+/// Text + mtime of the ANN hit's OWN chunk (#4817).  An ANN hit is
+/// keyed by `(path, chunk_index)`; a path-only lookup returns
+/// whichever chunk of the file the term query yields first (usually
+/// the leading heading), so every semantic hit on a multi-chunk file
+/// carried another chunk's text.  `chunk_index` is STORED-only (not
+/// indexed), so the path's chunks are read once and matched here.
+///
+/// A chunk missing from a COMPLETE stored set is an ANN orphan — a
+/// re-chunk whose re-embed failed keeps the old vectors — and returns
+/// `None` (dropped, like the title arm's R8 check).  Only a set
+/// truncated at the cap falls back to the path-level row: the chunk
+/// may exist beyond it.
+fn lookup_fts_chunk(
+    fts: &crate::fts_index::FtsIndex,
+    memo: &mut ChunkTextMemo,
+    path: &str,
+    chunk_index: u32,
+) -> Option<(String, Option<i64>)> {
+    let chunks = memo
+        .0
+        .entry(path.to_string())
+        .or_insert_with(|| fts.get_chunks_by_path(path).unwrap_or_default());
+    if let Ok(i) = chunks.binary_search_by_key(&chunk_index, |h| h.chunk_index) {
+        let h = &chunks[i];
+        return Some((h.chunk_text.clone(), h.mtime_ms));
+    }
+    if chunks.len() >= crate::fts_index::MAX_CHUNKS_PER_PATH {
+        return lookup_fts_by_path(fts, path);
+    }
+    None
 }
 
 /// Look up an FTS row by exact path via the STRING-indexed `path`
@@ -1684,11 +1756,10 @@ fn do_title_locate(
     q: &str,
     zone_id: &str,
     limit: usize,
-    path_filter: &str,
+    scope: &PathScope,
 ) -> TitleArmRun {
     let locate = |skeleton: &crate::title_index::ZoneSkeleton| {
-        let prefix = (!path_filter.is_empty()).then_some(path_filter);
-        let mut hits = skeleton.locate(q, limit, prefix);
+        let mut hits = skeleton.locate(q, limit, Some(scope));
         // Evidence gate: a lone incidental path-token overlap
         // (score 1.0) must not earn rank-based RRF votes;
         // require at least one real title-token match (2.0).
@@ -4020,7 +4091,9 @@ impl SearchService for SearchServiceImpl {
         let zone_id = resolve_zone(&req.zone_id).to_string();
         // Now safe to move fields out.
         let q = req.q;
-        let path_filter = req.path_filter;
+        // `path_filter` OR any `path_filters`: one fused ranking over
+        // the union (scores are not comparable across separate lists).
+        let path_filter = Arc::new(PathScope::from_request(&req.path_filter, &req.path_filters));
         let manager = Arc::clone(&self.manager);
         // Retained copies for post-outcome scoring — `q` moves into
         // the spawn_blocking closures below; recency-auto needs to
@@ -5034,30 +5107,20 @@ impl SearchService for SearchServiceImpl {
         let seq_snapshot = self.index_seq.snapshot();
         let pending = self.pending_docs.load(std::sync::atomic::Ordering::SeqCst);
         let outcome = tokio::task::spawn_blocking(move || -> Result<StatsResponse, String> {
-            // FTS side: count chunks + distinct paths in the zone.
-            // FtsIndex doesn't expose a raw count today, so we open
-            // it (which is cheap when already cached) and let the
-            // caller derive from search + get_chunks_by_path.  For
-            // v0 we surface zero counts on error — Stats is a poll
-            // surface, not a source of truth.
-            let fts_open = manager.get_or_open(&zone_id);
-            let (fts_doc_count, fts_path_count) = match fts_open {
-                Ok(_fts) => {
-                    // Rough approximation — no cheap enumerator on
-                    // tantivy without a full read.  Real accounting
-                    // lands with the P5 IndexState-driven counter in
-                    // a follow-up.  For now surface (parked
-                    // + indexed_dirs) counts so callers see SOMETHING
-                    // useful even if FTS totals are zero.
-                    let state =
-                        crate::index_state::IndexState::open_or_create(manager.zone_root(&zone_id));
-                    match state {
-                        Ok(s) => (s.len() as u32, s.len() as u32),
-                        Err(_) => (0, 0),
-                    }
-                }
-                Err(_) => (0, 0),
-            };
+            // FTS side: alive chunks + distinct live paths in the zone
+            // (proto contract).  Zero counts on error — Stats is a
+            // poll surface, not a source of truth.
+            let (fts_doc_count, fts_path_count) = manager
+                .get_or_open(&zone_id)
+                .ok()
+                .and_then(|fts| fts.counts().ok())
+                .map(|c| {
+                    (
+                        u32::try_from(c.chunks).unwrap_or(u32::MAX),
+                        u32::try_from(c.paths).unwrap_or(u32::MAX),
+                    )
+                })
+                .unwrap_or((0, 0));
             let ann_chunk_count = if let Some((tag, dim)) = embedder_tag_dim {
                 manager
                     .get_or_open_ann(&zone_id, &tag, dim)
@@ -5362,6 +5425,167 @@ mod tests {
         assert_eq!(cached(&manager, "/a.md"), Some(Some(1_000)));
         assert_eq!(cached(&manager, "/b.md"), Some(Some(2_000)));
         assert!(!manager.zone_is_dirty("root"));
+    }
+
+    /// Index one multi-section doc at `/ws/report.md` and return the
+    /// stored `chunk_index -> chunk_text` map for it.
+    fn index_multi_chunk_report(
+        manager: &Arc<IndexManager>,
+        embedder: &Arc<dyn Embedder>,
+        cache: &crate::query_cache::SharedQueryCache,
+        gate: &crate::ann_flush::EmbedGate,
+        flush: &Arc<crate::ann_flush::AnnFlushCoordinator>,
+    ) -> std::collections::HashMap<u32, String> {
+        let body = |w: &str| format!("{w} ").repeat(400);
+        let text = format!(
+            "# Annual report\n\n## Business\n\n{}\n\n## Risk factors\n\n{}\n\n## Properties\n\n{}\n",
+            body("alpha"),
+            body("bravo"),
+            body("charlie")
+        );
+        do_index_documents(
+            manager,
+            Some(embedder),
+            false,
+            None,
+            "root",
+            vec![doc("/ws/report.md", &text, 1_000)],
+            cache,
+            gate,
+            flush,
+        )
+        .expect("index doc");
+        let stored = manager
+            .get_or_open("root")
+            .expect("fts")
+            .get_chunks_by_path("/ws/report.md")
+            .expect("chunks");
+        assert!(stored.len() >= 3, "fixture must chunk: {}", stored.len());
+        stored
+            .into_iter()
+            .map(|h| (h.chunk_index, h.chunk_text))
+            .collect()
+    }
+
+    #[test]
+    fn semantic_hits_carry_their_own_chunk_text() {
+        // #4817: a multi-section file chunks into several
+        // (path, chunk_index) rows.  Every semantic hit must carry the
+        // text stored for ITS chunk_index — the path-only lookup handed
+        // every hit the file's leading chunk (a bare heading in
+        // production).  Covers the exact-scoring and widening branches.
+        let (_tmp, manager, embedder, cache, gate, flush) = deferral_fixture(None);
+        let embed_cache = QueryEmbedCache::with_capacity(0);
+        let by_index = index_multi_chunk_report(&manager, &embedder, &cache, &gate, &flush);
+
+        for exact in [0, DEFAULT_ANN_EXACT_MAX_CHUNKS] {
+            let hits = do_semantic_query_inner(
+                &manager,
+                &embedder,
+                &embed_cache,
+                "bravo",
+                "root",
+                10,
+                "/ws/",
+                64,
+                exact,
+            )
+            .expect("semantic query");
+            assert!(hits.len() >= 2, "several chunks of one path: {hits:?}");
+            for hit in &hits {
+                assert_eq!(
+                    Some(&hit.chunk_text),
+                    by_index.get(&hit.chunk_index),
+                    "chunk {} carries another chunk's text",
+                    hit.chunk_index
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn semantic_scope_unions_prefixes_in_both_branches() {
+        let (_tmp, manager, embedder, cache, gate, flush) = deferral_fixture(None);
+        let embed_cache = QueryEmbedCache::with_capacity(0);
+        let docs = vec![
+            doc("/ws/documents/a.md", "quarterly revenue report", 1_000),
+            doc("/ws/notes/b.md", "revenue meeting notes", 1_000),
+            doc("/ws/brief/c.md", "revenue brief snapshot", 1_000),
+            doc("/other/d.md", "revenue elsewhere", 1_000),
+        ];
+        do_index_documents(
+            &manager,
+            Some(&embedder),
+            false,
+            None,
+            "root",
+            docs,
+            &cache,
+            &gate,
+            &flush,
+        )
+        .expect("index");
+        let scope = PathScope::new(["/ws/documents/", "/ws/notes/"]);
+        for exact in [0, DEFAULT_ANN_EXACT_MAX_CHUNKS] {
+            let hits = do_semantic_query_scoped(
+                &manager,
+                &embedder,
+                &embed_cache,
+                "revenue",
+                "root",
+                10,
+                &scope,
+                64,
+                exact,
+            )
+            .expect("semantic query");
+            let mut paths: Vec<&str> = hits.iter().map(|h| h.path.as_str()).collect();
+            paths.sort_unstable();
+            assert_eq!(
+                paths,
+                ["/ws/documents/a.md", "/ws/notes/b.md"],
+                "exact_max={exact}"
+            );
+        }
+    }
+
+    #[test]
+    fn semantic_hit_on_a_stale_chunk_index_is_dropped() {
+        // A re-chunk whose re-embed failed leaves vectors for chunk
+        // indexes the FTS side no longer holds.  Such a hit has no
+        // text of its own; serving the path's leading chunk under the
+        // stale index would reintroduce #4817, so it is dropped.
+        let (_tmp, manager, embedder, cache, gate, flush) = deferral_fixture(None);
+        let embed_cache = QueryEmbedCache::with_capacity(0);
+        let by_index = index_multi_chunk_report(&manager, &embedder, &cache, &gate, &flush);
+        let stale = 9_999u32;
+        assert!(!by_index.contains_key(&stale));
+        let ann = manager
+            .get_or_open_ann("root", embedder.tag(), embedder.dim())
+            .expect("ann");
+        let vec = embedder.embed_batch(&["stale"]).expect("embed");
+        ann.add_vector("/ws/report.md", stale, &vec[0])
+            .expect("add stale vector");
+
+        for exact in [0, DEFAULT_ANN_EXACT_MAX_CHUNKS] {
+            let hits = do_semantic_query_inner(
+                &manager,
+                &embedder,
+                &embed_cache,
+                "stale",
+                "root",
+                10,
+                "/ws/",
+                64,
+                exact,
+            )
+            .expect("semantic query");
+            assert!(!hits.is_empty(), "live chunks still served");
+            assert!(
+                hits.iter().all(|h| h.chunk_index != stale),
+                "stale chunk served: {hits:?}"
+            );
+        }
     }
 
     #[test]

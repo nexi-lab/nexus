@@ -165,6 +165,7 @@ class QueryRequest(_message.Message):
         "recency_weight",
         "recency_half_life_days",
         "path_prefix_boosts",
+        "path_filters",
     )
     class PathPrefixBoostsEntry(_message.Message):
         __slots__ = ("key", "value")
@@ -189,6 +190,7 @@ class QueryRequest(_message.Message):
     RECENCY_WEIGHT_FIELD_NUMBER: _ClassVar[int]
     RECENCY_HALF_LIFE_DAYS_FIELD_NUMBER: _ClassVar[int]
     PATH_PREFIX_BOOSTS_FIELD_NUMBER: _ClassVar[int]
+    PATH_FILTERS_FIELD_NUMBER: _ClassVar[int]
     q: str
     zone_id: str
     limit: int
@@ -204,6 +206,7 @@ class QueryRequest(_message.Message):
     recency_weight: float
     recency_half_life_days: float
     path_prefix_boosts: _containers.ScalarMap[str, float]
+    path_filters: _containers.RepeatedScalarFieldContainer[str]
     def __init__(
         self,
         q: str | None = ...,
@@ -221,6 +224,7 @@ class QueryRequest(_message.Message):
         recency_weight: float | None = ...,
         recency_half_life_days: float | None = ...,
         path_prefix_boosts: _Mapping[str, float] | None = ...,
+        path_filters: _Iterable[str] | None = ...,
     ) -> None: ...
 
 class QueryResult(_message.Message):

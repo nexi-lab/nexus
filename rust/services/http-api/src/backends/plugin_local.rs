@@ -94,6 +94,7 @@ impl LocalSearchBackend for PluginLocalSearchBackend {
             recency_weight: 0.0,
             recency_half_life_days: 0.0,
             path_prefix_boosts: std::collections::HashMap::new(),
+            path_filters: Vec::new(),
         };
         let resp = client
             .query(tonic::Request::new(proto))

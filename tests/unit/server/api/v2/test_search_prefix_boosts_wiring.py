@@ -191,9 +191,13 @@ async def test_federated_legs_carry_per_zone_boosts(store: PathContextStore) -> 
 
 
 @pytest.mark.asyncio
-async def test_weight_update_visible_on_next_query(store: PathContextStore) -> None:
-    # The resolver caches per zone with a DB fingerprint check — an
-    # upsert between queries must be reflected, not served stale.
+async def test_weight_update_visible_on_next_query(
+    store: PathContextStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # With the freshness window disabled the resolver checks the DB
+    # fingerprint per query — an out-of-band upsert between queries must
+    # be reflected, not served stale.
+    monkeypatch.setenv("NEXUS_PATH_CONTEXT_FRESHNESS_SECONDS", "0")
     await store.upsert("eng", "docs", "tier-1", weight=2.0)
     daemon = _make_daemon()
     with TestClient(_build_app(daemon, store)) as client:
@@ -202,3 +206,56 @@ async def test_weight_update_visible_on_next_query(store: PathContextStore) -> N
         client.get("/api/v2/search/query", params={"q": "needle"})
     req = daemon.search.call_args.args[0]
     assert req.path_prefix_boosts == {"/docs/": 9.0}
+
+
+@pytest.mark.asyncio
+async def test_out_of_band_write_is_seen_once_the_freshness_window_expires(
+    store: PathContextStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Inside the window the fingerprint is trusted (no per-query DB round
+    # trip); a write from another process shows up once it expires.
+    import time
+
+    monkeypatch.setenv("NEXUS_PATH_CONTEXT_FRESHNESS_SECONDS", "0.3")
+    await store.upsert("eng", "docs", "tier-1", weight=2.0)
+    daemon = _make_daemon()
+    with TestClient(_build_app(daemon, store)) as client:
+        client.get("/api/v2/search/query", params={"q": "needle"})
+        await store.upsert("eng", "docs", "tier-1", weight=9.0)
+        client.get("/api/v2/search/query", params={"q": "needle"})
+        assert daemon.search.call_args.args[0].path_prefix_boosts == {"/docs/": 2.0}
+        time.sleep(0.4)
+        client.get("/api/v2/search/query", params={"q": "needle"})
+    assert daemon.search.call_args.args[0].path_prefix_boosts == {"/docs/": 9.0}
+
+
+@pytest.mark.asyncio
+async def test_route_upsert_is_visible_on_the_next_query_inside_the_window(
+    store: PathContextStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A write through THIS process's path-contexts route invalidates the
+    # search cache, so even a long freshness window never hides it.
+    from nexus.server.api.v2.routers.path_contexts import router as pc_router
+    from nexus.server.dependencies import require_admin
+
+    monkeypatch.setenv("NEXUS_PATH_CONTEXT_FRESHNESS_SECONDS", "3600")
+    await store.upsert("eng", "docs", "tier-1", weight=2.0)
+    daemon = _make_daemon()
+    app = _build_app(daemon, store)
+    app.dependency_overrides[require_admin] = lambda: {**_AUTH, "is_admin": True}
+    app.include_router(pc_router)
+    with TestClient(app) as client:
+        client.get("/api/v2/search/query", params={"q": "needle"})
+        put = client.put(
+            "/api/v2/path-contexts/",
+            json={"zone_id": "eng", "path_prefix": "docs", "description": "tier-1", "weight": 9.0},
+        )
+        assert put.status_code == 200, put.text
+        client.get("/api/v2/search/query", params={"q": "needle"})
+        assert daemon.search.call_args.args[0].path_prefix_boosts == {"/docs/": 9.0}
+        delete = client.delete(
+            "/api/v2/path-contexts/", params={"zone_id": "eng", "path_prefix": "docs"}
+        )
+        assert delete.status_code == 200, delete.text
+        client.get("/api/v2/search/query", params={"q": "needle"})
+    assert not daemon.search.call_args.args[0].path_prefix_boosts

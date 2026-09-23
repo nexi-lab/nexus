@@ -135,7 +135,7 @@ pub fn embed_query_cached(
         return Ok(v);
     }
     let vec = embedder
-        .embed_batch(&[q])
+        .embed_queries(&[q])
         .map_err(|e| format!("embed query: {e}"))?
         .into_iter()
         .next()
@@ -266,5 +266,37 @@ mod tests {
         let cache = QueryEmbedCache::with_capacity(4);
         assert!(embed_query_cached(&Failing, &cache, "q").is_err());
         assert!(cache.is_empty(), "a failed embed must not be cached");
+    }
+
+    #[test]
+    fn queries_embed_through_the_query_side_of_asymmetric_models() {
+        // e5-style models embed queries and passages differently; the
+        // query path must never use the passage (document) embedding.
+        struct Asymmetric;
+        impl Embedder for Asymmetric {
+            fn embed_batch(
+                &self,
+                texts: &[&str],
+            ) -> Result<Vec<Vec<f32>>, crate::embedder::EmbedError> {
+                Ok(texts.iter().map(|_| vec![1.0, 0.0]).collect())
+            }
+            fn embed_queries(
+                &self,
+                queries: &[&str],
+            ) -> Result<Vec<Vec<f32>>, crate::embedder::EmbedError> {
+                Ok(queries.iter().map(|_| vec![0.0, 1.0]).collect())
+            }
+            fn dim(&self) -> usize {
+                2
+            }
+            fn tag(&self) -> &str {
+                "asym"
+            }
+        }
+        let cache = QueryEmbedCache::with_capacity(4);
+        assert_eq!(
+            embed_query_cached(&Asymmetric, &cache, "q").unwrap(),
+            vec![0.0, 1.0]
+        );
     }
 }

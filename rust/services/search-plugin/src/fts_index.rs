@@ -83,6 +83,7 @@
 //! [`FtsIndex::writer_status`] exposes the fault for the Health RPC so
 //! a poller cannot read `healthy` while the writer is dead.
 
+use std::ops::Bound;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -90,12 +91,31 @@ use std::time::Instant;
 use parking_lot::Mutex;
 use tantivy::collector::TopDocs;
 use tantivy::directory::MmapDirectory;
-use tantivy::query::QueryParser;
-use tantivy::query::TermQuery;
+use tantivy::query::{BooleanQuery, BoostQuery, Occur, Query, QueryParser, RangeQuery, TermQuery};
 use tantivy::schema::{
-    Field, IndexRecordOption, Schema, TextFieldIndexing, TextOptions, Value, STORED, STRING,
+    Field, IndexRecordOption, Schema, TextFieldIndexing, TextOptions, Type, Value, STORED, STRING,
 };
-use tantivy::{doc, Index, IndexReader, IndexWriter, ReloadPolicy, TantivyDocument, Term};
+use tantivy::{doc, DocSet, Index, IndexReader, IndexWriter, ReloadPolicy, TantivyDocument, Term};
+
+use crate::path_scope::PathScope;
+
+/// Smallest byte string greater than every string that starts with
+/// `prefix` — the exclusive upper bound of a prefix range.  `None`
+/// when no such bound exists (empty, or all `0xFF`).
+fn prefix_successor(prefix: &[u8]) -> Option<Vec<u8>> {
+    let mut succ = prefix.to_vec();
+    while let Some(last) = succ.pop() {
+        if last < u8::MAX {
+            succ.push(last + 1);
+            return Some(succ);
+        }
+    }
+    None
+}
+
+/// Upper bound on the chunks [`FtsIndex::get_chunks_by_path`]
+/// returns.  A result of exactly this size may be truncated.
+pub const MAX_CHUNKS_PER_PATH: usize = 512;
 
 /// tantivy writer heap — 50 MiB is the conventional per-index budget
 /// and lets a batch of ~1 000 chunks commit without forcing a merge.
@@ -197,6 +217,19 @@ pub struct FtsIndex {
     /// updates, so a poll never queues behind an in-flight commit.
     status: Mutex<WriterStatus>,
     reader: IndexReader,
+    /// [`FtsIndex::counts`] memo keyed by searcher generation, so a
+    /// Stats poll re-walks the `path` term dictionary only after a
+    /// commit changed the index.
+    counts_cache: Mutex<Option<(u64, FtsCounts)>>,
+}
+
+/// Live FTS totals for the Stats RPC.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FtsCounts {
+    /// Alive chunk documents.
+    pub chunks: u64,
+    /// Distinct paths with at least one alive chunk.
+    pub paths: u64,
 }
 
 /// The tantivy writer plus the per-transaction bookkeeping the
@@ -313,6 +346,7 @@ impl FtsIndex {
                 last_verified_commit: None,
             }),
             reader,
+            counts_cache: Mutex::new(None),
         }))
     }
 
@@ -571,8 +605,9 @@ impl FtsIndex {
         &self,
         query: &str,
         limit: usize,
-        path_prefix: Option<&str>,
+        scope: Option<&PathScope>,
     ) -> Result<Vec<FtsHit>, IndexError> {
+        let scope = scope.filter(|s| !s.is_unscoped());
         let searcher = self.reader.searcher();
 
         let parser = QueryParser::for_index(&self.index, vec![self.fields.chunk_text]);
@@ -600,19 +635,24 @@ impl FtsIndex {
             }
         };
 
-        // Over-fetch when a path prefix is set: the prefix filter is
-        // applied post-scoring in P1, so we grab a wider window to
-        // avoid returning fewer than `limit` hits when the top of the
-        // BM25 list is largely off-prefix.  Bounded so a pathological
-        // filter doesn't scan the whole index.
-        let fetch = if path_prefix.is_some() {
-            (limit * 4).min(1_000)
-        } else {
-            limit
+        // The path scope is part of the query (a zero-weight range
+        // filter on the STRING `path` term dictionary), so the top
+        // `limit` are the best IN-SCOPE hits.  Post-filtering a bounded
+        // global window starved scoped queries in large zones: a common
+        // term's best global matches all lay outside the workspace.
+        let parsed: Box<dyn Query> = match scope {
+            Some(scope) => Box::new(BooleanQuery::new(vec![
+                (Occur::Must, parsed),
+                (
+                    Occur::Must,
+                    Box::new(BoostQuery::new(self.scope_filter(scope), 0.0)),
+                ),
+            ])),
+            None => parsed,
         };
 
         let top = searcher
-            .search(&parsed, &TopDocs::with_limit(fetch))
+            .search(&parsed, &TopDocs::with_limit(limit))
             .map_err(|e| IndexError::Search(e.to_string()))?;
 
         let mut hits = Vec::with_capacity(limit);
@@ -621,10 +661,9 @@ impl FtsIndex {
                 .doc(addr)
                 .map_err(|e| IndexError::Search(e.to_string()))?;
             let hit = self.decode(stored, score);
-            if let Some(prefix) = path_prefix {
-                if !hit.path.starts_with(prefix) {
-                    continue;
-                }
+            // Defensive re-check; the query already enforced it.
+            if scope.is_some_and(|s| !s.matches(&hit.path)) {
+                continue;
             }
             hits.push(hit);
             if hits.len() >= limit {
@@ -661,12 +700,13 @@ impl FtsIndex {
     /// ascending.  Used by the `expand=macro` code path in
     /// `service.rs` to build the previous + current + next
     /// context around each hit without a per-hit search round trip.
-    /// Caps at 512 chunks to bound a pathologically-large file's
-    /// footprint here — a file with more than 512 chunks in P4 is
-    /// beyond the intended budget anyway (chunks_per_page-pooled
-    /// results wouldn't surface that many either).
+    /// Caps at [`MAX_CHUNKS_PER_PATH`] chunks to bound a
+    /// pathologically-large file's footprint here — a file with more
+    /// than 512 chunks in P4 is beyond the intended budget anyway
+    /// (chunks_per_page-pooled results wouldn't surface that many
+    /// either).
     pub fn get_chunks_by_path(&self, path: &str) -> Result<Vec<FtsHit>, IndexError> {
-        const CAP: usize = 512;
+        const CAP: usize = MAX_CHUNKS_PER_PATH;
         let searcher = self.reader.searcher();
         let term = Term::from_field_text(self.fields.path, path);
         let query = TermQuery::new(term, IndexRecordOption::Basic);
@@ -684,12 +724,102 @@ impl FtsIndex {
         Ok(hits)
     }
 
+    /// Match-only query for "path starts with any of the scope's
+    /// prefixes": one term range `[prefix, successor(prefix))` per
+    /// prefix over the STRING `path` field.
+    fn scope_filter(&self, scope: &PathScope) -> Box<dyn Query> {
+        let field = self
+            .index
+            .schema()
+            .get_field_name(self.fields.path)
+            .to_string();
+        let mut ranges: Vec<(Occur, Box<dyn Query>)> = scope
+            .prefixes()
+            .iter()
+            .map(|prefix| {
+                let lower = Bound::Included(Term::from_field_text(self.fields.path, prefix));
+                let upper = match prefix_successor(prefix.as_bytes()) {
+                    Some(succ) => Bound::Excluded(Term::from_field_bytes(self.fields.path, &succ)),
+                    None => Bound::Unbounded,
+                };
+                let range: Box<dyn Query> = Box::new(RangeQuery::new_term_bounds(
+                    field.clone(),
+                    Type::Str,
+                    &lower,
+                    &upper,
+                ));
+                (Occur::Should, range)
+            })
+            .collect();
+        match ranges.len() {
+            1 => ranges.pop().map(|(_, q)| q).expect("one range"),
+            _ => Box::new(BooleanQuery::new(ranges)),
+        }
+    }
+
     /// Current searcher generation — bumps on every commit + reader
     /// reload.  The per-zone skeleton cache (#4628) keys on this so
     /// index mutations invalidate the skeleton automatically, with
     /// no invalidation call sites to keep in sync.
     pub fn generation_id(&self) -> u64 {
         self.reader.searcher().generation().generation_id()
+    }
+
+    /// Alive chunk count + distinct live path count.  Chunks come from
+    /// the searcher's alive-doc total; paths from the STRING-indexed
+    /// `path` term dictionary, deduped across segments.  A term only
+    /// counts when one of its postings is alive — delete-then-add
+    /// leaves the old segment's term in place until a merge.  Memoised
+    /// per searcher generation.
+    pub fn counts(&self) -> Result<FtsCounts, IndexError> {
+        let searcher = self.reader.searcher();
+        let gen = searcher.generation().generation_id();
+        if let Some((cached_gen, counts)) = *self.counts_cache.lock() {
+            if cached_gen == gen {
+                return Ok(counts);
+            }
+        }
+        let err = |e: tantivy::TantivyError| IndexError::Search(e.to_string());
+        let mut paths: std::collections::HashSet<Vec<u8>> = std::collections::HashSet::new();
+        for seg in searcher.segment_readers() {
+            let inverted = seg.inverted_index(self.fields.path).map_err(err)?;
+            let mut terms = inverted
+                .terms()
+                .stream()
+                .map_err(|e| IndexError::Search(e.to_string()))?;
+            while terms.advance() {
+                if paths.contains(terms.key()) {
+                    continue;
+                }
+                let live = match seg.alive_bitset() {
+                    None => true,
+                    Some(alive) => {
+                        let mut postings = inverted
+                            .read_postings_from_terminfo(terms.value(), IndexRecordOption::Basic)
+                            .map_err(|e| IndexError::Search(e.to_string()))?;
+                        let mut found = false;
+                        let mut doc = postings.doc();
+                        while doc != tantivy::TERMINATED {
+                            if alive.is_alive(doc) {
+                                found = true;
+                                break;
+                            }
+                            doc = postings.advance();
+                        }
+                        found
+                    }
+                };
+                if live {
+                    paths.insert(terms.key().to_vec());
+                }
+            }
+        }
+        let counts = FtsCounts {
+            chunks: searcher.num_docs(),
+            paths: paths.len() as u64,
+        };
+        *self.counts_cache.lock() = Some((gen, counts));
+        Ok(counts)
     }
 
     /// Visit every alive stored chunk as `(path, chunk_index,
@@ -838,6 +968,61 @@ mod tests {
     }
 
     #[test]
+    fn scoped_search_is_not_starved_by_better_out_of_scope_hits() {
+        // A workspace-scoped query in a large zone: a common term's top
+        // global matches are all OUTSIDE the scope.  Post-filtering a
+        // bounded global window (limit×4, max 1 000) returned nothing;
+        // the scope must be applied inside the query.
+        let idx = FtsIndex::open_or_create(tempdir().join("fts")).expect("open");
+        for i in 0..1_500 {
+            idx.add_document(
+                &format!("/other/{i}.md"),
+                0,
+                "revenue revenue revenue revenue",
+                Some(1),
+            )
+            .expect("add");
+        }
+        idx.add_document(
+            "/ws/documents/q3.md",
+            0,
+            "quarterly revenue grew in the third quarter across segments",
+            Some(1),
+        )
+        .expect("add");
+        idx.add_document("/ws/notes/n.md", 0, "revenue notes", Some(1))
+            .expect("add");
+        idx.add_document("/ws/brief/b.md", 0, "revenue brief", Some(1))
+            .expect("add");
+        idx.commit().expect("commit");
+
+        let one = crate::path_scope::PathScope::from_request("/ws/documents/", &[]);
+        let hits = idx.search("revenue", 10, Some(&one)).expect("search");
+        assert_eq!(
+            hits.iter().map(|h| h.path.as_str()).collect::<Vec<_>>(),
+            ["/ws/documents/q3.md"]
+        );
+
+        let two = crate::path_scope::PathScope::from_request(
+            "",
+            &["/ws/documents/".to_string(), "/ws/notes/".to_string()],
+        );
+        let mut paths: Vec<String> = idx
+            .search("revenue", 10, Some(&two))
+            .expect("search")
+            .into_iter()
+            .map(|h| h.path)
+            .collect();
+        paths.sort();
+        assert_eq!(paths, ["/ws/documents/q3.md", "/ws/notes/n.md"]);
+
+        // The scope filter adds no score: BM25 matches the unscoped run.
+        let unscoped = idx.search("quarterly", 5, None).expect("search");
+        let scoped = idx.search("quarterly", 5, Some(&one)).expect("search");
+        assert_eq!(unscoped[0].score, scoped[0].score);
+    }
+
+    #[test]
     fn natural_language_syntax_falls_back_to_lenient_parse() {
         // A dash surrounded by spaces, an unbalanced quote, a stray
         // colon: all strict-parser syntax errors that a user question
@@ -947,7 +1132,9 @@ mod tests {
             .expect("add");
         idx.commit().expect("commit");
 
-        let hits = idx.search("shared", 10, Some("/notes/")).expect("search");
+        let hits = idx
+            .search("shared", 10, Some(&PathScope::new(["/notes/"])))
+            .expect("search");
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].path, "/notes/a.md");
     }
@@ -1090,6 +1277,43 @@ mod tests {
             gen_before,
             "commit must change the generation"
         );
+    }
+
+    #[test]
+    fn counts_track_alive_chunks_and_distinct_live_paths() {
+        let dir = tempdir().join("fts");
+        let idx = FtsIndex::open_or_create(dir).expect("open");
+        let counts = |idx: &FtsIndex| {
+            let c = idx.counts().expect("counts");
+            (c.chunks, c.paths)
+        };
+        assert_eq!(counts(&idx), (0, 0));
+
+        idx.add_document("/a.md", 0, "alpha zero", Some(1))
+            .expect("add");
+        idx.add_document("/a.md", 1, "alpha one", Some(1))
+            .expect("add");
+        idx.add_document("/b.md", 0, "beta zero", Some(1))
+            .expect("add");
+        idx.commit().expect("commit");
+        assert_eq!(counts(&idx), (3, 2), "chunks vs distinct paths");
+        assert_eq!(counts(&idx), (3, 2), "memoised read is identical");
+
+        // Re-chunk /b.md: its term now lives in two segments (one all
+        // deleted) — still ONE path.
+        idx.delete_all_chunks("/b.md");
+        idx.add_document("/b.md", 0, "beta zero", Some(2))
+            .expect("add");
+        idx.add_document("/b.md", 1, "beta one", Some(2))
+            .expect("add");
+        idx.commit().expect("commit");
+        assert_eq!(counts(&idx), (4, 2));
+
+        // Deleting /a.md leaves its term in the old segment with no
+        // alive postings — it must not count.
+        idx.delete_all_chunks("/a.md");
+        idx.commit().expect("commit");
+        assert_eq!(counts(&idx), (2, 1));
     }
 
     // ── Writer liveness (#4725) ─────────────────────────────────

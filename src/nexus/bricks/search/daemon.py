@@ -530,6 +530,7 @@ def _request_to_pb(request: "SearchRequest", *, chunks_per_page: int) -> search_
         zone_id=request.zone_id or "",
         limit=request.limit,
         path_filter=request.path_filter or "",
+        path_filters=list(request.path_filters),
         query_type=_QUERY_TYPE_MAP.get(request.search_type, search_pb2.QUERY_TYPE_UNSPECIFIED),
         alpha=request.alpha,
         fusion_method=_FUSION_METHOD_MAP.get(

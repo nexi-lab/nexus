@@ -75,6 +75,8 @@ pub fn chunk_document(text: &str) -> Vec<Chunk> {
     let mut emitter = Emitter::new();
     let mut headings: HeadingStack = HeadingStack::default();
     let mut buf = String::new();
+    // Whether `buf` holds anything besides heading lines and blanks.
+    let mut buf_has_body = false;
     let mut in_code_fence = false;
 
     for raw_line in text.split_inclusive('\n') {
@@ -88,6 +90,7 @@ pub fn chunk_document(text: &str) -> Vec<Chunk> {
         if trimmed_start.starts_with("```") {
             in_code_fence = !in_code_fence;
             buf.push_str(raw_line);
+            buf_has_body = true;
             continue;
         }
 
@@ -101,15 +104,23 @@ pub fn chunk_document(text: &str) -> Vec<Chunk> {
         }
 
         // Heading detection: 1–6 leading `#` followed by space.  A
-        // new heading ALWAYS seals the current chunk (matches
-        // Python) so a heading-heavy but text-light document gets
-        // one chunk per section rather than everything crammed into
-        // one huge chunk.  Callers with tiny sections can pool
-        // downstream via `chunks_per_page`.
+        // new heading seals the current chunk (matches Python) so a
+        // heading-heavy but text-light document gets one chunk per
+        // section rather than everything crammed into one huge
+        // chunk.  Callers with tiny sections can pool downstream via
+        // `chunks_per_page`.
+        //
+        // Exception: a buffer holding ONLY headings has no section
+        // body yet, so it carries forward into the next section
+        // instead of sealing.  A document that repeats a page header
+        // before every section (Docling PDF markdown) otherwise emits
+        // one bare-heading chunk per page — near-identical text that
+        // crowds semantic results and says nothing on its own.
         if let Some((level, title)) = parse_heading(raw_line) {
-            if !buf.trim().is_empty() {
+            if buf_has_body {
                 let text = std::mem::take(&mut buf);
                 emitter.emit(&headings, text);
+                buf_has_body = false;
             }
             headings.push(level, title);
             buf.push_str(raw_line);
@@ -120,14 +131,16 @@ pub fn chunk_document(text: &str) -> Vec<Chunk> {
         // sealing a chunk if we're over budget.
         if raw_line.trim().is_empty() {
             buf.push_str(raw_line);
-            if buf.len() >= CHUNK_TARGET_CHARS {
+            if buf_has_body && buf.len() >= CHUNK_TARGET_CHARS {
                 let text = std::mem::take(&mut buf);
                 emitter.emit(&headings, text);
+                buf_has_body = false;
             }
             continue;
         }
 
         buf.push_str(raw_line);
+        buf_has_body = true;
     }
 
     // Trailing content that never crossed a paragraph or heading
@@ -376,6 +389,39 @@ body-3.
             !three.embed_input.contains("H2: Two"),
             "stack didn't pop: {three:?}"
         );
+    }
+
+    #[test]
+    fn repeated_page_header_joins_its_section_instead_of_its_own_chunk() {
+        // Docling PDF markdown repeats a page header before every
+        // section.  A heading with no body before the next heading
+        // carries forward — no bare-heading chunks.
+        let header = "## ACME ASA - ANNUAL REPORT 2025";
+        let text = format!(
+            "{header}\n\n### Dividends\n\nQuarterly dividend of 0.38.\n\n\
+             {header}\n\n### Fleet\n\nA fleet of 42 vessels.\n"
+        );
+        let out = chunk_document(&text);
+        assert_eq!(out.len(), 2, "one chunk per section: {out:?}");
+        for c in &out {
+            assert!(c.text.starts_with(header), "header kept in text: {c:?}");
+            assert_ne!(c.text.trim(), header, "bare heading chunk: {c:?}");
+        }
+        assert!(out[0].text.contains("0.38"));
+        assert!(out[1].text.contains("42 vessels"));
+        // The deepest heading still leads the embed prefix context.
+        assert!(out[1].embed_input.contains("[H3: Fleet]"));
+        for (i, c) in out.iter().enumerate() {
+            assert_eq!(c.chunk_index, i as u32);
+        }
+    }
+
+    #[test]
+    fn heading_only_document_still_emits_one_chunk() {
+        let out = chunk_document("# Title\n\n## Subtitle\n");
+        assert_eq!(out.len(), 1, "{out:?}");
+        assert!(out[0].text.contains("# Title"));
+        assert!(out[0].text.contains("## Subtitle"));
     }
 
     #[test]

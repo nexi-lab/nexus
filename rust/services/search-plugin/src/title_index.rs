@@ -438,7 +438,13 @@ impl ZoneSkeleton {
     /// DF caps, an oversized-bucket prefix rescue, and aggregate
     /// token/candidate budgets.  Ordering: score desc, path asc —
     /// deterministic across restarts (RRF ranks depend on it).
-    pub fn locate(&self, q: &str, limit: usize, path_prefix: Option<&str>) -> Vec<TitleHit> {
+    pub fn locate(
+        &self,
+        q: &str,
+        limit: usize,
+        scope: Option<&crate::path_scope::PathScope>,
+    ) -> Vec<TitleHit> {
+        let scope = scope.filter(|s| !s.is_unscoped());
         if q.trim().is_empty() || limit == 0 {
             return Vec::new();
         }
@@ -465,10 +471,8 @@ impl ZoneSkeleton {
             }
             let mut hits = Vec::new();
             for path in bucket {
-                if let Some(p) = path_prefix {
-                    if !path.starts_with(p) {
-                        continue;
-                    }
+                if scope.is_some_and(|s| !s.matches(path)) {
+                    continue;
                 }
                 let Some(doc) = self.docs.get(path) else {
                     continue;
@@ -501,7 +505,7 @@ impl ZoneSkeleton {
                     continue;
                 };
                 if bucket.len() > TITLE_ARM_MAX_TOKEN_DF {
-                    if path_prefix.is_some() {
+                    if scope.is_some() {
                         oversized.push((bucket.len(), token, field_rank, bucket));
                     }
                     continue;
@@ -518,7 +522,7 @@ impl ZoneSkeleton {
         // Oversized second chance: scan whole buckets (never partial)
         // in stable (size, token, field) order under a shared budget;
         // keep the in-prefix subset when it fits the DF cap.
-        if let Some(prefix) = path_prefix {
+        if let Some(scope) = scope {
             let mut scan_budget = TITLE_ARM_MAX_PREFIX_SCAN;
             oversized.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(b.1)).then(a.2.cmp(&b.2)));
             for (size, token, _field_rank, big) in oversized {
@@ -526,7 +530,7 @@ impl ZoneSkeleton {
                     continue;
                 }
                 scan_budget -= size;
-                let filtered: Vec<&String> = big.iter().filter(|p| p.starts_with(prefix)).collect();
+                let filtered: Vec<&String> = big.iter().filter(|p| scope.matches(p)).collect();
                 if filtered.is_empty() || filtered.len() > TITLE_ARM_MAX_TOKEN_DF {
                     continue;
                 }
@@ -559,10 +563,8 @@ impl ZoneSkeleton {
 
         let mut scored: Vec<(f32, &String, &Option<String>)> = Vec::new();
         for path in candidates {
-            if let Some(p) = path_prefix {
-                if !path.starts_with(p) {
-                    continue;
-                }
+            if scope.is_some_and(|s| !s.matches(path)) {
+                continue;
             }
             let Some(doc) = self.docs.get(path) else {
                 continue;
@@ -976,13 +978,24 @@ mod tests {
 
     #[test]
     fn locate_path_prefix_filters() {
+        use crate::path_scope::PathScope;
         let sk = atlas_skeleton();
         assert!(sk
-            .locate("atlas design doc", 10, Some("/notes/"))
+            .locate("atlas design doc", 10, Some(&PathScope::new(["/notes/"])))
             .is_empty());
         assert_eq!(
-            sk.locate("atlas design doc", 10, Some("/designs/"))[0].path,
+            sk.locate("atlas design doc", 10, Some(&PathScope::new(["/designs/"])))[0].path,
             "/designs/atlas.md"
+        );
+        assert_eq!(
+            sk.locate(
+                "atlas design doc",
+                10,
+                Some(&PathScope::new(["/notes/", "/designs/"]))
+            )[0]
+            .path,
+            "/designs/atlas.md",
+            "any prefix of a multi-prefix scope matches"
         );
     }
 
@@ -1102,7 +1115,11 @@ mod tests {
         assert!(sk.locate("common term", 10, None).is_empty());
         // Prefix-scoped: the oversized bucket is filtered to the
         // prefix (1 doc ≤ cap) and the hit comes back.
-        let hits = sk.locate("common term", 10, Some("/special/"));
+        let hits = sk.locate(
+            "common term",
+            10,
+            Some(&crate::path_scope::PathScope::new(["/special/"])),
+        );
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].path, "/special/doc");
     }

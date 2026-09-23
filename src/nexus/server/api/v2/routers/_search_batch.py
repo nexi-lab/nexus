@@ -23,6 +23,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from nexus.contracts.search_types import split_path_scope
+
 # Accepted enum values, mirroring the single /query route's 400 validation.
 _TYPE_CHOICES = ("keyword", "semantic", "hybrid")
 _FUSION_CHOICES = ("rrf", "weighted", "rrf_weighted")
@@ -38,6 +40,7 @@ class ParsedBatchSpec:
     search_type: str = "hybrid"
     limit: int = 10
     path_filter: str | None = None
+    path_filters: tuple[str, ...] = ()
     alpha: float = 0.5
     fusion_method: str = "rrf"
     rrf_k: int = 60
@@ -159,9 +162,14 @@ def parse_batch_query_spec(raw: Any) -> ParsedBatchSpec | str:
         return "query text must be a non-empty string (q)"
     query = raw_query
 
+    # A list searches several subtrees as ONE fused ranking (see
+    # ``SearchRequest.path_filters``).
     path = _pick(raw, "path", "path_filter")
-    if path is not None and not isinstance(path, str):
-        return "path must be a string"
+    if path is not None and not (
+        isinstance(path, str) or (isinstance(path, list) and all(isinstance(p, str) for p in path))
+    ):
+        return "path must be a string or a list of strings"
+    path_filter, path_filters = split_path_scope(path)
 
     limit = _as_int(raw.get("limit", 10), "limit", 1, 100)
     if isinstance(limit, str):
@@ -223,7 +231,8 @@ def parse_batch_query_spec(raw: Any) -> ParsedBatchSpec | str:
         query=query,
         search_type=search_type,
         limit=limit,
-        path_filter=path,
+        path_filter=path_filter,
+        path_filters=path_filters,
         alpha=alpha,
         fusion_method=fusion_method,
         rrf_k=rrf_k,

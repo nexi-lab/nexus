@@ -243,6 +243,10 @@ fn hash_request(req: &QueryRequest, title_arm: bool) -> u64 {
     req.zone_id.hash(&mut hasher);
     req.limit.hash(&mut hasher);
     req.path_filter.hash(&mut hasher);
+    // The extra scope prefixes are an OR — order-insensitive.
+    let mut path_filters: Vec<&String> = req.path_filters.iter().collect();
+    path_filters.sort();
+    path_filters.hash(&mut hasher);
     req.query_type.hash(&mut hasher);
     req.alpha.to_bits().hash(&mut hasher);
     req.fusion_method.hash(&mut hasher);
@@ -287,6 +291,7 @@ mod tests {
             recency_weight: 0.0,
             recency_half_life_days: 0.0,
             path_prefix_boosts: HashMap::new(),
+            path_filters: Vec::new(),
         }
     }
 
@@ -399,6 +404,28 @@ mod tests {
         assert!(
             c.get(&r2, false, 0).is_none(),
             "path_filter suffix must matter"
+        );
+    }
+
+    #[test]
+    fn path_filters_key_distinctly_but_order_insensitively() {
+        let c = QueryCache::new();
+        let mut docs_notes = base_req("root", "q");
+        docs_notes.path_filters = vec!["/ws/documents/".into(), "/ws/notes/".into()];
+        c.insert(&docs_notes, false, 0, vec![hit("/ws/documents/a", 1.0)]);
+
+        let mut docs_only = base_req("root", "q");
+        docs_only.path_filters = vec!["/ws/documents/".into()];
+        assert!(
+            c.get(&docs_only, false, 0).is_none(),
+            "a different scope must not share"
+        );
+
+        let mut reordered = base_req("root", "q");
+        reordered.path_filters = vec!["/ws/notes/".into(), "/ws/documents/".into()];
+        assert!(
+            c.get(&reordered, false, 0).is_some(),
+            "the same OR-scope in another order is the same query"
         );
     }
 

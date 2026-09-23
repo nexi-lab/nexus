@@ -196,6 +196,7 @@ fn build_query_request(zone_id: &str, req: &SearchRequest) -> QueryRequest {
         recency_weight: 0.0,
         recency_half_life_days: 0.0,
         path_prefix_boosts: std::collections::HashMap::new(),
+        path_filters: Vec::new(),
     }
 }
 

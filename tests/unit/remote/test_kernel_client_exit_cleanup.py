@@ -157,8 +157,8 @@ def test_child_dies_when_its_parent_is_killed() -> None:
             # A reparented child can linger as a zombie until init reaps it;
             # kill(pid, 0) still succeeds on a zombie, so read its state.
             stat = Path(f"/proc/{child_pid}/stat").read_text()
-        except FileNotFoundError:
-            return
+        except (FileNotFoundError, ProcessLookupError):
+            return  # gone; ESRCH when reaped between open and read
         if stat.rsplit(")", 1)[1].split()[0] == "Z":
             return
         time.sleep(0.1)

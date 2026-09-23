@@ -508,20 +508,22 @@ pub fn install_impl(
         // Real tonic-remote backend backed by a fresh
         // `PeerChannelCache` — one Channel-per-peer cache the
         // `RoutingBackend` uses when the `ZoneSearchRegistry` hands
-        // it a remote target.  Never dialed today because the
-        // registry starts empty; wired so a future deployment that
-        // populates the registry (env var, kernel-provided config)
-        // gets end-to-end cross-daemon dispatch without a
-        // composition-root refactor.
+        // it a remote target.
         let peer_cache = Arc::new(PeerChannelCache::new(PeerChannelConfig::default()));
         let remote =
             Arc::new(crate::backends::tonic_remote::TonicRemoteSearchBackend::new(peer_cache));
-        // Empty registry — every zone the caller reads from routes
-        // through the local plugin.  Populating this from a
-        // per-zone plugin-target env var (or a kernel-tier
-        // discovery hook) unlocks the cross-daemon path — the
-        // registry is the ONE knob.
-        let registry: Arc<InMemoryZoneSearchRegistry> = Arc::new(InMemoryZoneSearchRegistry::new());
+        // Env-driven registry — the ONE knob for cross-daemon
+        // dispatch.  Empty env → empty registry → every zone
+        // routes local (single-daemon deployment, default).  A
+        // populated `NEXUS_SEARCH_REMOTE_ZONE_TARGETS=zone1=url1,...`
+        // unlocks per-zone remote dial.  Malformed entries fail
+        // LOUD here so a typo is a boot-time error instead of a
+        // silently-empty registry (standing rule: fail loud on
+        // partial config).
+        let registry: Arc<InMemoryZoneSearchRegistry> = Arc::new(
+            crate::backends::registry_config::registry_from_env()
+                .map_err(|e| format!("nexus-http-api: NEXUS_SEARCH_REMOTE_ZONE_TARGETS: {e}"))?,
+        );
         let routing = RoutingBackend::new(
             local,
             remote,

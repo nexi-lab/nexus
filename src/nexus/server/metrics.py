@@ -72,6 +72,14 @@ def _status_group(status_code: int) -> str:
     return f"{status_code // 100}xx"
 
 
+# (app id, root_path, method, path) -> template.  The route walk below is a
+# linear regex scan over every registered route — repeating it per request
+# cost ~5% of server CPU under search load.  Bounded: cleared when full, so
+# id-bearing paths cannot grow it without limit.
+_TEMPLATE_CACHE: dict[tuple[int, str, str, str], str] = {}
+_TEMPLATE_CACHE_MAX = 4096
+
+
 def _resolve_route_template(scope: "Scope") -> str:
     """Resolve the route template from the ASGI scope.
 
@@ -83,12 +91,23 @@ def _resolve_route_template(scope: "Scope") -> str:
     if app is None:
         return fallback
 
+    key = (id(app), str(scope.get("root_path", "")), str(scope.get("method", "")), fallback)
+    cached = _TEMPLATE_CACHE.get(key)
+    if cached is not None:
+        return cached
+
     # Walk the router to find the matched route template
     for route in getattr(app, "routes", []):
         match, _ = route.matches(scope)
         if match == Match.FULL:
             path: str | None = getattr(route, "path", None)
-            return path if path is not None else fallback
+            template = path if path is not None else fallback
+            # Only matches are memoised: a miss (404 probe, or a route not
+            # registered yet) re-walks, so it can never pin a raw path.
+            if len(_TEMPLATE_CACHE) >= _TEMPLATE_CACHE_MAX:
+                _TEMPLATE_CACHE.clear()
+            _TEMPLATE_CACHE[key] = template
+            return template
 
     return fallback
 

@@ -26,5 +26,12 @@
 pub mod plugin_local;
 #[cfg(feature = "rebac")]
 pub mod proto_bridge;
+/// Env-driven [`nexus_search_common::InMemoryZoneSearchRegistry`]
+/// builder — `NEXUS_SEARCH_REMOTE_ZONE_TARGETS=zone1=url1,zone2=url2`
+/// unlocks the cross-daemon path.  Empty env → single-daemon
+/// (default).  See the module docstring for the wire format +
+/// fail-loud rules.
+#[cfg(feature = "rebac")]
+pub mod registry_config;
 #[cfg(feature = "rebac")]
 pub mod tonic_remote;

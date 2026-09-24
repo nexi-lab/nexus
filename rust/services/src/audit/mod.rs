@@ -68,20 +68,26 @@ pub struct AuditRecord {
 }
 
 /// VFS audit hook — implements `NativeInterceptHook` so it can be registered
-/// with `kernel.register_native_hook` and receive post-dispatch callbacks
+/// with `kernel.register_service_hook` and receive post-dispatch callbacks
 /// directly from the kernel dispatch path.
 ///
-/// Holds an `Arc<K>` to the kernel + the audit stream path; on each
-/// post-hook the record is serialised in a background thread and
-/// appended via `kernel.sys_write(audit_path, …)`. DT_STREAM
-/// short-circuits inside `sys_write` (kernel `io.rs`), so audit writes
-/// don't recursively re-enter the audit hook.
-pub struct AuditHook<K: KernelSyscall> {
+/// Holds an `Arc<Kernel>` for background sys_write + the audit stream
+/// path; on each post-hook the record is serialised in a background
+/// thread and appended via `kernel.sys_write(audit_path, …)`.
+/// DT_STREAM short-circuits inside `sys_write` (kernel `io.rs`), so
+/// audit writes don't recursively re-enter the audit hook.
+///
+/// Concrete `Kernel` (not generic over `KernelSyscall`) because
+/// [`install`] hands the hook to
+/// [`Kernel::register_service_hook`] which is a kernel-internal accessor
+/// only reachable on the concrete type — same reason
+/// [`install_root`] is Kernel-specific.
+pub struct AuditHook {
     sender: mpsc::SyncSender<AuditRecord>,
-    _kernel: Arc<K>,
+    _kernel: Arc<Kernel>,
 }
 
-impl<K: KernelSyscall> AuditHook<K> {
+impl AuditHook {
     /// Background flush channel capacity. At ~300 B per JSON record this is
     /// ~2.5 MB worst-case before try_send drops records (best-effort audit).
     const CHANNEL_CAP: usize = 8192;
@@ -96,7 +102,7 @@ impl<K: KernelSyscall> AuditHook<K> {
     /// `on_post`'s `is_system_path()` short-circuit covers
     /// self-writes uniformly with the rest of the kernel-internal
     /// namespace — see [`Self::on_post`].
-    pub fn new(kernel: Arc<K>, audit_path: String, zone_id: String) -> Self {
+    pub fn new(kernel: Arc<Kernel>, audit_path: String, zone_id: String) -> Self {
         debug_assert!(
             is_system_path(&audit_path),
             "AuditHook stream path must live under {} (got {audit_path:?}); \
@@ -115,8 +121,21 @@ impl<K: KernelSyscall> AuditHook<K> {
                 while let Ok(record) = rx.recv() {
                     match serde_json::to_vec(&record) {
                         Ok(json) => {
-                            if let Err(e) = kernel_for_thread.sys_write(&audit_path, &ctx, &json, 0)
-                            {
+                            // Trait syntax so method resolution picks the
+                            // `KernelSyscall::sys_write(path, ctx, content,
+                            // offset)` single-write shape rather than the
+                            // concrete `Kernel::sys_write(&[WriteRequest],
+                            // ctx)` batched shape.  DT_STREAM appends have
+                            // their own short-circuit inside sys_write, so
+                            // one record per call is the right granularity
+                            // for audit — batching would only defer visibility.
+                            if let Err(e) = KernelSyscall::sys_write(
+                                kernel_for_thread.as_ref(),
+                                &audit_path,
+                                &ctx,
+                                &json,
+                                0,
+                            ) {
                                 tracing::warn!(error = ?e, "audit stream write failed");
                             }
                         }
@@ -175,7 +194,7 @@ fn audit_writer_ctx(zone_id: &str) -> OperationContext {
     ctx
 }
 
-impl<K: KernelSyscall> NativeInterceptHook for AuditHook<K> {
+impl NativeInterceptHook for AuditHook {
     fn name(&self) -> &str {
         "audit"
     }
@@ -241,8 +260,8 @@ pub const AUDIT_SERVICE_NAME: &str = "audit";
 /// registers the hook.  Callers (typically `install_root` +
 /// `ZoneAuditAutoWire`) guarantee once-per-zone through their own
 /// bookkeeping.
-pub fn install<K: KernelSyscall>(
-    kernel: Arc<K>,
+pub fn install(
+    kernel: Arc<Kernel>,
     handle: &ServiceHandle,
     zone_id: &str,
     stream_path: &str,

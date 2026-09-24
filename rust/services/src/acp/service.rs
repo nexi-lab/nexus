@@ -861,7 +861,20 @@ impl<K: KernelSyscall> RustService for AcpService<K> {
     /// match the Python `AcpRPCService` contract 1:1 so existing
     /// CLI clients keep working through the flat-name backward-compat
     /// path (`acp_call`, `acp_kill`, etc.) wired in `grpc_server`.
-    fn dispatch(&self, method: &str, payload: &[u8]) -> Result<Vec<u8>, RustCallError> {
+    ///
+    /// The caller's `OperationContext` (`_ctx`) is currently
+    /// unused: every ACP RPC still carries `{zone_id, user_id}` in
+    /// its JSON body (see `AcpContext` below), a shape held for wire-
+    /// compatibility with the Python `AcpRPCService` contract. When
+    /// that Python surface retires the on-wire identity fields, this
+    /// impl switches to reading them from `_ctx` and drops the
+    /// underscore.
+    fn dispatch(
+        &self,
+        method: &str,
+        payload: &[u8],
+        _ctx: &OperationContext,
+    ) -> Result<Vec<u8>, RustCallError> {
         match method {
             "acp_call" => dispatch_acp_call(self, payload),
             "acp_list_agents" => dispatch_list_configs(self, payload),
@@ -1216,6 +1229,16 @@ mod tests {
         (svc, reg)
     }
 
+    /// Test-only caller identity. `dispatch` takes an
+    /// `&OperationContext` as of the 4-arg upgrade upstream; the ACP
+    /// impl currently reads identity from the JSON payload (see
+    /// `AcpContext`) so this ctx is unused, but the signature has to
+    /// carry one.  System-flagged so any future ctx-consuming code
+    /// path treats a test call as infrastructure.
+    fn test_dispatch_ctx() -> OperationContext {
+        OperationContext::new("test", "root", true, Some("test"), true)
+    }
+
     #[test]
     fn list_agents_filters_by_service_label() {
         let (svc, reg) = fresh_service();
@@ -1318,7 +1341,9 @@ mod tests {
         #[test]
         fn unknown_method_returns_not_found() {
             let (svc, _reg) = fresh_service();
-            let err = svc.dispatch("never_heard_of_this", b"{}").unwrap_err();
+            let err = svc
+                .dispatch("never_heard_of_this", b"{}", &test_dispatch_ctx())
+                .unwrap_err();
             assert!(matches!(err, RustCallError::NotFound));
         }
 
@@ -1329,7 +1354,9 @@ mod tests {
                 .spawn("acp:claude", "alice", "root", HashMap::new())
                 .unwrap();
             let payload = json!({"pid": pid, "context": {"zone_id": "root"}}).to_string();
-            let bytes = svc.dispatch("acp_kill", payload.as_bytes()).unwrap();
+            let bytes = svc
+                .dispatch("acp_kill", payload.as_bytes(), &test_dispatch_ctx())
+                .unwrap();
             let resp: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
             assert_eq!(resp["pid"], pid);
             assert_eq!(resp["state"], "TERMINATED");
@@ -1342,7 +1369,9 @@ mod tests {
         fn acp_history_returns_empty_when_no_proc_dir() {
             let (svc, _reg) = fresh_service();
             let payload = json!({"limit": 10, "context": {"zone_id": "root"}}).to_string();
-            let bytes = svc.dispatch("acp_history", payload.as_bytes()).unwrap();
+            let bytes = svc
+                .dispatch("acp_history", payload.as_bytes(), &test_dispatch_ctx())
+                .unwrap();
             let resp: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
             // Empty array — no proc dir exists in a fresh test kernel.
             assert!(resp.is_array());
@@ -1353,7 +1382,9 @@ mod tests {
         fn acp_history_uses_default_limit_when_payload_empty() {
             let (svc, _reg) = fresh_service();
             // Empty payload is accepted -- decode falls back to defaults.
-            let bytes = svc.dispatch("acp_history", b"{}").unwrap();
+            let bytes = svc
+                .dispatch("acp_history", b"{}", &test_dispatch_ctx())
+                .unwrap();
             let resp: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
             assert!(resp.is_array());
         }
@@ -1371,7 +1402,7 @@ mod tests {
                 .unwrap();
             let payload = json!({"context":{"zone_id":"root"}}).to_string();
             let bytes = svc
-                .dispatch("acp_list_processes", payload.as_bytes())
+                .dispatch("acp_list_processes", payload.as_bytes(), &test_dispatch_ctx())
                 .unwrap();
             let resp: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
             let list = resp.as_array().unwrap();
@@ -1403,7 +1434,7 @@ mod tests {
                 let err = rt
                     .block_on(async {
                         tokio::task::spawn_blocking(move || {
-                            svc.dispatch("acp_call", payload.as_bytes())
+                            svc.dispatch("acp_call", payload.as_bytes(), &test_dispatch_ctx())
                         })
                         .await
                         .unwrap()
@@ -1419,7 +1450,9 @@ mod tests {
             }
             #[cfg(not(unix))]
             {
-                let err = svc.dispatch("acp_call", payload.as_bytes()).unwrap_err();
+                let err = svc
+                    .dispatch("acp_call", payload.as_bytes(), &test_dispatch_ctx())
+                    .unwrap_err();
                 assert!(matches!(err, RustCallError::Internal(_)));
             }
         }

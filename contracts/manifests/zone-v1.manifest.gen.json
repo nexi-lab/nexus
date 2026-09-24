@@ -82,7 +82,7 @@
       "kind": "ZoneDelegation",
       "schema_id": "https://contracts.sudo.dev/schemas/auth/v1/zone-delegation.schema.json",
       "schema_path": "contracts/auth/v1/zone-delegation.schema.json",
-      "schema_digest": "sha256:8ec7ea6d01da18e8e4317bd771a79ffc4ccb5be21f4ecafc8a6937b174660d1a",
+      "schema_digest": "sha256:365d6124066cd8ce496a755d0759b53955bf5a49813db009c89ebcb1e0ff3fcb",
       "semantic_adr_refs": [
         "sudostack/docs/adr/ADR-002-zone-and-tenancy-model.md"
       ],

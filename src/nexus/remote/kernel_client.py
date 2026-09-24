@@ -25,6 +25,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import IO, Any
@@ -901,21 +902,10 @@ class KernelClient:
         # sys_readdir now returns list of (name, entry_type) tuples
         return [name for name, _etype in result]
 
-    def metastore_list_paginated(
-        self,
-        prefix: str,
-        recursive: bool = True,
-        limit: int = 100000,
-        cursor: Any = None,
-    ) -> dict[str, Any]:
-        """Paginated list via sys_readdir — returns {items, next_cursor, has_more, total_count}.
-
-        Items are FileMetadata objects (callers access .path, .zone_id etc.).
-        Uses stat_batch to populate metadata when available.
-        """
-        from datetime import UTC, datetime
-
-        from nexus.contracts.metadata import DT_DIR, DT_MOUNT, FileMetadata
+    def _walk_entries(self, prefix: str, recursive: bool) -> list[tuple[str, int]]:
+        """``(path, entry_type)`` under ``prefix``, sorted — one ``sys_readdir``
+        RPC per directory (the gRPC client has no native prefix scan)."""
+        from nexus.contracts.metadata import DT_DIR, DT_MOUNT
 
         def _normalize_dir(path: str) -> str:
             if not path:
@@ -925,14 +915,6 @@ class KernelClient:
             if path != "/":
                 path = path.rstrip("/")
             return path
-
-        def _dt_from_ms(value: Any) -> datetime | None:
-            if value is None:
-                return None
-            try:
-                return datetime.fromtimestamp(int(value) / 1000.0, UTC)
-            except (TypeError, ValueError, OSError):
-                return None
 
         root = _normalize_dir(prefix)
         dir_entry_types = {DT_DIR, DT_MOUNT}
@@ -959,17 +941,22 @@ class KernelClient:
                 break
 
         entries.sort(key=lambda item: item[0])
+        return entries
 
-        # Apply cursor-based pagination: skip entries until we pass the cursor path
-        if cursor:
-            entries = [(name, etype) for name, etype in entries if name > cursor]
+    def _to_file_metadata(self, page: list[tuple[str, int]]) -> list[Any]:
+        """FileMetadata for ``page``, enriched by ONE ``stat_batch`` RPC."""
+        from datetime import UTC, datetime
 
-        total = len(entries)
-        page = entries[:limit]
-        has_more = total > limit
+        from nexus.contracts.metadata import FileMetadata
 
-        # Convert to FileMetadata objects — callers access .path, .zone_id, etc.
-        # Enrich with stat data when available for size/content_id/version.
+        def _dt_from_ms(value: Any) -> datetime | None:
+            if value is None:
+                return None
+            try:
+                return datetime.fromtimestamp(int(value) / 1000.0, UTC)
+            except (TypeError, ValueError, OSError):
+                return None
+
         paths = [name for name, _ in page]
         stats: list[Any] = []
         if paths:
@@ -1003,14 +990,54 @@ class KernelClient:
                 )
             else:
                 items.append(FileMetadata(path=name, size=0, entry_type=etype))
+        return items
 
+    def metastore_list_paginated(
+        self,
+        prefix: str,
+        recursive: bool = True,
+        limit: int = 100000,
+        cursor: Any = None,
+    ) -> dict[str, Any]:
+        """Paginated list via sys_readdir — returns {items, next_cursor, has_more, total_count}.
+
+        Items are FileMetadata objects (callers access .path, .zone_id etc.).
+        Uses stat_batch to populate metadata when available.  Every call walks
+        the whole tree: to stream a large listing use
+        :meth:`metastore_list_iter`, which walks once.
+        """
+        entries = self._walk_entries(prefix, recursive)
+
+        # Apply cursor-based pagination: skip entries until we pass the cursor path
+        if cursor:
+            entries = [(name, etype) for name, etype in entries if name > cursor]
+
+        total = len(entries)
+        page = entries[:limit]
+        has_more = total > limit
         next_cursor = page[-1][0] if has_more and page else None
         return {
-            "items": items,
+            "items": self._to_file_metadata(page),
             "next_cursor": next_cursor,
             "has_more": has_more,
             "total_count": total,
         }
+
+    def metastore_list_iter(
+        self, prefix: str, recursive: bool = True, page_size: int = 1000
+    ) -> Iterator[Any]:
+        """Stream every entry under ``prefix`` from ONE tree walk.
+
+        ``kernel_helpers.metastore_list_iter`` used to page through
+        :meth:`metastore_list_paginated`, and every page re-walked the whole
+        tree (one RPC per directory) and re-sorted it — quadratic in the
+        entry count.  At ~155k files the boot-time Tiger resource-map sync
+        spent most of its ~40 min here.  Metadata is still fetched one
+        ``stat_batch`` per ``page_size`` entries.
+        """
+        entries = self._walk_entries(prefix, recursive)
+        for i in range(0, len(entries), page_size):
+            yield from self._to_file_metadata(entries[i : i + page_size])
 
     def service_unregister(self, name: str) -> None:
         """No-op — services are kernel-internal in subprocess mode."""

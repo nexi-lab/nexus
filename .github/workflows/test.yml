@@ -201,7 +201,11 @@ jobs:
             echo "::error::could not extract nexus-vfs rev pin from Cargo.toml"
             exit 1
           fi
-          cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --rev "$REV" --bin nexusd-cluster nexus-cluster
+          # --force: the shared rust-cache can restore a prior
+          # `nexusd-cluster` binary owned by a different package (e.g.
+          # the retired nexus-local `nexusd` assembly); cargo refuses to
+          # overwrite across owners without it.
+          cargo install --locked --force --git https://github.com/nexi-lab/nexus-vfs --rev "$REV" --bin nexusd-cluster nexus-cluster
           sudo ln -sf $(which nexusd-cluster) /usr/local/bin/nexus-cluster
 
       # Pre-build the nexus-server image once with buildx + GHA layer cache.
@@ -718,7 +722,15 @@ jobs:
             exit 1
           fi
           echo "Installing nexusd-cluster from nexus-vfs @ ${NEXUS_VFS_REV}"
-          cargo install --locked \
+          # --force: the Swatinem/rust-cache shared-key restores
+          # ~/.cargo/bin from a prior run; before this cutover it held a
+          # `nexusd-cluster` binary installed as part of the nexus-local
+          # `nexusd v0.1.0 (rust/nexusd)` crate, which cargo refuses to
+          # overwrite with the `nexus-cluster` package's copy. Force
+          # replacement here — every run reinstalls from the pinned rev
+          # and the cache only exists to save compile time, not to
+          # preserve stale binaries.
+          cargo install --locked --force \
             --git https://github.com/nexi-lab/nexus-vfs \
             --rev "${NEXUS_VFS_REV}" \
             --bin nexusd-cluster \

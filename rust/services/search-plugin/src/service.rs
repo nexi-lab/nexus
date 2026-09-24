@@ -3656,14 +3656,41 @@ fn do_notify_file_change(
         .map_err(|e| format!("open state for zone {zone_id:?}: {e}"))?;
 
     match change_type {
-        "delete" => {
+        "delete" | "delete_prefix" => {
+            // "delete_prefix" evicts a directory: the path itself and
+            // every indexed path strictly under `path + "/"` (the `/`
+            // boundary keeps `/a/b` from touching `/a/bc`).  A directory
+            // delete / rename removes its children in the kernel without
+            // a per-child event, so without this they stayed searchable.
+            let targets: Vec<String> = if change_type == "delete_prefix" {
+                let dir = path.trim_end_matches('/');
+                if dir.is_empty() {
+                    return Err("delete_prefix refuses the root path".to_string());
+                }
+                let under = format!("{dir}/");
+                let mut targets: Vec<String> = state
+                    .known_paths()
+                    .into_iter()
+                    .filter(|p| p == dir || p.starts_with(&under))
+                    .collect();
+                targets.sort();
+                targets.dedup();
+                if targets.is_empty() {
+                    return Ok("skipped".to_string());
+                }
+                targets
+            } else {
+                vec![path.to_string()]
+            };
             // Dirty window — same rationale as do_index (reviews
             // R5/R7).  Marked only on this MUTATING arm: the no-op
             // arms must neither set nor clear the flag, or a
             // "skipped" ack could erase the fail-closed mark left
             // by an earlier failed write.
             let zone_was_dirty = manager.mark_zone_dirty(zone_id)?;
-            fts.delete_all_chunks(path);
+            for target in &targets {
+                fts.delete_all_chunks(target);
+            }
             // Only open ANN if it happens to already be there —
             // creating an empty ANN dir on a delete is
             // counterproductive.  We'd need the embedder tag to
@@ -3683,7 +3710,9 @@ fn do_notify_file_change(
             // `state.record(path, None)` cross-wrote a stream path
             // into the FILES map (same SSOT class as the earlier
             // #4696 / #4702 fixes).
-            state.tombstone(path);
+            for target in &targets {
+                state.tombstone(target);
+            }
             if let Err(e) = fts.commit() {
                 return Err(format!("fts commit: {e}"));
             }

@@ -229,6 +229,59 @@ async fn notify_delete_mutates_and_advances_seq() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn notify_delete_prefix_evicts_a_directory_subtree_only() {
+    // A directory delete / rename removes its children in the kernel with
+    // no per-child event; the server evicts the subtree with one
+    // delete_prefix.  The `/` boundary must spare a sibling that merely
+    // shares the name prefix.
+    let dir = TempDir::new().unwrap();
+    let svc = service_at(&dir);
+    index_docs(
+        &svc,
+        vec![
+            doc("/ws/b/x.md", "zebracorn alpha"),
+            doc("/ws/b/deep/y.md", "zebracorn beta"),
+            doc("/ws/bc.md", "zebracorn gamma"),
+        ],
+    )
+    .await;
+    assert_eq!(keyword_hits(&svc, "zebracorn").await.len(), 3);
+
+    let ack = notify(&svc, "/ws/b/", "delete_prefix").await;
+    assert_eq!(ack.status, "accepted");
+    assert_eq!(
+        keyword_hits(&svc, "zebracorn").await,
+        vec!["/ws/bc.md".to_string()]
+    );
+
+    // Evicted paths stay known as tombstones (the Refresh stale-sweep's
+    // ANN cleanup record), so a repeat eviction is an idempotent no-op in
+    // effect; a prefix that never held an indexed path is a pure ack.
+    notify(&svc, "/ws/b", "delete_prefix").await;
+    assert_eq!(
+        keyword_hits(&svc, "zebracorn").await,
+        vec!["/ws/bc.md".to_string()]
+    );
+    assert_eq!(
+        notify(&svc, "/nope", "delete_prefix").await.status,
+        "skipped"
+    );
+    // The root is never a valid prefix.
+    let root = svc
+        .notify_file_change(Request::new(NotifyFileChangeRequest {
+            path: "/".to_string(),
+            change_type: "delete_prefix".to_string(),
+            zone_id: String::new(),
+            auth_token: String::new(),
+        }))
+        .await
+        .expect("notify rpc")
+        .into_inner();
+    assert!(root.error.is_some(), "root delete_prefix must be refused");
+    assert_eq!(keyword_hits(&svc, "zebracorn").await.len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn seq_survives_plugin_restart_on_same_root() {
     let dir = TempDir::new().unwrap();
     let last = {

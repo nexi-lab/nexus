@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from sqlalchemy.orm import Session
@@ -283,6 +283,9 @@ def issue_delegation(
                 audience=body.audience,
                 ttl_s=body.ttl_s,
                 idempotency_key=idempotency_key,
+                grant_id=body.grant_id,
+                purpose=body.purpose,
+                scope_rules=body.scope_rules,
             )
     except ServiceError as exc:
         raise _svc_error(exc) from exc
@@ -295,6 +298,8 @@ def issue_delegation(
         grant_revision=d.grant_revision,
         authorization_epoch=int(d.epoch),
         audience=d.audience,
+        purpose=cast(Literal["data-access", "runtime"] | None, d.purpose),
+        scope_rules=d.scope_rules,
         expires_at=d.expires_at.isoformat(),
         status=d.status,
     )
@@ -328,7 +333,9 @@ def get_delegation(
                     "retryable": unavailable,
                 },
             )
-        return {
+        payload: dict[str, Any] = {
+            "api_version": "auth.sudo.dev/v1",
+            "kind": "ZoneDelegation",
             "delegation_id": d.delegation_id,
             "user_id": d.user_id,
             "org_id": d.org_id,
@@ -340,6 +347,10 @@ def get_delegation(
             "status": d.status,
             "expires_at": d.expires_at.isoformat(),
         }
+        if d.purpose is not None and d.scope_rules is not None:
+            payload["purpose"] = d.purpose
+            payload["scope_rules"] = d.scope_rules
+        return payload
 
 
 @router.delete("/auth/zone-delegations/{delegation_id}", status_code=202)

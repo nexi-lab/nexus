@@ -18,8 +18,12 @@ from referencing.jsonschema import DRAFT202012
 from nexus.contracts.zone_v1 import (
     PrincipalRef,
     ResourceRef,
+    RuntimeResourceScope,
     Zone,
     ZoneCreateRequest,
+    ZoneDelegation,
+    ZoneDelegationIssueRequest,
+    ZoneDelegationScopeRule,
     ZoneGrant,
     ZoneGrantCreateRequest,
     ZoneOperation,
@@ -37,6 +41,10 @@ OWNED_SCHEMAS = [
     "auth/v1/zone-grant.schema.json",
     "auth/v1/zone-grant-create-request.schema.json",
     "auth/v1/zone-operation.schema.json",
+    "auth/v1/zone-delegation-scope-rule.schema.json",
+    "auth/v1/zone-delegation-issue-request.schema.json",
+    "auth/v1/zone-delegation.schema.json",
+    "runtime/v2/runtime-resource-scope.schema.json",
 ]
 
 VENDOR_DIR = CONTRACTS_DIR / "vendor" / "nexus-vfs.gen"
@@ -51,6 +59,10 @@ SCHEMA_TO_MODEL = {
     "auth/v1/zone-grant.schema.json": ZoneGrant,
     "auth/v1/zone-grant-create-request.schema.json": ZoneGrantCreateRequest,
     "auth/v1/zone-operation.schema.json": ZoneOperation,
+    "auth/v1/zone-delegation-scope-rule.schema.json": ZoneDelegationScopeRule,
+    "auth/v1/zone-delegation-issue-request.schema.json": ZoneDelegationIssueRequest,
+    "auth/v1/zone-delegation.schema.json": ZoneDelegation,
+    "runtime/v2/runtime-resource-scope.schema.json": RuntimeResourceScope,
 }
 
 

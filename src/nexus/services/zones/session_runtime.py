@@ -601,6 +601,7 @@ class SessionRuntimeService:
             snapshots = [
                 (
                     run.pid,
+                    run.session_id,
                     run.delegation_ref,
                     run.execution_zone_id,
                     run.grant_ref,
@@ -619,11 +620,11 @@ class SessionRuntimeService:
 
         invalid: list[str] = []
         unreachable = 0
-        for pid, delegation_ref, zone_id, grant_ref, epoch in snapshots:
+        for pid, session_id, delegation_ref, zone_id, grant_ref, epoch in snapshots:
             if not delegation_ref or grant_ref is None or epoch is None:
                 invalid.append(pid)
                 continue
-            current = validator(delegation_ref, zone_id, grant_ref, int(epoch))
+            current = validator(delegation_ref, zone_id, grant_ref, int(epoch), session_id)
             if current is None:
                 unreachable += 1
             elif not current:

@@ -33,6 +33,75 @@
     {
       "family": "auth",
       "api_version": "auth.sudo.dev/v1",
+      "kind": "ZoneDelegationIssueRequest",
+      "schema_id": "https://contracts.sudo.dev/schemas/auth/v1/zone-delegation-issue-request.schema.json",
+      "schema_path": "contracts/auth/v1/zone-delegation-issue-request.schema.json",
+      "schema_digest": "sha256:cc983fb8bbd421553c68ff6208ce551c6542304847f2aac7b0b01adf84624c8e",
+      "semantic_adr_refs": [
+        "sudostack/docs/adr/ADR-002-zone-and-tenancy-model.md"
+      ],
+      "owner": "nexus",
+      "security_owner": "nexus",
+      "producers": [
+        "nexus zone application service"
+      ],
+      "consumers": [
+        "moss (via sudostack-derived @sudo/contracts)",
+        "sudocode (P1a, via sudo-contracts crate)"
+      ],
+      "data_classification": "zone metadata and authorization facts; no user content, no secrets",
+      "secrets_allowed": false,
+      "compatibility": "experimental"
+    },
+    {
+      "family": "auth",
+      "api_version": "auth.sudo.dev/v1",
+      "kind": "ZoneDelegationScopeRule",
+      "schema_id": "https://contracts.sudo.dev/schemas/auth/v1/zone-delegation-scope-rule.schema.json",
+      "schema_path": "contracts/auth/v1/zone-delegation-scope-rule.schema.json",
+      "schema_digest": "sha256:21dff6f79a76e8d3dd9327e746d1d9d1e62e46a3de9d67b8ef08651965056027",
+      "semantic_adr_refs": [
+        "sudostack/docs/adr/ADR-002-zone-and-tenancy-model.md"
+      ],
+      "owner": "nexus",
+      "security_owner": "nexus",
+      "producers": [
+        "nexus zone application service"
+      ],
+      "consumers": [
+        "moss (via sudostack-derived @sudo/contracts)",
+        "sudocode (P1a, via sudo-contracts crate)"
+      ],
+      "data_classification": "zone metadata and authorization facts; no user content, no secrets",
+      "secrets_allowed": false,
+      "compatibility": "experimental"
+    },
+    {
+      "family": "auth",
+      "api_version": "auth.sudo.dev/v1",
+      "kind": "ZoneDelegation",
+      "schema_id": "https://contracts.sudo.dev/schemas/auth/v1/zone-delegation.schema.json",
+      "schema_path": "contracts/auth/v1/zone-delegation.schema.json",
+      "schema_digest": "sha256:8ec7ea6d01da18e8e4317bd771a79ffc4ccb5be21f4ecafc8a6937b174660d1a",
+      "semantic_adr_refs": [
+        "sudostack/docs/adr/ADR-002-zone-and-tenancy-model.md"
+      ],
+      "owner": "nexus",
+      "security_owner": "nexus",
+      "producers": [
+        "nexus zone application service"
+      ],
+      "consumers": [
+        "moss (via sudostack-derived @sudo/contracts)",
+        "sudocode (P1a, via sudo-contracts crate)"
+      ],
+      "data_classification": "zone metadata and authorization facts; no user content, no secrets",
+      "secrets_allowed": false,
+      "compatibility": "experimental"
+    },
+    {
+      "family": "auth",
+      "api_version": "auth.sudo.dev/v1",
       "kind": "ZoneGrantCreateRequest",
       "schema_id": "https://contracts.sudo.dev/schemas/auth/v1/zone-grant-create-request.schema.json",
       "schema_path": "contracts/auth/v1/zone-grant-create-request.schema.json",
@@ -188,6 +257,28 @@
         "sudocode (P1a)"
       ],
       "data_classification": "resource identity references; no payload bytes, no secrets",
+      "secrets_allowed": false,
+      "compatibility": "experimental"
+    },
+    {
+      "family": "runtime",
+      "api_version": "runtime.sudo.dev/v2",
+      "kind": "RuntimeResourceScope",
+      "schema_id": "https://contracts.sudo.dev/schemas/runtime/v2/runtime-resource-scope.schema.json",
+      "schema_path": "contracts/runtime/v2/runtime-resource-scope.schema.json",
+      "schema_digest": "sha256:a8943d084bf53dc508012ed00409792bd76b90e08ce42b579bd314f15de1d1c5",
+      "semantic_adr_refs": [
+        "sudostack/docs/adr/ADR-002-zone-and-tenancy-model.md"
+      ],
+      "owner": "nexus",
+      "security_owner": "nexus",
+      "producers": [
+        "moss runtime host"
+      ],
+      "consumers": [
+        "sudocode runtime"
+      ],
+      "data_classification": "runtime authorization scope metadata; no credentials or secrets",
       "secrets_allowed": false,
       "compatibility": "experimental"
     }

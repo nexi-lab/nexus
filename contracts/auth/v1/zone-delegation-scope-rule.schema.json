@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.sudo.dev/schemas/auth/v1/zone-delegation-scope-rule.schema.json",
+  "title": "ZoneDelegationScopeRule",
+  "description": "One capability and its own canonical resource prefixes. The pairing is preserved to prevent Cartesian-product privilege expansion.",
+  "type": "object",
+  "properties": {
+    "capability": {
+      "type": "string",
+      "pattern": "^zone\\.[a-z-]+\\.[a-z-]+$",
+      "minLength": 1
+    },
+    "resource_prefixes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "https://nexus-vfs.dev/contracts/zone-path/zone-path.schema.gen.json"
+      }
+    }
+  },
+  "required": ["capability", "resource_prefixes"],
+  "additionalProperties": true
+}

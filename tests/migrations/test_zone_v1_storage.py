@@ -84,6 +84,9 @@ def test_upgrade_and_fresh_agree_on_zone_v1_tables(upgraded_sqlite, fresh_sqlite
     assert _columns(upgraded_sqlite, "rebac_relation_sources") == _columns(
         fresh_sqlite, "rebac_relation_sources"
     )
+    assert _columns(upgraded_sqlite, "zone_delegations") == _columns(
+        fresh_sqlite, "zone_delegations"
+    )
 
 
 @pytest.mark.postgres

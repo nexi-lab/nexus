@@ -27,15 +27,16 @@ driver-s3 = ["dep:backends", "backends/driver-s3"]
 # `NEXUS_HTTP_ADDR` (see `http_api_decl` in main.rs) — the feature
 # gates the CODE, the env gates the LISTENER.
 http-api = ["dep:nexus-http-api", "dep:tracing"]
-# Co-host the real sudocode managed-agent runtime IN-PROCESS. Off by
-# default so the slim `cluster` binary stays sudocode-free (profile purity
-# — §7); a cohost-enabled build statically links `sudocode-tools` (which
-# carries `SudoCodeSpawnAdapter` next to the loop it wraps) and injects it
-# via `install_managed_agent_with_spawn`, so a minted agent runs a real LLM
-# loop doing in-process `KernelSyscall` calls (no gRPC on its fs path).
-# `sudocode-tools` MUST reach the kernel at the same nexus-vfs rev this
-# workspace pins, so `SpawnTask<Kernel>` is one type across the seam.
-cohost-sudocode = ["dep:sudocode-tools"]
+# Co-host the real sudocode agent runtime IN-PROCESS. Off by default so the
+# slim `cluster` binary stays sudocode-free (profile purity — §7); a
+# cohost-enabled build statically links `sudocode-engine-host` (which carries
+# `SudoCodeSpawnAdapter` next to the engine it hosts) and injects it via
+# `install_managed_agent_with_spawn`, so a minted agent runs the SAME engine
+# the `scode` CLI runs, with its file tools doing in-process `KernelSyscall`
+# calls rather than touching local disk.
+# It MUST reach the kernel at the same nexus-vfs rev this workspace pins, so
+# `SpawnTask<Kernel>` is one type across the seam.
+cohost-sudocode = ["dep:sudocode-engine-host"]
 # Opt-in ReBAC enforcer — Rust replacement for the Python
 # `bricks/rebac/` (part of the R10 pure-Rust `nexus-server`
 # migration; epic #4674).  Links `nexus-rebac` (the Zanzibar-shaped
@@ -62,7 +63,7 @@ rebac = ["dep:nexus-rebac", "nexus-http-api?/rebac"]
 # the default (this meta ONLY pulls features UP, never restricts
 # the slim path).
 #
-# **`cohost-sudocode` NOT included** — it links `sudocode-tools`
+# **`cohost-sudocode` NOT included** — it links `sudocode-engine-host`
 # from a pinned rev in a separate repo (sudoprivacy/sudocode) that
 # must match the workspace's `nexus-vfs` pin for `SpawnTask<Kernel>`
 # to unify.  Bumping either half out of sync fails the build.
@@ -92,17 +93,20 @@ backends = { workspace = true, default-features = false, optional = true }
 anyhow = "1"
 
 # ── Co-host (opt-in `cohost-sudocode`) ──────────────────────────────────
-# The real sudocode agent runtime, linked ONLY when co-hosting. `sudocode-
-# tools` reaches `kernel` at the SAME nexus-vfs rev the workspace pins, so
-# `Kernel` / `AgentDescriptor` / `KernelSyscall` / `AgentState` unify across
-# the seam and `SpawnTask<Kernel>` is a single monomorphised type.
-# `sudocode-tools` carries BOTH the `spawn_managed_agent` factory and the
-# `SudoCodeSpawnAdapter` this binary injects at boot — there is no
-# nexus-side co-host glue and no runtime enum to map (the adapter reports
-# `kernel::AgentState` directly). Pinned to the sudocode main merge that
-# carries that same rev: bumping the workspace pin means bumping this one
-# in the same commit, or the co-host build fails to compile.
-sudocode-tools = { package = "tools", git = "https://github.com/sudoprivacy/sudocode", rev = "901701c0350b4f0f48d200003a80d2e3ee8a0bd5", optional = true }
+# The real sudocode agent runtime, linked ONLY when co-hosting. It reaches
+# `kernel` at the SAME nexus-vfs rev the workspace pins, so `Kernel` /
+# `AgentDescriptor` / `KernelSyscall` / `AgentState` unify across the seam and
+# `SpawnTask<Kernel>` is a single monomorphised type.
+#
+# `engine-host` rather than `tools`: the co-host builds the same
+# `ConversationRuntime` the `scode` CLI builds, and that builder lives in
+# `engine-host`, which sits above `tools`. It carries both
+# `spawn_managed_agent` and the `SudoCodeSpawnAdapter` this binary injects at
+# boot — there is no nexus-side co-host glue and no runtime enum to map (the
+# adapter reports `kernel::AgentState` directly). Pinned to the sudocode main
+# merge that carries that same rev: bumping the workspace pin means bumping
+# this one in the same commit, or the co-host build fails to compile.
+sudocode-engine-host = { package = "engine-host", git = "https://github.com/sudoprivacy/sudocode", rev = "06562ef082e07763953671ead38fbafbc2f0292e", optional = true }
 # Named directly to spell `kernel::kernel::{ServiceDecl, Kernel}` — the
 # managed-agent boot decl's return type (both builds) and the co-host
 # adapter's `SpawnTask<Kernel>` (cohost build). Already present transitively

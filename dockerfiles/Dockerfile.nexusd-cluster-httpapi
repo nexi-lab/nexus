@@ -17,7 +17,7 @@
 #
 # Both cross-repo deps (nexi-lab/nexus-vfs @ the Cargo.toml pin, and
 # sudoprivacy/sudocode @ the nexusd/Cargo.toml pin — the http-api
-# feature does NOT enable cohost-sudocode; sudocode-tools stays a
+# feature does NOT enable cohost-sudocode; sudocode-engine-host stays a
 # lockstep-pinned build dep only) are PRIVATE, so the build
 # authenticates git via a BuildKit secret rather than a git token
 # baked into a layer.  Build:

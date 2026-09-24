@@ -698,27 +698,43 @@ jobs:
 
       - name: Install nexusd-cluster (the shipped production binary)
         if: needs.detect-changes.outputs.code_changed == 'true'
-        # Production ships the nexus-local `nexusd` crate as `nexusd-cluster`
+        # Production ships nexus-vfs's `nexus-cluster` crate as `nexusd-cluster`
         # — the KERNEL-ARCHITECTURE §7 `cluster` profile PLUS the
-        # managed_agent control plane. It composes nexus-vfs cluster boot +
-        # managed_agent, so it must be built from THIS tree (`--path
-        # rust/nexusd`) — the gate then tests the EXACT binary the image
-        # ships. The pure nexus-vfs `nexusd-cluster` (no services) is gated
-        # in nexus-vfs CI (cluster-binary-build.yml, incl. its ≤15.5 MiB size
-        # budget), so it is not re-installed here. `--locked` honors the
-        # source tree's Cargo.lock (the nexus-vfs pin the preflight validated).
+        # managed_agent control plane (relocated into nexus-vfs by #241).
+        # The earlier nexus-local assembly (`rust/nexusd`) was retired once
+        # the service crates it composed relocated into nexus-vfs itself
+        # (2026-09-24), so there is now ONE production build path and this
+        # gate installs it via `cargo install --git nexus-vfs` at the same
+        # rev the preflight validated. The rev is read from Cargo.toml at
+        # runtime (rather than hardcoded here) so a pin bump lands in ONE
+        # place; the preflight above guarantees this rev matches Cargo.lock
+        # and every Dockerfile ARG. `--locked` honors the nexus-vfs
+        # Cargo.lock at that rev.
         run: |
-          echo "Installing nexusd-cluster from the nexus-local crate rust/nexusd"
-          cargo install --locked --path rust/nexusd --bin nexusd-cluster
+          NEXUS_VFS_REV=$(grep -oE 'nexus-vfs", rev = "[a-f0-9]{40}' Cargo.toml \
+            | grep -oE '[a-f0-9]{40}' | sort -u)
+          if [ -z "$NEXUS_VFS_REV" ] || [ "$(echo "$NEXUS_VFS_REV" | wc -l)" -ne 1 ]; then
+            echo "::error::could not extract a single nexus-vfs rev from Cargo.toml (got: $NEXUS_VFS_REV)"
+            exit 1
+          fi
+          echo "Installing nexusd-cluster from nexus-vfs @ ${NEXUS_VFS_REV}"
+          cargo install --locked \
+            --git https://github.com/nexi-lab/nexus-vfs \
+            --rev "${NEXUS_VFS_REV}" \
+            --bin nexusd-cluster \
+            nexus-cluster
 
       - name: nexusd-cluster size budget (cluster profile purity)
         if: needs.detect-changes.outputs.code_changed == 'true'
         # The production cluster binary is size-gated (KERNEL-ARCHITECTURE §7;
-        # mirrors nexus-vfs cluster-binary-build.yml's linux budget). The
-        # nexus-vfs gates the PURE cluster binary; production ships this
-        # assembly of it plus the nexus services, so it needs its own guard.
-        # driver-s3 / connectors must NOT leak into the default (slim) build —
-        # that leak is the #36 regression this gate exists to catch.
+        # mirrors nexus-vfs cluster-binary-build.yml's linux budget). As of
+        # 2026-09-24 the nexus-repo assembly is retired and this gate runs
+        # against the very same binary nexus-vfs's own gate measures, so
+        # this budget is largely redundant with the upstream one — kept as
+        # a belt-and-suspenders leak-catcher for the pin (a rev bump that
+        # doubles the binary would slip past a stale upstream gate but not
+        # this one).  driver-s3 / connectors must NOT leak into the default
+        # (slim) build — that leak is the #36 regression this gate catches.
         run: |
           BIN="$HOME/.cargo/bin/nexusd-cluster"
           # 17.0 MiB = the nexus-vfs linux cluster budget (17563648 = 16.75

@@ -164,6 +164,54 @@ async fn query_path_filter_narrows_results() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_path_filters_union_prefixes_into_one_ranking() {
+    // One query over several subtrees (Koodle: documents/ + notes/ +
+    // private-inbox/, excluding brief/*) — ONE ranking over the union,
+    // unlike separate per-prefix queries whose scores are per-list.
+    let h = Harness::start();
+    h.seed("root");
+    let idx = h.manager.get_or_open("root").expect("open zone");
+    idx.add_document("/brief/w.md", 0, "widget widget widget", Some(1))
+        .expect("add");
+    idx.commit().expect("commit");
+
+    let query = |path_filter: &str, path_filters: Vec<String>| {
+        h.svc.query(Request::new(QueryRequest {
+            q: "widget".into(),
+            zone_id: "root".into(),
+            limit: 10,
+            path_filter: path_filter.into(),
+            path_filters,
+            query_type: QueryType::Keyword as i32,
+            ..Default::default()
+        }))
+    };
+    let paths = |resp: nexus_search_plugin::search_proto::QueryResponse| {
+        assert!(resp.error.is_none(), "unexpected error: {:?}", resp.error);
+        let mut p: Vec<String> = resp.results.into_iter().map(|r| r.path).collect();
+        p.sort();
+        p
+    };
+
+    let union = query("", vec!["/notes/".into(), "/logs/".into()])
+        .await
+        .expect("query")
+        .into_inner();
+    assert_eq!(paths(union), ["/logs/x.log", "/notes/hello.md"]);
+
+    // path_filter and path_filters are OR-ed.
+    let mixed = query("/notes/", vec!["/logs/".into()])
+        .await
+        .expect("query")
+        .into_inner();
+    assert_eq!(paths(mixed), ["/logs/x.log", "/notes/hello.md"]);
+
+    // Unscoped still sees the out-of-scope brief doc.
+    let all = query("", vec![]).await.expect("query").into_inner();
+    assert!(paths(all).contains(&"/brief/w.md".to_string()));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn query_empty_q_returns_error_not_500() {
     let h = Harness::start();
     let resp = h

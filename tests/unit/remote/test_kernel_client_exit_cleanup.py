@@ -80,3 +80,86 @@ def test_close_reaps_child_via_same_path() -> None:
     client.close()
     assert proc.poll() is not None
     assert client._process is None
+
+
+# ── Signal death: atexit never runs, the kernel must still go ─────────────
+
+
+def test_die_with_parent_wraps_a_linux_main_thread_spawn(monkeypatch: pytest.MonkeyPatch) -> None:
+    import os
+
+    monkeypatch.setattr(kc.sys, "platform", "linux")
+    argv = kc._die_with_parent_argv([sys.executable, "--flag"])
+    assert argv[:5] == [sys.executable, "-I", "-S", "-c", kc._PDEATHSIG_EXEC]
+    assert argv[5] == str(os.getpid()), "the wrapper checks it was not orphaned already"
+    assert argv[6:] == [sys.executable, "--flag"]
+
+
+def test_die_with_parent_is_linux_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(kc.sys, "platform", "darwin")
+    assert kc._die_with_parent_argv([sys.executable]) == [sys.executable]
+
+
+def test_die_with_parent_skips_unresolvable_binaries(monkeypatch: pytest.MonkeyPatch) -> None:
+    # execv does no PATH lookup — leave it to Popen's usual FileNotFoundError.
+    monkeypatch.setattr(kc.sys, "platform", "linux")
+    assert kc._die_with_parent_argv(["no-such-kernel-binary"]) == ["no-such-kernel-binary"]
+
+
+def test_die_with_parent_is_not_armed_off_the_main_thread(monkeypatch: pytest.MonkeyPatch) -> None:
+    # PDEATHSIG fires when the SPAWNING THREAD exits — a worker thread's
+    # spawn would kill the kernel as soon as that worker finished.
+    import threading
+
+    monkeypatch.setattr(kc.sys, "platform", "linux")
+    argvs: list[list[str]] = []
+    worker = threading.Thread(
+        target=lambda: argvs.append(kc._die_with_parent_argv([sys.executable]))
+    )
+    worker.start()
+    worker.join()
+    assert argvs == [[sys.executable]]
+
+
+# The spawner runs a live gRPC poller thread — the CLI's real shape, and what
+# made a preexec_fn-based arm abort the child (gRPC atfork handlers).
+_SIGKILLED_PARENT = r"""
+import subprocess, sys, os, signal
+sys.path.insert(0, {src!r})
+import grpc
+channel = grpc.insecure_channel("127.0.0.1:1")
+grpc.channel_ready_future(channel)  # starts gRPC's background threads
+from nexus.remote.kernel_client import _die_with_parent_argv
+child = subprocess.Popen(_die_with_parent_argv(["sleep", "60"]))
+print(child.pid, flush=True)
+import time; time.sleep(0.5)  # let the wrapper exec
+os.kill(os.getpid(), signal.SIGKILL)  # no atexit, like a SIGPIPE'd CLI
+"""
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="PR_SET_PDEATHSIG is Linux-only")
+def test_child_dies_when_its_parent_is_killed() -> None:
+    import time
+    from pathlib import Path
+
+    src = str(Path(kc.__file__).resolve().parents[2])
+    parent = subprocess.run(
+        [sys.executable, "-c", _SIGKILLED_PARENT.format(src=src)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert parent.returncode == -9, parent.stderr
+    child_pid = int(parent.stdout.strip())
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        try:
+            # A reparented child can linger as a zombie until init reaps it;
+            # kill(pid, 0) still succeeds on a zombie, so read its state.
+            stat = Path(f"/proc/{child_pid}/stat").read_text()
+        except (FileNotFoundError, ProcessLookupError):
+            return  # gone; ESRCH when reaped between open and read
+        if stat.rsplit(")", 1)[1].split()[0] == "Z":
+            return
+        time.sleep(0.1)
+    pytest.fail(f"child {child_pid} outlived its SIGKILLed parent")

@@ -265,6 +265,15 @@ Choose the embedding backend **before** reindexing:
   unchanged.
 
 The ANN directory tag encodes the embedder (`ann-<tag>-v<n>`, e.g.
-`ann-mE5-small-v1-v2` or `ann-api-text-embedding-3-small-1536-v2`), so
+`ann-mE5-small-v2-v2` or `ann-api-text-embedding-3-small-1536-v2`), so
 switching embedders later re-tags and rebuilds alongside the old
 directory instead of corrupting it.
+
+The local tag moved from `mE5-small-v1` to `mE5-small-v2` when the
+local embedder switched to mean pooling and the e5 `query: ` /
+`passage: ` input prefixes (the `v1` vectors were CLS-pooled and
+unprefixed). Walked directories re-embed on the next refresh; corpora
+indexed through `POST /api/v2/search/index` need `nexus reindex
+--target search` (or a replay of their index calls) before semantic
+results return. The old `ann-mE5-small-v1-*` directory can be deleted
+once the new one is populated.

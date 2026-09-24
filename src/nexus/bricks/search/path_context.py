@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import builtins
+import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -274,6 +275,17 @@ def prefix_boosts_from_records(
     return boosts
 
 
+def invalidate_prefix_boost_caches(app_state: Any, zone_id: str) -> None:
+    """Drop ``zone_id``'s freshness window in every search boost cache.
+
+    The search route keeps one :class:`PathContextCache` per event loop on
+    ``app.state._search_prefix_boost_caches``; the path-context write
+    routes call this so an upsert/delete is visible on the next query.
+    """
+    for cache in (getattr(app_state, "_search_prefix_boost_caches", None) or {}).values():
+        cache.invalidate(zone_id)
+
+
 def _coerce_datetime(value: Any) -> datetime:
     """SQLite + aiosqlite can return datetimes as ISO strings; normalize to datetime."""
     if isinstance(value, datetime):
@@ -299,9 +311,17 @@ class PathContextCache:
         *,
         store: PathContextStore,
         max_zones: int = _DEFAULT_MAX_ZONES,
+        fingerprint_ttl_s: float = 0.0,
     ) -> None:
         self._store = store
         self._max_zones = max_zones
+        # > 0: trust a zone's cached fingerprint for this long before the
+        # next DB check — one round trip per window instead of per call on
+        # hot paths.  Writers in THIS process call ``invalidate`` so their
+        # change is still visible on the next lookup; the window only
+        # bounds staleness for writes made by other processes.
+        self._fingerprint_ttl_s = fingerprint_ttl_s
+        self._checked_at: dict[str, float] = {}
         # Freshness token is ``(row_count, max_updated_at)`` — including count
         # catches deletes that leave the zone's max unchanged (Issue #3773
         # review feedback). OrderedDict enables LRU eviction on insertion so
@@ -339,7 +359,20 @@ class PathContextCache:
                         break
         return lock
 
+    def invalidate(self, zone_id: str) -> None:
+        """Force the next ``refresh_if_stale(zone_id)`` to consult the DB."""
+        self._checked_at.pop(zone_id, None)
+
+    def _fresh(self, zone_id: str) -> bool:
+        if self._fingerprint_ttl_s <= 0 or zone_id not in self._entries:
+            return False
+        checked = self._checked_at.get(zone_id)
+        return checked is not None and time.monotonic() - checked < self._fingerprint_ttl_s
+
     async def refresh_if_stale(self, zone_id: str) -> None:
+        if self._fresh(zone_id):
+            self._entries.move_to_end(zone_id)
+            return
         db_fp = await self._store.zone_fingerprint(zone_id)
         cached = self._entries.get(zone_id)
         if cached is not None and cached[0] == db_fp:
@@ -347,6 +380,7 @@ class PathContextCache:
             # too, otherwise they'd drift to the oldest slot and get evicted
             # behind merely-written zones (Round-3 review).
             self._entries.move_to_end(zone_id)
+            self._checked_at[zone_id] = time.monotonic()
             return
         async with self._lock_for(zone_id):
             # Re-check after lock acquisition — another task may have refreshed.
@@ -354,11 +388,13 @@ class PathContextCache:
             cached = self._entries.get(zone_id)
             if cached is not None and cached[0] == db_fp:
                 self._entries.move_to_end(zone_id)
+                self._checked_at[zone_id] = time.monotonic()
                 return
             records = await self._store.load_all_for_zone(zone_id)
             records.sort(key=lambda r: len(r.path_prefix), reverse=True)
             self._entries[zone_id] = (db_fp, records)
             self._entries.move_to_end(zone_id)
+            self._checked_at[zone_id] = time.monotonic()
             # LRU-bound: evict the oldest *records* when we exceed the cap.
             # Locks are intentionally NOT evicted: dropping a lock while a
             # concurrent task holds it, then re-creating a fresh lock on the
@@ -368,7 +404,8 @@ class PathContextCache:
             # Per-zone Locks are tiny (~56 B each) and bounded by zone
             # count — cheap enough to keep alive.
             while len(self._entries) > self._max_zones:
-                self._entries.popitem(last=False)
+                evicted, _ = self._entries.popitem(last=False)
+                self._checked_at.pop(evicted, None)
 
     def lookup_cached(self, zone_id: str | None, path: str) -> str | None:
         """Pure in-memory longest-prefix lookup. Assumes the caller has already

@@ -220,7 +220,19 @@ pub struct AnnIndex {
     /// back to these so a just-indexed chunk is scorable before the
     /// next commit rebuilds `points`.  Cleared by the refresh.
     recent_vectors: RwLock<HashMap<usize, Arc<Vec<f32>>>>,
+    /// `(path, chunk_index) → id` retired by
+    /// [`delete_all_chunks`](Self::delete_all_chunks) since the last
+    /// commit.  The reindex flow is delete-then-add; a re-add of the
+    /// SAME embedding revives the retired node instead of inserting a
+    /// duplicate (see [`add_vector`](Self::add_vector)).
+    retired: RwLock<HashMap<(String, u32), usize>>,
 }
+
+/// Cosine distance at or below which a re-added vector is the SAME
+/// embedding as the one already stored for its key.  Absorbs float
+/// jitter from remote embedders; real content changes move a chunk's
+/// vector by orders of magnitude more.
+const REUSE_MAX_DISTANCE: f32 = 1e-5;
 
 impl AnnIndex {
     /// Open the index at `dir` if a prior dump exists, otherwise
@@ -342,7 +354,40 @@ impl AnnIndex {
             path_ids: RwLock::new(path_ids),
             points: RwLock::new(points),
             recent_vectors: RwLock::new(HashMap::new()),
+            retired: RwLock::new(HashMap::new()),
         }))
+    }
+
+    /// Whether the vector stored for graph node `id` is the same
+    /// embedding as `vector` (see [`REUSE_MAX_DISTANCE`]).
+    fn stores_same_vector(&self, id: usize, vector: &[f32]) -> bool {
+        let dist = DistCosine {};
+        if let Some(p) = self.points.read().get(&id) {
+            return dist.eval(vector, p.get_v()) <= REUSE_MAX_DISTANCE;
+        }
+        self.recent_vectors
+            .read()
+            .get(&id)
+            .is_some_and(|v| dist.eval(vector, v.as_slice()) <= REUSE_MAX_DISTANCE)
+    }
+
+    /// Make a retired node live again under `(path, chunk_index)`.
+    fn revive(&self, path: &str, chunk_index: u32, id: usize) {
+        let mut side = self.sidecar.write();
+        side.shadowed.remove(&id);
+        side.entries.push(SidecarEntry {
+            path: path.to_string(),
+            chunk_index,
+            id,
+        });
+        let key = (path.to_string(), chunk_index);
+        self.chunk_to_id.write().insert(key.clone(), id);
+        self.id_to_chunk.write().insert(id, key);
+        self.path_ids
+            .write()
+            .entry(path.to_string())
+            .or_default()
+            .push(id);
     }
 
     /// Walk every point in the graph and index it by origin id.
@@ -400,6 +445,28 @@ impl AnnIndex {
         }
         if is_all_zero(vector) {
             return Err(AnnError::ZeroVector(path.to_string()));
+        }
+
+        // Unchanged content keeps its node.  Every insert of an
+        // identical vector used to add a node and shadow the old one;
+        // a chunk re-indexed a few hundred times (health sentinels,
+        // replayed index jobs) became a clump of identical nodes whose
+        // neighbour lists pointed only at each other, and HNSW could no
+        // longer reach the live one — the chunk dropped out of search.
+        let key = (path.to_string(), chunk_index);
+        let live = self.chunk_to_id.read().get(&key).copied();
+        match live {
+            Some(id) if self.stores_same_vector(id, vector) => return Ok(()),
+            Some(_) => {}
+            None => {
+                let retired = self.retired.write().remove(&key);
+                if let Some(id) = retired {
+                    if self.stores_same_vector(id, vector) {
+                        self.revive(path, chunk_index, id);
+                        return Ok(());
+                    }
+                }
+            }
         }
 
         // Rotate mappings under the write lock.  Short-held — no
@@ -473,22 +540,22 @@ impl AnnIndex {
         let mut side = self.sidecar.write();
         let mut lookup = self.chunk_to_id.write();
         let mut reverse = self.id_to_chunk.write();
-        let to_shadow: Vec<usize> = lookup
+        let to_shadow: Vec<((String, u32), usize)> = lookup
             .iter()
-            .filter_map(|((p, _), id)| if p == path { Some(*id) } else { None })
+            .filter(|((p, _), _)| p == path)
+            .map(|(key, id)| (key.clone(), *id))
             .collect();
-        for id in &to_shadow {
-            side.shadowed.insert(*id);
-            reverse.remove(id);
+        let mut retired = self.retired.write();
+        for (key, id) in to_shadow {
+            side.shadowed.insert(id);
+            reverse.remove(&id);
+            // Kept revivable until the next commit; its vector stays
+            // readable (graph point, or the interim copy until refresh).
+            retired.insert(key, id);
         }
         lookup.retain(|(p, _), _| p != path);
         side.entries.retain(|e| e.path != path);
-        if let Some(ids) = self.path_ids.write().remove(path) {
-            let mut recent = self.recent_vectors.write();
-            for id in ids {
-                recent.remove(&id);
-            }
-        }
+        self.path_ids.write().remove(path);
     }
 
     /// Number of live chunks whose path starts with `prefix` — the
@@ -522,6 +589,37 @@ impl AnnIndex {
         prefix: &str,
         k: usize,
     ) -> Result<Vec<AnnHit>, AnnError> {
+        self.exact_search_prefixes(query, &[prefix], k)
+    }
+
+    /// Live chunks under ANY of `scope`'s prefixes (they are disjoint,
+    /// so per-prefix counts add up).
+    pub fn live_chunks_in(&self, scope: &crate::path_scope::PathScope) -> usize {
+        scope
+            .prefixes()
+            .iter()
+            .map(|p| self.live_chunks_under(p))
+            .sum()
+    }
+
+    /// [`exact_search_under`](Self::exact_search_under) over the union
+    /// of `scope`'s prefixes — one ranking across all of them.
+    pub fn exact_search_in(
+        &self,
+        query: &[f32],
+        scope: &crate::path_scope::PathScope,
+        k: usize,
+    ) -> Result<Vec<AnnHit>, AnnError> {
+        let prefixes: Vec<&str> = scope.prefixes().iter().map(String::as_str).collect();
+        self.exact_search_prefixes(query, &prefixes, k)
+    }
+
+    fn exact_search_prefixes(
+        &self,
+        query: &[f32],
+        prefixes: &[&str],
+        k: usize,
+    ) -> Result<Vec<AnnHit>, AnnError> {
         if query.len() != self.dim {
             return Err(AnnError::DimMismatch {
                 path: "<query>".to_string(),
@@ -535,7 +633,7 @@ impl AnnIndex {
         if k == 0 {
             return Ok(Vec::new());
         }
-        let ids = self.ids_under(prefix);
+        let ids: Vec<usize> = prefixes.iter().flat_map(|p| self.ids_under(p)).collect();
         let dist = DistCosine {};
         let mut scored: Vec<(f32, usize)> = Vec::with_capacity(ids.len());
         {
@@ -605,13 +703,32 @@ impl AnnIndex {
 
         // Over-fetch so the shadow filter can drop stale hits and
         // still return `k` live results in the typical case (few
-        // shadows).  Bounded so a heavily-reindexed zone doesn't
-        // scan the whole graph.
-        let overfetch = std::cmp::min(k * 4, k + 100);
-        let effective_ef = std::cmp::max(ef, overfetch);
+        // shadows).
+        let mut overfetch = std::cmp::min(k * 4, k + 100);
+        // Shadowed nodes stay in the graph.  A chunk re-indexed many
+        // times leaves that many near-identical shadows around its live
+        // node, and they fill the whole first window: the live hit —
+        // and everything behind it — vanished (a re-indexed health
+        // sentinel stopped matching its own text).  When the window
+        // came back full but the filter starved it, widen; every
+        // shadow ahead of a live hit is at most the shadow count, so
+        // `k + shadowed` bounds the widening.
+        let ceiling = k.saturating_add(self.sidecar.read().shadowed.len());
+        loop {
+            let effective_ef = std::cmp::max(ef, overfetch);
+            let neighbours: Vec<Neighbour> = self.hnsw.search(query, overfetch, effective_ef);
+            let returned = neighbours.len();
+            let out = self.live_hits(neighbours, k);
+            if out.len() >= k || returned < overfetch || overfetch >= ceiling {
+                return Ok(out);
+            }
+            overfetch = std::cmp::min(overfetch.saturating_mul(4), ceiling);
+        }
+    }
 
-        let neighbours: Vec<Neighbour> = self.hnsw.search(query, overfetch, effective_ef);
-
+    /// First `k` graph neighbours that still resolve to a live
+    /// `(path, chunk_index)`, nearest first.
+    fn live_hits(&self, neighbours: Vec<Neighbour>, k: usize) -> Vec<AnnHit> {
         let side = self.sidecar.read();
         let id_map = self.id_to_chunk.read();
 
@@ -639,7 +756,7 @@ impl AnnIndex {
                 break;
             }
         }
-        Ok(out)
+        out
     }
 
     /// Persist the graph + sidecar to disk.  Callers batch adds and
@@ -703,6 +820,9 @@ impl AnnIndex {
         // exact scoring reads them from the graph and the interim
         // copies can go.
         self.refresh_points();
+        // Revival is a delete-then-re-add affordance within one
+        // transaction; past the commit a retired node stays shadowed.
+        self.retired.write().clear();
         Ok(())
     }
 
@@ -776,6 +896,122 @@ mod tests {
     /// distinct seeds are non-degenerate.
     fn vec_seed(dim: usize, seed: f32) -> Vec<f32> {
         (0..dim).map(|i| (seed + (i as f32) * 0.01).sin()).collect()
+    }
+
+    /// Deterministic vector whose DIRECTION varies with `seed`
+    /// (`vec_seed`'s components are near-equal, so its seeds differ
+    /// mostly in magnitude — useless for cosine-distance tests).
+    fn vec_dir(dim: usize, seed: f32) -> Vec<f32> {
+        (0..dim)
+            .map(|i| (seed * (i as f32 + 1.0) * 1.3 + i as f32).sin())
+            .collect()
+    }
+
+    /// Sentinel-free index with 20 distractors far from `vec_dir(_, 1.0)`.
+    fn with_distractors(dim: usize) -> Arc<AnnIndex> {
+        let idx = AnnIndex::open_or_create(tempdir().join("ann"), dim).expect("open");
+        for i in 0..20 {
+            idx.add_vector(
+                &format!("/other/{i}.md"),
+                0,
+                &vec_dir(dim, 40.0 + i as f32 * 3.7),
+            )
+            .unwrap();
+        }
+        idx
+    }
+
+    fn assert_sentinel_first(idx: &AnnIndex, query: &[f32]) {
+        for k in [1, 5, 10] {
+            let hits = idx.search(query, k).expect("search");
+            assert_eq!(hits.len(), k, "k={k} must fill: {hits:?}");
+            assert_eq!(hits[0].path, "/sentinel.md", "k={k}: {hits:?}");
+            assert_eq!(
+                hits.iter().filter(|h| h.path == "/sentinel.md").count(),
+                1,
+                "shadows never surface: {hits:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn reindexing_identical_content_reuses_the_node() {
+        // Health sentinels and replayed index jobs re-index the same
+        // text hundreds of times.  Each delete-then-add used to insert
+        // a fresh node and shadow the old one; the identical clump cut
+        // the live node off from the graph and the chunk vanished from
+        // search.  Same embedding ⇒ same node, before and after commit.
+        let idx = with_distractors(16);
+        let sentinel = vec_dir(16, 1.0);
+        idx.add_vector("/sentinel.md", 0, &sentinel).unwrap();
+        let nodes = idx.hnsw.get_nb_point();
+        for i in 0..300 {
+            if i == 150 {
+                idx.commit().expect("commit mid-way");
+            }
+            idx.delete_all_chunks("/sentinel.md");
+            idx.add_vector("/sentinel.md", 0, &sentinel).unwrap();
+            idx.add_vector("/sentinel.md", 0, &sentinel).unwrap();
+        }
+        assert_eq!(idx.hnsw.get_nb_point(), nodes, "no duplicate nodes");
+        assert!(idx.sidecar.read().shadowed.is_empty(), "no shadows");
+        assert_eq!(idx.live_count(), 21);
+        assert_sentinel_first(&idx, &sentinel);
+
+        // A real content change still replaces the vector.
+        let edited = vec_dir(16, 1.3);
+        idx.delete_all_chunks("/sentinel.md");
+        idx.add_vector("/sentinel.md", 0, &edited).unwrap();
+        assert_eq!(idx.sidecar.read().shadowed.len(), 1);
+        assert_sentinel_first(&idx, &edited);
+    }
+
+    #[test]
+    fn heavily_edited_chunk_is_still_found_past_its_shadows() {
+        // Content that changes on every re-index leaves one shadow per
+        // edit around the live node.  They filled the fixed over-fetch
+        // window and the live chunk (and every hit behind it) vanished;
+        // the widening must dig past them.
+        //
+        // hnsw_rs's unseeded RNG builds this clump with some nodes lacking
+        // in-edges — unreachable at any `ef`, an HNSW limitation rather
+        // than the shadow filter under test.  So the bar is the raw graph
+        // at an exhaustive `ef`: the live node must come first whenever
+        // the graph reaches it (rebuild the rare ~4% where it doesn't),
+        // and results fill up to the live nodes it reaches.
+        for _ in 0..8 {
+            let idx = with_distractors(16);
+            let mut last = Vec::new();
+            for i in 0..300 {
+                // Each step is well past REUSE_MAX_DISTANCE — a real edit.
+                last = vec_dir(16, 1.0 + i as f32 * 0.02);
+                idx.delete_all_chunks("/sentinel.md");
+                idx.add_vector("/sentinel.md", 0, &last).unwrap();
+            }
+            let raw = idx.hnsw.search(&last, idx.hnsw.get_nb_point(), 5_000);
+            if raw.first().is_none_or(|n| n.distance > 1e-6) {
+                continue;
+            }
+            let reachable_live = {
+                let side = idx.sidecar.read();
+                assert_eq!(side.shadowed.len(), 299);
+                raw.iter()
+                    .filter(|n| !side.shadowed.contains(&n.d_id))
+                    .count()
+            };
+            for k in [1, 5, 10] {
+                let hits = idx.search(&last, k).expect("search");
+                assert_eq!(hits.len(), k.min(reachable_live), "k={k}: {hits:?}");
+                assert_eq!(hits[0].path, "/sentinel.md", "k={k}: {hits:?}");
+                assert_eq!(
+                    hits.iter().filter(|h| h.path == "/sentinel.md").count(),
+                    1,
+                    "shadows never surface: {hits:?}"
+                );
+            }
+            return;
+        }
+        panic!("live node unreachable in every rebuilt graph");
     }
 
     #[test]

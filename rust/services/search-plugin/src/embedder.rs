@@ -56,10 +56,18 @@ use crate::http_client::GuardedClient;
 /// oblivious to whether the vectors came from a real ONNX session
 /// or a mock hash.
 pub trait Embedder: Send + Sync {
-    /// Embed a batch of texts.  Returns one vector per input in the
-    /// same order.  Empty input yields empty output — callers do
-    /// not need to short-circuit.
+    /// Embed a batch of document texts (chunks being indexed).
+    /// Returns one vector per input in the same order.  Empty input
+    /// yields empty output — callers do not need to short-circuit.
     fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, EmbedError>;
+
+    /// Embed search queries.  Asymmetric models embed a query and the
+    /// passages it should match differently (e5: `query: ` vs
+    /// `passage: `) and override this; symmetric ones keep the
+    /// default, which is [`Embedder::embed_batch`].
+    fn embed_queries(&self, queries: &[&str]) -> Result<Vec<Vec<f32>>, EmbedError> {
+        self.embed_batch(queries)
+    }
 
     /// Embedding dimensionality.  Callers pin their AnnIndex to
     /// this value at open-or-create time (see `AnnIndex::dim`).
@@ -230,8 +238,14 @@ mod fast {
 
     impl FastEmbedder {
         /// Load the model at `dir`, tagging the resulting index with
-        /// `tag` (typically `mE5-small-v1`).  See the module doc for
+        /// `tag` (typically `mE5-small-v2`).  See the module doc for
         /// the expected on-disk layout.
+        ///
+        /// The model is multilingual-e5: MEAN pooling over the
+        /// attention mask (fastembed defaults a user-defined model
+        /// with no pooling to CLS, which is not what e5 was trained
+        /// with), and `query: ` / `passage: ` input prefixes (see
+        /// [`E5_QUERY_PREFIX`]).
         ///
         /// `dylib_path` names the ONNX Runtime library the ort crate
         /// will `dlopen`.  Must be an absolute path to a
@@ -265,7 +279,8 @@ mod fast {
             };
             let model_bytes = read("model.onnx")?;
 
-            let udm = fastembed::UserDefinedEmbeddingModel::new(model_bytes, tokenizer_files);
+            let udm = fastembed::UserDefinedEmbeddingModel::new(model_bytes, tokenizer_files)
+                .with_pooling(fastembed::Pooling::Mean);
             let mut model = fastembed::TextEmbedding::try_new_from_user_defined(
                 udm,
                 fastembed::InitOptionsUserDefined::default(),
@@ -298,17 +313,31 @@ mod fast {
         }
     }
 
-    impl Embedder for FastEmbedder {
-        fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, EmbedError> {
+    impl FastEmbedder {
+        fn embed_prefixed(
+            &self,
+            prefix: &str,
+            texts: &[&str],
+        ) -> Result<Vec<Vec<f32>>, EmbedError> {
             if texts.is_empty() {
                 return Ok(Vec::new());
             }
             // fastembed::embed takes ownership of the batch — allocate
             // once here so callers can keep their `&[&str]` shape.
-            let owned: Vec<String> = texts.iter().map(|s| (*s).to_owned()).collect();
+            let owned: Vec<String> = texts.iter().map(|s| format!("{prefix}{s}")).collect();
             let mut lock = self.inner.lock();
             lock.embed(owned, None)
                 .map_err(|e| EmbedError::Runtime(e.to_string()))
+        }
+    }
+
+    impl Embedder for FastEmbedder {
+        fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, EmbedError> {
+            self.embed_prefixed(super::E5_PASSAGE_PREFIX, texts)
+        }
+
+        fn embed_queries(&self, queries: &[&str]) -> Result<Vec<Vec<f32>>, EmbedError> {
+            self.embed_prefixed(super::E5_QUERY_PREFIX, queries)
         }
 
         fn dim(&self) -> usize {
@@ -657,9 +686,20 @@ pub fn resolve_model_dir(data_root: &Path) -> PathBuf {
 }
 
 /// AnnIndex tag of the built-in local model — single source for
-/// [`build_default_embedder`] and the Stats identity field.
+/// [`build_default_embedder`] and the Stats identity field.  `v2` =
+/// mean pooling + e5 input prefixes; `v1` vectors (CLS-pooled, no
+/// prefixes) live in a different space, so the bump opens a fresh
+/// `ann-*` directory and the embedder-generation check re-embeds.
 #[cfg(feature = "semantic")]
-const LOCAL_EMBEDDER_TAG: &str = "mE5-small-v1";
+const LOCAL_EMBEDDER_TAG: &str = "mE5-small-v2";
+
+/// Input prefixes multilingual-e5 was trained with: retrieval
+/// queries and the passages they should match are embedded
+/// asymmetrically (see the model card).  Omitting them costs recall.
+#[cfg_attr(not(feature = "semantic"), allow(dead_code))]
+const E5_QUERY_PREFIX: &str = "query: ";
+#[cfg_attr(not(feature = "semantic"), allow(dead_code))]
+const E5_PASSAGE_PREFIX: &str = "passage: ";
 
 /// CONFIGURED embedder identity without loading anything (#4617).
 ///

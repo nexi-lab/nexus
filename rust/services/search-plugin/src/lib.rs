@@ -75,6 +75,7 @@ pub mod kernel_io;
 pub mod llm_chat;
 pub mod macro_expand;
 pub mod parked_state;
+pub mod path_scope;
 pub mod peer_fanout;
 pub mod peer_registry;
 pub mod query_cache;

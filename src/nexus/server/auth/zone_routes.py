@@ -647,6 +647,12 @@ async def delete_zone_endpoint(
         zone.deleted_at = datetime.now(UTC)
         session.commit()
 
+        # The raw tuple deletes above bypass the ReBAC writer, so no revision
+        # moved: drop cached permission decisions explicitly.
+        rebac_mgr = nx.service("rebac_manager") if (nx and hasattr(nx, "service")) else None
+        if rebac_mgr is not None and hasattr(rebac_mgr, "clear_permission_cache"):
+            rebac_mgr.clear_permission_cache()
+
         return ZoneDeprovisionResponse(
             zone_id=zone_id,
             phase=ZonePhase.TERMINATED,

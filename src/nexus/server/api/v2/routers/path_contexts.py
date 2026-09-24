@@ -19,7 +19,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, field_validator
 
-from nexus.bricks.search.path_context import PathContextStore
+from nexus.bricks.search.path_context import PathContextStore, invalidate_prefix_boost_caches
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.server.dependencies import require_admin, require_auth
 
@@ -223,12 +223,14 @@ async def dispose_loop_local_engines(app_state: Any) -> None:
 
 @router.put("/")
 async def upsert_context(
+    request: Request,
     body: PathContextIn,
     _admin: dict[str, Any] = Depends(require_admin),
     store: PathContextStore = Depends(_get_store),
 ) -> dict[str, Any]:
     """Upsert a path context (admin only)."""
     await store.upsert(body.zone_id, body.path_prefix, body.description, weight=body.weight)
+    invalidate_prefix_boost_caches(request.app.state, body.zone_id)
     return {
         "zone_id": body.zone_id,
         "path_prefix": body.path_prefix,
@@ -276,6 +278,7 @@ async def list_contexts(
 
 @router.delete("/")
 async def delete_context(
+    request: Request,
     zone_id: str = Query(...),
     path_prefix: str = Query(...),
     _admin: dict[str, Any] = Depends(require_admin),
@@ -287,6 +290,7 @@ async def delete_context(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     removed = await store.delete(zone_id, normalized)
+    invalidate_prefix_boost_caches(request.app.state, zone_id)
     if not removed:
         raise HTTPException(status_code=404, detail="path context not found")
     return {"zone_id": zone_id, "path_prefix": normalized, "status": "deleted"}

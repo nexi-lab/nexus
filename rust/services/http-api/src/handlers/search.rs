@@ -317,6 +317,10 @@ pub struct QueryBody {
     /// Per-prefix score multiplier map.  Empty ⇒ no per-prefix boost.
     #[serde(default)]
     pub path_prefix_boosts: HashMap<String, f32>,
+    /// Extra path prefixes OR-ed with `path_filter` — one fused
+    /// ranking over the union.  Empty ⇒ only `path_filter` applies.
+    #[serde(default)]
+    pub path_filters: Vec<String>,
 }
 
 /// One result row in [`QueryResponseBody::results`].  Every field
@@ -527,6 +531,7 @@ pub async fn query(
         recency_weight: body.recency_weight,
         recency_half_life_days: body.recency_half_life_days,
         path_prefix_boosts: body.path_prefix_boosts,
+        path_filters: body.path_filters,
     };
     let resp = client
         .query(tonic::Request::new(req))
@@ -562,6 +567,14 @@ async fn dispatch_federated(
     body: QueryBody,
     fence_zone: &str,
 ) -> Result<Response, SearchError> {
+    // The federated leg carries one `path_filter`; dropping the extra
+    // prefixes would silently widen the scope.
+    if !body.path_filters.is_empty() {
+        return Err(SearchError::BadRequest(
+            "path_filters is not supported for cross-zone (federated) search; pin zone_id"
+                .to_string(),
+        ));
+    }
     let observed = fence
         .enforce(std::sync::Arc::clone(&state.kernel), fence_zone)
         .await

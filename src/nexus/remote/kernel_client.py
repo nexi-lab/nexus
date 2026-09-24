@@ -22,6 +22,8 @@ import os
 import shutil
 import signal
 import subprocess
+import sys
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -253,6 +255,49 @@ def _apply_storage_env(
         )
 
 
+# Runs as the spawned process, then execs the kernel in place (same pid):
+# arm PR_SET_PDEATHSIG (1) with SIGTERM — it survives execve — and bail out
+# if the spawner already died before the arm (no signal would ever come).
+_PDEATHSIG_EXEC = (
+    "import ctypes, os, signal, sys\n"
+    "ctypes.CDLL(None).prctl(1, int(signal.SIGTERM), 0, 0, 0)\n"
+    "if os.getppid() != int(sys.argv[1]):\n"
+    "    os._exit(1)\n"
+    "os.execv(sys.argv[2], sys.argv[2:])\n"
+)
+
+
+def _die_with_parent_argv(cmd: list[str]) -> list[str]:
+    """Wrap ``cmd`` so the spawned kernel gets SIGTERM when this process dies.
+
+    ``atexit`` reaps the kernel on a normal exit, but not when this process is
+    killed by a signal: ``nexus … | grep -q …`` / ``| head`` (the CLI restores
+    default SIGPIPE, so a closed pipe kills it mid-write), a subprocess
+    timeout's SIGKILL, OOM.  Each such death orphaned a ``nexus-cluster``
+    (reparented to PID 1) — they pile up against a container's PID limit.
+
+    The death signal is armed by a tiny exec wrapper rather than a
+    ``preexec_fn``: a ``preexec_fn`` forces a real ``fork()`` whose gRPC
+    ``pthread_atfork`` handlers abort the child and break this process's
+    gRPC poller while its threads are live (observed: kernel exit -6,
+    ``epoll_wait … Bad file descriptor``).  The wrapper is spawned the normal
+    way and runs no code between fork and exec.
+
+    Linux only.  ``PR_SET_PDEATHSIG`` fires when the spawning THREAD exits, so
+    only a spawn from the main thread is wrapped; others keep ``atexit``.
+    """
+    if not sys.platform.startswith("linux"):
+        return cmd
+    if threading.current_thread() is not threading.main_thread():
+        return cmd
+    # execv does no PATH lookup; an unresolvable binary stays unwrapped so
+    # Popen still fails with its usual FileNotFoundError.
+    binary = shutil.which(cmd[0])
+    if binary is None:
+        return cmd
+    return [sys.executable, "-I", "-S", "-c", _PDEATHSIG_EXEC, str(os.getpid()), binary, *cmd[1:]]
+
+
 class KernelClient:
     """gRPC-based kernel client — drop-in replacement for PyKernel.
 
@@ -363,7 +408,7 @@ class KernelClient:
         self._stderr_file = os.fdopen(fd, "wb")
         self._stderr_path = stderr_path
         self._process = subprocess.Popen(
-            cmd,
+            _die_with_parent_argv(cmd),
             env=env,
             stdout=subprocess.DEVNULL,
             stderr=self._stderr_file,

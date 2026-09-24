@@ -351,6 +351,15 @@ message QueryRequest {
   // ⇒ no boost (multiplier stays 1.0).  Matches Python's
   // per-prefix ranking weight via path_contexts (#4544).
   map<string, float> path_prefix_boosts = 15;
+
+  // Additional path prefixes, OR-ed with `path_filter`: a hit is in
+  // scope when its path starts with ANY of them.  One query over
+  // several subtrees returns ONE fused ranking — scores are only
+  // comparable within a single result list (weighted fusion min-max
+  // normalises per list, RRF is rank-based), so callers must not
+  // merge separate per-prefix queries by score.  Empty ⇒ only
+  // `path_filter` applies.
+  repeated string path_filters = 16;
 }
 
 message QueryResult {

@@ -41,6 +41,7 @@ __all__ = [
     "LAST_SEMANTIC_DEGRADED",
     # SearchBrickProtocol.search bundled request (#4553 follow-up B)
     "SearchRequest",
+    "split_path_scope",
     # Positional per-query failure marker for batch_search
     "BatchQueryFailure",
 ]
@@ -73,6 +74,10 @@ class SearchRequest:
     search_type: str = "hybrid"
     limit: int = 10
     path_filter: str | None = None
+    # Extra path prefixes OR-ed with ``path_filter``: the plugin returns ONE
+    # fused ranking over the union. Fused scores are only comparable within
+    # one result list, so callers must not merge per-prefix queries by score.
+    path_filters: tuple[str, ...] = ()
     alpha: float = 0.5
     fusion_method: str = "rrf"
     rrf_k: int = 60
@@ -104,6 +109,24 @@ class SearchRequest:
     # the plugin's boost pass entirely. Built from the zone's
     # path_contexts rows by ``prefix_boosts_from_records``.
     path_prefix_boosts: dict[str, float] | None = None
+
+
+def split_path_scope(
+    paths: str | list[str] | tuple[str, ...] | None,
+) -> tuple[str | None, tuple[str, ...]]:
+    """Normalise wire path prefix(es) to ``(path_filter, path_filters)``.
+
+    One prefix stays on ``path_filter`` (unchanged single-scope behaviour);
+    several go to ``path_filters`` for one fused ranking over the union.
+    Blank entries are ignored and duplicates collapse, order-preserving.
+    """
+    if paths is None:
+        return None, ()
+    items = [paths] if isinstance(paths, str) else list(paths)
+    unique = tuple(dict.fromkeys(p for p in items if p))
+    if len(unique) <= 1:
+        return (unique[0] if unique else None), ()
+    return None, unique
 
 
 @dataclass(frozen=True, kw_only=True)

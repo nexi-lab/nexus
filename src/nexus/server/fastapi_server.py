@@ -31,7 +31,6 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from fastapi import (
     Depends,
     FastAPI,
-    HTTPException,
 )
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter
@@ -39,15 +38,11 @@ from slowapi.errors import RateLimitExceeded
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.routing import Route as _StarletteRoute
 
-from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import (
     NexusError,
 )
 from nexus.server.auth.oauth_init import (  # noqa: E402
     initialize_oauth_provider as _initialize_oauth_provider,
-)
-from nexus.server.dependencies import (  # noqa: E402
-    require_auth,
 )
 from nexus.server.error_handlers import (  # noqa: E402
     nexus_error_handler as _nexus_error_handler,
@@ -971,36 +966,15 @@ def _register_routes(app: FastAPI) -> None:
     # IPC brick + its `/api/v2/ipc/*` router deleted in Phase M of the
     # parallel-layers PR; PR #3912 ships the Rust replacement.
 
-    # Secrets audit log endpoints (Issue #997)
+    # Secrets audit log endpoints (Issue #997).  The router resolves its
+    # admin-gated logger from app.state itself — never register a
+    # production ``app.dependency_overrides`` entry: any non-empty map
+    # makes FastAPI rebuild every route's dependants on every request.
     try:
-        from nexus.server.api.v2.routers.secrets_audit import (
-            get_secrets_audit_logger as _secrets_audit_dep,
-        )
         from nexus.server.api.v2.routers.secrets_audit import (
             router as secrets_audit_router,
         )
-        from nexus.storage.secrets_audit_logger import SecretsAuditLogger
 
-        _secrets_audit_logger_instance: SecretsAuditLogger | None = None
-
-        def _get_secrets_audit_logger_override(
-            auth_result: dict[str, Any] = Depends(require_auth),
-        ) -> tuple:
-            nonlocal _secrets_audit_logger_instance
-            if not auth_result.get("is_admin", False):
-                raise HTTPException(
-                    status_code=403,
-                    detail="Secrets audit log access requires admin privileges",
-                )
-            if _secrets_audit_logger_instance is None:
-                _sa_rs = getattr(app.state, "record_store", None)
-                if _sa_rs is None:
-                    raise HTTPException(status_code=500, detail="Secrets audit not configured")
-                _secrets_audit_logger_instance = SecretsAuditLogger(record_store=_sa_rs)
-            zone_id = auth_result.get("zone_id", ROOT_ZONE_ID)
-            return _secrets_audit_logger_instance, zone_id
-
-        app.dependency_overrides[_secrets_audit_dep] = _get_secrets_audit_logger_override
         app.include_router(secrets_audit_router)
         logger.info("Secrets audit routes registered")
     except ImportError as e:

@@ -55,6 +55,10 @@ def test_dispatch_table_covers_all_wire_kinds() -> None:
         "ZoneGrant",
         "ZoneGrantCreateRequest",
         "ZoneOperation",
+        "ZoneDelegationScopeRule",
+        "ZoneDelegationIssueRequest",
+        "ZoneDelegation",
+        "RuntimeResourceScope",
     }
 
 

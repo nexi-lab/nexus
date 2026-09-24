@@ -244,6 +244,9 @@ class ZoneDelegationModel(Base):
     grant_revision: Mapped[str] = mapped_column(String(64), nullable=False)
     epoch: Mapped[int] = mapped_column(BigInteger, nullable=False)
     audience: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Nullable only for migration-era rows; all new issuance requires both.
+    purpose: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    scope_rules: Mapped[list | None] = mapped_column(JSON, nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     issued_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow

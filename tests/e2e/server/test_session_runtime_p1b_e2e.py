@@ -74,6 +74,7 @@ def test_p1b_implicit_task_resolution_attempt_and_home_zone_io(nexus_server, tes
     other = "p1b-execution-zone"
     _create_zone(test_app, admin, home, "p1b-home-create")
     _create_zone(test_app, admin, other, "p1b-other-create")
+    _create_session(test_app, admin, session_id="p1b-session", zone_id=home)
     home_delegation, _, _ = _create_runtime_delegation(
         test_app,
         admin,
@@ -81,6 +82,8 @@ def test_p1b_implicit_task_resolution_attempt_and_home_zone_io(nexus_server, tes
         org_id="p1b-org",
         user_id="p1b-user",
         key="p1b-home",
+        session_id="p1b-session",
+        read_paths=("/input.txt",),
     )
     other_delegation, _, _ = _create_runtime_delegation(
         test_app,
@@ -89,13 +92,15 @@ def test_p1b_implicit_task_resolution_attempt_and_home_zone_io(nexus_server, tes
         org_id="p1b-org",
         user_id="p1b-user",
         key="p1b-other",
+        session_id="p1b-session",
+        read_paths=("/other.txt",),
+        include_record_access=False,
     )
     user_key = _mint_user_key(test_app, admin, user_id="p1b-user", zone_id=home, key="p1b-user-key")
     user_home = {
         "Authorization": f"Bearer {user_key}",
         "X-Nexus-Zone-Delegation": home_delegation,
     }
-    _create_session(test_app, admin, session_id="p1b-session", zone_id=home)
 
     started = test_app.post(
         "/v2/runtime/start",
@@ -110,6 +115,17 @@ def test_p1b_implicit_task_resolution_attempt_and_home_zone_io(nexus_server, tes
     first = started.json()
     assert first["task_id"] and first["attempt_id"]
     assert first["execution_zone_id"] == home
+
+    cartesian_denied = test_app.post(
+        "/v2/zone-transfers",
+        headers={**user_home, "Idempotency-Key": "p1b-no-cartesian-write"},
+        json={
+            "source": _resource(home, "/input.txt"),
+            "target": _resource(home, "/input.txt"),
+        },
+    )
+    assert cartesian_denied.status_code == 403, cartesian_denied.text
+    assert cartesian_denied.json()["detail"]["code"] == "SCOPE_REQUIRED"
 
     task_response = test_app.get(
         f"/v2/sessions/p1b-session/tasks/{first['task_id']}", headers=user_home
@@ -265,6 +281,7 @@ def test_p1b_rejections_revocation_and_authorization_order(nexus_server, test_ap
     assert unauthorized.status_code == 403, unauthorized.text
     assert _counts(nexus_server["db_path"], "p1b-unauthorized") == (0, 0, 0, 0)
 
+    _create_session(test_app, admin, session_id="p1b-resource", zone_id=home)
     home_delegation, _, _ = _create_runtime_delegation(
         test_app,
         admin,
@@ -272,6 +289,8 @@ def test_p1b_rejections_revocation_and_authorization_order(nexus_server, test_ap
         org_id="p1b-resource-org",
         user_id="p1b-resource-user",
         key="p1b-resource-home",
+        session_id="p1b-resource",
+        read_paths=("/input.txt",),
     )
     resource_user_key = _mint_user_key(
         test_app,
@@ -280,7 +299,6 @@ def test_p1b_rejections_revocation_and_authorization_order(nexus_server, test_ap
         zone_id=home,
         key="p1b-resource-user-key",
     )
-    _create_session(test_app, admin, session_id="p1b-resource", zone_id=home)
     denied_ref = test_app.post(
         "/v2/runtime/start",
         headers={
@@ -303,6 +321,7 @@ def test_p1b_rejections_revocation_and_authorization_order(nexus_server, test_ap
     assert denied_task["attempts"] == []
     assert _counts(nexus_server["db_path"], "p1b-resource") == (1, 1, 0, 0)
 
+    _create_session(test_app, admin, session_id="p1b-revoke", zone_id=home)
     delegation_one, grant_one, _ = _create_runtime_delegation(
         test_app,
         admin,
@@ -310,6 +329,7 @@ def test_p1b_rejections_revocation_and_authorization_order(nexus_server, test_ap
         org_id="p1b-revoke-org",
         user_id="p1b-revoke-user",
         key="p1b-revoke-one",
+        session_id="p1b-revoke",
     )
     revoke_user_key = _mint_user_key(
         test_app,
@@ -318,7 +338,6 @@ def test_p1b_rejections_revocation_and_authorization_order(nexus_server, test_ap
         zone_id=home,
         key="p1b-revoke-user-key",
     )
-    _create_session(test_app, admin, session_id="p1b-revoke", zone_id=home)
     started = test_app.post(
         "/v2/runtime/start",
         headers={
@@ -354,6 +373,7 @@ def test_p1b_rejections_revocation_and_authorization_order(nexus_server, test_ap
         org_id="p1b-revoke-org",
         user_id="p1b-revoke-user",
         key="p1b-revoke-two",
+        session_id="p1b-revoke",
     )
     resumed = test_app.post(
         "/v2/runtime/resume",
@@ -386,6 +406,9 @@ def test_p1b_task_identity_survives_restart(tmp_path) -> None:
         with harness.client() as client:
             harness.poke_until_up(client, admin)
             _create_zone(client, admin, "p1b-restart-home", "p1b-restart-zone")
+            _create_session(
+                client, admin, session_id="p1b-restart-session", zone_id="p1b-restart-home"
+            )
             delegation, _, _ = _create_runtime_delegation(
                 client,
                 admin,
@@ -393,9 +416,7 @@ def test_p1b_task_identity_survives_restart(tmp_path) -> None:
                 org_id="p1b-restart-org",
                 user_id="p1b-restart-user",
                 key="p1b-restart",
-            )
-            _create_session(
-                client, admin, session_id="p1b-restart-session", zone_id="p1b-restart-home"
+                session_id="p1b-restart-session",
             )
             started = client.post(
                 "/v2/runtime/start",

@@ -115,6 +115,7 @@ def _minimum_task_write_gate(
     home_zone_id: str,
     execution_zone_id: str,
     delegation_ref: str,
+    session_id: str,
 ) -> VerifiedZoneDelegation | None:
     if auth_result.get("is_admin", False):
         require_zone_capability(
@@ -122,7 +123,7 @@ def _minimum_task_write_gate(
             auth_result,
             zone_id=home_zone_id,
             capability="zone.data.write",
-            resource_path="/",
+            resource_path=f"/sessions/{session_id}",
         )
         return None
     return require_runtime_delegation(
@@ -131,7 +132,7 @@ def _minimum_task_write_gate(
         delegation_id=delegation_ref,
         zone_id=execution_zone_id,
         capability="zone.runtime.execute",
-        resource_path="/",
+        resource_path=f"/sessions/{session_id}",
     )
 
 
@@ -141,11 +142,16 @@ def _require_runtime_access(
     *,
     zone_id: str,
     capability: str,
+    resource_path: str,
 ) -> None:
     """Authorize an admin control-plane call or a delegated user access."""
     if auth_result.get("is_admin", False):
         require_zone_capability(
-            request, auth_result, zone_id=zone_id, capability=capability, resource_path="/"
+            request,
+            auth_result,
+            zone_id=zone_id,
+            capability=capability,
+            resource_path=resource_path,
         )
         return
     require_runtime_delegation(
@@ -154,7 +160,7 @@ def _require_runtime_access(
         delegation_id=str(request.headers.get("X-Nexus-Zone-Delegation") or ""),
         zone_id=zone_id,
         capability=capability,
-        resource_path="/",
+        resource_path=resource_path,
     )
 
 
@@ -175,7 +181,11 @@ def create_session(
     def capability_check(zone_id: str) -> bool:
         try:
             require_zone_capability(
-                request, auth_result, zone_id=zone_id, capability="zone.data.write"
+                request,
+                auth_result,
+                zone_id=zone_id,
+                capability="zone.data.write",
+                resource_path=f"/sessions/{session_id}",
             )
             return True
         except HTTPException:
@@ -206,6 +216,7 @@ def get_session(
             auth_result,
             zone_id=view.home_zone_id,
             capability="zone.data.read",
+            resource_path=f"/sessions/{session_id}",
         )
         return view.as_json()
     except SessionRuntimeError as exc:
@@ -231,6 +242,7 @@ def write_record(
             auth_result,
             zone_id=view.home_zone_id,
             capability="zone.data.write",
+            resource_path=f"/sessions/{session_id}",
         )
         return svc.write_session_record(
             session_id=session_id,
@@ -257,6 +269,7 @@ def list_records(
             auth_result,
             zone_id=view.home_zone_id,
             capability="zone.data.read",
+            resource_path=f"/sessions/{session_id}",
         )
         return {"records": svc.record_ledger(session_id)}
     except SessionRuntimeError as exc:
@@ -305,6 +318,7 @@ def _start(
             home_zone_id=session_view.home_zone_id,
             execution_zone_id=execution_zone,
             delegation_ref=delegation_ref,
+            session_id=session_id,
         )
         try:
             task = task_svc.ensure_implicit_task(
@@ -331,7 +345,7 @@ def _start(
         delegation_id=delegation_ref,
         zone_id=execution_zone,
         capability="zone.runtime.execute",
-        resource_path="/",
+        resource_path=f"/sessions/{session_id}",
     )
     if body.get("grant_ref") not in (None, verified.grant_id) or body.get(
         "authorization_epoch"
@@ -470,6 +484,7 @@ def get_task(
             auth_result,
             zone_id=str(payload["spec"]["storage"]["zone_id"]),
             capability="zone.data.read",
+            resource_path=f"/sessions/{session_id}",
         )
         return payload
     except SessionTaskError as exc:
@@ -507,6 +522,7 @@ def get_run(
             auth_result,
             zone_id=view.execution_zone_id,
             capability="zone.runtime.execute",
+            resource_path=f"/sessions/{view.session_id}",
         )
         return view.as_json()
     except SessionRuntimeError as exc:
@@ -530,6 +546,7 @@ def cancel_run(
             auth_result,
             zone_id=current.execution_zone_id,
             capability="zone.runtime.execute",
+            resource_path=f"/sessions/{current.session_id}",
         )
         view = svc.cancel_run(pid=pid, mode=mode)
     except SessionRuntimeError as exc:

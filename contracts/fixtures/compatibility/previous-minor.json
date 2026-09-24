@@ -95,6 +95,25 @@
         "path": "/a",
         "size_bytes": "9007199254740993"
       }
+    },
+    {
+      "name": "zone-delegation-legacy-view-without-scope-accepted",
+      "schema": "auth/v1/zone-delegation.schema.json",
+      "expected": "valid",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "ZoneDelegation",
+        "delegation_id": "legacy-d",
+        "user_id": "u",
+        "org_id": "o",
+        "zone_id": "team-one",
+        "grant_id": "g",
+        "grant_revision": "r",
+        "authorization_epoch": 1,
+        "audience": "nexus-api",
+        "expires_at": "2026-09-24T10:00:00Z",
+        "status": "active"
+      }
     }
   ]
 }

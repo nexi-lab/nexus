@@ -11,8 +11,16 @@
     "/v2/zone-operations/{operation_id}": { "get": {} },
     "/v2/zones/{zone_id}/grants": { "get": {}, "post": {} },
     "/v2/zones/{zone_id}/grants/{grant_id}": { "get": {}, "delete": {} },
-    "/v2/auth/zone-delegations": { "post": {} },
-    "/v2/auth/zone-delegations/{delegation_id}": { "get": {}, "delete": {} },
+    "/v2/auth/zone-delegations": {
+      "post": {
+        "request_schema": "contracts/auth/v1/zone-delegation-issue-request.schema.json",
+        "response_schema": "contracts/auth/v1/zone-delegation.schema.json"
+      }
+    },
+    "/v2/auth/zone-delegations/{delegation_id}": {
+      "get": { "response_schema": "contracts/auth/v1/zone-delegation.schema.json" },
+      "delete": {}
+    },
     "/v2/zones/{zone_id}/joins": { "post": {} },
     "/v2/zone-mounts": { "get": {}, "post": {} },
     "/v2/zone-mounts/{mount_id}": { "delete": {} },

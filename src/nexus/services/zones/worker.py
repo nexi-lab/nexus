@@ -42,7 +42,8 @@ class ZoneOperationWorker:
         service: Any,
         session_runtime: Any = None,
         session_tasks: Any = None,
-        runtime_dependency_validator: Callable[[str, str, str, int], bool | None] | None = None,
+        runtime_dependency_validator: Callable[[str, str, str, int, str], bool | None]
+        | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._runtime = runtime

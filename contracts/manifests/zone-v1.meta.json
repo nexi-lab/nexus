@@ -18,6 +18,13 @@
       "producers": ["nexus product services"],
       "consumers": ["moss (via sudostack-derived @sudo/contracts)", "sudocode (P1a)"],
       "data_classification": "resource identity references; no payload bytes, no secrets"
+    },
+    "runtime.sudo.dev/v2": {
+      "owner": "nexus",
+      "security_owner": "nexus",
+      "producers": ["moss runtime host"],
+      "consumers": ["sudocode runtime"],
+      "data_classification": "runtime authorization scope metadata; no credentials or secrets"
     }
   },
   "kind_meta": {
@@ -28,7 +35,11 @@
     "auth/v1/zone-patch-request.schema.json": { "compatibility": "experimental" },
     "auth/v1/zone-grant.schema.json": { "compatibility": "experimental" },
     "auth/v1/zone-grant-create-request.schema.json": { "compatibility": "experimental" },
-    "auth/v1/zone-operation.schema.json": { "compatibility": "experimental" }
+    "auth/v1/zone-operation.schema.json": { "compatibility": "experimental" },
+    "auth/v1/zone-delegation-scope-rule.schema.json": { "compatibility": "experimental" },
+    "auth/v1/zone-delegation-issue-request.schema.json": { "compatibility": "experimental" },
+    "auth/v1/zone-delegation.schema.json": { "compatibility": "experimental" },
+    "runtime/v2/runtime-resource-scope.schema.json": { "compatibility": "experimental" }
   },
   "amendments": [
     {

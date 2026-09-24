@@ -56,6 +56,9 @@ def _create_runtime_delegation(
     org_id: str,
     user_id: str,
     key: str,
+    session_id: str,
+    read_paths: tuple[str, ...] = (),
+    include_record_access: bool = True,
 ) -> tuple[str, str, int]:
     grant_response = client.post(
         f"/v2/zones/{zone_id}/grants",
@@ -99,10 +102,50 @@ def _create_runtime_delegation(
             "zone_id": zone_id,
             "audience": "nexus-api",
             "ttl_s": 300,
+            "grant_id": grant["grant_id"],
+            "purpose": "runtime",
+            "scope_rules": [
+                {
+                    "capability": "zone.runtime.execute",
+                    "resource_prefixes": [f"/sessions/{session_id}"],
+                },
+                *(
+                    [
+                        {
+                            "capability": "zone.data.read",
+                            "resource_prefixes": [f"/sessions/{session_id}", *read_paths],
+                        },
+                        {
+                            "capability": "zone.data.write",
+                            "resource_prefixes": [f"/sessions/{session_id}"],
+                        },
+                    ]
+                    if include_record_access
+                    else (
+                        [
+                            {
+                                "capability": "zone.data.read",
+                                "resource_prefixes": list(read_paths),
+                            }
+                        ]
+                        if read_paths
+                        else []
+                    )
+                ),
+            ],
         },
     )
     assert delegated.status_code == 201, delegated.text
     delegation_body = delegated.json()
+    assert delegation_body["purpose"] == "runtime"
+    assert delegation_body["grant_id"] == grant["grant_id"]
+    assert "runtime_session_id" not in delegation_body
+    execute_rule = next(
+        rule
+        for rule in delegation_body["scope_rules"]
+        if rule["capability"] == "zone.runtime.execute"
+    )
+    assert execute_rule["resource_prefixes"] == [f"/sessions/{session_id}"]
     return (
         delegation_body["delegation_id"],
         grant["grant_id"],
@@ -215,6 +258,9 @@ def test_p1a_runtime_run_zones_and_cancellation(nexus_server, test_app) -> None:
     other = "p1a-run-other"
     _create_zone(test_app, headers, zone, "p1a-run-z1")
     _create_zone(test_app, headers, other, "p1a-run-z2")
+    test_app.post(
+        "/v2/sessions", headers=headers, json={"session_id": "p1a-sess-2", "home_zone_id": zone}
+    )
     home_delegation, home_grant, home_epoch = _create_runtime_delegation(
         test_app,
         headers,
@@ -222,6 +268,7 @@ def test_p1a_runtime_run_zones_and_cancellation(nexus_server, test_app) -> None:
         org_id="p1a-run-org",
         user_id="p1a-run-user",
         key="p1a-run-home",
+        session_id="p1a-sess-2",
     )
     other_delegation, _, _ = _create_runtime_delegation(
         test_app,
@@ -230,9 +277,8 @@ def test_p1a_runtime_run_zones_and_cancellation(nexus_server, test_app) -> None:
         org_id="p1a-run-org",
         user_id="p1a-run-user",
         key="p1a-run-other",
-    )
-    test_app.post(
-        "/v2/sessions", headers=headers, json={"session_id": "p1a-sess-2", "home_zone_id": zone}
+        session_id="p1a-sess-2",
+        include_record_access=False,
     )
 
     # (2) execution zone defaults to home; refs solidified
@@ -353,6 +399,12 @@ def test_p1a_runtime_delegation_revalidation_and_revoke_isolation(nexus_server, 
     org = "p1a-delegated-org"
     user = "p1a-delegated-user"
     _create_zone(test_app, admin_headers, zone, "p1a-delegated-create")
+    created = test_app.post(
+        "/v2/sessions",
+        headers=admin_headers,
+        json={"session_id": "p1a-delegated-session", "home_zone_id": zone},
+    )
+    assert created.status_code == 201, created.text
     delegation, grant_id, epoch = _create_runtime_delegation(
         test_app,
         admin_headers,
@@ -360,6 +412,7 @@ def test_p1a_runtime_delegation_revalidation_and_revoke_isolation(nexus_server, 
         org_id=org,
         user_id=user,
         key="p1a-delegated",
+        session_id="p1a-delegated-session",
     )
     user_key = _mint_user_key(
         test_app, admin_headers, user_id=user, zone_id=zone, key="p1a-runtime-user"
@@ -369,12 +422,13 @@ def test_p1a_runtime_delegation_revalidation_and_revoke_isolation(nexus_server, 
         "X-Nexus-Zone-Delegation": delegation,
     }
 
-    created = test_app.post(
+    cross_session_create = test_app.post(
         "/v2/sessions",
-        headers=admin_headers,
-        json={"session_id": "p1a-delegated-session", "home_zone_id": zone},
+        headers=user_headers,
+        json={"session_id": "p1a-delegated-other", "home_zone_id": zone},
     )
-    assert created.status_code == 201, created.text
+    assert cross_session_create.status_code == 403, cross_session_create.text
+
     no_runtime_delegation = test_app.post(
         "/v2/runtime/start",
         headers=admin_headers,
@@ -461,6 +515,12 @@ def test_p1a_zones_survive_full_restart(tmp_path) -> None:
         with harness.client() as client:
             harness.poke_until_up(client, headers)
             _create_zone(client, headers, "p1a-restart-home", "p1a-restart-z")
+            created = client.post(
+                "/v2/sessions",
+                headers=headers,
+                json={"session_id": "p1a-restart-sess", "home_zone_id": "p1a-restart-home"},
+            )
+            assert created.status_code == 201, created.text
             delegation, _, _ = _create_runtime_delegation(
                 client,
                 headers,
@@ -468,13 +528,8 @@ def test_p1a_zones_survive_full_restart(tmp_path) -> None:
                 org_id="p1a-restart-org",
                 user_id="p1a-restart-user",
                 key="p1a-restart",
+                session_id="p1a-restart-sess",
             )
-            created = client.post(
-                "/v2/sessions",
-                headers=headers,
-                json={"session_id": "p1a-restart-sess", "home_zone_id": "p1a-restart-home"},
-            )
-            assert created.status_code == 201, created.text
             run = client.post(
                 "/v2/runtime/start",
                 headers={**headers, "X-Nexus-Zone-Delegation": delegation},

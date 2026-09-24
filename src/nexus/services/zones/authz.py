@@ -28,6 +28,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from nexus.contracts.zone_v1 import ZoneDelegationScopeRule, ZonePathStr
 from nexus.services.zones.membership import MembershipUnreachable
 from nexus.storage.models import (
     ZoneAuthorizationEpochModel,
@@ -47,6 +48,86 @@ _CAPABILITY_PERMISSIONS = {
     "zone.grants.manage": "write",
     "zone.lifecycle.delete": "write",
 }
+
+
+def _path_is_within(path: str, prefix: str) -> bool:
+    return prefix == "/" or path == prefix or path.startswith(f"{prefix}/")
+
+
+def _normalize_scope_rules(
+    raw_rules: list[ZoneDelegationScopeRule] | list[dict[str, Any]],
+    *,
+    purpose: str,
+) -> list[dict[str, Any]]:
+    from nexus.services.zones.service import ServiceError
+
+    if not raw_rules:
+        raise ServiceError(
+            "SCOPE_REQUIRED", "delegation scope_rules must not be empty", http_status=422
+        )
+    normalized: list[dict[str, Any]] = []
+    capabilities: set[str] = set()
+    for raw in raw_rules:
+        try:
+            rule = (
+                raw
+                if isinstance(raw, ZoneDelegationScopeRule)
+                else ZoneDelegationScopeRule.model_validate(raw)
+            )
+        except Exception as exc:
+            raise ServiceError(
+                "SCOPE_REQUIRED", "invalid delegation scope rule", http_status=422
+            ) from exc
+        if rule.capability in capabilities:
+            raise ServiceError(
+                "SCOPE_REQUIRED", "duplicate delegation capability rule", http_status=422
+            )
+        capabilities.add(rule.capability)
+        prefixes = list(rule.resource_prefixes)
+        if len(prefixes) != len(set(prefixes)):
+            raise ServiceError("SCOPE_REQUIRED", "duplicate resource prefix", http_status=422)
+        normalized.append(
+            {
+                "capability": rule.capability,
+                "resource_prefixes": sorted(prefixes, key=lambda item: item.encode("utf-8")),
+            }
+        )
+    normalized.sort(key=lambda rule: str(rule["capability"]).encode("utf-8"))
+    if purpose != "runtime" and any(
+        rule["capability"] == "zone.runtime.execute" for rule in normalized
+    ):
+        raise ServiceError(
+            "SCOPE_REQUIRED", "runtime execution scope requires purpose=runtime", http_status=422
+        )
+    if purpose == "runtime":
+        execute = [rule for rule in normalized if rule["capability"] == "zone.runtime.execute"]
+        prefixes = execute[0]["resource_prefixes"] if len(execute) == 1 else []
+        if (
+            len(execute) != 1
+            or len(prefixes) != 1
+            or not isinstance(prefixes[0], str)
+            or not prefixes[0].startswith("/sessions/")
+            or len(prefixes[0].split("/")) != 3
+        ):
+            raise ServiceError(
+                "SCOPE_REQUIRED",
+                "runtime delegation requires exactly one /sessions/{id} execute prefix",
+                http_status=422,
+            )
+    return normalized
+
+
+def _grant_covers_rules(grant: ZoneGrantModel, rules: list[dict[str, Any]]) -> bool:
+    grant_capabilities = set(grant.capabilities or [])
+    grant_prefixes = list(grant.resource_prefixes or ["/"])
+    return all(
+        rule["capability"] in grant_capabilities
+        and all(
+            any(_path_is_within(str(prefix), str(grant_prefix)) for grant_prefix in grant_prefixes)
+            for prefix in rule["resource_prefixes"]
+        )
+        for rule in rules
+    )
 
 
 class Decision:
@@ -185,6 +266,9 @@ class AuthorizationService:
         audience: str,
         ttl_s: int = DEFAULT_DELEGATION_TTL_S,
         idempotency_key: str | None = None,
+        grant_id: str | None = None,
+        purpose: str = "data-access",
+        scope_rules: list[ZoneDelegationScopeRule] | list[dict[str, Any]] | None = None,
     ) -> ZoneDelegationModel:
         """Called ONLY by the trusted Moss issuance service identity; the
         membership itself was validated Moss-side (SSOT stays there)."""
@@ -228,38 +312,89 @@ class AuthorizationService:
                 "Moss membership is not active at the supplied version",
                 http_status=403,
             )
+        if purpose not in {"data-access", "runtime"}:
+            from nexus.services.zones.service import ServiceError
+
+            raise ServiceError("SCOPE_REQUIRED", "invalid delegation purpose", http_status=422)
         now = datetime.now(UTC)
         grants = (
             session.execute(
-                select(ZoneGrantModel)
-                .where(
+                select(ZoneGrantModel).where(
                     ZoneGrantModel.zone_id == zone_id,
                     ZoneGrantModel.status == "active",
                 )
-                .order_by(ZoneGrantModel.created_at.desc())
             )
             .scalars()
             .all()
         )
-        grant = next(
-            (
-                item
-                for item in grants
-                if isinstance(item.grantee, dict)
-                and item.grantee.get("subject_type") == "organization"
-                and item.grantee.get("subject_id") == org_id
-                and (item.not_before is None or _aware(item.not_before) <= now)
-                and (item.expires_at is None or _aware(item.expires_at) > now)
-            ),
-            None,
+        valid_grants = [
+            item
+            for item in grants
+            if isinstance(item.grantee, dict)
+            and item.grantee.get("subject_type") == "organization"
+            and item.grantee.get("subject_id") == org_id
+            and (item.not_before is None or _aware(item.not_before) <= now)
+            and (item.expires_at is None or _aware(item.expires_at) > now)
+        ]
+        normalized_rules = (
+            _normalize_scope_rules(scope_rules, purpose=purpose)
+            if scope_rules is not None
+            else None
         )
-        if grant is None:
+        if purpose == "runtime" and normalized_rules is None:
+            from nexus.services.zones.service import ServiceError
+
+            raise ServiceError(
+                "SCOPE_REQUIRED",
+                "runtime delegation requires explicit scope_rules",
+                http_status=422,
+            )
+        if grant_id is not None:
+            candidates = [item for item in valid_grants if item.grant_id == grant_id]
+        elif normalized_rules is not None:
+            candidates = [
+                item for item in valid_grants if _grant_covers_rules(item, normalized_rules)
+            ]
+        else:
+            candidates = valid_grants
+        if not candidates:
             from nexus.services.zones.service import ServiceError
 
             raise ServiceError(
                 "GRANT_NOT_ACTIVE",
                 f"org {org_id} has no active grant on {zone_id}",
                 http_status=403,
+            )
+        if len(candidates) > 1:
+            from nexus.services.zones.service import ServiceError
+
+            raise ServiceError(
+                "AMBIGUOUS_GRANT",
+                "multiple active grants match; retry with an explicit grant_id",
+                http_status=409,
+            )
+        grant = candidates[0]
+        if normalized_rules is None:
+            derived_capabilities = sorted(
+                {"zone.data.read", "zone.data.write"}.intersection(grant.capabilities or [])
+            )
+            normalized_rules = _normalize_scope_rules(
+                [
+                    {
+                        "capability": capability,
+                        "resource_prefixes": list(grant.resource_prefixes or ["/"]),
+                    }
+                    for capability in derived_capabilities
+                ],
+                purpose=purpose,
+            )
+        if not _grant_covers_rules(grant, normalized_rules):
+            from nexus.services.zones.service import ServiceError
+
+            raise ServiceError(
+                "RESOURCE_RELATION_DENIED",
+                "delegation scope exceeds the selected grant",
+                http_status=422,
             )
         epoch = self.current_epoch(session, zone_id)
         if epoch is None:
@@ -290,6 +425,9 @@ class AuthorizationService:
                 and existing.membership_version == membership_version
                 and existing.zone_id == zone_id
                 and existing.audience == audience
+                and existing.grant_id == grant.grant_id
+                and existing.purpose == purpose
+                and existing.scope_rules == normalized_rules
             )
             if not same:
                 from nexus.services.zones.service import ServiceError
@@ -310,6 +448,8 @@ class AuthorizationService:
             grant_revision=grant.revision,
             epoch=epoch,
             audience=audience,
+            purpose=purpose,
+            scope_rules=normalized_rules,
             status="active",
             issued_at=now,
             expires_at=now + timedelta(seconds=ttl_s),
@@ -323,6 +463,8 @@ class AuthorizationService:
         *,
         delegation_id: str,
         audience: str,
+        capability: str | None = None,
+        resource_path: str | None = None,
     ) -> Decision:
         d = session.get(ZoneDelegationModel, delegation_id)
         if d is None or d.status != "active":
@@ -352,6 +494,42 @@ class AuthorizationService:
             return Decision(False, code="GRANT_REVOKED", reason="issuing grant no longer active")
         if not self.epoch_is_current(session, d.zone_id, d.epoch):
             return Decision(False, code="GRANT_REVOKED", reason="epoch moved past delegation")
+        legacy = d.purpose is None and d.scope_rules is None
+        if legacy and resource_path is None and capability != "zone.runtime.execute":
+            return Decision(True)
+        if d.purpose is None or not isinstance(d.scope_rules, list) or not d.scope_rules:
+            return Decision(False, code="SCOPE_REQUIRED", reason="delegation scope is required")
+        if capability is None:
+            if resource_path is not None:
+                return Decision(
+                    False, code="SCOPE_REQUIRED", reason="resource scope needs capability"
+                )
+            return Decision(True)
+        matching: list[dict[str, Any]] = []
+        try:
+            for raw_rule in d.scope_rules:
+                rule = ZoneDelegationScopeRule.model_validate(raw_rule)
+                if rule.capability == capability:
+                    matching.append(rule.model_dump(mode="json"))
+        except Exception:
+            return Decision(False, code="SCOPE_REQUIRED", reason="delegation scope is corrupt")
+        if not matching:
+            return Decision(False, code="SCOPE_REQUIRED", reason="capability is outside scope")
+        if resource_path is not None:
+            try:
+                from pydantic import TypeAdapter
+
+                canonical_path = TypeAdapter(ZonePathStr).validate_python(resource_path)
+            except Exception:
+                return Decision(
+                    False, code="SCOPE_REQUIRED", reason="resource path is not canonical"
+                )
+            if not any(
+                _path_is_within(canonical_path, str(prefix))
+                for rule in matching
+                for prefix in rule["resource_prefixes"]
+            ):
+                return Decision(False, code="SCOPE_REQUIRED", reason="resource is outside scope")
         return Decision(True)
 
     def revoke_delegation(self, session: Session, delegation_id: str) -> bool:

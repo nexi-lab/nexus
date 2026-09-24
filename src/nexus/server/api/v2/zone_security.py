@@ -69,7 +69,7 @@ def require_zone_capability(
     *,
     zone_id: str,
     capability: str,
-    resource_path: str = "/",
+    resource_path: str | None = None,
 ) -> None:
     decision = zone_capability_decision(
         request,
@@ -92,7 +92,7 @@ def require_runtime_delegation(
     delegation_id: str,
     zone_id: str,
     capability: str = "zone.runtime.execute",
-    resource_path: str = "/",
+    resource_path: str | None = None,
 ) -> VerifiedZoneDelegation:
     """Verify a runtime delegation and return only server-owned references.
 
@@ -143,7 +143,11 @@ def require_runtime_delegation(
                     },
                 )
             delegated = authz.verify_delegation(
-                session, delegation_id=delegation_id, audience="nexus-api"
+                session,
+                delegation_id=delegation_id,
+                audience="nexus-api",
+                capability=capability,
+                resource_path=resource_path,
             )
             if not delegated:
                 unavailable = delegated.code == "MEMBERSHIP_UNAVAILABLE"
@@ -160,7 +164,7 @@ def require_runtime_delegation(
                 principal=Principal(subject_type="organization", subject_id=row.org_id),
                 zone_id=zone_id,
                 capability=capability,
-                resource_path=resource_path,
+                resource_path=resource_path or "/",
             )
             if not access:
                 raise HTTPException(
@@ -192,7 +196,7 @@ def zone_capability_decision(
     *,
     zone_id: str,
     capability: str,
-    resource_path: str = "/",
+    resource_path: str | None = None,
 ) -> Any:
     if auth_result.get("is_admin", False):
         from nexus.services.zones.authz import Decision
@@ -209,7 +213,7 @@ def zone_capability_decision(
                 principal=principal_from_auth(auth_result),
                 zone_id=zone_id,
                 capability=capability,
-                resource_path=resource_path,
+                resource_path=resource_path or "/",
             )
             delegation_id = request.headers.get("X-Nexus-Zone-Delegation")
             if not decision and delegation_id:
@@ -217,6 +221,8 @@ def zone_capability_decision(
                     session,
                     delegation_id=delegation_id,
                     audience="nexus-api",
+                    capability=capability,
+                    resource_path=resource_path,
                 )
                 if not delegated:
                     decision = delegated
@@ -235,7 +241,7 @@ def zone_capability_decision(
                             principal=Principal(subject_type="organization", subject_id=row.org_id),
                             zone_id=zone_id,
                             capability=capability,
-                            resource_path=resource_path,
+                            resource_path=resource_path or "/",
                         )
     except HTTPException:
         raise

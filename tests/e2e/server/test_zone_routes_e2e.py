@@ -150,6 +150,7 @@ def api_key_zone_app(request, monkeypatch):
         rebac_check=lambda *_args: True,
         projection_write=lambda *_args: None,
         projection_delete=lambda *_args: None,
+        membership_check=lambda *_args: True,
         worker_enabled=True,
     )
     app.include_router(zone_router)
@@ -388,7 +389,7 @@ def test_v2_create_delegation_revoke_and_deprovision(nexus_server, test_app) -> 
         json={
             "user_id": "delegated-user",
             "org_id": "org-e2e",
-            "membership_version": "membership-v1",
+            "membership_version": "r1",
             "zone_id": zone_id,
             "audience": "nexus-api",
             "ttl_s": 300,
@@ -402,6 +403,27 @@ def test_v2_create_delegation_revoke_and_deprovision(nexus_server, test_app) -> 
         "X-Nexus-Zone-Delegation": delegation_id,
     }
     assert test_app.get(f"/v2/zones/{zone_id}", headers=user_headers).status_code == 200
+
+    collision_key_response = test_app.post(
+        "/api/v2/auth/keys",
+        headers=admin_headers,
+        json={
+            "label": "delegated-service-collision",
+            "subject_type": "service",
+            "subject_id": "delegated-user",
+            "zone_id": zone_id,
+            "is_admin": False,
+        },
+    )
+    assert collision_key_response.status_code == 201, collision_key_response.text
+    collision = test_app.get(
+        f"/v2/zones/{zone_id}",
+        headers={
+            "Authorization": f"Bearer {collision_key_response.json()['key']}",
+            "X-Nexus-Zone-Delegation": delegation_id,
+        },
+    )
+    assert collision.status_code == 403, collision.text
 
     revoked = test_app.delete(
         f"/v2/zones/{zone_id}/grants/{org_grant['grant_id']}",

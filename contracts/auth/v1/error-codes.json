@@ -47,6 +47,7 @@
     { "code": "GRANT_NOT_ACTIVE", "description": "Grant exists but is not active (pending/revoked/expired grants carry no access)." },
     { "code": "GRANT_REVOKED", "description": "The grant has been revoked." },
     { "code": "GRANT_EXPIRED", "description": "The grant's expires_at has passed (judged at access time)." },
+    { "code": "MEMBERSHIP_UNAVAILABLE", "description": "The authoritative Moss membership service is temporarily unavailable; access remains denied and may be retried." },
     { "code": "RESOURCE_RELATION_DENIED", "description": "Active ZoneGrant holds but the resource-level ReBAC relation does not; both layers must hold to allow." },
     { "code": "IDEMPOTENCY_CONFLICT", "description": "Same Idempotency-Key with a different canonical request hash." },
     { "code": "UNSUPPORTED_CONTRACT_MAJOR", "description": "api_version carries a major this endpoint does not support; unknown majors are rejected by default." },

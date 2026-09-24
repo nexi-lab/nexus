@@ -36,6 +36,8 @@ from pathlib import Path
 
 import httpx
 
+from tests.e2e.conftest import find_free_port, start_membership_stub
+
 _SRC = Path(__file__).resolve().parents[2].parents[1] / "src"
 
 
@@ -106,7 +108,7 @@ def _issue_delegation(
         json={
             "user_id": user,
             "org_id": org,
-            "membership_version": "v1",
+            "membership_version": "r1",
             "zone_id": zone,
             "audience": "nexus-api",
             "ttl_s": 300,
@@ -314,7 +316,7 @@ def test_p0_scenario_10_overlapping_grants_and_independent_relations(
         json={
             "user_id": "p0m-s10-user",
             "org_id": "p0m-org-a",
-            "membership_version": "v1",
+            "membership_version": "r1",
             "zone_id": zone,
             "audience": "nexus-api",
             "ttl_s": 300,
@@ -328,6 +330,12 @@ def test_p0_scenario_13_suspend_blocks_new_grants_resume_restores(nexus_server, 
     headers = {"Authorization": f"Bearer {nexus_server['api_key']}"}
     zone = "p0m-s13-zone"
     _create_zone(test_app, headers, zone, "p0m-s13-create")
+    created_session = test_app.post(
+        "/v2/sessions",
+        headers=headers,
+        json={"session_id": "p0m-s13-session", "home_zone_id": zone},
+    )
+    assert created_session.status_code == 201, created_session.text
 
     # suspend executes inline (202 with a settled operation body — no
     # Location round-trip in this deployment mode).
@@ -350,12 +358,25 @@ def test_p0_scenario_13_suspend_blocks_new_grants_resume_restores(nexus_server, 
     )
     assert blocked.status_code in (403, 409, 422, 503), blocked.text
     assert blocked.status_code != 202, "new grant must not be accepted while the zone is suspended"
+    blocked_write = test_app.post(
+        "/v2/sessions/p0m-s13-session/records",
+        headers=headers,
+        json={"record_kind": "context", "data": "{}"},
+    )
+    assert blocked_write.status_code == 409, blocked_write.text
+    assert blocked_write.json()["detail"]["code"] == "ZONE_NOT_ACTIVE"
 
     resumed = test_app.post(
         f"/v2/zones/{zone}:resume", headers={**headers, "Idempotency-Key": "p0m-s13-res"}
     )
     assert resumed.status_code == 202, resumed.text
     assert resumed.json()["state"] == "succeeded", resumed.text
+    restored_write = test_app.post(
+        "/v2/sessions/p0m-s13-session/records",
+        headers=headers,
+        json={"record_kind": "context", "data": "{}"},
+    )
+    assert restored_write.status_code == 201, restored_write.text
     _create_grant(test_app, headers, zone, "p0m-org-a", "p0m-s13-g", "p0m-s13-s")
 
 
@@ -496,9 +517,9 @@ def test_p0_scenario_17_state_survives_full_restart(tmp_path) -> None:
     operations stay queryable and committed revocations still deny after a
     hard kill + restart.
     """
-    import socket as _socket
     from shutil import which
 
+    membership = start_membership_stub()
     data_dir = tmp_path / "s17"
     data_dir.mkdir(parents=True, exist_ok=True)
     metastore = data_dir / "metastore"
@@ -509,11 +530,7 @@ def test_p0_scenario_17_state_survives_full_restart(tmp_path) -> None:
     home_dir.mkdir(exist_ok=True)
 
     def _find_port() -> int:
-        s = _socket.socket()
-        s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]
-        s.close()
-        return port
+        return find_free_port(3)
 
     def _kernel_binary() -> str:
         for name in ("nexusd-cluster", "nexus-cluster"):
@@ -576,6 +593,8 @@ def test_p0_scenario_17_state_survives_full_restart(tmp_path) -> None:
             "NEXUS_SEARCH_DAEMON": "false",
             "NEXUS_UPLOAD_MIN_CHUNK_SIZE": "1",
             "NEXUS_ZONE_DELEGATION_ISSUERS": "moss-e2e",
+            "NEXUS_ZONE_MEMBERSHIP_URL": membership.url,
+            "NEXUS_ZONE_MEMBERSHIP_TOKEN": membership.token,
             "HOME": str(home_dir),
             "PYTHONPATH": str(_SRC),
         }
@@ -615,6 +634,7 @@ def test_p0_scenario_17_state_survives_full_restart(tmp_path) -> None:
 
     port = _find_port()
     proc = _spawn(port)
+    proc2: subprocess.Popen | None = None
     _wait_ready(proc)
     try:
         headers = {"Authorization": f"Bearer {api_key}"}
@@ -700,6 +720,9 @@ def test_p0_scenario_17_state_survives_full_restart(tmp_path) -> None:
     finally:
         if proc.poll() is None:
             subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True)
+        if proc2 is not None and proc2.poll() is None:
+            subprocess.run(["taskkill", "/PID", str(proc2.pid), "/T", "/F"], capture_output=True)
+        membership.close()
 
 
 def test_p0_scenario_18_idempotency_semantics(nexus_server, test_app) -> None:

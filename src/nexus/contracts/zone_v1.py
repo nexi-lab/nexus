@@ -94,6 +94,7 @@ KNOWN_ERROR_CODES: frozenset[str] = frozenset(
         "GRANT_NOT_ACTIVE",
         "GRANT_REVOKED",
         "GRANT_EXPIRED",
+        "MEMBERSHIP_UNAVAILABLE",
         "RESOURCE_RELATION_DENIED",
         "IDEMPOTENCY_CONFLICT",
         "UNSUPPORTED_CONTRACT_MAJOR",

@@ -146,12 +146,13 @@ def require_runtime_delegation(
                 session, delegation_id=delegation_id, audience="nexus-api"
             )
             if not delegated:
+                unavailable = delegated.code == "MEMBERSHIP_UNAVAILABLE"
                 raise HTTPException(
-                    status_code=403,
+                    status_code=503 if unavailable else 403,
                     detail={
                         "code": delegated.code,
                         "message": delegated.reason,
-                        "retryable": False,
+                        "retryable": unavailable,
                     },
                 )
             access = authz.allow(
@@ -225,6 +226,7 @@ def zone_capability_decision(
                     row = session.get(ZoneDelegationModel, delegation_id)
                     if (
                         row is not None
+                        and principal_from_auth(auth_result).subject_type == "user"
                         and row.user_id == principal_from_auth(auth_result).subject_id
                         and row.zone_id == zone_id
                     ):
@@ -239,4 +241,9 @@ def zone_capability_decision(
         raise
     except Exception as exc:
         raise HTTPException(status_code=503, detail="zone authorization unavailable") from exc
+    if not decision and decision.code == "MEMBERSHIP_UNAVAILABLE":
+        raise HTTPException(
+            status_code=503,
+            detail={"code": decision.code, "message": decision.reason, "retryable": True},
+        )
     return decision

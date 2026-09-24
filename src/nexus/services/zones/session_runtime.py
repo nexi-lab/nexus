@@ -248,6 +248,9 @@ class SessionRuntimeService:
                     "SESSION_NOT_ACTIVE", f"session {session_id} is {record.state}", 409
                 )
             home_zone = record.home_zone_id
+            zone = session.get(ZoneModel, home_zone)
+            if zone is None or zone.canonical_status != "active":
+                raise SessionRuntimeError("ZONE_NOT_ACTIVE", f"zone {home_zone} is not active", 409)
             if zone_hint is not None and zone_hint != home_zone:
                 raise SessionRuntimeError(
                     "ZONE_OVERRIDE_DENIED",
@@ -614,14 +617,22 @@ class SessionRuntimeService:
                 )
             ]
 
-        invalid = [
-            pid
-            for pid, delegation_ref, zone_id, grant_ref, epoch in snapshots
-            if not delegation_ref
-            or grant_ref is None
-            or epoch is None
-            or not validator(delegation_ref, zone_id, grant_ref, int(epoch))
-        ]
+        invalid: list[str] = []
+        unreachable = 0
+        for pid, delegation_ref, zone_id, grant_ref, epoch in snapshots:
+            if not delegation_ref or grant_ref is None or epoch is None:
+                invalid.append(pid)
+                continue
+            current = validator(delegation_ref, zone_id, grant_ref, int(epoch))
+            if current is None:
+                unreachable += 1
+            elif not current:
+                invalid.append(pid)
+        if unreachable:
+            logger.warning(
+                "skipped dependency revalidation for %d runtime(s): membership unavailable",
+                unreachable,
+            )
         if not invalid:
             return 0
         with self._session_factory() as session, session.begin():

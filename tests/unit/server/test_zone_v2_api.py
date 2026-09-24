@@ -18,6 +18,7 @@ from nexus.server.api.v2.routers.zone_runtime import router as runtime_router
 from nexus.server.api.v2.routers.zones import router as zones_router
 from nexus.server.auth.zone_routes import router as legacy_zone_router
 from nexus.server.dependencies import require_auth
+from nexus.server.lifespan import zone_control as zone_control_module
 from nexus.server.lifespan.zone_control import (
     ZoneControlNotArmed,
     arm_zone_services,
@@ -67,12 +68,17 @@ class Runtime:
 
 def _app() -> FastAPI:
     from nexus.storage.models import auth as auth_models
+    from nexus.storage.models import session_v1 as session_models
     from nexus.storage.models import zone_v1 as zone_models
 
     engine = sa.create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=sa.pool.StaticPool
     )
     auth_models.ZoneModel.__table__.create(engine)
+    session_models.SessionModel.__table__.create(engine)
+    with engine.begin() as connection:
+        connection.exec_driver_sql("CREATE TABLE task_attempts (attempt_id TEXT PRIMARY KEY)")
+    session_models.SessionRuntimeRunModel.__table__.create(engine)
     for model in (
         zone_models.ZoneGrantModel,
         zone_models.ZoneOperationModel,
@@ -222,3 +228,112 @@ def test_enabled_startup_refuses_missing_mandatory_provider(monkeypatch) -> None
     monkeypatch.setenv("NEXUS_ZONE_CONTROL_ENABLED", "true")
     with pytest.raises(ZoneControlNotArmed):
         asyncio.run(startup_zone_control(app))
+
+
+def _startup_ready_app() -> FastAPI:
+    app = FastAPI()
+    app.state.session_factory = lambda: None
+    app.state.rebac_manager = object()
+    app.state.nexus_fs = object()
+    app.state.api_key = "configured"
+    app.state.deployment_profile = "full"
+    return app
+
+
+def _stub_startup_dependencies(monkeypatch, worker) -> None:
+    monkeypatch.setattr(
+        zone_control_module,
+        "arm_zone_services",
+        lambda app, **kwargs: {"composite_armed": True, "membership": kwargs["membership_check"]},
+    )
+    monkeypatch.setattr(zone_control_module, "zone_worker", lambda app: worker)
+
+
+def test_full_without_delegation_issuers_does_not_require_membership(monkeypatch) -> None:
+    class Worker:
+        def pump_once(self):
+            return 0
+
+        def reconcile_stale_operations(self):
+            return 0
+
+    app = _startup_ready_app()
+    _stub_startup_dependencies(monkeypatch, Worker())
+    monkeypatch.delenv("NEXUS_ZONE_DELEGATION_ISSUERS", raising=False)
+    monkeypatch.delenv("NEXUS_ZONE_MEMBERSHIP_URL", raising=False)
+    monkeypatch.delenv("NEXUS_ZONE_MEMBERSHIP_TOKEN", raising=False)
+
+    async def run() -> None:
+        tasks = await startup_zone_control(app)
+        app.state.zone_worker_stop.set()
+        await asyncio.gather(*tasks)
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("missing", ["url", "token"])
+def test_delegation_issuer_refuses_partial_membership_config(monkeypatch, missing: str) -> None:
+    app = _startup_ready_app()
+    monkeypatch.setenv("NEXUS_ZONE_DELEGATION_ISSUERS", "moss-e2e")
+    monkeypatch.setenv("NEXUS_ZONE_MEMBERSHIP_URL", "http://moss/membership")
+    monkeypatch.setenv("NEXUS_ZONE_MEMBERSHIP_TOKEN", "secret")
+    monkeypatch.delenv(
+        "NEXUS_ZONE_MEMBERSHIP_URL" if missing == "url" else "NEXUS_ZONE_MEMBERSHIP_TOKEN"
+    )
+    with pytest.raises(ZoneControlNotArmed, match="requires both"):
+        asyncio.run(startup_zone_control(app))
+
+
+def test_delegation_issuer_with_complete_membership_config_starts(monkeypatch) -> None:
+    class Worker:
+        def pump_once(self):
+            return 0
+
+        def reconcile_stale_operations(self):
+            return 0
+
+    app = _startup_ready_app()
+    _stub_startup_dependencies(monkeypatch, Worker())
+    monkeypatch.setenv("NEXUS_ZONE_DELEGATION_ISSUERS", "moss-e2e")
+    monkeypatch.setenv("NEXUS_ZONE_MEMBERSHIP_URL", "http://moss/membership")
+    monkeypatch.setenv("NEXUS_ZONE_MEMBERSHIP_TOKEN", "secret")
+
+    async def run() -> None:
+        tasks = await startup_zone_control(app)
+        assert callable(app.state.moss_membership_verifier)
+        app.state.zone_worker_stop.set()
+        await asyncio.gather(*tasks)
+
+    asyncio.run(run())
+
+
+def test_worker_survives_one_iteration_failure(monkeypatch) -> None:
+    class Worker:
+        calls = 0
+
+        def pump_once(self):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("transient")
+            return 0
+
+        def reconcile_stale_operations(self):
+            return 0
+
+    worker = Worker()
+    app = _startup_ready_app()
+    _stub_startup_dependencies(monkeypatch, worker)
+    monkeypatch.delenv("NEXUS_ZONE_DELEGATION_ISSUERS", raising=False)
+    monkeypatch.delenv("NEXUS_ZONE_MEMBERSHIP_URL", raising=False)
+    monkeypatch.delenv("NEXUS_ZONE_MEMBERSHIP_TOKEN", raising=False)
+
+    async def run() -> None:
+        tasks = await startup_zone_control(app)
+        deadline = asyncio.get_running_loop().time() + 2
+        while worker.calls < 2 and asyncio.get_running_loop().time() < deadline:
+            await asyncio.sleep(0.05)
+        app.state.zone_worker_stop.set()
+        await asyncio.gather(*tasks)
+
+    asyncio.run(run())
+    assert worker.calls >= 2

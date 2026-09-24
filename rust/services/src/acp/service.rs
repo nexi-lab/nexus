@@ -1402,7 +1402,11 @@ mod tests {
                 .unwrap();
             let payload = json!({"context":{"zone_id":"root"}}).to_string();
             let bytes = svc
-                .dispatch("acp_list_processes", payload.as_bytes(), &test_dispatch_ctx())
+                .dispatch(
+                    "acp_list_processes",
+                    payload.as_bytes(),
+                    &test_dispatch_ctx(),
+                )
                 .unwrap();
             let resp: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
             let list = resp.as_array().unwrap();

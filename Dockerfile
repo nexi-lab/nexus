@@ -23,8 +23,8 @@ ENV USE_CHINA_MIRROR=${USE_CHINA_MIRROR}
 
 # ---------- 系统依赖 ----------
 # protobuf-compiler is required by raft-proto's protobuf-build step,
-# reached transitively when building the nexus-local nexusd crate
-# (its nexus-vfs raft git-dep compiles the protos).
+# reached transitively by the `cargo install nexus-cluster` below
+# (nexus-vfs's raft crate compiles the protos).
 RUN set -eux; \
     apt-get update && apt-get install -y --no-install-recommends \
         gcc \
@@ -78,42 +78,33 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=cache,target=/root/.cache/pip \
     uv pip install --system -i "$(cat /tmp/pip_index)" ".[${NEXUS_PROFILE_EXTRAS}]"
 
-# ---------- Build nexusd-cluster from nexus-local sources (Issue #3125, #4259, #36) ----------
+# ---------- Install nexusd-cluster from nexus-vfs (Issue #3125, #4259) ----------
 # The production daemon is `nexusd-cluster` — the `cluster` deployment
-# profile (KERNEL-ARCHITECTURE §7: slim ⊂ cluster ⊂ … ⊂ full) PLUS the
-# agent control plane. As of the ServiceRegistry bring-up refactor (#36)
-# it is the nexus-local `nexusd` crate (rust/nexusd): the SAME nexus-vfs
-# cluster boot (`nexus_cluster::run_with_services`) plus managed_agent
-# composed in at boot via `Kernel::bring_up_services`. The kernel repo
-# can't depend on the nexus service crates, so the composition root lives
-# HERE, next to them.
+# profile (KERNEL-ARCHITECTURE §7: slim ⊂ cluster ⊂ … ⊂ full).  It lives
+# in nexus-vfs's `rust/profiles/cluster/` and is published at the pin
+# below; the earlier nexus-local assembly (`rust/nexusd`) was retired
+# once the service crates it composed (http-api, federated-search,
+# search-common, rebac) relocated into nexus-vfs itself, so nexus-vfs's
+# own cluster binary is now the sole production build (2026-09-24).
 #
-# PROFILE PURITY (§7): this is the SLIM cluster — backends = path-local +
-# remote only (via `nexus-cluster`); NO S3, no connectors — so it holds
-# the size gate (nexus-vfs cluster-binary-build.yml: linux ≤ 15.5 MiB;
-# cluster + managed_agent measures ~14.9 MiB). The full/S3 superset is the
-# OPT-IN `driver-s3` feature (~+4 MiB AWS SDK), never the default — an
-# S3-serving tier builds `-p nexusd --features driver-s3`.
-#
-# The nexus-vfs pin is not a build-arg here: `nexusd` resolves nexus-vfs
-# through its Cargo.toml git-dep `rev` + Cargo.lock (the SSOT). `--locked`
-# builds exactly that resolution. Bump the pin in Cargo.toml/Cargo.lock —
-# the test.yml "Kernel pin consistency preflight" enforces Cargo ==
-# Cargo.lock == the remaining Dockerfile ARGs, and CI's nexusd-cluster
-# smoke builds this same nexus-local crate (so the gate tests the exact
-# binary the image ships). Symlinked to nexus-cluster below so the Python
-# runtime spawns it unchanged.
+# The pin below is the same rev the workspace's Cargo.toml git-deps
+# use and every other Dockerfile carries; the `test.yml` "Kernel pin
+# consistency preflight" fails the build if they drift, so a bump lands
+# in Cargo.toml / Cargo.lock / this Dockerfile / dockerfiles/ ARGs
+# together — an unpinned install would track nexus-vfs HEAD and ship
+# an untested kernel (#4343).  Symlinked to `nexus-cluster` below so
+# the Python runtime spawns it unchanged.
 ENV CARGO_NET_RETRY=10 \
     CARGO_HTTP_TIMEOUT=120
-# The nexus Rust workspace sources (the service crates + the nexusd assembly).
-# Copied AFTER the Python-deps cache layer so a Rust edit doesn't invalidate it;
-# the build below re-runs only when rust/ or the workspace manifests change.
-COPY rust/ ./rust/
+ARG NEXUS_VFS_REV=2467f35825b872daed0c7913d0466f221cd813df
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
-    --mount=type=cache,id=cargo-target-${TARGETARCH},target=/build/target \
-    cargo build --locked --release -p nexusd --bin nexusd-cluster && \
-    cp /build/target/release/nexusd-cluster /build/nexusd-cluster
+    cargo install --locked \
+        --git https://github.com/nexi-lab/nexus-vfs \
+        --rev "${NEXUS_VFS_REV}" \
+        --bin nexusd-cluster \
+        nexus-cluster && \
+    cp /root/.cargo/bin/nexusd-cluster /build/nexusd-cluster
 
 # ---------- Copy real application source and reinstall local package ----------
 COPY src/ ./src/

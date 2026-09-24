@@ -51,6 +51,8 @@ from nexus.remote.zone_runtime_client import (
 )
 from nexus.storage.models import (
     RebacRelationSourceModel,
+    SessionModel,
+    SessionRuntimeRunModel,
     ZoneAuthorizationEpochModel,
     ZoneGrantModel,
     ZoneGrantProjectionOutboxModel,
@@ -573,7 +575,8 @@ class ZoneApplicationService:
                 if dupe is not None:
                     existing_op = session.execute(
                         select(ZoneOperationModel).where(
-                            ZoneOperationModel.grant_id == dupe.grant_id
+                            ZoneOperationModel.grant_id == dupe.grant_id,
+                            ZoneOperationModel.action == "grant",
                         )
                     ).scalar_one_or_none()
                     if existing_op is None:
@@ -1337,6 +1340,26 @@ class ZoneApplicationService:
             )
             if active_mounts:
                 blockers.append(f"{len(active_mounts)} active mount(s) must be removed first")
+            active_states = ("registered", "warming_up", "ready", "busy", "awaiting_input")
+            active_runs = (
+                session.execute(
+                    select(SessionRuntimeRunModel)
+                    .join(
+                        SessionModel, SessionModel.session_id == SessionRuntimeRunModel.session_id
+                    )
+                    .where(
+                        (
+                            (SessionRuntimeRunModel.execution_zone_id == zone_id)
+                            | (SessionModel.home_zone_id == zone_id)
+                        ),
+                        SessionRuntimeRunModel.state.in_(active_states),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if active_runs:
+                blockers.append(f"{len(active_runs)} active runtime(s) must be cancelled first")
             if blockers:
                 raise ServiceError("ZONE_DELETE_BLOCKED", "; ".join(blockers), http_status=409)
             # §5.6: revoke the zone's own grants as part of the flow.

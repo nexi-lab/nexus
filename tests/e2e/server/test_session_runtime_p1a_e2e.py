@@ -95,7 +95,7 @@ def _create_runtime_delegation(
         json={
             "user_id": user_id,
             "org_id": org_id,
-            "membership_version": "active:user",
+            "membership_version": "r1",
             "zone_id": zone_id,
             "audience": "nexus-api",
             "ttl_s": 300,
@@ -278,6 +278,20 @@ def test_p1a_runtime_run_zones_and_cancellation(nexus_server, test_app) -> None:
     )
     assert cross.status_code == 201, cross.text
     assert cross.json()["execution_zone_id"] == other
+
+    # L-7: the home zone is still a live dependency even when execution is
+    # placed in another zone; deprovision must report the active runtime.
+    blocked_home_delete = test_app.delete(
+        f"/v2/zones/{zone}",
+        headers={
+            **headers,
+            "Idempotency-Key": "p1a-home-active-run-delete",
+            "X-Nexus-Confirm-Zone": zone,
+        },
+    )
+    assert blocked_home_delete.status_code == 409, blocked_home_delete.text
+    assert blocked_home_delete.json()["detail"]["code"] == "ZONE_DELETE_BLOCKED"
+    assert "active runtime(s)" in blocked_home_delete.json()["detail"]["message"]
     assert cross.json()["decision_reason"] == "policy: heavy data locality"
 
     terminated_cross = test_app.post(

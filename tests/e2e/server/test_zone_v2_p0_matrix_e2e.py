@@ -28,6 +28,7 @@ ZoneManager calls, no mocked kernel.
 from __future__ import annotations
 
 import os
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -100,7 +101,13 @@ def _create_grant(
 
 
 def _issue_delegation(
-    client: httpx.Client, headers: dict, user: str, org: str, zone: str, key: str
+    client: httpx.Client,
+    headers: dict,
+    user: str,
+    org: str,
+    zone: str,
+    key: str,
+    grant_id: str | None = None,
 ) -> str:
     r = client.post(
         "/v2/auth/zone-delegations",
@@ -112,6 +119,7 @@ def _issue_delegation(
             "zone_id": zone,
             "audience": "nexus-api",
             "ttl_s": 300,
+            **({"grant_id": grant_id} if grant_id else {}),
         },
     )
     assert r.status_code == 201, r.text
@@ -266,6 +274,20 @@ def test_p0_scenario_10_overlapping_grants_and_independent_relations(
         },
     ).json()["key"]
     user_key = _mint_user_key(test_app, headers, "p0m-s10-user", zone)
+    ambiguous = test_app.post(
+        "/v2/auth/zone-delegations",
+        headers={"Authorization": f"Bearer {svc}", "Idempotency-Key": "p0m-s10-ambiguous"},
+        json={
+            "user_id": "p0m-s10-user",
+            "org_id": "p0m-org-a",
+            "membership_version": "r1",
+            "zone_id": zone,
+            "audience": "nexus-api",
+            "ttl_s": 300,
+        },
+    )
+    assert ambiguous.status_code == 409, ambiguous.text
+    assert ambiguous.json()["detail"]["code"] == "AMBIGUOUS_GRANT"
     delegation = _issue_delegation(
         test_app,
         {"Authorization": f"Bearer {svc}"},
@@ -273,6 +295,7 @@ def test_p0_scenario_10_overlapping_grants_and_independent_relations(
         "p0m-org-a",
         zone,
         "p0m-s10-d1",
+        g1,
     )
     assert _access(test_app, zone, user_key, delegation) == 200
 
@@ -297,6 +320,7 @@ def test_p0_scenario_10_overlapping_grants_and_independent_relations(
         "p0m-org-a",
         zone,
         "p0m-s10-d2",
+        g2,
     )
     assert _access(test_app, zone, user_key, delegation2) == 200
 
@@ -755,6 +779,91 @@ def test_p0_scenario_18_idempotency_semantics(nexus_server, test_app) -> None:
     )
     assert conflict.status_code == 409, conflict.text
     assert conflict.json()["detail"]["code"] == "ZONE_ALREADY_EXISTS", conflict.text
+
+
+def test_runtime_delegation_requires_one_canonical_session_scope(nexus_server, test_app) -> None:
+    admin = {"Authorization": f"Bearer {nexus_server['api_key']}"}
+    zone = "p0m-runtime-scope"
+    _create_zone(test_app, admin, zone, "p0m-runtime-scope-create")
+    grant_response = test_app.post(
+        f"/v2/zones/{zone}/grants",
+        headers={**admin, "Idempotency-Key": "p0m-runtime-scope-grant"},
+        json={
+            "grantee": {"subject_type": "organization", "subject_id": "p0m-runtime-org"},
+            "capabilities": ["zone.data.read", "zone.data.write", "zone.runtime.execute"],
+            "resource_prefixes": ["/"],
+            "source": {"source_type": "moss_org_binding", "source_id": "p0m-runtime-source"},
+            "reason": "runtime scope e2e",
+        },
+    )
+    assert grant_response.status_code == 202, grant_response.text
+    grant_op = _wait_operation(test_app, grant_response.headers["Location"].split("/")[-1], admin)
+    grant_id = grant_op["grant_id"]
+    service_key = test_app.post(
+        "/api/v2/auth/keys",
+        headers=admin,
+        json={
+            "label": "p0m-runtime-scope-service",
+            "subject_type": "service",
+            "subject_id": "moss-e2e",
+            "zone_id": "root",
+            "is_admin": True,
+        },
+    ).json()["key"]
+    service = {"Authorization": f"Bearer {service_key}"}
+    base = {
+        "user_id": "p0m-runtime-user",
+        "org_id": "p0m-runtime-org",
+        "membership_version": "r1",
+        "zone_id": zone,
+        "audience": "nexus-api",
+        "grant_id": grant_id,
+        "purpose": "runtime",
+    }
+    missing = test_app.post(
+        "/v2/auth/zone-delegations",
+        headers={**service, "Idempotency-Key": "p0m-runtime-missing"},
+        json={
+            **base,
+            "scope_rules": [
+                {"capability": "zone.data.read", "resource_prefixes": ["/sessions/scope-s1"]}
+            ],
+        },
+    )
+    assert missing.status_code == 422, missing.text
+    multiple = test_app.post(
+        "/v2/auth/zone-delegations",
+        headers={**service, "Idempotency-Key": "p0m-runtime-multiple"},
+        json={
+            **base,
+            "scope_rules": [
+                {
+                    "capability": "zone.runtime.execute",
+                    "resource_prefixes": ["/sessions/scope-s1", "/sessions/scope-s2"],
+                }
+            ],
+        },
+    )
+    assert multiple.status_code == 422, multiple.text
+    valid = test_app.post(
+        "/v2/auth/zone-delegations",
+        headers={**service, "Idempotency-Key": "p0m-runtime-valid"},
+        json={
+            **base,
+            "scope_rules": [
+                {
+                    "capability": "zone.runtime.execute",
+                    "resource_prefixes": ["/sessions/scope-s1"],
+                }
+            ],
+        },
+    )
+    assert valid.status_code == 201, valid.text
+    assert valid.json()["scope_rules"][0]["resource_prefixes"] == ["/sessions/scope-s1"]
+    assert "runtime_session_id" not in valid.json()
+    with sqlite3.connect(nexus_server["db_path"]) as db:
+        columns = {row[1] for row in db.execute("PRAGMA table_info(zone_delegations)")}
+    assert "runtime_session_id" not in columns
 
 
 def test_p0_c2_truth_table_supplements(nexus_server, test_app) -> None:

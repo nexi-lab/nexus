@@ -58,6 +58,10 @@ OWNED_SCHEMAS = [
     "auth/v1/zone-grant.schema.json",
     "auth/v1/zone-grant-create-request.schema.json",
     "auth/v1/zone-operation.schema.json",
+    "auth/v1/zone-delegation-scope-rule.schema.json",
+    "auth/v1/zone-delegation-issue-request.schema.json",
+    "auth/v1/zone-delegation.schema.json",
+    "runtime/v2/runtime-resource-scope.schema.json",
 ]
 
 CHECK = "--check" in sys.argv

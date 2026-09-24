@@ -55,6 +55,29 @@ export interface ZoneDelegationInput {
   zoneId: string;
   audience: string;
   ttlS?: number;
+  grantId?: string;
+  purpose?: "data-access" | "runtime";
+  scopeRules?: ZoneDelegationScopeRule[];
+}
+
+export interface ZoneDelegationScopeRule {
+  capability: string;
+  resourcePrefixes: string[];
+}
+
+export interface ZoneDelegation {
+  delegationId: string;
+  userId: string;
+  orgId: string;
+  zoneId: string;
+  grantId: string;
+  grantRevision: string;
+  authorizationEpoch: number;
+  audience: string;
+  purpose?: "data-access" | "runtime";
+  scopeRules?: ZoneDelegationScopeRule[];
+  expiresAt: string;
+  status: string;
 }
 
 /** Typed client for the canonical Zone v1 HTTP boundary. */
@@ -158,11 +181,11 @@ export class ZoneClient {
     return this.http.get(`/v2/zone-operations/${encodeURIComponent(operationId)}`);
   }
 
-  issueDelegation(body: ZoneDelegationInput, idempotencyKey: string): Promise<unknown> {
+  issueDelegation(body: ZoneDelegationInput, idempotencyKey: string): Promise<ZoneDelegation> {
     return this.http.post("/v2/auth/zone-delegations", body, { idempotencyKey });
   }
 
-  getDelegation(delegationId: string): Promise<unknown> {
+  getDelegation(delegationId: string): Promise<ZoneDelegation> {
     return this.http.get(`/v2/auth/zone-delegations/${encodeURIComponent(delegationId)}`);
   }
 

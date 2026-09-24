@@ -297,6 +297,55 @@
       "class": "bad-enum",
       "schema": "common/v1/principal-ref.schema.json",
       "payload": { "subject_type": "robot", "subject_id": "u" }
+    },
+    {
+      "name": "zone-delegation-rule-empty-prefixes",
+      "class": "missing-required",
+      "schema": "auth/v1/zone-delegation-scope-rule.schema.json",
+      "payload": { "capability": "zone.data.read", "resource_prefixes": [] }
+    },
+    {
+      "name": "zone-delegation-request-bad-purpose",
+      "class": "bad-enum",
+      "schema": "auth/v1/zone-delegation-issue-request.schema.json",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "ZoneDelegationIssueRequest",
+        "user_id": "u",
+        "org_id": "o",
+        "membership_version": "r1",
+        "zone_id": "team-one",
+        "audience": "nexus-api",
+        "purpose": "unbounded"
+      }
+    },
+    {
+      "name": "zone-delegation-missing-grant",
+      "class": "missing-required",
+      "schema": "auth/v1/zone-delegation.schema.json",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "ZoneDelegation",
+        "delegation_id": "d",
+        "user_id": "u",
+        "org_id": "o",
+        "zone_id": "team-one",
+        "grant_revision": "r",
+        "authorization_epoch": 1,
+        "audience": "nexus-api",
+        "expires_at": "2026-09-24T10:00:00Z",
+        "status": "active"
+      }
+    },
+    {
+      "name": "runtime-resource-scope-wrong-version",
+      "class": "bad-enum",
+      "schema": "runtime/v2/runtime-resource-scope.schema.json",
+      "payload": {
+        "schema_version": 2,
+        "zone_id": "team-one",
+        "rules": [{ "capability": "zone.data.read", "resource_prefixes": ["/"] }]
+      }
     }
   ]
 }

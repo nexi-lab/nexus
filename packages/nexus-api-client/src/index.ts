@@ -23,6 +23,8 @@ export { ZoneClient } from "./zones.js";
 export type {
   ZoneCreateInput,
   ZoneDelegationInput,
+  ZoneDelegation,
+  ZoneDelegationScopeRule,
   ZoneGrantInput,
   ZoneMount,
   ZoneOperation,

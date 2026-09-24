@@ -8,11 +8,16 @@ without duplicating contract rules.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from nexus.contracts.zone_v1 import ExistingZoneIdRefStr, ResourceRef, ZonePathStr
+from nexus.contracts.zone_v1 import (
+    ExistingZoneIdRefStr,
+    ResourceRef,
+    ZoneDelegationScopeRule,
+    ZonePathStr,
+)
 
 
 class ZoneView(BaseModel):
@@ -121,17 +126,24 @@ class DelegationIssueBody(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
+    api_version: Literal["auth.sudo.dev/v1"] = "auth.sudo.dev/v1"
+    kind: Literal["ZoneDelegationIssueRequest"] = "ZoneDelegationIssueRequest"
     user_id: str = Field(min_length=1)
     org_id: str = Field(min_length=1)
     membership_version: str = Field(min_length=1)
     zone_id: str = Field(min_length=1)
     audience: str = Field(min_length=1)
     ttl_s: int = Field(default=900, ge=60, le=3600)
+    grant_id: str | None = Field(default=None, min_length=1)
+    purpose: Literal["data-access", "runtime"] = "data-access"
+    scope_rules: list[ZoneDelegationScopeRule] | None = Field(default=None, min_length=1)
 
 
 class DelegationView(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
+    api_version: Literal["auth.sudo.dev/v1"] = "auth.sudo.dev/v1"
+    kind: Literal["ZoneDelegation"] = "ZoneDelegation"
     delegation_id: str
     user_id: str
     org_id: str
@@ -140,6 +152,8 @@ class DelegationView(BaseModel):
     grant_revision: str
     authorization_epoch: int
     audience: str
+    purpose: Literal["data-access", "runtime"] | None = None
+    scope_rules: list[ZoneDelegationScopeRule] | None = Field(default=None, min_length=1)
     expires_at: str
     status: str
 

@@ -155,7 +155,11 @@ def zone_worker(app: FastAPI) -> Any:
     authz = app.state.zone_worker_authorization_service
 
     def runtime_dependency_is_current(
-        delegation_id: str, zone_id: str, grant_ref: str, authorization_epoch: int
+        delegation_id: str,
+        zone_id: str,
+        grant_ref: str,
+        authorization_epoch: int,
+        session_id: str,
     ) -> bool | None:
         from nexus.services.zones.authz import Principal
         from nexus.storage.models import ZoneDelegationModel
@@ -171,7 +175,11 @@ def zone_worker(app: FastAPI) -> Any:
                 ):
                     return False
                 current = authz.verify_delegation(
-                    session, delegation_id=delegation_id, audience="nexus-api"
+                    session,
+                    delegation_id=delegation_id,
+                    audience="nexus-api",
+                    capability="zone.runtime.execute",
+                    resource_path=f"/sessions/{session_id}",
                 )
                 if not current:
                     if current.code == "MEMBERSHIP_UNAVAILABLE":
@@ -242,15 +250,21 @@ def _rebac_bindings(
 ) -> tuple[Callable[..., bool], Callable[..., None], Callable[..., None]]:
     def check(_session: Any, subject: str, permission: str, path: str, zone_id: str) -> bool:
         subject_type, subject_id = subject.split(":", 1)
-        target = "/*" if path == "/" else path
-        return bool(
-            manager.rebac_check(
-                (subject_type, subject_id),
-                permission,
-                ("file", target),
-                zone_id=zone_id,
-                consistency="strong",
+        parts = [part for part in path.split("/") if part]
+        targets = [path]
+        targets.extend(f"/{'/'.join(parts[:depth])}/*" for depth in range(len(parts) - 1, 0, -1))
+        targets.append("/*")
+        return any(
+            bool(
+                manager.rebac_check(
+                    (subject_type, subject_id),
+                    permission,
+                    ("file", target),
+                    zone_id=zone_id,
+                    consistency="strong",
+                )
             )
+            for target in dict.fromkeys(targets)
         )
 
     def write(zone_id: str, principal: dict[str, Any], relation: str, path: str) -> None:

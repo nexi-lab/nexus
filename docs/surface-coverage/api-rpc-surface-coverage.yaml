@@ -1775,7 +1775,7 @@ operations:
   transports:
     grpc_expose:
       name: backfill_directory_index
-      source: src/nexus/core/nexus_fs_metadata.py:2129
+      source: src/nexus/core/nexus_fs_metadata.py:2189
     sdk:
       name: MCPClient.backfill_directory_index
       source: src/nexus/remote/domain/mcp.py:91
@@ -2525,7 +2525,7 @@ operations:
   transports:
     grpc_expose:
       name: delete_batch
-      source: src/nexus/core/nexus_fs_metadata.py:1466
+      source: src/nexus/core/nexus_fs_metadata.py:1485
   profiles:
     lite: supported
     sandbox: supported
@@ -2881,7 +2881,7 @@ operations:
   transports:
     grpc_expose:
       name: exists_batch
-      source: src/nexus/core/nexus_fs_metadata.py:1361
+      source: src/nexus/core/nexus_fs_metadata.py:1380
     sdk:
       name: KernelClient.exists_batch
       source: src/nexus/remote/kernel_client.py:884
@@ -3741,7 +3741,7 @@ operations:
       source: src/nexus/cli/commands/file_ops.py:1
     grpc_expose:
       name: stat
-      source: src/nexus/core/nexus_fs_metadata.py:1141
+      source: src/nexus/core/nexus_fs_metadata.py:1160
   profiles:
     lite: supported
     sandbox: supported
@@ -3868,7 +3868,7 @@ operations:
   transports:
     grpc_expose:
       name: flush_write_observer
-      source: src/nexus/core/nexus_fs_metadata.py:2159
+      source: src/nexus/core/nexus_fs_metadata.py:2219
   profiles:
     lite: supported
     sandbox: supported
@@ -5728,7 +5728,7 @@ operations:
   transports:
     grpc_expose:
       name: metadata_batch
-      source: src/nexus/core/nexus_fs_metadata.py:1371
+      source: src/nexus/core/nexus_fs_metadata.py:1390
   profiles:
     lite: supported
     sandbox: supported
@@ -7353,7 +7353,7 @@ operations:
   transports:
     grpc_expose:
       name: rename_batch
-      source: src/nexus/core/nexus_fs_metadata.py:1605
+      source: src/nexus/core/nexus_fs_metadata.py:1624
   profiles:
     lite: supported
     sandbox: supported
@@ -8484,7 +8484,7 @@ operations:
   transports:
     grpc_expose:
       name: stat_bulk
-      source: src/nexus/core/nexus_fs_metadata.py:1229
+      source: src/nexus/core/nexus_fs_metadata.py:1248
   profiles:
     lite: supported
     sandbox: supported

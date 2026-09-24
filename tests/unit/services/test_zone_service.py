@@ -561,6 +561,73 @@ def _authz_env(session_factory, *, grant: bool, rebac: bool, expired: bool = Fal
     )
 
 
+def _scoped_authz(
+    session_factory,
+    *,
+    capabilities: list[str],
+    prefixes: list[str] | None = None,
+    source_id: str = "scoped-grant",
+) -> tuple[AuthorizationService, str]:
+    svc = make_service(session_factory, FakeRuntime())
+    _active_zone(svc, session_factory)
+    request = ZoneGrantCreateRequest(
+        api_version="auth.sudo.dev/v1",
+        kind="ZoneGrantCreateRequest",
+        grantee=GRANTEE,
+        capabilities=capabilities,
+        resource_prefixes=prefixes,
+        source={"source_type": "moss_org_binding", "source_id": source_id},
+        reason="scope test",
+    )
+    svc.issue_grant(
+        "team-test-zone", request, idempotency_key=f"idem-{source_id}", principal=PRINCIPAL
+    )
+    with session_factory() as session:
+        from nexus.storage.models import ZoneGrantModel
+
+        grant = session.execute(
+            sa.select(ZoneGrantModel).where(ZoneGrantModel.source_id == source_id)
+        ).scalar_one()
+        svc.complete_grant_projection(grant_id=grant.grant_id)
+        grant_id = grant.grant_id
+    return (
+        AuthorizationService(
+            session_factory,
+            lambda session, subject, permission, path, zone_id: True,
+            membership_check=lambda user_id, org_id, version: True,
+            trusted_issuers=frozenset({"moss-provisioner"}),
+        ),
+        grant_id,
+    )
+
+
+def _issue_scoped(
+    authz: AuthorizationService,
+    session_factory,
+    *,
+    grant_id: str | None = None,
+    purpose: str = "data-access",
+    scope_rules=None,
+    key: str | None = None,
+):
+    with session_factory() as session, session.begin():
+        delegation = authz.issue_delegation(
+            session,
+            principal=Principal(subject_type="user", subject_id="u1"),
+            issuer=Principal(subject_type="service", subject_id="moss-provisioner"),
+            org_id="org-1",
+            membership_version="r1",
+            zone_id="team-test-zone",
+            audience="runtime",
+            grant_id=grant_id,
+            purpose=purpose,
+            scope_rules=scope_rules,
+            idempotency_key=key,
+        )
+        delegation_id = delegation.delegation_id
+    return delegation_id
+
+
 def test_truth_table_allow_when_both_layers_hold(session_factory):
     principal = Principal(subject_type="organization", subject_id="org-1")
     authz = _authz_env(session_factory, grant=True, rebac=True)
@@ -783,6 +850,199 @@ def test_suspended_zone_denies_writes_but_keeps_read_policy(session_factory):
         )
     assert not denied and denied.code == "ZONE_NOT_ACTIVE"
     assert allowed_read
+
+
+def test_data_access_scope_derives_read_only_and_narrow_prefix(session_factory):
+    authz, grant_id = _scoped_authz(
+        session_factory,
+        capabilities=["zone.data.read"],
+        prefixes=["/only/subtree"],
+    )
+    delegation_id = _issue_scoped(authz, session_factory)
+    with session_factory() as session:
+        from nexus.storage.models import ZoneDelegationModel
+
+        row = session.get(ZoneDelegationModel, delegation_id)
+        assert row.grant_id == grant_id
+        assert row.purpose == "data-access"
+        assert row.scope_rules == [
+            {"capability": "zone.data.read", "resource_prefixes": ["/only/subtree"]}
+        ]
+        assert authz.verify_delegation(
+            session,
+            delegation_id=delegation_id,
+            audience="runtime",
+            capability="zone.data.read",
+            resource_path="/only/subtree/file.txt",
+        )
+        denied = authz.verify_delegation(
+            session,
+            delegation_id=delegation_id,
+            audience="runtime",
+            capability="zone.data.write",
+            resource_path="/only/subtree/file.txt",
+        )
+        assert not denied and denied.code == "SCOPE_REQUIRED"
+
+    with pytest.raises(ServiceError) as outside:
+        _issue_scoped(
+            authz,
+            session_factory,
+            grant_id=grant_id,
+            scope_rules=[{"capability": "zone.data.read", "resource_prefixes": ["/outside"]}],
+        )
+    assert (outside.value.code, outside.value.http_status) == (
+        "RESOURCE_RELATION_DENIED",
+        422,
+    )
+
+
+def test_ambiguous_grant_requires_explicit_selection(session_factory):
+    authz, grant_one = _scoped_authz(
+        session_factory, capabilities=["zone.data.read"], source_id="ambiguous-one"
+    )
+    svc = make_service(session_factory, FakeRuntime())
+    request = ZoneGrantCreateRequest(
+        api_version="auth.sudo.dev/v1",
+        kind="ZoneGrantCreateRequest",
+        grantee=GRANTEE,
+        capabilities=["zone.data.read"],
+        reason="second",
+        source={"source_type": "moss_org_binding", "source_id": "ambiguous-two"},
+    )
+    svc.issue_grant("team-test-zone", request, idempotency_key="ambiguous-two", principal=PRINCIPAL)
+    with session_factory() as session:
+        from nexus.storage.models import ZoneGrantModel
+
+        second = session.execute(
+            sa.select(ZoneGrantModel).where(ZoneGrantModel.source_id == "ambiguous-two")
+        ).scalar_one()
+        svc.complete_grant_projection(grant_id=second.grant_id)
+    with pytest.raises(ServiceError) as exc:
+        _issue_scoped(authz, session_factory)
+    assert (exc.value.code, exc.value.http_status) == ("AMBIGUOUS_GRANT", 409)
+    assert _issue_scoped(authz, session_factory, grant_id=grant_one)
+
+
+def test_runtime_scope_preserves_capability_prefix_pairs(session_factory):
+    authz, grant_id = _scoped_authz(
+        session_factory,
+        capabilities=["zone.data.read", "zone.data.write", "zone.runtime.execute"],
+    )
+    delegation_id = _issue_scoped(
+        authz,
+        session_factory,
+        grant_id=grant_id,
+        purpose="runtime",
+        scope_rules=[
+            {"capability": "zone.data.write", "resource_prefixes": ["/sessions/s1"]},
+            {
+                "capability": "zone.data.read",
+                "resource_prefixes": ["/input.txt", "/sessions/s1"],
+            },
+            {"capability": "zone.runtime.execute", "resource_prefixes": ["/sessions/s1"]},
+        ],
+        key="paired",
+    )
+    with session_factory() as session:
+        assert authz.verify_delegation(
+            session,
+            delegation_id=delegation_id,
+            audience="runtime",
+            capability="zone.data.read",
+            resource_path="/input.txt",
+        )
+        assert authz.verify_delegation(
+            session,
+            delegation_id=delegation_id,
+            audience="runtime",
+            capability="zone.data.write",
+            resource_path="/sessions/s1",
+        )
+        denied = authz.verify_delegation(
+            session,
+            delegation_id=delegation_id,
+            audience="runtime",
+            capability="zone.data.write",
+            resource_path="/input.txt",
+        )
+        assert not denied and denied.code == "SCOPE_REQUIRED"
+
+    with pytest.raises(ServiceError) as changed:
+        _issue_scoped(
+            authz,
+            session_factory,
+            grant_id=grant_id,
+            purpose="runtime",
+            scope_rules=[
+                {"capability": "zone.runtime.execute", "resource_prefixes": ["/sessions/other"]}
+            ],
+            key="paired",
+        )
+    assert changed.value.code == "IDEMPOTENCY_CONFLICT"
+
+
+@pytest.mark.parametrize(
+    "rules",
+    [
+        [{"capability": "zone.data.read", "resource_prefixes": ["/sessions/s1"]}],
+        [
+            {
+                "capability": "zone.runtime.execute",
+                "resource_prefixes": ["/sessions/s1", "/sessions/s2"],
+            }
+        ],
+    ],
+)
+def test_runtime_scope_requires_one_session_root(session_factory, rules):
+    authz, grant_id = _scoped_authz(
+        session_factory,
+        capabilities=["zone.data.read", "zone.runtime.execute"],
+    )
+    with pytest.raises(ServiceError) as exc:
+        _issue_scoped(
+            authz,
+            session_factory,
+            grant_id=grant_id,
+            purpose="runtime",
+            scope_rules=rules,
+        )
+    assert (exc.value.code, exc.value.http_status) == ("SCOPE_REQUIRED", 422)
+
+
+def test_legacy_scope_compatibility_is_bounded(session_factory):
+    authz, _grant_id = _scoped_authz(session_factory, capabilities=["zone.data.read"])
+    delegation_id = _issue_scoped(authz, session_factory)
+    with session_factory() as session, session.begin():
+        from nexus.storage.models import ZoneDelegationModel
+
+        row = session.get(ZoneDelegationModel, delegation_id)
+        row.purpose = None
+        row.scope_rules = None
+    with session_factory() as session:
+        assert authz.verify_delegation(session, delegation_id=delegation_id, audience="runtime")
+        runtime_denied = authz.verify_delegation(
+            session,
+            delegation_id=delegation_id,
+            audience="runtime",
+            capability="zone.runtime.execute",
+        )
+        resource_denied = authz.verify_delegation(
+            session,
+            delegation_id=delegation_id,
+            audience="runtime",
+            capability="zone.data.read",
+            resource_path="/input.txt",
+        )
+        assert not runtime_denied and runtime_denied.code == "SCOPE_REQUIRED"
+        assert not resource_denied and resource_denied.code == "SCOPE_REQUIRED"
+
+    with session_factory() as session, session.begin():
+        row = session.get(ZoneDelegationModel, delegation_id)
+        row.purpose = "data-access"
+    with session_factory() as session:
+        corrupt = authz.verify_delegation(session, delegation_id=delegation_id, audience="runtime")
+        assert not corrupt and corrupt.code == "SCOPE_REQUIRED"
 
 
 # ── worker fencing ────────────────────────────────────────────────────────────

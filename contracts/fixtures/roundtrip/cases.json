@@ -76,6 +76,56 @@
         "updated_at": "2026-09-18T08:00:09Z",
         "completed_at": "2026-09-18T08:00:09Z"
       }
+    },
+    {
+      "name": "zone-delegation-scope-rule",
+      "schema": "auth/v1/zone-delegation-scope-rule.schema.json",
+      "payload": { "capability": "zone.data.write", "resource_prefixes": ["/sessions/s1"] }
+    },
+    {
+      "name": "zone-delegation-issue-request",
+      "schema": "auth/v1/zone-delegation-issue-request.schema.json",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "ZoneDelegationIssueRequest",
+        "user_id": "u",
+        "org_id": "o",
+        "membership_version": "r2",
+        "zone_id": "team-one",
+        "audience": "nexus-api",
+        "grant_id": "g",
+        "purpose": "runtime",
+        "scope_rules": [{ "capability": "zone.runtime.execute", "resource_prefixes": ["/sessions/s1"] }]
+      }
+    },
+    {
+      "name": "zone-delegation",
+      "schema": "auth/v1/zone-delegation.schema.json",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "ZoneDelegation",
+        "delegation_id": "d",
+        "user_id": "u",
+        "org_id": "o",
+        "zone_id": "team-one",
+        "grant_id": "g",
+        "grant_revision": "r",
+        "authorization_epoch": 1,
+        "audience": "nexus-api",
+        "purpose": "runtime",
+        "scope_rules": [{ "capability": "zone.runtime.execute", "resource_prefixes": ["/sessions/s1"] }],
+        "expires_at": "2026-09-24T10:00:00Z",
+        "status": "active"
+      }
+    },
+    {
+      "name": "runtime-resource-scope",
+      "schema": "runtime/v2/runtime-resource-scope.schema.json",
+      "payload": {
+        "schema_version": 1,
+        "zone_id": "team-one",
+        "rules": [{ "capability": "zone.data.read", "resource_prefixes": ["/agents"] }]
+      }
     }
   ]
 }

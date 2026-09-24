@@ -95,6 +95,8 @@ KNOWN_ERROR_CODES: frozenset[str] = frozenset(
         "GRANT_REVOKED",
         "GRANT_EXPIRED",
         "MEMBERSHIP_UNAVAILABLE",
+        "AMBIGUOUS_GRANT",
+        "SCOPE_REQUIRED",
         "RESOURCE_RELATION_DENIED",
         "IDEMPOTENCY_CONFLICT",
         "UNSUPPORTED_CONTRACT_MAJOR",
@@ -255,6 +257,56 @@ class ZoneGrantCreateRequest(BaseModel):
     expires_at: str | None = Field(default=None, pattern=RFC3339_PATTERN)
 
 
+class ZoneDelegationScopeRule(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    capability: str = Field(min_length=1, pattern=CAPABILITY_PATTERN)
+    resource_prefixes: list[ZonePathStr] = Field(min_length=1)
+
+
+class ZoneDelegationIssueRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    api_version: Literal["auth.sudo.dev/v1"]
+    kind: Literal["ZoneDelegationIssueRequest"]
+    user_id: str = Field(min_length=1)
+    org_id: str = Field(min_length=1)
+    membership_version: str = Field(min_length=1)
+    zone_id: ExistingZoneIdRefStr
+    audience: str = Field(min_length=1)
+    ttl_s: int = Field(default=900, ge=60, le=3600)
+    grant_id: str | None = Field(default=None, min_length=1)
+    purpose: Literal["data-access", "runtime"] = "data-access"
+    scope_rules: list[ZoneDelegationScopeRule] | None = Field(default=None, min_length=1)
+
+
+class ZoneDelegation(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    api_version: Literal["auth.sudo.dev/v1"]
+    kind: Literal["ZoneDelegation"]
+    delegation_id: str = Field(min_length=1)
+    user_id: str = Field(min_length=1)
+    org_id: str = Field(min_length=1)
+    zone_id: ExistingZoneIdRefStr
+    grant_id: str = Field(min_length=1)
+    grant_revision: str = Field(min_length=1)
+    authorization_epoch: int = Field(ge=0)
+    audience: str = Field(min_length=1)
+    purpose: Literal["data-access", "runtime"] | None = None
+    scope_rules: list[ZoneDelegationScopeRule] | None = Field(default=None, min_length=1)
+    expires_at: str = Field(pattern=RFC3339_PATTERN)
+    status: Literal["active", "revoked", "expired"]
+
+
+class RuntimeResourceScope(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    schema_version: Literal[1]
+    zone_id: ExistingZoneIdRefStr
+    rules: list[ZoneDelegationScopeRule] = Field(min_length=1)
+
+
 class ErrorInfo(BaseModel):
     """Inline error shape (§4.10); clients judge by code/retryable, never message."""
 
@@ -314,5 +366,9 @@ ZONE_V1_MODELS: dict[str, type[BaseModel]] = {
     "ZonePatchRequest": ZonePatchRequest,
     "ZoneGrant": ZoneGrant,
     "ZoneGrantCreateRequest": ZoneGrantCreateRequest,
+    "ZoneDelegationScopeRule": ZoneDelegationScopeRule,
+    "ZoneDelegationIssueRequest": ZoneDelegationIssueRequest,
+    "ZoneDelegation": ZoneDelegation,
+    "RuntimeResourceScope": RuntimeResourceScope,
     "ZoneOperation": ZoneOperation,
 }

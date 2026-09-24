@@ -234,8 +234,8 @@ checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
 
 [[package]]
 name = "api"
-version = "0.2.17"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=901701c0350b4f0f48d200003a80d2e3ee8a0bd5#901701c0350b4f0f48d200003a80d2e3ee8a0bd5"
+version = "0.2.18"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=06562ef082e07763953671ead38fbafbc2f0292e#06562ef082e07763953671ead38fbafbc2f0292e"
 dependencies = [
  "base64 0.22.1",
  "httpdate",
@@ -821,6 +821,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
 
 [[package]]
+name = "color_quant"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d7b894f5411737b7867f4827955924d7c254fc9f4d91a6aad6b097804b1018b"
+
+[[package]]
 name = "colorchoice"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -848,8 +854,8 @@ dependencies = [
 
 [[package]]
 name = "commands"
-version = "0.2.17"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=901701c0350b4f0f48d200003a80d2e3ee8a0bd5#901701c0350b4f0f48d200003a80d2e3ee8a0bd5"
+version = "0.2.18"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=06562ef082e07763953671ead38fbafbc2f0292e#06562ef082e07763953671ead38fbafbc2f0292e"
 dependencies = [
  "api",
  "plugins",
@@ -1443,6 +1449,48 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine-core"
+version = "0.2.18"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=06562ef082e07763953671ead38fbafbc2f0292e#06562ef082e07763953671ead38fbafbc2f0292e"
+dependencies = [
+ "api",
+ "async-trait",
+ "engine-events",
+ "futures",
+ "runtime",
+ "serde_json",
+ "telemetry",
+ "tokio",
+ "tools",
+]
+
+[[package]]
+name = "engine-events"
+version = "0.2.18"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=06562ef082e07763953671ead38fbafbc2f0292e#06562ef082e07763953671ead38fbafbc2f0292e"
+dependencies = [
+ "runtime",
+]
+
+[[package]]
+name = "engine-host"
+version = "0.2.18"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=06562ef082e07763953671ead38fbafbc2f0292e#06562ef082e07763953671ead38fbafbc2f0292e"
+dependencies = [
+ "commands",
+ "engine-core",
+ "managed-agent",
+ "nexus-vfs-client",
+ "plugins",
+ "runtime",
+ "serde",
+ "serde_json",
+ "telemetry",
+ "tokio",
+ "tools",
+]
+
+[[package]]
 name = "enum-as-inner"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1891,6 +1939,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "gif"
+version = "0.14.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee8cfcc411d9adbbaba82fb72661cc1bcca13e8bba98b364e62b2dba8f960159"
+dependencies = [
+ "color_quant",
+ "weezl",
+]
+
+[[package]]
 name = "glob"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2311,11 +2369,24 @@ checksum = "85ab80394333c02fe689eaf900ab500fbd0c2213da414687ebf995a65d5a6104"
 dependencies = [
  "bytemuck",
  "byteorder-lite",
+ "color_quant",
+ "gif",
+ "image-webp",
  "moxcms",
  "num-traits",
  "png",
  "zune-core",
  "zune-jpeg",
+]
+
+[[package]]
+name = "image-webp"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "525e9ff3e1a4be2fbea1fdf0e98686a6d98b4d8f937e1bf7402245af1909e8c3"
+dependencies = [
+ "byteorder-lite",
+ "quick-error",
 ]
 
 [[package]]
@@ -3196,8 +3267,8 @@ dependencies = [
 
 [[package]]
 name = "nexus-vfs-client"
-version = "0.2.17"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=901701c0350b4f0f48d200003a80d2e3ee8a0bd5#901701c0350b4f0f48d200003a80d2e3ee8a0bd5"
+version = "0.2.18"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=06562ef082e07763953671ead38fbafbc2f0292e#06562ef082e07763953671ead38fbafbc2f0292e"
 dependencies = [
  "prost 0.13.5",
  "protoc-bin-vendored",
@@ -3214,12 +3285,12 @@ dependencies = [
  "a2a",
  "anyhow",
  "backends",
+ "engine-host",
  "kernel",
  "managed-agent",
  "nexus-cluster",
  "nexus-http-api",
  "nexus-rebac",
- "tools",
  "tracing",
 ]
 
@@ -3655,8 +3726,8 @@ checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 
 [[package]]
 name = "plugins"
-version = "0.2.17"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=901701c0350b4f0f48d200003a80d2e3ee8a0bd5#901701c0350b4f0f48d200003a80d2e3ee8a0bd5"
+version = "0.2.18"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=06562ef082e07763953671ead38fbafbc2f0292e#06562ef082e07763953671ead38fbafbc2f0292e"
 dependencies = [
  "serde",
  "serde_json",
@@ -3978,6 +4049,12 @@ name = "pxfm"
 version = "0.1.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
+
+[[package]]
+name = "quick-error"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a993555f31e5a609f617c12db6250dedcac1b0a85076912c436e6fc9b2c8e6a3"
 
 [[package]]
 name = "quick_cache"
@@ -4499,8 +4576,8 @@ dependencies = [
 
 [[package]]
 name = "runtime"
-version = "0.2.17"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=901701c0350b4f0f48d200003a80d2e3ee8a0bd5#901701c0350b4f0f48d200003a80d2e3ee8a0bd5"
+version = "0.2.18"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=06562ef082e07763953671ead38fbafbc2f0292e#06562ef082e07763953671ead38fbafbc2f0292e"
 dependencies = [
  "a2a",
  "agent-client-protocol",
@@ -5416,8 +5493,8 @@ dependencies = [
 
 [[package]]
 name = "telemetry"
-version = "0.2.17"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=901701c0350b4f0f48d200003a80d2e3ee8a0bd5#901701c0350b4f0f48d200003a80d2e3ee8a0bd5"
+version = "0.2.18"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=06562ef082e07763953671ead38fbafbc2f0292e#06562ef082e07763953671ead38fbafbc2f0292e"
 dependencies = [
  "chrono",
  "dirs",
@@ -5808,8 +5885,8 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "0.2.17"
-source = "git+https://github.com/sudoprivacy/sudocode?rev=901701c0350b4f0f48d200003a80d2e3ee8a0bd5#901701c0350b4f0f48d200003a80d2e3ee8a0bd5"
+version = "0.2.18"
+source = "git+https://github.com/sudoprivacy/sudocode?rev=06562ef082e07763953671ead38fbafbc2f0292e#06562ef082e07763953671ead38fbafbc2f0292e"
 dependencies = [
  "api",
  "async-trait",
@@ -5817,7 +5894,6 @@ dependencies = [
  "commands",
  "flate2",
  "futures",
- "managed-agent",
  "plugins",
  "regex",
  "reqwest 0.12.28",
@@ -6288,6 +6364,12 @@ checksum = "7dcd9d09a39985f5344844e66b0c530a33843579125f23e21e9f0f220850f22a"
 dependencies = [
  "rustls-pki-types",
 ]
+
+[[package]]
+name = "weezl"
+version = "0.1.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a28ac98ddc8b9274cb41bb4d9d4d5c425b6020c50c46f25559911905610b4a88"
 
 [[package]]
 name = "widestring"

@@ -44,8 +44,8 @@
 /// sudocode's `SudoCodeSpawnAdapter` via `install_managed_agent_with_spawn`,
 /// so a minted agent runs a live LLM loop in-process. Same service name either
 /// way; only the install closure differs. The adapter lives in sudocode
-/// (`sudocode_tools::managed_agent`, next to the loop it wraps); this binary
-/// just injects it — there is no nexus-side co-host glue.
+/// (`sudocode_engine_host::managed_agent`, next to the engine it hosts); this
+/// binary just injects it — there is no nexus-side co-host glue.
 #[cfg(not(feature = "cohost-sudocode"))]
 fn managed_agent_decl() -> kernel::kernel::ServiceDecl {
     managed_agent::service_decl()
@@ -59,7 +59,7 @@ fn managed_agent_decl() -> kernel::kernel::ServiceDecl {
         install: Box::new(|kernel| {
             managed_agent::install_managed_agent_with_spawn(
                 kernel,
-                Arc::new(sudocode_tools::managed_agent::SudoCodeSpawnAdapter),
+                Arc::new(sudocode_engine_host::managed_agent::SudoCodeSpawnAdapter),
             )
         }),
     }

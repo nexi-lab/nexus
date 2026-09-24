@@ -111,7 +111,7 @@ jobs:
         if: steps.changes.outputs.run == 'true'
         env:
           # Authenticates the two private git deps (nexus-vfs +
-          # sudocode-tools).  The Dockerfile consumes it as a
+          # sudocode-engine-host).  The Dockerfile consumes it as a
           # BuildKit secret rather than an ARG so the token does
           # not land in a layer.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

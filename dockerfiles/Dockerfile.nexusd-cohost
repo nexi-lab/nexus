@@ -4,7 +4,7 @@
 # Distinct from `Dockerfile.nexusd-cluster` (the slim pure-VFS binary built
 # from the nexus-vfs `rust/profiles/cluster` context). This one builds
 # `nexus/rust/nexusd` — the assembly that injects
-# `sudocode_tools::managed_agent::SudoCodeSpawnAdapter` via
+# `sudocode_engine_host::managed_agent::SudoCodeSpawnAdapter` via
 # `install_managed_agent_with_spawn`, so a minted agent runs a real LLM loop
 # in-process (KernelFsBackend file tools, send_message mailbox reply). Used by
 # the co-host A2A duet compose (`docker-compose.cohost-duet.yml`).

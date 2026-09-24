@@ -316,16 +316,24 @@ sequenceDiagram
 
 <h3>2.4 sudo-code state placement</h3>
 
-<p>sudo-code routes all filesystem access through one <code>FsBackend</code> trait with three impls, selected by deployment:</p>
+<p>sudo-code routes all filesystem access through one <code>FsBackend</code> trait, and <strong>every host reaches a kernel</strong> &mdash; what differs is which one and how it is reached:</p>
 
 <table>
   <thead><tr><th>Backend</th><th>Used by</th><th>Reaches files via</th></tr></thead>
   <tbody>
-    <tr><td><code>KernelFsBackend&lt;Kernel&gt;</code></td><td><code>nexusd-cluster</code> (production)</td><td>in-process kernel syscalls</td></tr>
-    <tr><td><code>StdFsBackend</code></td><td>standalone CLI</td><td>host <code>std::fs</code></td></tr>
+    <tr><td><code>KernelFsBackend&lt;Kernel&gt;</code></td><td><code>nexusd-cluster</code> (production)</td><td>in-process syscalls on the cluster's kernel</td></tr>
+    <tr><td><code>KernelFsBackend&lt;Kernel&gt;</code> (host spelling)</td><td>standalone <code>scode</code></td><td>in-process syscalls on a kernel of its own</td></tr>
     <tr><td><code>NexusVfsFsBackend</code></td><td>edge / dev CLI</td><td>gRPC to a remote kernel</td></tr>
   </tbody>
 </table>
+
+<p>A standalone session's kernel is <strong>daemon-free</strong>: <code>Kernel::new</code> builds its own runtime and boots with a tempfile metastore, so <code>scode</code> runs with no nexus installed, no cluster and no network. Its workspace &mdash; plus any directory named by the <code>additionalDirectories</code> setting &mdash; is mounted through <code>LocalConnectorBackend</code>, the reference-mode connector: files stay where they are and remain the source of truth, so an editor open beside <code>scode</code> edits the same bytes and an out-of-band change is visible inside the session. The metastore stays ephemeral for the same reason &mdash; it holds only metadata about files whose bytes live on disk, a read that misses it falls through to the connector by path, and persisting it would leave a stale shadow of a tree the user edits from outside.</p>
+
+<p><strong>Containment is the mount table.</strong> A path under none of a session's mounts belongs to no mount and is refused &mdash; the same containment the co-hosted agent has from its workspace-boundary hook, reaching the CLI through the same mechanism rather than a second policy. <code>additionalDirectories</code> is deliberately absent from the <code>config</code> tool's settable registry: a session that can widen its own reach is not contained by it.</p>
+
+<p><strong>Paths are spelled the way each host speaks.</strong> A co-hosted agent's world IS the VFS, so <code>/proc/{pid}/workspace/main.rs</code> is the only name that file has. A standalone session's files also have a host name &mdash; the one its user typed, and the only one its <code>bash</code> tool can open &mdash; so its backend answers in host spelling and converts at the kernel edge (<code>KernelFsBackend::to_kernel</code>, idempotent, so composing methods convert once). Its transcripts likewise stay beside its configuration on host disk rather than at the VFS <code>/sessions</code>, where <code>scode --resume</code> already looks for them and where they outlive a VFS that exists only while the session does.</p>
+
+<p><strong>What still differs, and why:</strong> the mailbox. A co-hosted agent's inbox lives in the kernel it shares with its peers; a standalone session's lives on host disk (<code>local_pair_root</code>) or, cross-machine, in a daemon it dials. That is not drift &mdash; a conversation has to live where both ends can reach it, and a session's own in-process kernel is reachable by nobody else.</p>
 
 <p>Inside <code>nexusd-cluster</code> the agent loop runs on <code>KernelFsBackend&lt;Kernel&gt;</code>, so <code>SessionStore</code>, <code>ConfigLoader</code>, and the workspace-bounded <code>file_ops</code> helpers all issue kernel syscalls against nexus VFS paths:</p>
 

@@ -12,6 +12,7 @@ Merged from tests/integration/conftest.py and tests/e2e/conftest.py.
 """
 
 import gc
+import json
 import os
 import signal
 import socket
@@ -21,6 +22,7 @@ import threading
 import time
 import uuid
 from contextlib import suppress
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import httpx
@@ -41,6 +43,47 @@ except ImportError:
 _src_path = Path(__file__).parent.parent.parent / "src"
 if str(_src_path) not in sys.path:
     sys.path.insert(0, str(_src_path))
+
+
+class MembershipStub:
+    def __init__(self, *, status: str = "active", role: str = "member", revision: int = 1):
+        self.token = f"membership-{uuid.uuid4().hex}"
+        state = {"status": status, "role": role, "revision": revision}
+        token = self.token
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:  # noqa: N802
+                if self.path.split("?", 1)[0] != "/api/v1/internal/zone-membership":
+                    self.send_error(404)
+                    return
+                if self.headers.get("Authorization") != f"Bearer {token}":
+                    self.send_error(403)
+                    return
+                payload = json.dumps(state).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def log_message(self, _format: str, *_args: object) -> None:
+                return
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        port = int(self.server.server_address[1])
+        self.url = f"http://127.0.0.1:{port}/api/v1/internal/zone-membership"
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+
+    def close(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=5)
+
+
+def start_membership_stub() -> MembershipStub:
+    """Start the shared fixed-membership HTTP stub used by real-process E2E tests."""
+    return MembershipStub()
 
 
 def find_free_port(width: int = 1) -> int:
@@ -209,6 +252,8 @@ def nexus_server(isolated_db, tmp_path):
     Returns:
         dict with 'port', 'base_url', 'process'
     """
+    membership = start_membership_stub()
+
     # Set up environment
     storage_path = tmp_path / "storage"
     storage_path.mkdir(exist_ok=True)
@@ -233,6 +278,8 @@ def nexus_server(isolated_db, tmp_path):
     # use that key for both the Python HTTP auth adapter and internal gRPC.
     env["NEXUS_API_KEY"] = _mint_kernel_admin_key(env, tmp_path)
     env["NEXUS_ZONE_DELEGATION_ISSUERS"] = "moss-e2e"
+    env["NEXUS_ZONE_MEMBERSHIP_URL"] = membership.url
+    env["NEXUS_ZONE_MEMBERSHIP_TOKEN"] = membership.token
 
     # Issue #788: Lower min chunk size for e2e tests (default 5MB too large for test payloads)
     env["NEXUS_UPLOAD_MIN_CHUNK_SIZE"] = "1"
@@ -341,6 +388,7 @@ def nexus_server(isolated_db, tmp_path):
     except subprocess.TimeoutExpired:
         process.kill()
         process.wait()
+    membership.close()
 
 
 @pytest.fixture(scope="function")

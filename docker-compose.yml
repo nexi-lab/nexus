@@ -21,6 +21,12 @@ services:
       - NEXUS_PORT=2026
       - NEXUS_DATA_DIR=/app/data
       - NEXUS_PROFILE=full
+      # Optional Moss delegation integration. Leave all three empty for a
+      # standalone full-profile deployment; when issuers is set, URL/token
+      # must be configured together.
+      - NEXUS_ZONE_DELEGATION_ISSUERS=${NEXUS_ZONE_DELEGATION_ISSUERS:-}
+      - NEXUS_ZONE_MEMBERSHIP_URL=${NEXUS_ZONE_MEMBERSHIP_URL:-}
+      - NEXUS_ZONE_MEMBERSHIP_TOKEN=${NEXUS_ZONE_MEMBERSHIP_TOKEN:-}
       - NEXUS_DATABASE_URL=${NEXUS_DATABASE_URL:-postgresql://postgres:nexus@postgres:5432/nexus}
       - NEXUS_API_KEY=${NEXUS_API_KEY:-}
       - NEXUS_BACKEND=${NEXUS_BACKEND:-local}

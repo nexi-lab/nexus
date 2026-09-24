@@ -93,6 +93,10 @@ services:
       NEXUS_ADMIN_USER: ${NEXUS_ADMIN_USER:-admin}
       NEXUS_AUTH_TYPE: ${NEXUS_AUTH_TYPE:-database}
       NEXUS_API_KEY: ${NEXUS_API_KEY:-}
+      # Optional Moss delegation integration; keep all empty for standalone full.
+      NEXUS_ZONE_DELEGATION_ISSUERS: ${NEXUS_ZONE_DELEGATION_ISSUERS:-}
+      NEXUS_ZONE_MEMBERSHIP_URL: ${NEXUS_ZONE_MEMBERSHIP_URL:-}
+      NEXUS_ZONE_MEMBERSHIP_TOKEN: ${NEXUS_ZONE_MEMBERSHIP_TOKEN:-}
       # Search
       NEXUS_SEARCH_DAEMON: "true"
       # Post-P12 (#4598) the Rust nexus-search-plugin (hosted by

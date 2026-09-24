@@ -70,6 +70,17 @@ spec:
           env:
             - name: NEXUS_PROFILE
               value: {{ .Values.nexus.profile | quote }}
+{{ if .Values.nexus.zoneDelegationIssuers }}
+            - name: NEXUS_ZONE_DELEGATION_ISSUERS
+              value: {{ .Values.nexus.zoneDelegationIssuers | quote }}
+            - name: NEXUS_ZONE_MEMBERSHIP_URL
+              value: {{ required "nexus.zoneMembership.url is required when nexus.zoneDelegationIssuers is set" .Values.nexus.zoneMembership.url | quote }}
+            - name: NEXUS_ZONE_MEMBERSHIP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "nexus.zoneMembership.tokenSecretRef.name is required when nexus.zoneDelegationIssuers is set" .Values.nexus.zoneMembership.tokenSecretRef.name | quote }}
+                  key: {{ required "nexus.zoneMembership.tokenSecretRef.key is required when nexus.zoneDelegationIssuers is set" .Values.nexus.zoneMembership.tokenSecretRef.key | quote }}
+{{ end }}
             - name: NEXUS_DATA_DIR
               value: /data
             - name: POSTGRES_PASSWORD

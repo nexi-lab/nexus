@@ -74,6 +74,10 @@ services:
       NEXUS_PORT: 2026
       NEXUS_DATA_DIR: /app/data
       NEXUS_PROFILE: full
+      # Optional Moss delegation integration; keep all empty for standalone full.
+      NEXUS_ZONE_DELEGATION_ISSUERS: ${NEXUS_ZONE_DELEGATION_ISSUERS:-}
+      NEXUS_ZONE_MEMBERSHIP_URL: ${NEXUS_ZONE_MEMBERSHIP_URL:-}
+      NEXUS_ZONE_MEMBERSHIP_TOKEN: ${NEXUS_ZONE_MEMBERSHIP_TOKEN:-}
 
       # Database configuration (PostgreSQL)
       NEXUS_DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}

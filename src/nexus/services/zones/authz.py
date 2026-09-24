@@ -28,10 +28,12 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from nexus.services.zones.membership import MembershipUnreachable
 from nexus.storage.models import (
     ZoneAuthorizationEpochModel,
     ZoneDelegationModel,
     ZoneGrantModel,
+    ZoneModel,
 )
 
 DEFAULT_DELEGATION_TTL_S = 900
@@ -100,6 +102,12 @@ class AuthorizationService:
         capability: str,
         resource_path: str,
     ) -> Decision:
+        permission = _CAPABILITY_PERMISSIONS.get(capability)
+        if permission is None:
+            return Decision(False, code="UNSUPPORTED_CAPABILITY", reason="capability not enabled")
+        zone = session.get(ZoneModel, zone_id)
+        if zone is not None and zone.canonical_status != "active" and permission == "write":
+            return Decision(False, code="ZONE_NOT_ACTIVE", reason="zone is not active")
         grants = (
             session.execute(
                 select(ZoneGrantModel).where(
@@ -133,9 +141,6 @@ class AuthorizationService:
         if matched is None:
             return Decision(False, code="GRANT_NOT_ACTIVE", reason="no covering active grant")
 
-        permission = _CAPABILITY_PERMISSIONS.get(capability)
-        if permission is None:
-            return Decision(False, code="UNSUPPORTED_CAPABILITY", reason="capability not enabled")
         obj = resource_path
         try:
             rebac_allowed = self._rebac_check(
@@ -193,9 +198,29 @@ class AuthorizationService:
                 "delegations require a trusted Moss issuance service",
                 http_status=403,
             )
-        if self._membership_check is not None and not self._membership_check(
-            principal.subject_id, org_id, membership_version
-        ):
+        if self._membership_check is None:
+            from nexus.services.zones.service import ServiceError
+
+            raise ServiceError(
+                "RESOURCE_RELATION_DENIED",
+                "membership verification is not armed",
+                retryable=True,
+                http_status=503,
+            )
+        try:
+            membership_active = self._membership_check(
+                principal.subject_id, org_id, membership_version
+            )
+        except MembershipUnreachable as exc:
+            from nexus.services.zones.service import ServiceError
+
+            raise ServiceError(
+                "MEMBERSHIP_UNAVAILABLE",
+                str(exc),
+                retryable=True,
+                http_status=503,
+            ) from exc
+        if not membership_active:
             from nexus.services.zones.service import ServiceError
 
             raise ServiceError(
@@ -306,17 +331,22 @@ class AuthorizationService:
             return Decision(False, code="RESOURCE_RELATION_DENIED", reason="audience mismatch")
         if _aware(d.expires_at) <= datetime.now(UTC):
             return Decision(False, code="GRANT_EXPIRED", reason="delegation expired")
-        if self._membership_check is not None:
-            try:
-                membership_active = self._membership_check(
-                    d.user_id, d.org_id, d.membership_version
-                )
-            except Exception:
-                membership_active = False
-            if not membership_active:
-                return Decision(
-                    False, code="GRANT_REVOKED", reason="membership is no longer active"
-                )
+        if self._membership_check is None:
+            return Decision(
+                False, code="GRANT_REVOKED", reason="membership verification is not armed"
+            )
+        try:
+            membership_active = self._membership_check(d.user_id, d.org_id, d.membership_version)
+        except MembershipUnreachable:
+            return Decision(
+                False, code="MEMBERSHIP_UNAVAILABLE", reason="Moss membership is unavailable"
+            )
+        except Exception:
+            return Decision(
+                False, code="MEMBERSHIP_UNAVAILABLE", reason="membership verification failed"
+            )
+        if not membership_active:
+            return Decision(False, code="GRANT_REVOKED", reason="membership is no longer active")
         grant = session.get(ZoneGrantModel, d.grant_id)
         if grant is None or grant.status != "active":
             return Decision(False, code="GRANT_REVOKED", reason="issuing grant no longer active")

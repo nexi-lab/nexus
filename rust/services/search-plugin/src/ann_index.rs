@@ -66,7 +66,7 @@ use anndists::dist::{DistCosine, Distance};
 use hnsw_rs::hnsw::{Hnsw, Neighbour, Point};
 use hnsw_rs::hnswio::{HnswIo, ReloadOptions};
 use hnsw_rs::prelude::AnnT;
-use parking_lot::RwLock;
+use parking_lot::{RwLock, RwLockUpgradableReadGuard, RwLockWriteGuard};
 use serde::{Deserialize, Serialize};
 
 /// Remove hnsw dump files whose basename differs from `current` (the
@@ -226,6 +226,10 @@ pub struct AnnIndex {
     /// SAME embedding revives the retired node instead of inserting a
     /// duplicate (see [`add_vector`](Self::add_vector)).
     retired: RwLock<HashMap<(String, u32), usize>>,
+    /// Test hook run inside [`commit`](Self::commit) right before the
+    /// graph dump, while the sidecar lock is held.
+    #[cfg(test)]
+    dump_hook: parking_lot::Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
 }
 
 /// Cosine distance at or below which a re-added vector is the SAME
@@ -355,6 +359,8 @@ impl AnnIndex {
             points: RwLock::new(points),
             recent_vectors: RwLock::new(HashMap::new()),
             retired: RwLock::new(HashMap::new()),
+            #[cfg(test)]
+            dump_hook: parking_lot::Mutex::new(None),
         }))
     }
 
@@ -779,24 +785,42 @@ impl AnnIndex {
         // to honor the requested basename (a datamap-active graph gets
         // a uniquified `<basename>-<rand>` via DumpInit) — always
         // record the name it RETURNS.
+        //
+        // The dump rewrites the whole graph (~1 GB at 150k 1536-d chunks,
+        // seconds of disk I/O), so it runs under an UPGRADABLE read of the
+        // sidecar: searches (plain readers) keep going, while writers —
+        // add_vector / delete_all_chunks, which already serialise with
+        // commits on the zone write lock — still cannot change the entries
+        // this dump describes.  Only the pointer swap takes the write lock.
         let (bytes, dumped_basename) = {
-            let mut side = self.sidecar.write();
+            let side = self.sidecar.upgradable_read();
+            let generation = side.generation + 1;
             let dumped = if side.entries.is_empty() {
                 // Empty graph: hnsw_rs errors on zero-point dumps.  The
                 // sidecar still writes so the next open knows this zone;
                 // any previously-recorded pair stays on disk untouched.
                 None
             } else {
-                side.generation += 1;
-                let requested = format!("{HNSW_BASENAME}-g{}", side.generation);
+                let requested = format!("{HNSW_BASENAME}-g{generation}");
+                #[cfg(test)]
+                if let Some(hook) = self.dump_hook.lock().as_ref() {
+                    hook();
+                }
                 let actual = self
                     .hnsw
                     .file_dump(&self.dir, &requested)
                     .map_err(|e| AnnError::Commit(format!("hnsw file_dump: {e}")))?;
-                side.graph_basename = Some(actual.clone());
                 Some(actual)
             };
-            let bytes = serde_json::to_vec_pretty(&*side)
+            let mut side = RwLockUpgradableReadGuard::upgrade(side);
+            if let Some(actual) = &dumped {
+                side.generation = generation;
+                side.graph_basename = Some(actual.clone());
+            }
+            let side = RwLockWriteGuard::downgrade(side);
+            // Compact: the sidecar is machine-read only, and the pretty
+            // encoder costs noticeably more at 100k+ entries.
+            let bytes = serde_json::to_vec(&*side)
                 .map_err(|e| AnnError::Commit(format!("sidecar encode: {e}")))?;
             (bytes, dumped)
         };
@@ -1012,6 +1036,52 @@ mod tests {
             return;
         }
         panic!("live node unreachable in every rebuilt graph");
+    }
+
+    #[test]
+    fn search_is_not_blocked_while_a_commit_dumps_the_graph() {
+        // The dump rewrites the whole graph (seconds at production size);
+        // holding the sidecar WRITE lock across it stalled every semantic
+        // query in the zone for that long.  Park a commit inside its dump
+        // and require a search to complete meanwhile.
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let idx = with_distractors(16);
+        idx.add_vector("/sentinel.md", 0, &vec_dir(16, 1.0))
+            .unwrap();
+        let (started_tx, started_rx) = mpsc::channel::<()>();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let release_rx = parking_lot::Mutex::new(release_rx);
+        *idx.dump_hook.lock() = Some(Box::new(move || {
+            let _ = started_tx.send(());
+            let _ = release_rx.lock().recv_timeout(Duration::from_secs(10));
+        }));
+        let committer = {
+            let idx = Arc::clone(&idx);
+            std::thread::spawn(move || idx.commit())
+        };
+        started_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("commit reached the dump");
+
+        let (done_tx, done_rx) = mpsc::channel();
+        {
+            let idx = Arc::clone(&idx);
+            std::thread::spawn(move || {
+                let _ = done_tx.send(idx.search(&vec_dir(16, 1.0), 3).map(|h| h.len()));
+            });
+        }
+        let during = done_rx.recv_timeout(Duration::from_secs(2));
+        release_tx.send(()).unwrap();
+        committer.join().unwrap().expect("commit");
+        assert!(
+            matches!(during, Ok(Ok(n)) if n > 0),
+            "search must not wait for the dump: {during:?}"
+        );
+        // The commit still landed: a reopen serves the sentinel.
+        let reopened = AnnIndex::open_or_create(idx.dir.clone(), 16).expect("reopen");
+        assert_eq!(reopened.live_count(), 21);
     }
 
     #[test]

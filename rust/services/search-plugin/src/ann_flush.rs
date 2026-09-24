@@ -61,6 +61,22 @@ pub const DEFAULT_ANN_FLUSH_SECONDS: u64 = 30;
 pub const ANN_DEFER_MIN_CHUNKS_ENV: &str = "NEXUS_SEARCH_ANN_DEFER_MIN_CHUNKS";
 pub const DEFAULT_ANN_DEFER_MIN_CHUNKS: usize = 10_000;
 
+/// After the fallback delay, the flusher waits until the zone has seen no
+/// index batch for this long before dumping.  The dump holds the zone
+/// write lock for as long as it takes to rewrite the whole graph (seconds
+/// at 100k+ chunks), so landing it in a pause keeps it off the request
+/// path: a dump every [`ANN_FLUSH_SECONDS_ENV`] under steady traffic
+/// stalled roughly one index call per window for 2-11 s in production.
+/// `0` = no idle gate (dump as soon as the delay elapses).
+pub const ANN_FLUSH_IDLE_SECONDS_ENV: &str = "NEXUS_SEARCH_ANN_FLUSH_IDLE_SECONDS";
+pub const DEFAULT_ANN_FLUSH_IDLE_SECONDS: u64 = 5;
+
+/// Upper bound on how long the idle gate may postpone a dump from the
+/// first deferral of its window — caps the re-embed window after a crash
+/// when traffic never pauses.
+pub const ANN_FLUSH_MAX_SECONDS_ENV: &str = "NEXUS_SEARCH_ANN_FLUSH_MAX_SECONDS";
+pub const DEFAULT_ANN_FLUSH_MAX_SECONDS: u64 = 300;
+
 fn env_usize(name: &str, default: usize) -> usize {
     match std::env::var(name) {
         Ok(raw) if !raw.trim().is_empty() => raw.trim().parse().unwrap_or_else(|_| {
@@ -161,6 +177,8 @@ pub struct PendingAnnDump {
     pub clearable: bool,
     /// First deferral in this pending window.
     pub deferred_at: Instant,
+    /// Latest deferral — the flusher waits for the zone to go quiet.
+    pub last_deferred_at: Instant,
     flusher_scheduled: bool,
 }
 
@@ -226,6 +244,10 @@ pub struct AnnFlushCoordinator {
     /// Live-chunk count from which a zone's dump is deferred even when no
     /// sibling batch is in flight — see [`ANN_DEFER_MIN_CHUNKS_ENV`].
     defer_min_chunks: usize,
+    /// See [`ANN_FLUSH_IDLE_SECONDS_ENV`]; zero disables the gate.
+    flush_idle: Duration,
+    /// See [`ANN_FLUSH_MAX_SECONDS_ENV`].
+    flush_max: Duration,
 }
 
 impl AnnFlushCoordinator {
@@ -234,13 +256,67 @@ impl AnnFlushCoordinator {
             zones: Mutex::new(HashMap::new()),
             flush_delay,
             defer_min_chunks: DEFAULT_ANN_DEFER_MIN_CHUNKS,
+            flush_idle: Duration::ZERO,
+            flush_max: Duration::from_secs(DEFAULT_ANN_FLUSH_MAX_SECONDS),
         }
     }
 
     pub fn from_env() -> Self {
         let secs = env_usize(ANN_FLUSH_SECONDS_ENV, DEFAULT_ANN_FLUSH_SECONDS as usize);
-        Self::new((secs > 0).then(|| Duration::from_secs(secs as u64))).with_defer_min_chunks(
-            env_usize(ANN_DEFER_MIN_CHUNKS_ENV, DEFAULT_ANN_DEFER_MIN_CHUNKS),
+        let idle = env_usize(
+            ANN_FLUSH_IDLE_SECONDS_ENV,
+            DEFAULT_ANN_FLUSH_IDLE_SECONDS as usize,
+        );
+        let max = env_usize(
+            ANN_FLUSH_MAX_SECONDS_ENV,
+            DEFAULT_ANN_FLUSH_MAX_SECONDS as usize,
+        );
+        Self::new((secs > 0).then(|| Duration::from_secs(secs as u64)))
+            .with_defer_min_chunks(env_usize(
+                ANN_DEFER_MIN_CHUNKS_ENV,
+                DEFAULT_ANN_DEFER_MIN_CHUNKS,
+            ))
+            .with_flush_gate(
+                Duration::from_secs(idle as u64),
+                Duration::from_secs(max as u64),
+            )
+    }
+
+    /// Idle gate for the fallback flusher (see [`ANN_FLUSH_IDLE_SECONDS_ENV`]).
+    pub fn with_flush_gate(mut self, idle: Duration, max: Duration) -> Self {
+        self.flush_idle = idle;
+        self.flush_max = max;
+        self
+    }
+
+    /// How much longer the fallback flusher should wait before dumping
+    /// `zone_id`, or `None` to dump now: nothing is pending, the gate is
+    /// off, the zone has been quiet (no batch in flight or queued, none
+    /// deferred) for the idle period, or the window hit its upper bound.
+    pub fn flush_wait(&self, zone_id: &str, now: Instant) -> Option<Duration> {
+        if self.flush_idle.is_zero() {
+            return None;
+        }
+        let zones = self.zones.lock();
+        let z = zones.get(zone_id)?;
+        let pending = z.pending.as_ref()?;
+        let age = now.saturating_duration_since(pending.deferred_at);
+        if age >= self.flush_max {
+            return None;
+        }
+        let busy = z.active > 0 || z.waiting > 0;
+        let quiet = now.saturating_duration_since(pending.last_deferred_at);
+        if !busy && quiet >= self.flush_idle {
+            return None;
+        }
+        let wait = if busy {
+            self.flush_idle
+        } else {
+            self.flush_idle - quiet
+        };
+        Some(
+            wait.min(self.flush_max - age)
+                .max(Duration::from_millis(50)),
         )
     }
 
@@ -436,6 +512,7 @@ impl AnnFlushCoordinator {
                 newer.records.extend(pending.records);
                 newer.clearable &= pending.clearable;
                 newer.deferred_at = newer.deferred_at.min(pending.deferred_at);
+                newer.last_deferred_at = newer.last_deferred_at.max(pending.last_deferred_at);
                 z.pending = Some(newer);
             }
             None => z.pending = Some(pending),
@@ -485,9 +562,11 @@ impl AnnFlushCoordinator {
                 records: Vec::new(),
                 clearable: true,
                 deferred_at: Instant::now(),
+                last_deferred_at: Instant::now(),
                 flusher_scheduled: false,
             });
             entry.ann = ann;
+            entry.last_deferred_at = Instant::now();
             entry.records.extend(records);
             let schedule = !entry.flusher_scheduled;
             entry.flusher_scheduled = true;
@@ -512,6 +591,9 @@ impl AnnFlushCoordinator {
             .name(format!("nexus-ann-flush-{zone_id}"))
             .spawn(move || {
                 std::thread::sleep(delay);
+                while let Some(wait) = coordinator.flush_wait(&zone_for_thread, Instant::now()) {
+                    std::thread::sleep(wait);
+                }
                 match coordinator.flush_zone(&zone_for_thread, &manager, &cache) {
                     Ok(true) => {
                         tracing::info!(zone = %zone_for_thread, "deferred hnsw dump landed (fallback flusher)")
@@ -630,6 +712,65 @@ pub fn upgrade_records(state: &IndexState, records: &[(String, Option<i64>)]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn park_pending(c: &AnnFlushCoordinator, zone: &str, deferred_at: Instant, last: Instant) {
+        let dir = std::env::temp_dir().join(format!(
+            "ann-flush-gate-{}-{}",
+            std::process::id(),
+            deferred_at.elapsed().as_nanos()
+        ));
+        let ann = AnnIndex::open_or_create(dir, 4).expect("ann");
+        c.zones.lock().entry(zone.to_string()).or_default().pending = Some(PendingAnnDump {
+            ann,
+            records: Vec::new(),
+            clearable: true,
+            deferred_at,
+            last_deferred_at: last,
+            flusher_scheduled: true,
+        });
+    }
+
+    #[test]
+    fn flush_waits_for_the_zone_to_go_quiet_up_to_the_cap() {
+        let idle = Duration::from_secs(5);
+        let max = Duration::from_secs(300);
+        let c = AnnFlushCoordinator::new(Some(Duration::from_secs(30))).with_flush_gate(idle, max);
+        let t0 = Instant::now();
+
+        // Nothing pending → dump (a no-op) right away.
+        assert_eq!(c.flush_wait("z", t0), None);
+
+        // Deferred 1 s ago, no batch in flight → wait out the rest of the idle period.
+        park_pending(&c, "z", t0, t0);
+        assert_eq!(
+            c.flush_wait("z", t0 + Duration::from_secs(1)),
+            Some(Duration::from_secs(4))
+        );
+        // Quiet for the idle period → dump now.
+        assert_eq!(c.flush_wait("z", t0 + Duration::from_secs(5)), None);
+
+        // A batch in flight or queued on the zone lock keeps it waiting…
+        c.zones.lock().get_mut("z").unwrap().active = 1;
+        assert_eq!(c.flush_wait("z", t0 + Duration::from_secs(60)), Some(idle));
+        c.zones.lock().get_mut("z").unwrap().active = 0;
+        c.zones.lock().get_mut("z").unwrap().waiting = 1;
+        assert_eq!(c.flush_wait("z", t0 + Duration::from_secs(60)), Some(idle));
+        // …but never past the cap on the window's age.
+        assert_eq!(
+            c.flush_wait("z", t0 + max - Duration::from_secs(2)),
+            Some(Duration::from_secs(2))
+        );
+        assert_eq!(c.flush_wait("z", t0 + max), None);
+    }
+
+    #[test]
+    fn flush_gate_zero_dumps_as_soon_as_the_delay_elapses() {
+        let c = AnnFlushCoordinator::new(Some(Duration::from_secs(30)));
+        let t0 = Instant::now();
+        park_pending(&c, "z", t0, t0);
+        c.zones.lock().get_mut("z").unwrap().active = 1;
+        assert_eq!(c.flush_wait("z", t0), None, "no gate: pre-change behaviour");
+    }
 
     #[test]
     fn embed_gate_bounds_concurrency_and_releases_on_drop() {

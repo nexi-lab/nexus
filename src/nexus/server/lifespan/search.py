@@ -19,7 +19,9 @@ import asyncio
 import contextlib
 import logging
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -145,13 +147,33 @@ def _wire_notify_hooks(app: "FastAPI", svc: "LifespanServices") -> None:
     _daemon_ref = app.state.search_daemon
     _loop = asyncio.get_running_loop()
 
-    from nexus.contracts.vfs_hooks import DeleteHookContext, RenameHookContext
+    from nexus.contracts.vfs_hooks import DeleteHookContext, RenameHookContext, RmdirHookContext
 
-    def _evict(path: str) -> None:
+    # Strong refs: the loop keeps only weak ones, and a failed eviction must
+    # be logged rather than vanish as "Task exception was never retrieved".
+    _in_flight: set[asyncio.Task[Any]] = set()
+
+    def _done(task: asyncio.Task[Any]) -> None:
+        _in_flight.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            logger.warning(
+                "search eviction failed — the deleted path stays searchable until "
+                "the next refresh: %s",
+                task.exception(),
+            )
+
+    def _spawn(coro: Any) -> None:
+        task = _loop.create_task(coro)
+        _in_flight.add(task)
+        task.add_done_callback(_done)
+
+    def _evict(path: str, zone_id: str | None, *, subtree: bool = False) -> None:
+        zone, plain_path = search_zone_and_path(path, zone_id)
+        change = "delete_prefix" if subtree else "delete"
         with contextlib.suppress(RuntimeError):
             _loop.call_soon_threadsafe(
-                _loop.create_task,
-                _daemon_ref.notify_file_change(path, "delete"),
+                _spawn,
+                _daemon_ref.notify_file_change(plain_path, change, zone_id=zone),
             )
 
     class _SearchDeleteHook:
@@ -160,7 +182,7 @@ def _wire_notify_hooks(app: "FastAPI", svc: "LifespanServices") -> None:
             return "search_auto_delete"
 
         def on_post_delete(self, ctx: DeleteHookContext) -> None:
-            _evict(ctx.path)
+            _evict(ctx.path, ctx.zone_id)
 
     class _SearchRenameHook:
         @property
@@ -168,11 +190,44 @@ def _wire_notify_hooks(app: "FastAPI", svc: "LifespanServices") -> None:
             return "search_auto_rename"
 
         def on_post_rename(self, ctx: RenameHookContext) -> None:
-            _evict(ctx.old_path)
+            # A directory rename moves its whole subtree away from the old
+            # prefix without a per-child event.
+            _evict(ctx.old_path, ctx.zone_id, subtree=ctx.is_directory)
+
+    class _SearchRmdirHook:
+        @property
+        def name(self) -> str:
+            return "search_auto_rmdir"
+
+        def on_post_rmdir(self, ctx: RmdirHookContext) -> None:
+            # The kernel removes a directory's children without per-child
+            # delete events, so evict everything indexed under it.
+            _evict(ctx.path, ctx.zone_id, subtree=True)
 
     _nexus_fs.register_intercept_delete(_SearchDeleteHook())
     _nexus_fs.register_intercept_rename(_SearchRenameHook())
-    logger.info("Search eviction hooks registered (delete/rename)")
+    if hasattr(_nexus_fs, "register_intercept_rmdir"):
+        _nexus_fs.register_intercept_rmdir(_SearchRmdirHook())
+    logger.info("Search eviction hooks registered (delete/rename/rmdir)")
+
+
+def search_zone_and_path(path: str, zone_id: str | None) -> tuple[str, str]:
+    """The (plugin zone, path) a VFS event must evict.
+
+    Documents are indexed under the caller's token zone with the path the
+    caller sees (``index_zone_for``), but a zone-scoped caller's delete
+    reaches the VFS as ``/zone/<zone>/…``.  Evicting that path in the root
+    zone — what the hook used to do — matched nothing, so the deleted
+    document stayed searchable.
+    """
+    zone = zone_id or ROOT_ZONE_ID
+    if zone != ROOT_ZONE_ID:
+        scoped = f"/zone/{zone}"
+        if path == scoped:
+            return zone, "/"
+        if path.startswith(scoped + "/"):
+            return zone, path[len(scoped) :]
+    return zone, path
 
 
 def _init_zone_registry(app: "FastAPI", svc: "LifespanServices") -> None:

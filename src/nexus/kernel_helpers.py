@@ -98,8 +98,15 @@ def metastore_list_iter(
     """Streaming variant of :func:`metastore_list` using paginated reads.
 
     Yields entries one page at a time via cursor-based pagination, avoiding
-    materializing the full prefix list in memory.
+    materializing the full prefix list in memory.  A kernel whose paginated
+    list re-walks the tree on every page (the gRPC ``KernelClient``) streams
+    from a single walk instead — paging it was quadratic in the entry count.
     """
+    # Looked up on the TYPE: a mock kernel instance would fabricate the
+    # attribute and silently yield nothing.
+    if callable(getattr(type(kernel), "metastore_list_iter", None)):
+        yield from kernel.metastore_list_iter(prefix, recursive)
+        return
     cursor: str | None = None
     while True:
         page = kernel.metastore_list_paginated(prefix, recursive, 1000, cursor)

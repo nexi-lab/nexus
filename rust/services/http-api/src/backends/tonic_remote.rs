@@ -223,12 +223,19 @@ mod tests {
     use tokio_stream::wrappers::TcpListenerStream;
     use tonic::{Request, Response, Status};
 
-    /// Mock peer daemon: records every incoming request's metadata
-    /// + body so a test can assert the wire shape the client
-    /// produced.
+    /// One recorded call: the proto request body plus the raw
+    /// delegation bytes lifted off `x-nexus-search-delegation-bin`
+    /// metadata (`None` when the caller sent no delegation).
+    /// Named type so the [`clippy::type_complexity`] lint on
+    /// `Arc<Mutex<Vec<(_, _)>>>` doesn't fire, AND so the wire
+    /// contract this test asserts against reads as one thing.
+    type SeenCall = (QueryRequest, Option<Vec<u8>>);
+
+    /// Mock peer daemon: records every incoming request's metadata +
+    /// body so a test can assert the wire shape the client produced.
     #[derive(Default, Clone)]
     struct RecordingMock {
-        seen: Arc<Mutex<Vec<(QueryRequest, Option<Vec<u8>>)>>>,
+        seen: Arc<Mutex<Vec<SeenCall>>>,
         error_response: Arc<Mutex<Option<String>>>,
         rpc_status: Arc<Mutex<Option<tonic::Code>>>,
     }

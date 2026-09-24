@@ -9,7 +9,9 @@ import sqlalchemy as sa
 from nexus.contracts.zone_v1 import ZoneCreateRequest, ZoneGrantCreateRequest
 from nexus.remote.zone_runtime_client import RuntimeReceipt, ZoneRuntimeUnavailable
 from nexus.services.zones.authz import AuthorizationService, Principal
+from nexus.services.zones.membership import MembershipUnreachable
 from nexus.services.zones.service import ServiceError, ZoneApplicationService
+from nexus.services.zones.session_runtime import SessionRuntimeError, SessionRuntimeService
 from nexus.services.zones.worker import ZoneOperationWorker
 
 PRINCIPAL = {"subject_type": "user", "subject_id": "usr-admin"}
@@ -106,9 +108,15 @@ def session_factory():
 
     # Only the zone-v1 surface (plus its FK targets) — this suite is unit-level.
     from nexus.storage.models import auth as auth_models
+    from nexus.storage.models import session_v1 as sv1
     from nexus.storage.models import zone_v1 as zv1
 
     auth_models.ZoneModel.__table__.create(engine)
+    sv1.SessionModel.__table__.create(engine)
+    with engine.begin() as connection:
+        connection.exec_driver_sql("CREATE TABLE task_attempts (attempt_id TEXT PRIMARY KEY)")
+    sv1.SessionRuntimeRunModel.__table__.create(engine)
+    sv1.SessionDataRecordModel.__table__.create(engine)
     for t in (
         zv1.ZoneGrantModel,
         zv1.ZoneOperationModel,
@@ -303,6 +311,44 @@ def test_revoke_commits_fact_epoch_and_invalidation_together(session_factory):
         assert any(e.event_type == "grant.cleanup_projections" for e in events)
 
 
+def test_revoked_grant_source_replays_and_new_generation_source_can_insert(session_factory):
+    svc = make_service(session_factory, FakeRuntime())
+    _active_zone(svc, session_factory)
+    old_request = ZoneGrantCreateRequest.model_validate(
+        {
+            **grant_request().model_dump(),
+            "source": {"source_type": "moss_org_binding", "source_id": "binding:1"},
+        }
+    )
+    first = svc.issue_grant(
+        "team-test-zone", old_request, idempotency_key="source-old", principal=PRINCIPAL
+    )
+    with session_factory() as s:
+        from nexus.storage.models import ZoneGrantModel
+
+        old = s.execute(
+            sa.select(ZoneGrantModel).where(ZoneGrantModel.source_id == "binding:1")
+        ).scalar_one()
+        svc.complete_grant_projection(grant_id=old.grant_id)
+        old_id = old.grant_id
+    svc.revoke_grant("team-test-zone", old_id, principal=PRINCIPAL, reason="rotate")
+
+    replay = svc.issue_grant(
+        "team-test-zone", old_request, idempotency_key="source-replay", principal=PRINCIPAL
+    )
+    assert replay.operation_id == first.operation_id
+    newer = ZoneGrantCreateRequest.model_validate(
+        {
+            **grant_request().model_dump(),
+            "source": {"source_type": "moss_org_binding", "source_id": "binding:2"},
+        }
+    )
+    created = svc.issue_grant(
+        "team-test-zone", newer, idempotency_key="source-new", principal=PRINCIPAL
+    )
+    assert created.operation_id != first.operation_id
+
+
 def test_grant_requires_active_zone(session_factory):
     svc = make_service(session_factory, FakeRuntime(ok=False))
     svc.create_zone(create_request(), idempotency_key="k1", principal=PRINCIPAL)
@@ -350,6 +396,119 @@ def test_deprovision_moves_to_deleting_without_grants(session_factory):
         zone = s.get(ZoneModel, "team-test-zone")
         assert zone.canonical_status == "deleted"
         assert zone.phase == "Terminated"
+
+
+def test_deprovision_blocks_execution_and_home_zone_runtime_dependencies(session_factory):
+    from nexus.storage.models import SessionModel, SessionRuntimeRunModel
+
+    svc = make_service(session_factory, FakeRuntime())
+    _active_zone(svc, session_factory)
+    _active_zone(svc, session_factory, "other-test-zone")
+    with session_factory() as s, s.begin():
+        s.add_all(
+            [
+                SessionModel(
+                    session_id="execution-dependency",
+                    home_zone_id="other-test-zone",
+                    owner=GRANTEE,
+                    created_by=PRINCIPAL,
+                    state="active",
+                ),
+                SessionModel(
+                    session_id="home-dependency",
+                    home_zone_id="team-test-zone",
+                    owner=GRANTEE,
+                    created_by=PRINCIPAL,
+                    state="active",
+                ),
+            ]
+        )
+        s.add_all(
+            [
+                SessionRuntimeRunModel(
+                    pid="execution-run",
+                    session_id="execution-dependency",
+                    execution_zone_id="team-test-zone",
+                    state="ready",
+                ),
+                SessionRuntimeRunModel(
+                    pid="home-run",
+                    session_id="home-dependency",
+                    execution_zone_id="other-test-zone",
+                    state="busy",
+                ),
+            ]
+        )
+    with pytest.raises(ServiceError) as exc:
+        svc.request_deprovision("team-test-zone", principal=PRINCIPAL)
+    assert exc.value.code == "ZONE_DELETE_BLOCKED"
+    assert "2 active runtime(s)" in exc.value.message
+
+
+def test_suspended_home_zone_blocks_record_writes_and_resume_restores_them(session_factory):
+    from nexus.storage.models import SessionModel
+
+    svc = make_service(session_factory, FakeRuntime())
+    _active_zone(svc, session_factory)
+    with session_factory() as s, s.begin():
+        s.add(
+            SessionModel(
+                session_id="suspended-write",
+                home_zone_id="team-test-zone",
+                owner=GRANTEE,
+                created_by=PRINCIPAL,
+                state="active",
+            )
+        )
+    runtime = SessionRuntimeService(session_factory, fs_writer=lambda path, data, zone: len(data))
+    svc.suspend_zone("team-test-zone", principal=PRINCIPAL)
+    with pytest.raises(SessionRuntimeError) as exc:
+        runtime.write_session_record(
+            session_id="suspended-write", record_kind="context", payload=b"{}"
+        )
+    assert exc.value.code == "ZONE_NOT_ACTIVE"
+    svc.resume_zone("team-test-zone", principal=PRINCIPAL)
+    assert (
+        runtime.write_session_record(
+            session_id="suspended-write", record_kind="context", payload=b"{}"
+        )["bytes_written"]
+        == 2
+    )
+
+
+def test_runtime_revalidation_skips_unreachable_and_parks_inactive(session_factory):
+    from nexus.storage.models import SessionModel, SessionRuntimeRunModel
+
+    svc = make_service(session_factory, FakeRuntime())
+    _active_zone(svc, session_factory)
+    with session_factory() as s, s.begin():
+        s.add(
+            SessionModel(
+                session_id="revalidation-session",
+                home_zone_id="team-test-zone",
+                owner=GRANTEE,
+                created_by=PRINCIPAL,
+                state="active",
+            )
+        )
+        s.add(
+            SessionRuntimeRunModel(
+                pid="revalidation-run",
+                session_id="revalidation-session",
+                execution_zone_id="team-test-zone",
+                delegation_ref="dlg",
+                grant_ref="grant",
+                authorization_epoch=1,
+                state="ready",
+            )
+        )
+    runtime = SessionRuntimeService(session_factory)
+    assert runtime.revalidate_runtime_dependencies(lambda *_: None) == 0
+    with session_factory() as s:
+        assert s.get(SessionRuntimeRunModel, "revalidation-run").state == "ready"
+    assert runtime.revalidate_runtime_dependencies(lambda *_: False) == 1
+    with session_factory() as s:
+        assert s.get(SessionRuntimeRunModel, "revalidation-run").state == "revocation_pending"
 
 
 def test_patch_if_match_conflict(session_factory):
@@ -508,6 +667,122 @@ def test_delegation_denies_when_membership_is_removed(session_factory):
     with session_factory() as s:
         decision = authz.verify_delegation(s, delegation_id=delegation_id, audience="runtime")
         assert not decision and decision.code == "GRANT_REVOKED"
+
+
+def test_delegation_issue_fails_closed_when_membership_is_not_armed(session_factory):
+    _authz_env(session_factory, grant=True, rebac=True)
+    authz = AuthorizationService(
+        session_factory,
+        lambda session, subject, permission, path, zone_id: True,
+        membership_check=None,
+        trusted_issuers=frozenset({"moss-provisioner"}),
+    )
+    with session_factory() as s, s.begin(), pytest.raises(ServiceError) as exc:
+        authz.issue_delegation(
+            s,
+            principal=Principal(subject_type="user", subject_id="u1"),
+            issuer=Principal(subject_type="service", subject_id="moss-provisioner"),
+            org_id="org-1",
+            membership_version="r1",
+            zone_id="team-test-zone",
+            audience="runtime",
+        )
+    assert exc.value.code == "RESOURCE_RELATION_DENIED"
+    assert exc.value.http_status == 503
+
+
+def test_delegation_verify_fails_closed_when_membership_is_not_armed(session_factory):
+    armed = _authz_env(session_factory, grant=True, rebac=True)
+    with session_factory() as s, s.begin():
+        delegation = armed.issue_delegation(
+            s,
+            principal=Principal(subject_type="user", subject_id="u1"),
+            issuer=Principal(subject_type="service", subject_id="moss-provisioner"),
+            org_id="org-1",
+            membership_version="r1",
+            zone_id="team-test-zone",
+            audience="runtime",
+        )
+        delegation_id = delegation.delegation_id
+    unarmed = AuthorizationService(
+        session_factory,
+        lambda session, subject, permission, path, zone_id: True,
+        membership_check=None,
+        trusted_issuers=frozenset({"moss-provisioner"}),
+    )
+    with session_factory() as s:
+        decision = unarmed.verify_delegation(s, delegation_id=delegation_id, audience="runtime")
+    assert not decision
+    assert decision.code == "GRANT_REVOKED"
+
+
+def test_membership_outage_is_retryable_for_issue_and_verify(session_factory):
+    armed = _authz_env(session_factory, grant=True, rebac=True)
+    with session_factory() as s, s.begin():
+        delegation = armed.issue_delegation(
+            s,
+            principal=Principal(subject_type="user", subject_id="u1"),
+            issuer=Principal(subject_type="service", subject_id="moss-provisioner"),
+            org_id="org-1",
+            membership_version="r1",
+            zone_id="team-test-zone",
+            audience="runtime",
+        )
+        delegation_id = delegation.delegation_id
+
+    def unavailable(*_args):
+        raise MembershipUnreachable("offline")
+
+    authz = AuthorizationService(
+        session_factory,
+        lambda session, subject, permission, path, zone_id: True,
+        membership_check=unavailable,
+        trusted_issuers=frozenset({"moss-provisioner"}),
+    )
+    with session_factory() as s, s.begin(), pytest.raises(ServiceError) as exc:
+        authz.issue_delegation(
+            s,
+            principal=Principal(subject_type="user", subject_id="u2"),
+            issuer=Principal(subject_type="service", subject_id="moss-provisioner"),
+            org_id="org-1",
+            membership_version="r1",
+            zone_id="team-test-zone",
+            audience="runtime",
+        )
+    assert (exc.value.code, exc.value.http_status, exc.value.retryable) == (
+        "MEMBERSHIP_UNAVAILABLE",
+        503,
+        True,
+    )
+    with session_factory() as s:
+        decision = authz.verify_delegation(s, delegation_id=delegation_id, audience="runtime")
+    assert not decision and decision.code == "MEMBERSHIP_UNAVAILABLE"
+
+
+def test_suspended_zone_denies_writes_but_keeps_read_policy(session_factory):
+    principal = Principal(subject_type="organization", subject_id="org-1")
+    authz = _authz_env(session_factory, grant=True, rebac=True)
+    with session_factory() as s, s.begin():
+        from nexus.storage.models import ZoneModel
+
+        s.get(ZoneModel, "team-test-zone").canonical_status = "suspended"
+    with session_factory() as s:
+        denied = authz.allow(
+            s,
+            principal=principal,
+            zone_id="team-test-zone",
+            capability="zone.data.write",
+            resource_path="/sessions/x",
+        )
+        allowed_read = authz.allow(
+            s,
+            principal=principal,
+            zone_id="team-test-zone",
+            capability="zone.data.read",
+            resource_path="/sessions/x",
+        )
+    assert not denied and denied.code == "ZONE_NOT_ACTIVE"
+    assert allowed_read
 
 
 # ── worker fencing ────────────────────────────────────────────────────────────

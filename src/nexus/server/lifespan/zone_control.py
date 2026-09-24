@@ -19,6 +19,7 @@ from fastapi import FastAPI
 
 from nexus.remote.zone_runtime_client import NullZoneRuntimePort, ZoneRuntimePort
 from nexus.services.zones.authz import AuthorizationService
+from nexus.services.zones.membership import MembershipUnreachable, MossMembershipVerifier
 from nexus.services.zones.service import ZoneApplicationService
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,7 @@ def arm_zone_services(
     projection_write: Any = None,
     projection_delete: Any = None,
     membership_check: Any = None,
+    worker_membership_check: Any = None,
     trusted_issuers: frozenset[str] = frozenset(),
     auth_armed: bool = True,
     transfer_policy: Any = None,
@@ -71,9 +73,18 @@ def arm_zone_services(
         membership_check=membership_check,
         trusted_issuers=trusted_issuers,
     )
+    worker_authz = AuthorizationService(
+        session_factory,
+        rebac_check,
+        membership_check=(
+            worker_membership_check if worker_membership_check is not None else membership_check
+        ),
+        trusted_issuers=trusted_issuers,
+    )
 
     app.state.zone_application_service = service
     app.state.zone_authorization_service = authz
+    app.state.zone_worker_authorization_service = worker_authz
     app.state.zone_session_factory = session_factory
     app.state.zone_runtime = runtime
 
@@ -141,11 +152,11 @@ def zone_worker(app: FastAPI) -> Any:
     from nexus.services.zones.worker import ZoneOperationWorker
 
     service = app.state.zone_application_service
-    authz = app.state.zone_authorization_service
+    authz = app.state.zone_worker_authorization_service
 
     def runtime_dependency_is_current(
         delegation_id: str, zone_id: str, grant_ref: str, authorization_epoch: int
-    ) -> bool:
+    ) -> bool | None:
         from nexus.services.zones.authz import Principal
         from nexus.storage.models import ZoneDelegationModel
 
@@ -163,6 +174,8 @@ def zone_worker(app: FastAPI) -> Any:
                     session, delegation_id=delegation_id, audience="nexus-api"
                 )
                 if not current:
+                    if current.code == "MEMBERSHIP_UNAVAILABLE":
+                        return None
                     return False
                 allowed = authz.allow(
                     session,
@@ -172,6 +185,8 @@ def zone_worker(app: FastAPI) -> Any:
                     resource_path="/",
                 )
                 return bool(allowed)
+        except MembershipUnreachable:
+            return None
         except Exception:
             return False
 
@@ -293,6 +308,25 @@ async def startup_zone_control(app: FastAPI) -> list[asyncio.Task[Any]]:
         for value in os.environ.get("NEXUS_ZONE_DELEGATION_ISSUERS", "").split(",")
         if value.strip()
     )
+    access_membership = MossMembershipVerifier.from_env(cache_ttl_s=0)
+    worker_membership = MossMembershipVerifier.from_env(cache_ttl_s=5)
+    if issuers and (access_membership is None or worker_membership is None):
+        raise ZoneControlNotArmed(
+            "NEXUS_ZONE_DELEGATION_ISSUERS requires both "
+            "NEXUS_ZONE_MEMBERSHIP_URL and NEXUS_ZONE_MEMBERSHIP_TOKEN"
+        )
+    app.state.moss_membership_verifier = (
+        access_membership.check if access_membership is not None else None
+    )
+
+    def worker_membership_check(user_id: str, org_id: str, version: str) -> bool:
+        if worker_membership is None:
+            return False
+        state = worker_membership.check_detailed(user_id, org_id, version)
+        if state == "unreachable":
+            raise MembershipUnreachable("Moss membership lookup unavailable")
+        return state == "ok"
+
     report = arm_zone_services(
         app,
         session_factory=session_factory,
@@ -300,7 +334,8 @@ async def startup_zone_control(app: FastAPI) -> list[asyncio.Task[Any]]:
         rebac_check=rebac_check,
         projection_write=projection_write,
         projection_delete=projection_delete,
-        membership_check=getattr(app.state, "moss_membership_verifier", None),
+        membership_check=app.state.moss_membership_verifier,
+        worker_membership_check=(worker_membership_check if worker_membership else None),
         trusted_issuers=issuers,
         worker_enabled=True,
         # The background worker owns the operation lease in deployed apps.
@@ -323,8 +358,11 @@ async def startup_zone_control(app: FastAPI) -> list[asyncio.Task[Any]]:
 
     async def run() -> None:
         while not stop.is_set():
-            await asyncio.to_thread(worker.pump_once)
-            await asyncio.to_thread(worker.reconcile_stale_operations)
+            try:
+                await asyncio.to_thread(worker.pump_once)
+                await asyncio.to_thread(worker.reconcile_stale_operations)
+            except Exception:
+                logger.exception("zone operation worker iteration failed")
             try:
                 await asyncio.wait_for(stop.wait(), timeout=0.25)
             except TimeoutError:

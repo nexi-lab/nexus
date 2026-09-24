@@ -41,7 +41,7 @@ from shutil import which
 
 import httpx
 
-from tests.e2e.conftest import find_free_port
+from tests.e2e.conftest import find_free_port, start_membership_stub
 
 _SRC = Path(__file__).resolve().parents[2].parents[1] / "src"
 
@@ -58,6 +58,7 @@ class ServerHarness:
             path.mkdir(parents=True, exist_ok=True)
         self.db_file = data_dir / "fault.db"
         self.api_key = self._mint_key()
+        self.membership = start_membership_stub()
         self.proc: subprocess.Popen | None = None
         self.port = 0
         self.stdout_lines: list[str] = []
@@ -126,6 +127,8 @@ class ServerHarness:
             "NEXUS_SEARCH_DAEMON": "false",
             "NEXUS_UPLOAD_MIN_CHUNK_SIZE": "1",
             "NEXUS_ZONE_DELEGATION_ISSUERS": "moss-e2e",
+            "NEXUS_ZONE_MEMBERSHIP_URL": self.membership.url,
+            "NEXUS_ZONE_MEMBERSHIP_TOKEN": self.membership.token,
             "HOME": str(self.home_dir),
             "PYTHONPATH": str(_SRC),
         }
@@ -224,6 +227,7 @@ class ServerHarness:
         # accumulated orphans turned retries-exhausted failures into the
         # steady state; clearing them restored green). Kill only kernels whose
         # command line carries OUR data dir, never foreign ones.
+
         try:
             listing = subprocess.run(
                 [
@@ -241,6 +245,10 @@ class ServerHarness:
             del listing
         except Exception:  # noqa: BLE001 — cleanup must never fail the test
             pass
+
+    def close(self) -> None:
+        self.kill()
+        self.membership.close()
 
     def client(self) -> httpx.Client:
         return httpx.Client(base_url=f"http://127.0.0.1:{self.port}", timeout=30.0, trust_env=False)
@@ -318,7 +326,7 @@ def test_fault_classes_1_2_3_create_crashed_mid_flight_recovers_exactly_once(tmp
             matches = [z for z in listed.get("zones", []) if z["zone_id"] == zone]
             assert len(matches) == 1, f"zone duplicated after crash recovery: {matches}"
     finally:
-        harness.kill()
+        harness.close()
 
 
 def test_fault_classes_6_7_revoke_killed_before_broadcast_stays_fail_closed(tmp_path) -> None:
@@ -379,7 +387,7 @@ def test_fault_classes_6_7_revoke_killed_before_broadcast_stays_fail_closed(tmp_
                 json={
                     "user_id": "f67-user",
                     "org_id": "f67-org",
-                    "membership_version": "v1",
+                    "membership_version": "r1",
                     "zone_id": zone,
                     "audience": "nexus-api",
                     "ttl_s": 300,
@@ -423,7 +431,7 @@ def test_fault_classes_6_7_revoke_killed_before_broadcast_stays_fail_closed(tmp_
                 json={
                     "user_id": "f67-user",
                     "org_id": "f67-org",
-                    "membership_version": "v1",
+                    "membership_version": "r1",
                     "zone_id": zone,
                     "audience": "nexus-api",
                     "ttl_s": 300,
@@ -431,7 +439,7 @@ def test_fault_classes_6_7_revoke_killed_before_broadcast_stays_fail_closed(tmp_
             )
             assert refused.status_code == 403, refused.text
     finally:
-        harness.kill()
+        harness.close()
 
 
 def test_fault_class_12_contract_mismatch_rejected(nexus_server, test_app) -> None:

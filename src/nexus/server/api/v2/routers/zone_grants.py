@@ -319,9 +319,14 @@ def get_delegation(
             )
         decision = authz.verify_delegation(s, delegation_id=delegation_id, audience=d.audience)
         if not decision:
+            unavailable = decision.code == "MEMBERSHIP_UNAVAILABLE"
             raise HTTPException(
-                status_code=403,
-                detail={"code": decision.code, "message": decision.reason, "retryable": False},
+                status_code=503 if unavailable else 403,
+                detail={
+                    "code": decision.code,
+                    "message": decision.reason,
+                    "retryable": unavailable,
+                },
             )
         return {
             "delegation_id": d.delegation_id,

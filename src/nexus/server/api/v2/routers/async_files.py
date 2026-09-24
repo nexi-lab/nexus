@@ -1638,11 +1638,23 @@ def create_async_files_router(
             None,
             description="Override zone (must be in token's zone_set).",
         ),
+        recursive: bool = Query(
+            False,
+            description=(
+                "Delete a directory and everything under it. Without it, a "
+                "non-empty directory is refused with 409."
+            ),
+        ),
         context: Any = Depends(get_context),
         auth_result: dict[str, Any] = Depends(require_auth),
     ) -> DeleteResponse:
-        """Delete a file."""
+        """Delete a file, or a directory (empty, or with ``recursive=true``)."""
         context = _apply_zone_override(context, zone, auth_result, required_perm="w")
+        if recursive and transaction_id:
+            raise HTTPException(
+                status_code=400,
+                detail="recursive delete cannot join a transaction (transactions track single files)",
+            )
         try:
 
             async def _work() -> DeleteResponse:
@@ -1672,7 +1684,9 @@ def create_async_files_router(
                         except Exception:
                             _original_hash = None
 
-                unlink_result = await _call_sync_or_async(fs.sys_unlink, path, context=context)
+                unlink_result = await _call_sync_or_async(
+                    fs.sys_unlink, path, recursive=recursive, context=context
+                )
 
                 if (
                     _ss is not None
@@ -1711,6 +1725,11 @@ def create_async_files_router(
         except _TransactionConflictError as e:
             raise HTTPException(status_code=409, detail=str(e)) from e
         except Exception as e:
+            # The kernel refuses a non-recursive rmdir of a non-empty
+            # directory with an IOError("Directory not empty") that reaches
+            # here as a generic RPC error — a conflict, not a server fault.
+            if "Directory not empty" in str(e):
+                raise HTTPException(status_code=409, detail=str(e)) from e
             logger.exception(f"Delete error: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
 

@@ -98,9 +98,12 @@ jobs:
           VAULT_TAG=$(next_patch "vault-v")
           FUSE_TAG=$(next_patch "fuse-v")
           LC_TAG=$(next_patch "local-connector-v")
-          SEARCH_TAG=$(next_patch "search-v")
+          # `search-v*` is no longer cut here: `nexus-search-plugin`
+          # relocated to nexus-vfs (nexus-vfs#321, 2026-09-25), so its
+          # release workflow moves with it. This repo only auto-cuts
+          # the plugins whose source still lives here.
 
-          echo "Cutting tags: $VAULT_TAG, $FUSE_TAG, $LC_TAG, $SEARCH_TAG"
+          echo "Cutting tags: $VAULT_TAG, $FUSE_TAG, $LC_TAG"
           echo "nexus-vfs rev: ${NEW_REV:0:12}"
 
           MSG="rebuild against nexus-vfs ${NEW_REV:0:12} (auto-release on rev bump)"
@@ -110,18 +113,16 @@ jobs:
           git push origin "$VAULT_TAG"
           echo "vault_tag=$VAULT_TAG" >> "$GITHUB_ENV"
 
-          # Fuse + local-connector + search can go together (all use dogfood
+          # Fuse + local-connector can go together (both use dogfood
           # signing which fetches the latest vault-v* release — vault must
           # be released first, which the dispatch step below orders).
           git tag -a "$FUSE_TAG" HEAD -m "fuse-plugin ${FUSE_TAG#fuse-v} — $MSG"
           git tag -a "$LC_TAG" HEAD -m "local-connector ${LC_TAG#local-connector-v} — $MSG"
-          git tag -a "$SEARCH_TAG" HEAD -m "search-plugin ${SEARCH_TAG#search-v} — $MSG"
-          git push origin "$FUSE_TAG" "$LC_TAG" "$SEARCH_TAG"
+          git push origin "$FUSE_TAG" "$LC_TAG"
 
           {
             echo "fuse_tag=$FUSE_TAG"
             echo "lc_tag=$LC_TAG"
-            echo "search_tag=$SEARCH_TAG"
           } >> "$GITHUB_ENV"
 
           echo "### Auto Plugin Release" >> "$GITHUB_STEP_SUMMARY"
@@ -133,7 +134,6 @@ jobs:
           echo "| vault | $VAULT_TAG |" >> "$GITHUB_STEP_SUMMARY"
           echo "| fuse | $FUSE_TAG |" >> "$GITHUB_STEP_SUMMARY"
           echo "| local-connector | $LC_TAG |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| search-plugin | $SEARCH_TAG |" >> "$GITHUB_STEP_SUMMARY"
 
       # Cutting the tag is NOT what releases the plugin — this step is.
       #
@@ -183,4 +183,3 @@ jobs:
 
           dispatch release-fuse-plugin.yml "$fuse_tag"
           dispatch release-local-connector-plugin.yml "$lc_tag"
-          dispatch release-search-plugin.yml "$search_tag"

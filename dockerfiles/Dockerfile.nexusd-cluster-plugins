@@ -21,14 +21,17 @@
 #     -t nexusd-cluster:latest .
 #
 # KEEP IN SYNC: the `cluster-builder` + runtime stages mirror
-# `Dockerfile.nexusd-cluster`, and the `plugin-builder` stage mirrors
-# `Dockerfile.search-plugin-test` — a change to either sibling almost
-# certainly belongs here too.
+# `Dockerfile.nexusd-cluster`.  The `plugin-builder` stage builds the
+# cdylib directly from the `nexus-vfs-src` build context (the plugin
+# source relocated from `nexus/rust/services/search-plugin/` to
+# `nexus-vfs/rust/search-plugin/` in nexus-vfs#321, 2026-09-25).
 #
 # Pinning is single-sourced in `Cargo.toml` — the plugin cdylib and the
 # cluster binary must compile against the same nexus-vfs commit for ABI
-# parity.  CI parses the SHA from Cargo.toml and checks out
-# nexi-lab/nexus-vfs at that rev as the `nexus-vfs-src` build context.
+# parity, so CI parses the SHA from Cargo.toml and checks out
+# nexi-lab/nexus-vfs at that rev as the `nexus-vfs-src` build context;
+# both stages read from that context, guaranteeing they compile from
+# ONE nexus-vfs SHA.
 
 # ---------- Cluster binary ----------
 FROM rust:1-slim-bookworm AS cluster-builder
@@ -65,10 +68,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /build
 
-COPY Cargo.toml Cargo.lock ./
-COPY rust ./rust
+# The plugin source relocated from `nexus/rust/services/search-plugin/`
+# to `nexus-vfs/rust/search-plugin/` in nexus-vfs#321 (2026-09-25); it
+# reads the same `nexus-vfs-src` build context the cluster-builder
+# stage above uses so both stages compile from the SAME nexus-vfs SHA
+# (the CI checkout resolves the SHA from `Cargo.toml`, so a pin bump
+# here + Cargo.toml lands the daemon and plugin together).
+COPY --from=nexus-vfs-src . /build/nexus-vfs
 
-RUN cargo build --release -p nexus-search-plugin
+RUN cargo build --locked --release \
+    --manifest-path /build/nexus-vfs/Cargo.toml \
+    -p nexus-search-plugin
 
 # Ed25519-sign the dylib (kernel refuses unsigned plugins; PluginLoader
 # verifies against compile-time trusted keys).  The private key arrives
@@ -76,7 +86,7 @@ RUN cargo build --release -p nexus-search-plugin
 COPY scripts/sign_plugin.py ./scripts/sign_plugin.py
 RUN --mount=type=secret,id=plugin_signing_key \
     PLUGIN_SIGNING_PRIVKEY="$(cat /run/secrets/plugin_signing_key)" \
-    python3 scripts/sign_plugin.py target/release/libnexus_search_plugin.so
+    python3 scripts/sign_plugin.py /build/nexus-vfs/target/release/libnexus_search_plugin.so
 
 # ---------- Production image ----------
 FROM debian:bookworm-slim
@@ -100,10 +110,10 @@ RUN useradd -r -m -u 1000 -s /bin/bash nexus && \
 # Signed dylib + detached signature — PluginLoader reads `<plugin>.sig`
 # next to `<plugin>` at --plugin-dir scan time.
 COPY --from=plugin-builder --chown=nexus:nexus \
-    /build/target/release/libnexus_search_plugin.so \
+    /build/nexus-vfs/target/release/libnexus_search_plugin.so \
     /plugins/libnexus_search_plugin.so
 COPY --from=plugin-builder --chown=nexus:nexus \
-    /build/target/release/libnexus_search_plugin.so.sig \
+    /build/nexus-vfs/target/release/libnexus_search_plugin.so.sig \
     /plugins/libnexus_search_plugin.so.sig
 
 USER nexus

@@ -271,7 +271,14 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      NEXUS_DATABASE_URL: postgresql://nexus_test:nexus_test@localhost:5432/nexus_test
+      # `+psycopg2` pins SQLAlchemy to the psycopg2 driver.  Without
+      # it, SQLAlchemy 2.x's `postgresql://` scheme prefers the
+      # psycopg (v3) dialect, which imports `psycopg` at engine-create
+      # time; the runner only installs psycopg2-binary, so the tests
+      # fail at fixture setup with a ModuleNotFoundError.  Making the
+      # driver explicit is the least-surprise fix — the tests all rely
+      # on psycopg2-binary already being on the venv.
+      NEXUS_DATABASE_URL: postgresql+psycopg2://nexus_test:nexus_test@localhost:5432/nexus_test
     steps:
       - name: Skip notice (no code changes)
         if: needs.detect-changes.outputs.code_changed != 'true'
@@ -917,7 +924,14 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      NEXUS_DATABASE_URL: postgresql://nexus_test:nexus_test@localhost:5432/nexus_test
+      # `+psycopg2` pins SQLAlchemy to the psycopg2 driver.  Without
+      # it, SQLAlchemy 2.x's `postgresql://` scheme prefers the
+      # psycopg (v3) dialect, which imports `psycopg` at engine-create
+      # time; the runner only installs psycopg2-binary, so the tests
+      # fail at fixture setup with a ModuleNotFoundError.  Making the
+      # driver explicit is the least-surprise fix — the tests all rely
+      # on psycopg2-binary already being on the venv.
+      NEXUS_DATABASE_URL: postgresql+psycopg2://nexus_test:nexus_test@localhost:5432/nexus_test
     steps:
       - name: Skip notice (no code changes)
         if: needs.detect-changes.outputs.code_changed != 'true'

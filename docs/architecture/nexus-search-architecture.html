@@ -182,7 +182,7 @@ cross-zone federation, DT_STREAM search coverage, pure-Rust migration arc.</p>
 flowchart TB
     subgraph API["1. API layer &mdash; HTTP"]
         A1["<b>Python FastAPI</b> (today, production)<br/>src/nexus/server/api/v2/routers/search.py<br/>~1800 LoC &mdash; /v2/search/{query,glob,grep,batch}"]
-        A2["<b>Rust axum</b> (R10 arc, in-progress)<br/>rust/services/http-api/<br/>GET /v2/status &check; GET /v2/search/glob &check;<br/>grep / query / auth-mw / nexusd-wiring pending"]
+        A2["<b>Rust axum</b> (R10 arc, in-progress)<br/>nexus-vfs/rust/http-api/<br/>GET /v2/status &check; GET /v2/search/glob &check;<br/>grep / query / auth-mw / nexusd-wiring pending"]
     end
     subgraph ORCH["2. Orchestration / Auth / ReBAC layer"]
         O1["<b>SearchService</b> (Python)<br/>search_service.py &mdash; ~5000 LoC<br/>profile gate, auth+ReBAC filter, grep orchestration,<br/>SANDBOX fallback, activity events"]
@@ -190,7 +190,7 @@ flowchart TB
         O3["<b>SearchDaemon proxy</b> (Python)<br/>daemon.py &mdash; ~500 LoC<br/>thin gRPC client to the Rust plugin"]
     end
     subgraph CORE["3. Rust core plugin &mdash; SSOT for search logic"]
-        C1["<b>nexus-search-plugin</b> cdylib (Rust)<br/>rust/services/search-plugin/ &mdash; ~16k LoC<br/>17 gRPC RPCs on nexus.search.v1.SearchService"]
+        C1["<b>nexus-search-plugin</b> cdylib (Rust)<br/>nexus/rust/services/search-plugin/ &mdash; ~16k LoC<br/>17 gRPC RPCs on nexus.search.v1.SearchService<br/>(pending Stage γ relocation to nexus-vfs)"]
     end
     subgraph KERN["4. Kernel VFS &mdash; nexus-vfs"]
         K1["<b>KernelHandle</b> C-ABI &mdash; 11 Tier 1 syscalls<br/>sys_read / sys_readdir / sys_stat / sys_write / ...<br/>plugin never modifies this ABI"]
@@ -360,7 +360,7 @@ flowchart TB
 </ul>
 
 <h3>4.2 Tomorrow: Rust axum (R10 arc)</h3>
-<p>New crate: <code>rust/services/http-api/</code> (see §7). Landed:</p>
+<p>Crate: <code>nexus-vfs/rust/http-api/</code> (relocated from <code>nexus/rust/services/http-api/</code> in nexus-vfs#319 + nexus#4825, 2026-09-24; see §7). Landed:</p>
 <ul>
   <li><code>GET /v2/status</code> <span class="status-done">&check;</span> (PR #4675)</li>
   <li><code>GET /v2/search/glob</code> <span class="status-done">&check;</span> (PR #4678, with cached tonic backend + typed error → HTTP status mapping)</li>
@@ -470,7 +470,7 @@ flowchart TB
 
 <h3>Landed steps</h3>
 <ol>
-  <li>PR #4675 &mdash; <code>rust/services/http-api/</code> crate skeleton, axum + <code>/v2/status</code>, 2 unit tests + 2 real-TCP integration tests.</li>
+  <li>PR #4675 &mdash; <code>rust/services/http-api/</code> crate skeleton (later relocated to <code>nexus-vfs/rust/http-api/</code> in #4825), axum + <code>/v2/status</code>, 2 unit tests + 2 real-TCP integration tests.</li>
   <li>PR #4678 &mdash; <code>GET /v2/search/glob</code> handler, <code>SearchBackend</code> Channel cache (DashMap per address, <code>connect_lazy</code>), handlers/ module layout, error-mapping (gRPC <code>Code</code> → HTTP status).</li>
   <li>PR #4680 &mdash; <code>serve()</code> / <code>bind_and_serve()</code> public helpers (dedup for the future <code>nexusd</code> wiring), 3 edge-case E2E (upstream-down → 503, sort_recency=false propagation, max_results=0 sentinel).</li>
 </ol>
@@ -537,7 +537,7 @@ flowchart TB
     </tr>
     <tr>
       <td>2026-08-18</td>
-      <td>Start R10 arc: <code>rust/services/http-api/</code> crate.</td>
+      <td>Start R10 arc: <code>rust/services/http-api/</code> crate (relocated to <code>nexus-vfs/rust/http-api/</code> in #4825).</td>
       <td>Prove the axum + gRPC-client-cache pattern before touching auth / ReBAC / orchestration.</td>
     </tr>
     <tr>
@@ -615,8 +615,8 @@ flowchart TB
     </tr>
     <tr>
       <td><code>nexusd-cluster</code> wiring of the axum listener</td>
-      <td>rust/nexusd</td>
-      <td><span class="status-done">&check; Done</span> &mdash; PR #4713 (<code>--features http-api</code>), PR #4735 (<code>--features full</code> composition)</td>
+      <td>nexus-vfs/rust/profiles/cluster (was: nexus/rust/nexusd, retired #4825)</td>
+      <td><span class="status-done">&check; Done</span> &mdash; PR #4713 (<code>--features http-api</code>), PR #4735 (<code>--features full</code> composition); the assembly binary that carried the wiring retired 2026-09-24 once the service crates relocated into nexus-vfs, so wiring now sits in nexus-vfs's cluster profile directly</td>
     </tr>
     <tr>
       <td>Deprecate Python SANDBOX chain</td>

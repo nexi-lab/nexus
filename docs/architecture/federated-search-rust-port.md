@@ -1,8 +1,15 @@
 # Federated search: Python -> Rust port scoping
 
-Status: **Scoping** — no code changes yet.  Author: elfenlieds7 · 2026-09-13
-· Superset of the "Federated dispatcher port to axum handler group" row
-in [`nexus-search-architecture.html`](nexus-search-architecture.html#open).
+Status: **LANDED** (originally scoped 2026-09-13; ported across PRs #4790-#4818
+and merged 2026-09-24).  Code SSOT lives at
+[`nexus-vfs/rust/federated-search/`](https://github.com/nexi-lab/nexus-vfs/tree/main/rust/federated-search)
+(relocated from `nexus/rust/services/federated-search/` in nexus-vfs#319 +
+nexus#4825); the shared peer-fanout primitives live at
+[`nexus-vfs/rust/search-common/`](https://github.com/nexi-lab/nexus-vfs/tree/main/rust/search-common).
+This document is preserved as design history; consult the code for current
+shape.  Author: elfenlieds7 · Superset of the "Federated dispatcher port to
+axum handler group" row in
+[`nexus-search-architecture.html`](nexus-search-architecture.html#open).
 
 The last major R10 chunk after PRs #4693 (grep/query axum), #4700 (auth
 middleware), #4721-#4735 (Rust ReBAC), #4756 (auth-keys), #4760-#4764

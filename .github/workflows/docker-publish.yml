@@ -497,7 +497,7 @@ jobs:
           mkdir -p /tmp/nexus-data && sudo chown -R 1000:1000 /tmp/nexus-data
           docker run -d --name nexus-e2e \
             --network host \
-            -e NEXUS_DATABASE_URL=postgresql://postgres:nexus@localhost/nexus \
+            -e NEXUS_DATABASE_URL=postgresql+psycopg2://postgres:nexus@localhost/nexus \
             -e NEXUS_HOST=0.0.0.0 \
             -e NEXUS_PORT=2026 \
             -e NEXUS_GRPC_PORT=2028 \
@@ -670,7 +670,7 @@ jobs:
           echo "Step 2: Checking file_paths table after demo init..."
           docker exec -i nexus-e2e python3 - <<'PY' || echo "  (SQL diagnostic unavailable — skipping)"
           from sqlalchemy import create_engine, text
-          eng = create_engine("postgresql://postgres:nexus@localhost/nexus")
+          eng = create_engine("postgresql+psycopg2://postgres:nexus@localhost/nexus")
           with eng.connect() as conn:
               row = conn.execute(text(
                   "SELECT count(*) AS demo_files, min(zone_id) AS min_zone, max(zone_id) AS max_zone "

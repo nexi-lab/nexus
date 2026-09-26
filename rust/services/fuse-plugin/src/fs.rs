@@ -91,9 +91,6 @@ fn errno_enoent() -> Errno {
 fn errno_einval() -> Errno {
     Errno::from_i32(libc::EINVAL)
 }
-fn errno_nosys() -> Errno {
-    Errno::from_i32(libc::ENOSYS)
-}
 
 pub struct NexusFs {
     kernel: KernelHandle,
@@ -335,15 +332,11 @@ impl Filesystem for NexusFs {
         _lock_owner: Option<fuser::LockOwner>,
         reply: ReplyWrite,
     ) {
-        // First cut: O_TRUNC semantics only.  An offset != 0 write
-        // surfaces as EIO until the offset-aware kernel callback
-        // lands.  This is honest about the gap rather than silently
-        // dropping bytes; CC's task-file workflow always rewrites
-        // the whole JSON document so offset==0 is the common path.
-        if offset != 0 {
-            reply.error(errno_io());
-            return;
-        }
+        // Offsets are honoured as of plugin ABI v7.  Until then this
+        // returned EIO past byte zero, which meant a program could only
+        // ever replace a whole file — and POSIX lets a program open a
+        // file and write it in as many calls as it likes.  `git init`
+        // writes its own config that way and could not get past it.
         let path = match self.path_for(ino) {
             Some(p) => p,
             None => {
@@ -351,7 +344,7 @@ impl Filesystem for NexusFs {
                 return;
             }
         };
-        match kernel_callbacks::sys_write(&self.kernel, &path, data) {
+        match kernel_callbacks::sys_write(&self.kernel, &path, data, offset) {
             Ok(()) => reply.written(data.len() as u32),
             Err(_) => reply.error(errno_io()),
         }
@@ -595,7 +588,7 @@ impl Filesystem for NexusFs {
             }
         };
         let path = join_path(&parent_path, name_str);
-        if kernel_callbacks::sys_write(&self.kernel, &path, &[]).is_err() {
+        if kernel_callbacks::sys_write(&self.kernel, &path, &[], 0).is_err() {
             reply.error(errno_io());
             return;
         }
@@ -616,7 +609,7 @@ impl Filesystem for NexusFs {
     fn setattr(
         &self,
         _req: &Request,
-        _ino: INodeNo,
+        ino: INodeNo,
         _mode: Option<u32>,
         _uid: Option<u32>,
         _gid: Option<u32>,
@@ -631,7 +624,57 @@ impl Filesystem for NexusFs {
         _flags: Option<fuser::BsdFileFlags>,
         reply: ReplyAttr,
     ) {
-        reply.error(errno_nosys());
+        let path = match self.path_for(ino) {
+            Some(p) => p,
+            None => {
+                reply.error(errno_enoent());
+                return;
+            }
+        };
+
+        // Size is the one attribute this filesystem actually has, so it is the
+        // one that is honoured.  Shrinking is a read-truncate-write because the
+        // kernel has no truncate syscall: `sys_write` grows a file but never
+        // shortens one, and silently leaving the tail behind would corrupt the
+        // file rather than fail.
+        if let Some(size) = _size {
+            let cur = match kernel_callbacks::sys_read(&self.kernel, &path) {
+                Ok(b) => b,
+                Err(_) => {
+                    reply.error(errno_io());
+                    return;
+                }
+            };
+            let want = size as usize;
+            let next: Vec<u8> = if want <= cur.len() {
+                cur[..want].to_vec()
+            } else {
+                let mut v = cur;
+                v.resize(want, 0);
+                v
+            };
+            if kernel_callbacks::sys_write(&self.kernel, &path, &next, 0).is_err() {
+                reply.error(errno_io());
+                return;
+            }
+        }
+
+        // Mode, owner and timestamps are accepted and do nothing, which is what
+        // a filesystem without a POSIX permission model is supposed to do —
+        // FAT and CIFS-without-unix-extensions behave the same way, and it is
+        // why git works on them at all.  nexus authorises through zones and
+        // ReBAC; there is no mode to change.
+        //
+        // This is not a silent lie: `stat` keeps reporting the real synthesised
+        // mode, so a caller that checks whether its chmod stuck can see that it
+        // did not.  That check is exactly what git's `core.fileMode` detection
+        // does.  Returning ENOSYS instead fails every program that chmods
+        // defensively — `git init` cannot create a repository, because it
+        // chmods its own config lockfile before it can write it.
+        match self.stat_attr(ino, &path) {
+            Ok(attr) => reply.attr(&ATTR_TTL, &attr),
+            Err(e) => reply.error(e),
+        }
     }
 }
 

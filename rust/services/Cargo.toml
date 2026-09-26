@@ -13,7 +13,6 @@ default = []
 
 # Per-service features.  Each gates one `pub mod` line in lib.rs so
 # slim Rust binaries (nexus-cluster) link only the services they want.
-service-audit = []
 service-agents = []
 # Generic hosted-subprocess primitive (`HostedSubprocess`): launch an argv +
 # surface its stdio to the VFS. RELOCATED to the nexus-vfs `subprocess` crate
@@ -23,12 +22,6 @@ service-agents = []
 subprocess-host = ["dep:subprocess"]
 service-acp = ["subprocess-host"]
 service-tasks = []
-# AuditNode — consumer-side audit collect/gather service for an
-# audit-only federation node. Pulls `service-audit` to reuse
-# `audit::prepare_stream_only` for local DT_STREAM registration on
-# joined learner zones (the audit-node consumes traces, it does not
-# install the producing AuditHook).
-service-audit-node = ["service-audit"]
 # PasswordVaultService — gRPC interface to the password vault
 # (namespace="passwords"). Phase 1 Rust impl per #3923 integration doc.
 # Loaded as a dylib plugin by nexusd-cluster via --plugin-dir. aes-gcm

@@ -48,14 +48,17 @@
 pub mod acp;
 #[cfg(feature = "service-agents")]
 pub mod agents;
-#[cfg(feature = "service-audit")]
-pub mod audit;
-// AuditNode — consumer-side collect/gather service for an audit-only
-// federation node. Bootstraps its own zone + joins production zones as
-// raft learners, then polls each zone's /audit/traces/ stream and
-// appends copies into its local zone. Reuses audit::prepare_stream_only.
-#[cfg(feature = "service-audit-node")]
-pub mod audit_node;
+// audit + audit_node modules retired 2026-09-26.  The Rust ports were
+// staged behind `service-audit` / `service-audit-node` features and never
+// picked up a production consumer (nexus-vfs's cluster binary — the sole
+// production build after nexus-vfs#319/#321 — enables neither).  Two of
+// their integration tests started failing on the current nexus-vfs pin
+// (raft/topology semantics drift); the modules were the last thing making
+// `cargo check --all-features` compile before the R10 β / δ arc, but a
+// dead cdylib feature with broken tests and no downstream consumer earns
+// no maintenance tax.  Python `AuditNode` (src/nexus/services/audit_node/)
+// keeps operating in the Python nexus-server image; a fresh Rust port
+// can land whenever a production consumer needs it.
 // ManagedAgentService (the MANAGED-agent control plane) moved to the nexus-vfs
 // `managed-agent` crate so the production nexusd-cluster carries it directly;
 // the assembly reaches it via `managed_agent::` from nexus-vfs.

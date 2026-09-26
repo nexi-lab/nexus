@@ -208,7 +208,7 @@ impl NFSFileSystem for NexusNfs {
         // Handle truncate (size=0): shell `>` redirect and open(O_TRUNC)
         // send setattr(size=0) before writing new content.
         if let nfsserve::nfs::set_size3::size(0) = setattr.size {
-            kernel_callbacks::sys_write_async(&self.kernel, &path, &[])
+            kernel_callbacks::sys_write_async(&self.kernel, &path, &[], 0)
                 .await
                 .map_err(|_| nfsstat3::NFS3ERR_IO)?;
         }
@@ -235,11 +235,11 @@ impl NFSFileSystem for NexusNfs {
     }
 
     async fn write(&self, id: fileid3, offset: u64, data: &[u8]) -> Result<fattr3, nfsstat3> {
-        if offset != 0 {
-            return Err(nfsstat3::NFS3ERR_IO);
-        }
+        // Offsets are honoured as of plugin ABI v7; this used to refuse
+        // past byte zero, which limited every client to whole-file
+        // rewrites.
         let path = self.path_for(id).ok_or(nfsstat3::NFS3ERR_NOENT)?;
-        kernel_callbacks::sys_write_async(&self.kernel, &path, data)
+        kernel_callbacks::sys_write_async(&self.kernel, &path, data, offset)
             .await
             .map_err(|_| nfsstat3::NFS3ERR_IO)?;
         self.stat_fattr_async(id, &path).await
@@ -254,7 +254,7 @@ impl NFSFileSystem for NexusNfs {
         let parent = self.path_for(dirid).ok_or(nfsstat3::NFS3ERR_NOENT)?;
         let name = std::str::from_utf8(filename).map_err(|_| nfsstat3::NFS3ERR_INVAL)?;
         let path = join_path(&parent, name);
-        kernel_callbacks::sys_write_async(&self.kernel, &path, &[])
+        kernel_callbacks::sys_write_async(&self.kernel, &path, &[], 0)
             .await
             .map_err(|_| nfsstat3::NFS3ERR_IO)?;
         let id = self.inode_for(&path);
@@ -277,7 +277,7 @@ impl NFSFileSystem for NexusNfs {
         {
             return Err(nfsstat3::NFS3ERR_EXIST);
         }
-        kernel_callbacks::sys_write_async(&self.kernel, &path, &[])
+        kernel_callbacks::sys_write_async(&self.kernel, &path, &[], 0)
             .await
             .map_err(|_| nfsstat3::NFS3ERR_IO)?;
         Ok(self.inode_for(&path))

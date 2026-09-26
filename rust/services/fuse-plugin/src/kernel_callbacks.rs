@@ -78,7 +78,12 @@ pub fn sys_read(kernel: &KernelHandle, path: &str) -> Result<Vec<u8>, i32> {
 }
 
 /// Wrapper around the C `sys_write` callback.
-pub fn sys_write(kernel: &KernelHandle, path: &str, data: &[u8]) -> Result<(), i32> {
+///
+/// `offset == 0` replaces the file; a non-zero offset patches in place.
+/// POSIX lets a program open a file and write it in as many calls as it
+/// likes, and git does exactly that with its own config — which is why
+/// this argument exists rather than the adapter refusing past byte zero.
+pub fn sys_write(kernel: &KernelHandle, path: &str, data: &[u8], offset: u64) -> Result<(), i32> {
     let c_path = CString::new(path).map_err(|_| ERRNO_IO_RAW)?;
     let rc = unsafe {
         (kernel.sys_write)(
@@ -86,6 +91,7 @@ pub fn sys_write(kernel: &KernelHandle, path: &str, data: &[u8]) -> Result<(), i
             c_path.as_ptr(),
             data.as_ptr(),
             data.len(),
+            offset,
         )
     };
     if rc != 0 {
@@ -346,6 +352,7 @@ mod nfs_async {
         kernel: &KernelHandle,
         path: &str,
         data: &[u8],
+        offset: u64,
     ) -> Result<(), i32> {
         let c_path = CString::new(path).map_err(|_| ERRNO_IO_RAW)?;
         let fn_ptr = kernel.sys_write;
@@ -354,8 +361,15 @@ mod nfs_async {
         let owned_data = data.to_vec();
         tokio::task::spawn_blocking(move || {
             let kptr = kptr as *const std::ffi::c_void;
-            let rc =
-                unsafe { (fn_ptr)(kptr, c_path.as_ptr(), owned_data.as_ptr(), owned_data.len()) };
+            let rc = unsafe {
+                (fn_ptr)(
+                    kptr,
+                    c_path.as_ptr(),
+                    owned_data.as_ptr(),
+                    owned_data.len(),
+                    offset,
+                )
+            };
             if rc != 0 {
                 return Err(rc);
             }

@@ -19,6 +19,16 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
+    from nexus.contracts.protocols.chunked_upload import ChunkedUploadProtocol
+    from nexus.contracts.protocols.entity_registry import EntityRegistryProtocol
+    from nexus.contracts.protocols.permission_enforcer import PermissionEnforcerProtocol
+    from nexus.contracts.protocols.rebac import ReBACBrickProtocol
+    from nexus.contracts.protocols.scheduler import SchedulerProtocol
+    from nexus.contracts.protocols.search import SearchBrickProtocol
+    from nexus.contracts.protocols.snapshot import SnapshotServiceProtocol
+    from nexus.services.event_bus.protocol import EventBusProtocol
+    from nexus.storage.record_store import RecordStoreABC
+
 logger = logging.getLogger(__name__)
 
 
@@ -51,12 +61,12 @@ class NexusAppState:
     features_info: Any = None
 
     # === Flattened from NexusFS (replaces private attr access) ===
-    rebac_manager: Any = None
-    entity_registry: Any = None
-    event_bus: Any = None
+    rebac_manager: "ReBACBrickProtocol | None" = None
+    entity_registry: "EntityRegistryProtocol | None" = None
+    event_bus: "EventBusProtocol | None" = None
     write_observer: Any = None
-    permission_enforcer: Any = None
-    record_store: Any = None
+    permission_enforcer: "PermissionEnforcerProtocol | None" = None
+    record_store: "RecordStoreABC | None" = None
 
     # === From ServiceRegistry ===
     observability_subsystem: Any = None
@@ -76,7 +86,7 @@ class NexusAppState:
     async_rebac_manager: Any = None
     key_service: Any = None
     credential_service: Any = None
-    scheduler_service: Any = None
+    scheduler_service: "SchedulerProtocol | None" = None
     task_runner: Any = None
     task_manager_service: Any = None
     task_write_hook: Any = None
@@ -84,11 +94,11 @@ class NexusAppState:
     workflow_engine: Any = None
     sandbox_auth_service: Any = None
     agent_event_log: Any = None
-    transactional_snapshot_service: Any = None
+    transactional_snapshot_service: "SnapshotServiceProtocol | None" = None
 
     # === Realtime ===
     subscription_manager: Any = None
-    search_daemon: Any = None
+    search_daemon: "SearchBrickProtocol | None" = None
     search_daemon_enabled: bool = False
     # #4777: ``POST /search/index`` requests currently in flight in this
     # process — admission control sheds with 503 + Retry-After above
@@ -111,7 +121,7 @@ class NexusAppState:
 
     # === Services (brick-sourced) ===
     delegation_service: Any = None
-    chunked_upload_service: Any = None
+    chunked_upload_service: "ChunkedUploadProtocol | None" = None
 
     # === IPC ===
     ipc_nexus_fs: Any = None

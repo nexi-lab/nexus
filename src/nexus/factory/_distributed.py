@@ -8,7 +8,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from nexus.bricks.workflows.protocol import WorkflowProtocol
+    from nexus.contracts.protocols.workflow import WorkflowProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -30,9 +30,9 @@ def _create_workflow_engine(
         return None
     try:
         from nexus.bricks.workflows.engine import WorkflowEngine
-        from nexus.bricks.workflows.protocol import WorkflowServices
         from nexus.bricks.workflows.storage import WorkflowStore
         from nexus.contracts.constants import ROOT_ZONE_ID
+        from nexus.contracts.protocols.workflow import WorkflowServices
         from nexus.storage.models import WorkflowExecutionModel, WorkflowModel
 
         workflow_store = WorkflowStore(

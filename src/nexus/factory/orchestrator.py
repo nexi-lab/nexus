@@ -59,7 +59,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from nexus.backends.base.backend import Backend
-    from nexus.bricks.workflows.protocol import WorkflowProtocol
+    from nexus.contracts.protocols.workflow import WorkflowProtocol
     from nexus.contracts.types import AuditConfig
     from nexus.core.config import (
         CacheConfig,

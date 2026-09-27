@@ -41,6 +41,7 @@ from nexus.contracts.protocols.share_link import ShareLinkProtocol
 from nexus.contracts.protocols.time_travel import TimeTravelProtocol
 from nexus.contracts.protocols.token_encryptor import TokenEncryptor
 from nexus.contracts.protocols.version import VersionProtocol
+from nexus.contracts.protocols.workflow import WorkflowProtocol
 
 __all__ = [
     "APIKeyCreatorProtocol",
@@ -69,4 +70,5 @@ __all__ = [
     "TimeTravelProtocol",
     "TokenEncryptor",
     "VersionProtocol",
+    "WorkflowProtocol",
 ]

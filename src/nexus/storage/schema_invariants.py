@@ -184,37 +184,6 @@ def _ensure_file_paths_search_columns(
         columns.add("last_indexed_at")
 
 
-def _ensure_rebac_namespaces_table(
-    conn: Any,
-    columns_by_table: dict[str, set[str]],
-    table_names: set[str],
-) -> None:
-    if "rebac_namespaces" in table_names:
-        return
-
-    conn.execute(
-        text(
-            """
-            CREATE TABLE IF NOT EXISTS rebac_namespaces (
-                namespace_id VARCHAR(255) PRIMARY KEY,
-                object_type VARCHAR(255) UNIQUE NOT NULL,
-                config TEXT NOT NULL,
-                created_at TIMESTAMP NOT NULL,
-                updated_at TIMESTAMP NOT NULL
-            )
-            """
-        )
-    )
-    table_names.add("rebac_namespaces")
-    columns_by_table["rebac_namespaces"] = {
-        "namespace_id",
-        "object_type",
-        "config",
-        "created_at",
-        "updated_at",
-    }
-
-
 def _ensure_version_history_content_columns(
     conn: Any,
     columns_by_table: dict[str, set[str]],
@@ -756,11 +725,6 @@ def ensure_postgres_schema_invariants(engine: Engine) -> None:
     columns_by_table = _column_names_by_table(inspector, table_names)
 
     with engine.begin() as conn:
-        # ReBACManager still supports a SQL-backed namespace store when the
-        # kernel is a subprocess. This table must exist for SQLite dev/test
-        # stores as well as PostgreSQL installs.
-        _ensure_rebac_namespaces_table(conn, columns_by_table, table_names)
-
         if engine.dialect.name != "postgresql":
             return
 

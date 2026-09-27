@@ -2,16 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import create_engine, inspect
-
 from nexus.storage.schema_invariants import (
     _ensure_file_paths_search_columns,
     _ensure_operation_log_snapshot_hash_text,
-    _ensure_rebac_namespaces_table,
     _ensure_version_history_content_columns,
     _ensure_zone_indexes,
     _ensure_zones_table_shape,
-    ensure_postgres_schema_invariants,
 )
 
 
@@ -77,27 +73,6 @@ def test_ensure_file_paths_search_columns_repairs_legacy_table() -> None:
     assert "ADD COLUMN indexed_content_id VARCHAR(255)" in statements
     assert "SET indexed_content_id = indexed_content_hash" in statements
     assert "ADD COLUMN last_indexed_at TIMESTAMP" in statements
-
-
-def test_ensure_rebac_namespaces_table_creates_missing_table() -> None:
-    conn = RecordingConnection()
-    columns_by_table: dict[str, set[str]] = {}
-    table_names: set[str] = set()
-
-    _ensure_rebac_namespaces_table(conn, columns_by_table, table_names)
-
-    statements = "\n".join(conn.statements)
-    assert "rebac_namespaces" in table_names
-    assert "rebac_namespaces" in columns_by_table
-    assert "CREATE TABLE IF NOT EXISTS rebac_namespaces" in statements
-
-
-def test_schema_invariants_create_rebac_namespaces_for_sqlite() -> None:
-    engine = create_engine("sqlite:///:memory:")
-
-    ensure_postgres_schema_invariants(engine)
-
-    assert "rebac_namespaces" in inspect(engine).get_table_names()
 
 
 class _FakeInspector:

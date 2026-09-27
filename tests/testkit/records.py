@@ -24,22 +24,6 @@ class InMemoryRecordStore(RecordStoreABC):
         )
         Base.metadata.create_all(self._engine)
 
-        from sqlalchemy import text
-
-        with self._engine.connect() as conn:
-            conn.execute(
-                text(
-                    "CREATE TABLE IF NOT EXISTS rebac_namespaces ("
-                    "  namespace_id TEXT PRIMARY KEY,"
-                    "  object_type TEXT UNIQUE NOT NULL,"
-                    "  config TEXT NOT NULL,"
-                    "  created_at TEXT NOT NULL,"
-                    "  updated_at TEXT NOT NULL"
-                    ")"
-                )
-            )
-            conn.commit()
-
         self._session_factory = sessionmaker(bind=self._engine, expire_on_commit=False)
 
     @property

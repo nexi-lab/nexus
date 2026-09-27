@@ -3100,75 +3100,14 @@ class ReBACManager:
             DEFAULT_APPROVALS_NAMESPACE,
         ]
 
-        # Prefer metastore-backed namespace store (Issue #183)
-        if self._namespace_store is not None:
-            try:
-                for ns_config in all_defaults:
-                    self._namespace_store.create_or_update_default(ns_config)
-                return
-            except Exception as e:
-                logger.warning(
-                    f"Failed to register default namespaces via metastore: {type(e).__name__}: {e}"
-                )
-                logger.debug(traceback.format_exc())
-                return
-
+        assert self._namespace_store is not None, "namespace_store is required"
         try:
-            cursor = self._create_cursor(conn)
-
-            # Check if rebac_namespaces table exists
-            if not self._is_postgresql:
-                cursor.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table' AND name='rebac_namespaces'"
-                )
-            else:  # PostgreSQL
-                cursor.execute("SELECT tablename FROM pg_tables WHERE tablename='rebac_namespaces'")
-
-            if not cursor.fetchone():
-                return  # Table doesn't exist yet
-
-            # Check and create/update namespaces
             for ns_config in all_defaults:
-                cursor.execute(
-                    self._fix_sql_placeholders(
-                        "SELECT namespace_id FROM rebac_namespaces WHERE object_type = ?"
-                    ),
-                    (ns_config.object_type,),
-                )
-                existing = cursor.fetchone()
-                if not existing:
-                    # Create namespace
-                    cursor.execute(
-                        self._fix_sql_placeholders(
-                            "INSERT INTO rebac_namespaces (namespace_id, object_type, config, created_at, updated_at) VALUES (?, ?, ?, ?, ?)"
-                        ),
-                        (
-                            ns_config.namespace_id,
-                            ns_config.object_type,
-                            json.dumps(ns_config.config),
-                            datetime.now(UTC),
-                            datetime.now(UTC),
-                        ),
-                    )
-                else:
-                    # BUGFIX for issue #338: Update existing namespace ONLY if it matches our default namespace_id
-                    # This prevents overwriting custom namespaces created by tests or users
-                    existing_namespace_id = existing["namespace_id"]
-                    if existing_namespace_id == ns_config.namespace_id:
-                        # This is our default namespace, update it to pick up config changes
-                        cursor.execute(
-                            self._fix_sql_placeholders(
-                                "UPDATE rebac_namespaces SET config = ?, updated_at = ? WHERE namespace_id = ?"
-                            ),
-                            (
-                                json.dumps(ns_config.config),
-                                datetime.now(UTC),
-                                ns_config.namespace_id,
-                            ),
-                        )
-            conn.commit()
-        except Exception as e:  # fail-safe: tables may not exist yet at startup
-            logger.warning(f"Failed to register default namespaces: {type(e).__name__}: {e}")
+                self._namespace_store.create_or_update_default(ns_config)
+        except Exception as e:
+            logger.warning(
+                f"Failed to register default namespaces via metastore: {type(e).__name__}: {e}"
+            )
             logger.debug(traceback.format_exc())
 
     def _initialize_default_namespaces(self) -> None:
@@ -3182,63 +3121,9 @@ class ReBACManager:
         Args:
             namespace: Namespace configuration to create
         """
-        # Prefer metastore-backed namespace store (Issue #183)
-        if self._namespace_store is not None:
-            self._namespace_store.create_or_update(namespace)
-            self._invalidate_cache_for_namespace(namespace.object_type)
-            return
-
-        with self._connection() as conn:
-            cursor = self._create_cursor(conn)
-
-            # Check if namespace exists
-            cursor.execute(
-                self._fix_sql_placeholders(
-                    "SELECT namespace_id FROM rebac_namespaces WHERE object_type = ?"
-                ),
-                (namespace.object_type,),
-            )
-            existing = cursor.fetchone()
-
-            if existing:
-                # Update existing namespace
-                cursor.execute(
-                    self._fix_sql_placeholders(
-                        """
-                        UPDATE rebac_namespaces
-                        SET config = ?, updated_at = ?
-                        WHERE object_type = ?
-                        """
-                    ),
-                    (
-                        json.dumps(namespace.config),
-                        datetime.now(UTC).isoformat(),
-                        namespace.object_type,
-                    ),
-                )
-            else:
-                # Insert new namespace
-                cursor.execute(
-                    self._fix_sql_placeholders(
-                        """
-                        INSERT INTO rebac_namespaces (namespace_id, object_type, config, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?)
-                        """
-                    ),
-                    (
-                        namespace.namespace_id,
-                        namespace.object_type,
-                        json.dumps(namespace.config),
-                        namespace.created_at.isoformat(),
-                        namespace.updated_at.isoformat(),
-                    ),
-                )
-
-            conn.commit()
-
-            # BUGFIX: Invalidate all cached checks for this namespace
-            # When namespace config changes, cached permission checks may be stale
-            self._invalidate_cache_for_namespace(namespace.object_type)
+        assert self._namespace_store is not None, "namespace_store is required"
+        self._namespace_store.create_or_update(namespace)
+        self._invalidate_cache_for_namespace(namespace.object_type)
 
     def get_namespace(self, object_type: str) -> NamespaceConfig | None:
         """Get namespace configuration for an object type.
@@ -3249,61 +3134,23 @@ class ReBACManager:
         Returns:
             NamespaceConfig or None if not found
         """
-        # Prefer metastore-backed namespace store (Issue #183)
-        if self._namespace_store is not None:
-            data = self._namespace_store.get(object_type)
-            if data is None:
-                return None
-            created_at = data.get("created_at", "")
-            updated_at = data.get("updated_at", "")
-            if isinstance(created_at, str):
-                created_at = datetime.fromisoformat(created_at) if created_at else datetime.now(UTC)
-            if isinstance(updated_at, str):
-                updated_at = datetime.fromisoformat(updated_at) if updated_at else datetime.now(UTC)
-            return NamespaceConfig(
-                namespace_id=data["namespace_id"],
-                object_type=data["object_type"],
-                config=data["config"],
-                created_at=created_at,
-                updated_at=updated_at,
-            )
-
-        with self._connection(readonly=True) as conn:
-            cursor = self._create_cursor(conn)
-
-            cursor.execute(
-                self._fix_sql_placeholders(
-                    """
-                    SELECT namespace_id, object_type, config, created_at, updated_at
-                    FROM rebac_namespaces
-                    WHERE object_type = ?
-                    """
-                ),
-                (object_type,),
-            )
-
-            row = cursor.fetchone()
-            if not row:
-                return None
-
-            # Both SQLite and PostgreSQL now return dict-like rows
-            created_at = row["created_at"]
-            updated_at = row["updated_at"]
-            # SQLite returns ISO strings, PostgreSQL returns datetime objects
-            if isinstance(created_at, str):
-                created_at = datetime.fromisoformat(created_at)
-            if isinstance(updated_at, str):
-                updated_at = datetime.fromisoformat(updated_at)
-
-            return NamespaceConfig(
-                namespace_id=row["namespace_id"],
-                object_type=row["object_type"],
-                config=json.loads(row["config"])
-                if isinstance(row["config"], str)
-                else row["config"],
-                created_at=created_at,
-                updated_at=updated_at,
-            )
+        assert self._namespace_store is not None, "namespace_store is required"
+        data = self._namespace_store.get(object_type)
+        if data is None:
+            return None
+        created_at = data.get("created_at", "")
+        updated_at = data.get("updated_at", "")
+        if isinstance(created_at, str):
+            created_at = datetime.fromisoformat(created_at) if created_at else datetime.now(UTC)
+        if isinstance(updated_at, str):
+            updated_at = datetime.fromisoformat(updated_at) if updated_at else datetime.now(UTC)
+        return NamespaceConfig(
+            namespace_id=data["namespace_id"],
+            object_type=data["object_type"],
+            config=data["config"],
+            created_at=created_at,
+            updated_at=updated_at,
+        )
 
     def list_namespaces(self) -> list[dict[str, Any]]:
         """List all namespace configurations.
@@ -3312,30 +3159,8 @@ class ReBACManager:
             List of namespace dicts with keys: namespace_id, object_type,
             config (parsed JSON), created_at, updated_at.
         """
-        # Prefer metastore-backed namespace store (Issue #183)
-        if self._namespace_store is not None:
-            return self._namespace_store.list_all()
-
-        with self._connection(readonly=True) as conn:
-            cursor = self._create_cursor(conn)
-            cursor.execute(
-                self._fix_sql_placeholders(
-                    "SELECT namespace_id, object_type, config, created_at, updated_at "
-                    "FROM rebac_namespaces ORDER BY object_type"
-                )
-            )
-            return [
-                {
-                    "namespace_id": row["namespace_id"],
-                    "object_type": row["object_type"],
-                    "config": json.loads(row["config"])
-                    if isinstance(row["config"], str)
-                    else row["config"],
-                    "created_at": row["created_at"],
-                    "updated_at": row["updated_at"],
-                }
-                for row in cursor.fetchall()
-            ]
+        assert self._namespace_store is not None, "namespace_store is required"
+        return self._namespace_store.list_all()
 
     def delete_namespace(self, object_type: str) -> bool:
         """Delete a namespace configuration.
@@ -3346,37 +3171,11 @@ class ReBACManager:
         Returns:
             True if namespace was deleted, False if not found.
         """
-        # Prefer metastore-backed namespace store (Issue #183)
-        if self._namespace_store is not None:
-            deleted = self._namespace_store.delete(object_type)
-            if deleted:
-                self._invalidate_cache_for_namespace(object_type)
-            return deleted
-
-        conn = self._get_connection()
-        try:
-            cursor = self._create_cursor(conn)
-
-            cursor.execute(
-                self._fix_sql_placeholders(
-                    "SELECT namespace_id FROM rebac_namespaces WHERE object_type = ?"
-                ),
-                (object_type,),
-            )
-            if cursor.fetchone() is None:
-                return False
-
-            cursor.execute(
-                self._fix_sql_placeholders("DELETE FROM rebac_namespaces WHERE object_type = ?"),
-                (object_type,),
-            )
-            conn.commit()
-
+        assert self._namespace_store is not None, "namespace_store is required"
+        deleted = self._namespace_store.delete(object_type)
+        if deleted:
             self._invalidate_cache_for_namespace(object_type)
-
-            return True
-        finally:
-            self._close_connection(conn)
+        return deleted
 
     def get_tuple_conditions(self, tuple_id: str) -> dict[str, Any] | None:
         """Get the conditions JSON for a specific tuple.

@@ -33,22 +33,6 @@ from tests.testkit.records import InMemoryRecordStore
 @pytest.fixture()
 def record_store():
     store = InMemoryRecordStore()
-    # Create rebac_namespaces table (removed from ORM models in #183 migration)
-    from sqlalchemy import text
-
-    with store.engine.connect() as conn:
-        conn.execute(
-            text(
-                "CREATE TABLE IF NOT EXISTS rebac_namespaces ("
-                "  namespace_id TEXT PRIMARY KEY,"
-                "  object_type TEXT UNIQUE NOT NULL,"
-                "  config TEXT NOT NULL,"
-                "  created_at TEXT NOT NULL,"
-                "  updated_at TEXT NOT NULL"
-                ")"
-            )
-        )
-        conn.commit()
     # create_key validates the target zone exists and is Active (#3871);
     # keys here use the default ROOT_ZONE_ID, so seed that zone.
     from nexus.contracts.constants import ROOT_ZONE_ID

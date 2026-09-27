@@ -22,6 +22,12 @@ from nexus.contracts.protocols.auth import APIKeyCreatorProtocol
 from nexus.contracts.protocols.chunked_upload import ChunkedUploadProtocol
 from nexus.contracts.protocols.entity_registry import EntityRegistryProtocol
 from nexus.contracts.protocols.file_reader import FileReaderProtocol
+from nexus.contracts.protocols.governance import (
+    AnomalyDetectorProtocol,
+    AnomalyServiceProtocol,
+    CollusionServiceProtocol,
+    GovernanceGraphProtocol,
+)
 from nexus.contracts.protocols.lease import LeaseManagerProtocol, LeaseState
 from nexus.contracts.protocols.mcp import MCPProtocol
 from nexus.contracts.protocols.mount import MountProtocol
@@ -45,10 +51,14 @@ from nexus.contracts.protocols.version import VersionProtocol
 __all__ = [
     "APIKeyCreatorProtocol",
     "AgentRequest",
+    "AnomalyDetectorProtocol",
+    "AnomalyServiceProtocol",
+    "CollusionServiceProtocol",
     "BackgroundService",
     "ChunkedUploadProtocol",
     "EntityRegistryProtocol",
     "FileReaderProtocol",
+    "GovernanceGraphProtocol",
     "LeaseManagerProtocol",
     "LeaseState",
     "MCPProtocol",

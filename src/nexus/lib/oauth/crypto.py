@@ -92,8 +92,8 @@ class OAuthCrypto:
             raise EphemeralOAuthKeyRefused(
                 "No persistent OAuth encryption key available and "
                 f"{ALLOW_EPHEMERAL_KEY_ENV}=1 was not set. Wire a "
-                "settings_store (e.g. SQLAlchemySystemSettingsStore on the "
-                f"record_store) or set {OAUTH_ENCRYPTION_KEY_ENV} to a 32-byte "
+                "settings_store (e.g. MetastoreSettingsStore) or set "
+                f"{OAUTH_ENCRYPTION_KEY_ENV} to a 32-byte "
                 "urlsafe-base64 Fernet key before starting. Generating an "
                 "ephemeral key silently would orphan any secret written in "
                 "previous process runs."

@@ -77,7 +77,6 @@ from nexus.storage.models.indexed_directory import (
 from nexus.storage.models.infrastructure import MigrationHistoryModel as MigrationHistoryModel
 from nexus.storage.models.infrastructure import SandboxMetadataModel as SandboxMetadataModel
 from nexus.storage.models.infrastructure import SubscriptionModel as SubscriptionModel
-from nexus.storage.models.infrastructure import SystemSettingsModel as SystemSettingsModel
 
 # Domain: Lineage Tracking (Issue #3417)
 from nexus.storage.models.lineage_reverse_index import (

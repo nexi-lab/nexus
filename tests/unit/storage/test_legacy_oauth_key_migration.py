@@ -1,12 +1,11 @@
-"""Tests for the legacy-redb → SQL OAuth key migration shim.
+"""Tests for the legacy-redb OAuth key migration shim.
 
 The migration is a one-shot upgrade path that copies an existing
 OAuth encryption key from the pre-R20.18.5 filesystem-metastore
-location (``~/.nexus/metastore[.redb]``) into the record_store (SQL)
-so the post-R20.18.5 boot path, which reads only from SQL, can find
-it. These tests stub out the redb reader so they don't need a real
-nexus_runtime; the migration function is a pure orchestration layer
-above ``_read_oauth_key_from_redb``.
+location (``~/.nexus/metastore[.redb]``) into the settings store
+so the boot path can find it. These tests stub out the redb reader
+so they don't need a real nexus_runtime; the migration function is
+a pure orchestration layer above ``_read_oauth_key_from_redb``.
 """
 
 from __future__ import annotations
@@ -50,7 +49,7 @@ def _patch_reader(monkeypatch: pytest.MonkeyPatch, result_by_path: dict[Path, An
 
 
 class TestIdempotency:
-    def test_skips_when_sql_already_has_key(
+    def test_skips_when_store_already_has_key(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         store = _FakeSettingsStore(initial={OAUTH_ENCRYPTION_KEY_NAME: "existing-key"})
@@ -75,7 +74,7 @@ class TestIdempotency:
         _patch_reader(monkeypatch, {candidate: "legacy-key"})
 
         assert migrate_legacy_oauth_key(store) is True
-        # Second call sees the key already in SQL → skips.
+        # Second call sees the key already in store → skips.
         assert migrate_legacy_oauth_key(store) is False
 
 

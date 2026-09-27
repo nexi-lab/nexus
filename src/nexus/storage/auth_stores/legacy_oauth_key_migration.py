@@ -1,5 +1,5 @@
 """One-shot migration of the OAuth encryption key from legacy metastore
-(redb) files into the record_store (SQL).
+(redb) files into the current settings store.
 
 Context
 -------
@@ -13,14 +13,12 @@ already written an OAuth key silently lost it on upgrade: next boot
 generated an ephemeral key, and every secret encrypted under the old
 key became undecryptable.
 
-We now persist the key in the record_store (SQL) via
-``SQLAlchemySystemSettingsStore`` — the correct services-tier SSOT —
-which makes filesystem-metastore paths irrelevant going forward. This
-module bridges the upgrade: on first boot after this change, if the
-record_store has no OAuth key yet, peek at the legacy redb files and
-copy the key over if found.
+We now persist the key via ``MetastoreSettingsStore`` (redb, per
+data-storage-matrix.md). This module bridges the upgrade: on first boot
+after this change, if the settings store has no OAuth key yet, peek at
+the legacy redb files and copy the key over if found.
 
-Idempotent: if the record_store already has a key (either migrated
+Idempotent: if the settings store already has a key (either migrated
 earlier or written in a later boot), the legacy paths are never opened.
 """
 
@@ -47,34 +45,32 @@ def _legacy_redb_candidates() -> list[Path]:
 
 
 def migrate_legacy_oauth_key(
-    sql_settings_store: SystemSettingsStoreProtocol,
+    settings_store: SystemSettingsStoreProtocol,
     *,
     existing_metastore: Any | None = None,
 ) -> bool:
-    """Copy the OAuth key from a legacy redb file into the SQL settings store.
+    """Copy the OAuth key from a legacy redb file into the settings store.
 
     Args:
-        sql_settings_store: The SQL-backed settings store to write the key into.
+        settings_store: The settings store to write the key into.
         existing_metastore: An already-open ``MetastoreABC`` (typically the main
             Kernel's ``RustMetastoreProxy``).  When provided the key is read
             through this connection, avoiding a second ``PyKernel()`` that would
             hit the redb exclusive-file-lock held by the main PyKernel.
 
     Returns:
-        True if a migration actually happened this call; False if the SQL
+        True if a migration actually happened this call; False if the
         store already had a key, no legacy file existed, or no legacy file
         contained the key.
 
     Raises:
-        Exception: if a legacy file holds a key but writing it into the SQL
+        Exception: if a legacy file holds a key but writing it into the
             settings store fails. This is a data-integrity failure the
             operator needs to see; silently continuing would let the next
             request generate a fresh ephemeral key and orphan all data
             encrypted under the legacy key.
     """
-    # Idempotency guard — once the SQL store has the key, the redb files
-    # stop being load-bearing and we don't touch them again.
-    if sql_settings_store.get_setting(OAUTH_ENCRYPTION_KEY_NAME) is not None:
+    if settings_store.get_setting(OAUTH_ENCRYPTION_KEY_NAME) is not None:
         return False
 
     for path in _legacy_redb_candidates():
@@ -83,7 +79,7 @@ def migrate_legacy_oauth_key(
         key = _read_oauth_key_from_redb(path, existing_metastore=existing_metastore)
         if key is None:
             continue
-        sql_settings_store.set_setting(
+        settings_store.set_setting(
             OAUTH_ENCRYPTION_KEY_NAME,
             key,
             description=(
@@ -92,7 +88,7 @@ def migrate_legacy_oauth_key(
             ),
         )
         logger.info(
-            "Migrated legacy OAuth encryption key: %s -> record_store.system_settings",
+            "Migrated legacy OAuth encryption key: %s -> metastore settings",
             path,
         )
         return True

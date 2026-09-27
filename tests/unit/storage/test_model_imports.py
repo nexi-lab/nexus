@@ -56,7 +56,6 @@ EXPECTED_MODELS = [
     "ShareLinkAccessLogModel",
     # Infrastructure
     "SandboxMetadataModel",
-    "SystemSettingsModel",
     "SubscriptionModel",
     "MigrationHistoryModel",
     # Agents

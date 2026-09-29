@@ -109,17 +109,49 @@ jobs:
         timeout-minutes: 30
         run: |
           start=$(date +%s)
-          uv run --no-sync python -Xfaulthandler -m pytest tests/unit -v --durations=10 -n auto --dist loadgroup \
+          # `timeout` here is what makes the branch below reachable at all. The kill
+          # has to be OURS: when GitHub enforces `timeout-minutes` it takes the whole
+          # step down, so nothing after the pytest line runs — which is why the
+          # $status check was dead code, and why the known exit-time hang (#4667)
+          # burned the full 30 minutes and reported a bare
+          # "The action 'Run unit tests' has timed out" with no diagnosis.
+          #
+          # 15m, not 20: the duration gate below fails over 1200s, so a run accepted
+          # here must land under it. The suite's target is 180s, so this is already 5x
+          # the worst anyone expects.
+          # SIGTERM first, SIGKILL only if it will not go: a terminating process still
+          # runs its atexit handlers and can print, which is where a diagnosis for
+          # #4667 would come from. A SIGKILL leaves nothing behind but the exit code.
+          set +e
+          timeout -s TERM --kill-after=60s 15m \
+            uv run --no-sync python -Xfaulthandler -m pytest tests/unit -v --durations=10 -n auto --dist loadgroup \
             --timeout=60 --timeout-method=signal -p no:cacheprovider \
-            --cov=nexus --cov-report=term-missing --cov-report=xml
-          status=$?
+            --cov=nexus --cov-report=term-missing --cov-report=xml 2>&1 | tee pytest_unit.log
+          status=${PIPESTATUS[0]}
+          set -e
           echo $(( $(date +%s) - start )) > unit_test_duration_sec.txt
-          # timeout returns 137 (128+9=SIGKILL) when it kills the process.
-          # Treat this as success if tests actually passed (duration file exists
-          # and was written before the kill).
-          if [ $status -eq 137 ] && [ -f unit_test_duration_sec.txt ]; then
-            echo "::warning::pytest killed by timeout watchdog (tokio thread hang). Tests passed."
-            exit 0
+          # 143 = 128+SIGTERM (it took the hint), 137 = 128+SIGKILL (it did not).
+          if [ "$status" -eq 137 ] || [ "$status" -eq 143 ]; then
+            # A suite that PASSED and then would not exit is #4667: an xdist worker
+            # leaves a tokio thread alive, so the process hangs after the verdict is
+            # already known. Accepting that is reasonable; accepting a kill on faith
+            # is not, and that is what this used to do — its old guard was
+            # `[ -f unit_test_duration_sec.txt ]`, a file written by the line above it
+            # on every path, so the condition was always true and ANY kill, including
+            # a genuine mid-run hang, would have been reported as a pass.
+            #
+            # The verdict now comes from pytest's own summary line. Only that line is
+            # read: `-v` output contains test NAMES with "failed" in them, so matching
+            # the whole log would fail on a green run.
+            summary=$(grep -aE "^=+.*(passed|failed|error)" pytest_unit.log | tail -1)
+            if [ -n "$summary" ] \
+              && printf '%s' "$summary" | grep -q "passed" \
+              && ! printf '%s' "$summary" | grep -qE "failed|error"; then
+              echo "::warning::pytest hung at exit after a green suite (#4667), killed at 15m and accepted on its own summary: ${summary}"
+              exit 0
+            fi
+            echo "::error::pytest was killed at 15m with no passing summary — a real hang, not the exit-time one. Last summary line: ${summary:-<none>}"
+            exit 1
           fi
           exit $status
         shell: bash

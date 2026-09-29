@@ -122,8 +122,24 @@ jobs:
           # SIGTERM first, SIGKILL only if it will not go: a terminating process still
           # runs its atexit handlers and can print, which is where a diagnosis for
           # #4667 would come from. A SIGKILL leaves nothing behind but the exit code.
+          #
+          # Resolved rather than assumed: macOS runners have no GNU `timeout`
+          # (coreutils is not in the image), and hard-coding it turned this step into
+          # `timeout: command not found` there. The hang being guarded against is the
+          # Linux xdist one in #4667, so where the tool exists the kill is ours and the
+          # branch below runs; where it does not, the step's `timeout-minutes` stays the
+          # only limit, exactly as before. An empty variable expands to nothing, which
+          # runs pytest directly.
+          WATCHDOG=""
+          if command -v timeout >/dev/null 2>&1; then
+            WATCHDOG="timeout -s TERM --kill-after=60s 15m"
+          elif command -v gtimeout >/dev/null 2>&1; then
+            WATCHDOG="gtimeout -s TERM --kill-after=60s 15m"
+          else
+            echo "::warning::no GNU timeout on this runner — the unit-test watchdog is inactive here, only the step's 30m limit applies"
+          fi
           set +e
-          timeout -s TERM --kill-after=60s 15m \
+          $WATCHDOG \
             uv run --no-sync python -Xfaulthandler -m pytest tests/unit -v --durations=10 -n auto --dist loadgroup \
             --timeout=60 --timeout-method=signal -p no:cacheprovider \
             --cov=nexus --cov-report=term-missing --cov-report=xml 2>&1 | tee pytest_unit.log

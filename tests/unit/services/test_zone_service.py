@@ -669,6 +669,55 @@ def test_truth_table_denies_when_grant_missing(session_factory):
         assert not decision and decision.code == "GRANT_NOT_ACTIVE"
 
 
+def test_foreign_same_name_agent_distinguished_by_trust_domain(session_factory):
+    """§11.2 supplement: a foreign same-name agent is distinguished by trust
+    domain (authz._grant_covers_principal grantee matching).
+
+    A grant whose grantee carries trust_domain="td-alpha" must not cover a
+    same-name, same-type principal from trust_domain="td-beta" — the
+    foreign principal falls back to GRANT_NOT_ACTIVE (deny), while the
+    td-alpha principal stays covered. A principal without a trust domain
+    cannot claim a td-scoped grant either (the mismatch rule is
+    symmetric), matching _grant_covers_principal's exact-match check.
+    """
+    authz = _authz_env(session_factory, grant=True, rebac=True)
+    with session_factory() as s, s.begin():
+        from nexus.storage.models import ZoneGrantModel
+
+        g = s.execute(
+            sa.select(ZoneGrantModel).where(ZoneGrantModel.source_id == "gk1")
+        ).scalar_one()
+        g.grantee = {
+            "subject_type": "agent",
+            "subject_id": "agent-7",
+            "trust_domain": "td-alpha",
+        }
+
+    def allow_for(td: str | None):
+        principal = Principal(subject_type="agent", subject_id="agent-7", trust_domain=td)
+        with session_factory() as s:
+            return authz.allow(
+                s,
+                principal=principal,
+                zone_id="team-test-zone",
+                capability="zone.data.read",
+                resource_path="/sessions/x",
+            )
+
+    same_td = allow_for("td-alpha")
+    assert same_td, "same-name principal in the grant's trust domain stays covered"
+
+    foreign = allow_for("td-beta")
+    assert not foreign and foreign.code == "GRANT_NOT_ACTIVE", (
+        "foreign same-name agent from another trust domain must be denied"
+    )
+
+    absent_td = allow_for(None)
+    assert not absent_td and absent_td.code == "GRANT_NOT_ACTIVE", (
+        "a principal without trust domain must not claim a td-scoped grant"
+    )
+
+
 def test_expired_grant_denies_at_access_time(session_factory):
     principal = Principal(subject_type="organization", subject_id="org-1")
     authz = _authz_env(session_factory, grant=True, rebac=True, expired=True)

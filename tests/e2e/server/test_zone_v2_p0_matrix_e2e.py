@@ -993,3 +993,76 @@ def test_p0_c2_truth_table_supplements(nexus_server, test_app) -> None:
     )
     assert root_delete.status_code in (400, 403, 404, 409, 422), root_delete.text
     # root delete rejection above is the assertion (§4.5 root 禁删).
+
+
+def test_p0_c2_office_core_data_domain_default_deny(nexus_server, test_app) -> None:
+    """§11.2 supplement: "Office does not read Core by default".
+
+    Semantic boundary: data_domain is a placement/list-filter attribute
+    (zones.py list filter, service.py placement columns) — it is NOT an
+    authz input; the authorization decision is grant ∩ ReBAC regardless
+    of data_domain. This scenario is the direct §11.2 checklist evidence:
+    a principal holding an office-domain grant (truth-table allow on the
+    office zone) is denied on a core-domain zone, because the default
+    across domains is denial — a cross-domain read needs an explicit
+    grant. It does not assert a data_domain-level access-control
+    mechanism (none exists).
+    """
+    headers = {"Authorization": f"Bearer {nexus_server['api_key']}"}
+    office_zone = "p0m-c2-office"
+    core_zone = "p0m-c2-core"
+
+    for zone_id, data_domain, key in (
+        (office_zone, "office", "p0m-c2-office-create"),
+        (core_zone, "core", "p0m-c2-core-create"),
+    ):
+        created = test_app.post(
+            "/v2/zones",
+            headers={**headers, "Idempotency-Key": key},
+            json={
+                "zone_id": zone_id,
+                "display_name": zone_id,
+                "deployment": {
+                    "location": "cloud",
+                    "trust_domain": "p0-matrix.test",
+                    "data_domain": data_domain,
+                },
+            },
+        )
+        assert created.status_code == 202, created.text
+        op = _wait_operation(test_app, created.headers["Location"].split("/")[-1], headers)
+        assert op["state"] == "succeeded", op
+        stored = test_app.get(f"/v2/zones/{zone_id}", headers=headers).json()
+        assert stored["deployment"]["data_domain"] == data_domain, stored
+
+    # Setup validity: the org holds an active grant + delegation on the
+    # office zone only, and that access is allowed (§11.2 truth-table row
+    # "grant holds + relation holds" → allow).
+    _create_grant(
+        test_app, headers, office_zone, "p0m-org-office", "p0m-c2-og", "p0m-c2-office-src"
+    )
+    svc = test_app.post(
+        "/api/v2/auth/keys",
+        headers=headers,
+        json={
+            "label": "p0m-svc",
+            "subject_type": "service",
+            "subject_id": "moss-e2e",
+            "zone_id": "root",
+            "is_admin": True,
+        },
+    ).json()["key"]
+    svc_headers = {"Authorization": f"Bearer {svc}"}
+    user_key = _mint_user_key(test_app, headers, "p0m-c2-office-user", office_zone)
+    delegation = _issue_delegation(
+        test_app, svc_headers, "p0m-c2-office-user", "p0m-org-office", office_zone, "p0m-c2-od"
+    )
+    assert _access(test_app, office_zone, user_key, delegation) == 200
+
+    # The same principal against the core zone: no grant for it → deny
+    # (§11.2 "Office 不默认读 Core" — the default across data domains is
+    # denial; nothing about data_domain itself widens or narrows access).
+    denied = _access(test_app, core_zone, user_key, delegation)
+    assert denied == 403, (
+        f"office-domain principal must not read core zone by default: {denied}"
+    )

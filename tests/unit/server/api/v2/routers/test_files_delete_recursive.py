@@ -41,7 +41,13 @@ class _FakeFS:
     def sys_unlink(self, path: str, *, recursive: bool = False, **_: Any) -> dict[str, Any]:
         self.calls.append((path, recursive))
         if path == "/ws/a" and not recursive:
-            raise RuntimeError('RPC error [-32603]: IOError("Directory not empty: /ws/a")')
+            # The shape the daemon actually sends. It used to arrive wrapped in Rust's
+            # Debug form — `IOError("Directory not empty: /ws/a")` — and this mock
+            # copied that verbatim; nexus-vfs#350 gave `KernelError` a `Display`, so the
+            # variant name no longer travels. The router matches the substring either
+            # way, which is exactly why a mock left on the old shape would have kept
+            # passing while describing a wire format that no longer exists.
+            raise RuntimeError("RPC error [-32603]: Directory not empty: /ws/a")
         return {"projection_seq": 1}
 
 

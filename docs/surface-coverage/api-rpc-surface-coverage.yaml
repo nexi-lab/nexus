@@ -1036,7 +1036,7 @@ operations:
   transports:
     http:
       name: POST /batch/read
-      source: src/nexus/server/api/v2/routers/async_files.py:2259
+      source: src/nexus/server/api/v2/routers/async_files.py:2264
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1055,7 +1055,7 @@ operations:
   transports:
     http:
       name: POST /batch/write
-      source: src/nexus/server/api/v2/routers/async_files.py:2173
+      source: src/nexus/server/api/v2/routers/async_files.py:2178
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1074,7 +1074,7 @@ operations:
   transports:
     http:
       name: POST /copy
-      source: src/nexus/server/api/v2/routers/async_files.py:2464
+      source: src/nexus/server/api/v2/routers/async_files.py:2469
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1093,7 +1093,7 @@ operations:
   transports:
     http:
       name: POST /copy-bulk
-      source: src/nexus/server/api/v2/routers/async_files.py:2574
+      source: src/nexus/server/api/v2/routers/async_files.py:2579
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1130,7 +1130,7 @@ operations:
   transports:
     http:
       name: GET /exists
-      source: src/nexus/server/api/v2/routers/async_files.py:1736
+      source: src/nexus/server/api/v2/routers/async_files.py:1741
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1148,7 +1148,7 @@ operations:
   transports:
     http:
       name: GET /glob
-      source: src/nexus/server/api/v2/routers/async_files.py:2653
+      source: src/nexus/server/api/v2/routers/async_files.py:2658
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1166,7 +1166,7 @@ operations:
   transports:
     http:
       name: GET /grep
-      source: src/nexus/server/api/v2/routers/async_files.py:2712
+      source: src/nexus/server/api/v2/routers/async_files.py:2717
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1185,7 +1185,7 @@ operations:
   transports:
     http:
       name: GET /list
-      source: src/nexus/server/api/v2/routers/async_files.py:1773
+      source: src/nexus/server/api/v2/routers/async_files.py:1778
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1221,7 +1221,7 @@ operations:
   transports:
     http:
       name: GET /metadata
-      source: src/nexus/server/api/v2/routers/async_files.py:2069
+      source: src/nexus/server/api/v2/routers/async_files.py:2074
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1239,7 +1239,7 @@ operations:
   transports:
     http:
       name: POST /mkdir
-      source: src/nexus/server/api/v2/routers/async_files.py:2025
+      source: src/nexus/server/api/v2/routers/async_files.py:2030
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1294,7 +1294,7 @@ operations:
   transports:
     http:
       name: POST /rename
-      source: src/nexus/server/api/v2/routers/async_files.py:2419
+      source: src/nexus/server/api/v2/routers/async_files.py:2424
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1312,7 +1312,7 @@ operations:
   transports:
     http:
       name: POST /rename-batch
-      source: src/nexus/server/api/v2/routers/async_files.py:2531
+      source: src/nexus/server/api/v2/routers/async_files.py:2536
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1330,7 +1330,7 @@ operations:
   transports:
     http:
       name: GET /stream
-      source: src/nexus/server/api/v2/routers/async_files.py:2338
+      source: src/nexus/server/api/v2/routers/async_files.py:2343
   profiles:
     lite: supported
     sandbox: unavailable

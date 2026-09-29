@@ -1725,9 +1725,14 @@ def create_async_files_router(
         except _TransactionConflictError as e:
             raise HTTPException(status_code=409, detail=str(e)) from e
         except Exception as e:
-            # The kernel refuses a non-recursive rmdir of a non-empty
-            # directory with an IOError("Directory not empty") that reaches
-            # here as a generic RPC error — a conflict, not a server fault.
+            # The kernel refuses a non-recursive rmdir of a non-empty directory with
+            # "Directory not empty: <path>", which crosses the wire under the generic
+            # internal-error code — a conflict, not a server fault.
+            #
+            # Matched as a substring because that code is the only one the daemon has
+            # for it: there is no distinct RPC code to key on, so the text is the
+            # signal. (Until nexus-vfs#350 the text also carried a Rust Debug wrapper,
+            # `IOError("…")`; the substring is why this kept working across that change.)
             if "Directory not empty" in str(e):
                 raise HTTPException(status_code=409, detail=str(e)) from e
             logger.exception(f"Delete error: {e}")

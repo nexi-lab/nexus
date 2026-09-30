@@ -46,10 +46,14 @@ def _service(request: Request) -> ZoneApplicationService:
 
 
 def _svc_error(exc: ServiceError) -> HTTPException:
-    return HTTPException(
-        status_code=exc.http_status,
-        detail={"code": exc.code, "message": exc.message, "retryable": exc.retryable},
-    )
+    detail: dict[str, Any] = {
+        "code": exc.code,
+        "message": exc.message,
+        "retryable": exc.retryable,
+    }
+    if exc.details is not None:
+        detail["details"] = exc.details
+    return HTTPException(status_code=exc.http_status, detail=detail)
 
 
 def _iso(value: Any) -> str:

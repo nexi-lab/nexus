@@ -58,6 +58,54 @@ def arm_zone_services(
     if session_factory is None:
         raise ZoneControlNotArmed("zone canonical store is unavailable")
 
+    # P1a SessionRuntimeService (§8.9): home-zone record routing goes through
+    # the typed kernel — real VFS bytes with a zone-scoped OperationContext,
+    # never SQL columns standing in for zone I/O.
+    fs = getattr(app.state, "nexus_fs", None)
+
+    def _zone_fs_purger(zone_id: str) -> None:
+        """§5.6 deprovision physical replica teardown: clear the root-zone
+        VFS materialized tree /zone/<zone_id>/ written by _zone_fs_writer.
+
+        Pass criteria is "no file entries remain under the prefix" — the
+        delete_batch success flag is unreliable here (its recheck reports
+        "Path recreated" on an emptied implicit-dir tree), so verify the
+        listing directly. Idempotent: an already-purged tree passes.
+        """
+        from nexus.contracts.types import OperationContext
+
+        if fs is None:  # pragma: no cover - guarded by composite arming
+            raise RuntimeError("zone filesystem unavailable")
+        ctx = OperationContext(
+            user_id="zone-deprovision",
+            subject_type="service",
+            subject_id="zone-deprovision",
+            zone_id=zone_id,
+            zone_perms=((zone_id, "rw"),),
+            is_admin=False,
+            groups=[],
+        )
+        prefix = f"/zone/{zone_id}"
+        fs.delete_batch(paths=[prefix], recursive=True, context=ctx)
+        # Empty implicit-dir skeletons (no inode) survive the batch delete —
+        # they carry no data. Pass = no FILE entries remain: stat each listed
+        # entry (implicit dirs stat as entry_type DT_DIR) and fail on any
+        # non-directory.
+        try:
+            entries = fs.sys_readdir(prefix, recursive=True)
+        except Exception:  # noqa: BLE001 - a vanished prefix is the goal
+            entries = []
+        remaining = []
+        for entry in entries:
+            path = entry if isinstance(entry, str) else getattr(entry, "path", str(entry))
+            stat = fs.sys_stat(path)
+            if stat is not None and stat.get("entry_type") != 1:  # 1 = DT_DIR
+                remaining.append(path)
+        if remaining:  # pragma: no cover - defensive: purge must drain files
+            raise RuntimeError(
+                f"zone {zone_id}: {len(remaining)} file entries remain after VFS purge"
+            )
+
     service = ZoneApplicationService(
         session_factory,
         runtime,
@@ -66,6 +114,7 @@ def arm_zone_services(
         projection_delete=projection_delete,
         transfer_policy=transfer_policy,
         transfer_executor=transfer_executor,
+        zone_fs_purger=_zone_fs_purger if fs is not None else None,
     )
     authz = AuthorizationService(
         session_factory,
@@ -87,11 +136,6 @@ def arm_zone_services(
     app.state.zone_worker_authorization_service = worker_authz
     app.state.zone_session_factory = session_factory
     app.state.zone_runtime = runtime
-
-    # P1a SessionRuntimeService (§8.9): home-zone record routing goes through
-    # the typed kernel — real VFS bytes with a zone-scoped OperationContext,
-    # never SQL columns standing in for zone I/O.
-    fs = getattr(app.state, "nexus_fs", None)
 
     def _zone_fs_writer(path: str, buf: bytes, zone_id: str) -> int:
         if fs is None:  # pragma: no cover - guarded by composite arming

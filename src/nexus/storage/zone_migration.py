@@ -82,7 +82,6 @@ def map_legacy_zone(
         return LegacyZoneMapping(
             zone_id=zone_id,
             outcome="blocker",
-            canonical_status="deleting",
             blockers=("Terminating requires resuming or rebuilding a deprovision operation",),
         )
     if phase == "Terminated":
@@ -305,9 +304,11 @@ def zone_inventory(
         if not decision.importable:
             items["api_key_zone_unattributable"] = (*items["api_key_zone_unattributable"], key_id)
 
-    # Manual/authoritative ReBAC relations without an active grant are only
-    # visible when the caller passes them (the ReBAC store is a projection,
-    # not canonical here) — see test_zone_inventory for the construction.
+    # rebac_membership_without_grant is declared to mirror the §10.2 nine
+    # bucket taxonomy, but this tool does NOT detect ReBAC-only memberships:
+    # it never inspects the ReBAC store, so the bucket is always empty here.
+    # An empty report means "not measured", never "no grantless membership
+    # exists" — audit the ReBAC store directly for that class of drift.
 
     counts = {cls: len(ids) for cls, ids in items.items()}
     return InventoryReport(counts=counts, items=items)

@@ -679,8 +679,11 @@ def api_call(
         headers=headers,
         timeout=30.0,
     )
-    if response.is_error:
-        raise RuntimeError(f"Zone API {response.status_code}: {response.text}")
+    if response.is_error or response.is_redirect:
+        # Redirects are a misconfigured base URL (e.g. http→https jump);
+        # httpx does not follow them by default and .json() would only
+        # produce a cryptic decode error.
+        raise RuntimeError(f"Zone API {response.status_code} (redirect): {response.text}")             if response.is_redirect else             RuntimeError(f"Zone API {response.status_code}: {response.text}")
     if response.status_code == 204:
         return None
     return response.json()

@@ -65,6 +65,8 @@ class ZoneOperationWorker:
             )
             if self._session_tasks is not None:
                 self._session_tasks.park_attempts_for_revocation()
+                self._session_tasks.reap_orphan_attempts()
+                self._session_tasks.reap_terminal_rows()
         return processed
 
     def _pump_outbox(self, model: type[Any], handler: Callable[[dict[str, Any]], bool]) -> int:
@@ -188,7 +190,13 @@ class ZoneOperationWorker:
                 event_type=str(kind),
                 payload=event,
             )
-        return result.state in ("succeeded", "waiting_dependency")
+        # A deterministic failure (retryable=False, e.g. a runtime REJECTED
+        # verdict) is terminal: report done so the outbox stops retrying and
+        # the recorded refusal reason survives.  Unknown-family failures keep
+        # retrying as before.
+        return result.state in ("succeeded", "waiting_dependency") or (
+            result.state == "failed" and not result.retryable
+        )
 
     def _do_projection_event(self, event: dict) -> bool:
         grant_id = event.get("grant_id")
@@ -237,19 +245,33 @@ class ZoneOperationWorker:
         return recovered
 
     def _collect_pending_creates(self) -> list[str]:
-        with self._session_factory() as session:
+        """Claim-and-collect: mirror the outbox due-query's lease conditions so
+        a second replica holding a live lease on the operation is never
+        re-pumped here (HA multi-replica correctness, M-8)."""
+        now = datetime.now(UTC)
+        claimed: list[str] = []
+        with self._session_factory() as session, session.begin():
             rows = (
                 session.execute(
-                    select(ZoneOperationModel.operation_id).where(
+                    select(ZoneOperationModel).where(
                         ZoneOperationModel.action == "create",
                         ZoneOperationModel.state.in_(("queued", "running")),
                         ~ZoneOperationModel.step.like("zone.join%"),
+                        or_(
+                            ZoneOperationModel.lease_owner.is_(None),
+                            ZoneOperationModel.lease_expires_at.is_(None),
+                            ZoneOperationModel.lease_expires_at <= now,
+                        ),
                     )
                 )
                 .scalars()
                 .all()
             )
-            return list(rows)
+            for op in rows:
+                op.lease_owner = WORKER_ID
+                op.lease_expires_at = now + timedelta(seconds=LEASE_S)
+                claimed.append(op.operation_id)
+        return claimed
 
 
 def select_stmt_count(model: type[Any], session: Any, row_id: int) -> int:

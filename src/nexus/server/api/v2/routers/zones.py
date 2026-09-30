@@ -107,21 +107,19 @@ def create_zone(
     svc = _service(request)
     require_global_capability(auth_result, "zone.global.create")
     principal = principal_dict(auth_result)
+    # Body fields are contract-typed (H-2): admission-shape violations were
+    # rejected at the validation layer (422), so this construction cannot
+    # raise; the frozen schema also makes deployment.location/trust_domain
+    # required — no server-side defaulting (H-2 consistency).
     contract = ZoneCreateRequest(
         api_version="auth.sudo.dev/v1",
         kind="ZoneCreateRequest",
         zone_id=body.zone_id,
         display_name=body.display_name,
         description=body.description,
-        deployment=None,
+        deployment=body.deployment,
         labels=body.labels,
     )
-    if body.deployment:
-        from nexus.contracts.zone_v1 import ZoneDeployment
-
-        contract.deployment = ZoneDeployment.model_validate(
-            {**body.deployment, "location": body.deployment.get("location", "cloud")}
-        )
     try:
         result = svc.create_zone(contract, idempotency_key=idempotency_key, principal=principal)
     except ServiceError as exc:
@@ -156,7 +154,9 @@ def list_zones(
     session = getattr(request.app.state, "zone_session_factory", None)
     if session is None:
         raise HTTPException(status_code=503, detail="zone store unavailable")
-    if include_deleted or all_zones:
+    # L-8①: ?status=deleted reads the tombstones without include_deleted —
+    # that is an audit-gated read and must hit the same capability + event.
+    if include_deleted or all_zones or status == "deleted":
         require_global_capability(auth_result, "zone.audit.read")
         from nexus.contracts.protocols.activity import EventKind, Result, emit
 
@@ -166,34 +166,64 @@ def list_zones(
             actor_user=str(auth_result.get("subject_id") or "unknown"),
             meta={"operation": "zone.list.all", "include_deleted": include_deleted},
         )
-    with session() as s:
-        stmt = select(ZoneModel).order_by(ZoneModel.zone_id)
-        if status is not None:
-            stmt = stmt.where(ZoneModel.canonical_status == status)
-        elif not include_deleted:
-            stmt = stmt.where(ZoneModel.canonical_status != "deleted")
-        if location is not None:
-            stmt = stmt.where(ZoneModel.placement_location == location)
-        if data_domain is not None:
-            stmt = stmt.where(ZoneModel.placement_data_domain == data_domain)
-        if trust_domain is not None:
-            stmt = stmt.where(ZoneModel.trust_domain == trust_domain)
-        if cursor:
-            stmt = stmt.where(ZoneModel.zone_id > cursor)
-        rows = s.execute(stmt).scalars().all()
-    if not all_zones and not auth_result.get("is_admin", False):
-        rows = [
-            zone
-            for zone in rows
-            if zone_capability_decision(
-                request,
-                auth_result,
-                zone_id=zone.zone_id,
-                capability="zone.data.read",
+    needs_visibility = not all_zones and not auth_result.get("is_admin", False)
+    authorized_zone_ids: set[str] | None = None
+    if needs_visibility:
+        # M-18: one grant prefilter — non-admin visibility REQUIRES an active
+        # grant, so grantless rows are dropped before the per-row two-layer
+        # decision runs.  Replaces the full-table authorization fan-out that
+        # made cheap polling expensive for everyone.
+        from nexus.storage.models import ZoneGrantModel
+
+        with session() as s:
+            authorized_zone_ids = set(
+                s.execute(
+                    select(ZoneGrantModel.zone_id).where(ZoneGrantModel.status == "active")
+                )
+                .scalars()
+                .all()
             )
-        ]
-    has_more = len(rows) > limit
-    rows = rows[:limit]
+    visible: list[ZoneModel] = []
+    page_cursor = cursor
+    with session() as s:
+        # M-18: SQL-side cursor pagination (limit+1 pages) instead of one
+        # unbounded full-table fetch; keeps collecting visible rows across
+        # pages until the limit is met or the table is exhausted.
+        while len(visible) <= limit:
+            stmt = select(ZoneModel).order_by(ZoneModel.zone_id)
+            if status is not None:
+                stmt = stmt.where(ZoneModel.canonical_status == status)
+            elif not include_deleted:
+                stmt = stmt.where(ZoneModel.canonical_status != "deleted")
+            if location is not None:
+                stmt = stmt.where(ZoneModel.placement_location == location)
+            if data_domain is not None:
+                stmt = stmt.where(ZoneModel.placement_data_domain == data_domain)
+            if trust_domain is not None:
+                stmt = stmt.where(ZoneModel.trust_domain == trust_domain)
+            if page_cursor:
+                stmt = stmt.where(ZoneModel.zone_id > page_cursor)
+            page = s.execute(stmt.limit(limit + 1)).scalars().all()
+            if not page:
+                break
+            for zone in page:
+                if authorized_zone_ids is not None and zone.zone_id not in authorized_zone_ids:
+                    continue
+                if not zone_capability_decision(
+                    request,
+                    auth_result,
+                    zone_id=zone.zone_id,
+                    capability="zone.data.read",
+                ):
+                    continue
+                visible.append(zone)
+                if len(visible) > limit:
+                    break
+            if len(page) <= limit:
+                break
+            page_cursor = page[-1].zone_id
+    has_more = len(visible) > limit
+    rows = visible[:limit]
     return ZoneListResponse(
         zones=[_view(z) for z in rows],
         next_cursor=rows[-1].zone_id if has_more and rows else None,

@@ -23,7 +23,11 @@
       "description": "Immutable: Session metadata/Transcript/Context/Artifact/Verify records default-write into this zone."
     },
     "state": {
-      "enum": ["active", "archived", "deleted"]
+      "enum": [
+        "active",
+        "archived",
+        "deleted"
+      ]
     },
     "agent_principal": {
       "type": "string",
@@ -31,7 +35,9 @@
     },
     "task_ids": {
       "type": "array",
-      "items": { "type": "string" },
+      "items": {
+        "type": "string"
+      },
       "description": "P1a records the gap explicitly when Tasks are not yet introduced; the field stays empty rather than fabricating records."
     },
     "current_attempt_id": {
@@ -42,13 +48,24 @@
     },
     "created_at": {
       "type": "string",
-      "format": "date-time"
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
     },
     "updated_at": {
       "type": "string",
-      "format": "date-time"
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
     }
   },
-  "required": ["api_version", "kind", "session_id", "owner", "home_zone_id", "state", "created_at", "updated_at"],
+  "required": [
+    "api_version",
+    "kind",
+    "session_id",
+    "owner",
+    "home_zone_id",
+    "state",
+    "created_at",
+    "updated_at"
+  ],
   "additionalProperties": true
 }

@@ -184,7 +184,7 @@ class ServerHarness:
                 self.port = port
                 return port
             last_tail = "".join(tail[-20:])
-            self.kill()
+            self.close()  # kill() alone would leak the membership stub (M-12)
         raise AssertionError(f"server did not become ready after {attempts} attempts: {last_tail}")
 
     def kill(self) -> None:
@@ -215,7 +215,13 @@ class ServerHarness:
             subprocess.run(
                 ["taskkill", "/PID", str(self.proc.pid), "/T", "/F"], capture_output=True
             )
-            self.proc.wait(timeout=30)
+            try:
+                self.proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                # M-12: a stuck wait must not skip the child re-kill and the
+                # orphan-kernel sweep below — that sweep is the main defence
+                # against leaked kernels poisoning later restart windows.
+                pass
         for child_pid in owned_kernel_pids:
             subprocess.run(
                 ["taskkill", "/PID", str(child_pid), "/F"], capture_output=True, check=False
@@ -254,13 +260,17 @@ class ServerHarness:
         return httpx.Client(base_url=f"http://127.0.0.1:{self.port}", timeout=30.0, trust_env=False)
 
     def poke_until_up(self, client: httpx.Client, headers: dict, tries: int = 15) -> None:
-        """Windows first-connect flakiness: retry the first request."""
-        for _ in range(tries):
+        """Windows first-connect flakiness: retry the first request.
+
+        Exhausting the retries is a hard failure (L-12): silently continuing
+        made every downstream assertion run against a dead server."""
+        for attempt in range(tries):
             try:
                 client.get("/v2/zone-capabilities", headers=headers)
                 return
             except httpx.TransportError:
                 time.sleep(1)
+        raise AssertionError(f"server did not answer within {tries} poke attempts")
 
 
 def _wait_operation(
@@ -279,7 +289,11 @@ def _wait_operation(
 
 def test_fault_classes_1_2_3_create_crashed_mid_flight_recovers_exactly_once(tmp_path) -> None:
     harness = ServerHarness(tmp_path / "f123")
-    harness.start()
+    try:
+        harness.start()
+    except Exception:
+        harness.close()
+        raise
     headers = {"Authorization": f"Bearer {harness.api_key}"}
     try:
         with harness.client() as client:
@@ -292,6 +306,18 @@ def test_fault_classes_1_2_3_create_crashed_mid_flight_recovers_exactly_once(tmp
             )
             assert accepted.status_code == 202, accepted.text
             op_id = accepted.json()["operation_id"]
+
+        # M-16 guard: the injection window only exists while the create is
+        # still in flight.  On a fast machine the saga may already be terminal
+        # by kill() time, which would silently degrade this test into a plain
+        # restart check — fail loudly instead of passing vacuously.
+        with harness.client() as client:
+            pre = client.get(f"/v2/zone-operations/{op_id}", headers=headers)
+            assert pre.status_code == 200, pre.text
+            pre_state = pre.json()["state"]
+            assert pre_state not in ("succeeded", "failed"), (
+                f"injection window missed: create already {pre_state} before kill"
+            )
 
         # Crash right after acceptance — before/around the runtime call, the
         # response read-back, and the receipt write. All three §11.5 classes
@@ -331,7 +357,11 @@ def test_fault_classes_1_2_3_create_crashed_mid_flight_recovers_exactly_once(tmp
 
 def test_fault_classes_6_7_revoke_killed_before_broadcast_stays_fail_closed(tmp_path) -> None:
     harness = ServerHarness(tmp_path / "f67")
-    harness.start()
+    try:
+        harness.start()
+    except Exception:
+        harness.close()
+        raise
     headers = {"Authorization": f"Bearer {harness.api_key}"}
     zone = "fault-revoke-zone"
     try:
@@ -399,6 +429,36 @@ def test_fault_classes_6_7_revoke_killed_before_broadcast_stays_fail_closed(tmp_
                 g["grant_id"] for g in grants if g["grantee"]["subject_id"] == "f67-org"
             )
 
+            # L-12(1) positive control: before revoking, the delegation MUST
+            # grant access — otherwise the post-revoke 403 proves nothing
+            # (the relation/grant may have never worked in the first place).
+            deadline = time.monotonic() + 30.0
+            while time.monotonic() < deadline:
+                grant_state = next(
+                    (
+                        g["status"]
+                        for g in client.get(
+                            f"/v2/zones/{zone}/grants", headers=headers
+                        ).json()["grants"]
+                        if g["grant_id"] == grant_id
+                    ),
+                    None,
+                )
+                if grant_state == "active":
+                    break
+                time.sleep(0.5)
+            assert grant_state == "active", f"grant never activated: {grant_state}"
+            allowed = client.get(
+                f"/v2/zones/{zone}",
+                headers={
+                    "Authorization": f"Bearer {user_key}",
+                    "X-Nexus-Zone-Delegation": delegation,
+                },
+            )
+            assert allowed.status_code == 200, (
+                f"positive control failed — delegation must allow before revoke: {allowed.text}"
+            )
+
         # Kill immediately after the revoke request is accepted — the durable
         # facts (revoked + epoch + invalidation outbox) may be committed while
         # the cache broadcast is not. The delegation must still be denied.
@@ -442,7 +502,7 @@ def test_fault_classes_6_7_revoke_killed_before_broadcast_stays_fail_closed(tmp_
         harness.close()
 
 
-def test_fault_class_12_contract_mismatch_rejected(nexus_server, test_app) -> None:
+def test_fault_class_12_contract_mismatch_downgrades_to_v1(nexus_server, test_app) -> None:
     headers = {"Authorization": f"Bearer {nexus_server['api_key']}"}
     # The HTTP boundary pins the wire version server-side: a caller-supplied
     # unknown major (auth.sudo.dev/v999) never takes effect — the operation

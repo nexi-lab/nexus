@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import grpc
 import pytest
 
 from nexus.grpc.vfs import zone_runtime_pb2
@@ -112,6 +113,67 @@ def test_pending_operation_remains_unknown_and_retryable() -> None:
 
 def test_receipt_needs_an_explicit_success_outcome() -> None:
     assert not receipt_from_raw({"zone_id": "team-alpha"}).ok
+
+
+class _FakeRpcError(grpc.RpcError):
+    def __init__(self, code: grpc.StatusCode, details: str = "") -> None:
+        super().__init__(details)
+        self._code = code
+        self._details = details
+
+    def code(self) -> grpc.StatusCode:
+        return self._code
+
+    def details(self) -> str:
+        return self._details
+
+
+def test_rejected_journal_verdict_is_deterministic_not_unreachable() -> None:
+    class RejectedChannel(Channel):
+        def zone_runtime_call(self, method: str, payload: dict, *, timeout_s: float):
+            if method == "GetZoneOperation":
+                return {
+                    "operation_id": payload["operation_id"],
+                    "status": "REJECTED",
+                    "error": "zone quota exceeded for org",
+                }
+            return super().zone_runtime_call(method, payload, timeout_s=timeout_s)
+
+    receipt = KernelRpcZoneRuntimePort(RejectedChannel()).get_operation(
+        operation_id="op-1", ctx={}
+    )
+    assert not receipt.ok
+    assert receipt.rejected
+    assert receipt.error == "zone quota exceeded for org"
+
+
+def test_permission_denied_rpc_maps_to_rejected_receipt() -> None:
+    class DeniedChannel(Channel):
+        def zone_runtime_call(self, method: str, payload: dict, *, timeout_s: float):
+            raise _FakeRpcError(grpc.StatusCode.PERMISSION_DENIED, "not a zone member")
+
+    receipt = KernelRpcZoneRuntimePort(DeniedChannel()).create_zone(
+        zone_id="team-alpha", ctx={"operation_id": "op-1"}
+    )
+    assert not receipt.ok
+    assert receipt.rejected
+    assert "PERMISSION_DENIED" in (receipt.error or "")
+
+
+def test_unavailable_rpc_and_non_rpc_errors_stay_unknown_retryable() -> None:
+    class UnavailableChannel(Channel):
+        def zone_runtime_call(self, method: str, payload: dict, *, timeout_s: float):
+            raise _FakeRpcError(grpc.StatusCode.UNAVAILABLE, "connection refused")
+
+    class BuggyChannel(Channel):
+        def zone_runtime_call(self, method: str, payload: dict, *, timeout_s: float):
+            raise TypeError("client-side serialization bug")
+
+    for channel in (UnavailableChannel(), BuggyChannel()):
+        with pytest.raises(ZoneRuntimeUnavailable):
+            KernelRpcZoneRuntimePort(channel).create_zone(
+                zone_id="team-alpha", ctx={"operation_id": "op-1"}
+            )
 
 
 def test_rpc_transport_builds_the_typed_mutation_dto() -> None:

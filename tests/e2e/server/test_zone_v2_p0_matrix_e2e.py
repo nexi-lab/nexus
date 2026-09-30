@@ -69,7 +69,13 @@ def _create_zone(client: httpx.Client, headers: dict, zone_id: str, key: str) ->
 
 
 def _create_grant(
-    client: httpx.Client, headers: dict, zone_id: str, org: str, key: str, source_id: str
+    client: httpx.Client,
+    headers: dict,
+    zone_id: str,
+    org: str,
+    key: str,
+    source_id: str,
+    capabilities: list[str] | None = None,
 ) -> str:
     """Issue an organization grant; returns the grant_id once active.
 
@@ -81,7 +87,7 @@ def _create_grant(
         headers={**headers, "Idempotency-Key": key},
         json={
             "grantee": {"subject_type": "organization", "subject_id": org},
-            "capabilities": ["zone.data.read"],
+            "capabilities": capabilities or ["zone.data.read"],
             "resource_prefixes": ["/"],
             "source": {"source_type": "moss_org_binding", "source_id": source_id},
             "reason": "p0 matrix",
@@ -108,6 +114,8 @@ def _issue_delegation(
     zone: str,
     key: str,
     grant_id: str | None = None,
+    purpose: str | None = None,
+    scope_rules: list[dict] | None = None,
 ) -> str:
     r = client.post(
         "/v2/auth/zone-delegations",
@@ -120,6 +128,8 @@ def _issue_delegation(
             "audience": "nexus-api",
             "ttl_s": 300,
             **({"grant_id": grant_id} if grant_id else {}),
+            **({"purpose": purpose} if purpose else {}),
+            **({"scope_rules": scope_rules} if scope_rules else {}),
         },
     )
     assert r.status_code == 201, r.text
@@ -487,9 +497,70 @@ def test_p0_scenarios_15_16_deprovision_blocker_and_tombstone(nexus_server, test
     headers = {"Authorization": f"Bearer {nexus_server['api_key']}"}
     zone = "p0m-s15-zone"
     _create_zone(test_app, headers, zone, "p0m-s15-create")
-    _create_grant(test_app, headers, zone, "p0m-org-a", "p0m-s15-g1", "p0m-s15-s1")
+    grant_id = _create_grant(
+        test_app,
+        headers,
+        zone,
+        "p0m-org-a",
+        "p0m-s15-g1",
+        "p0m-s15-s1",
+        capabilities=["zone.data.read", "zone.data.write", "zone.runtime.execute"],
+    )
 
-    # 15: an active grant blocks deprovision.
+    # Seed real business data on the zone: a session + a started runtime run
+    # (which materializes the task/attempt rows and the /zone/<zid> VFS tree)
+    # — the surfaces A-1's teardown must clear. runtime/start demands a
+    # user delegation (R5.4/5.5 — never a service/admin credential).
+    svc = test_app.post(
+        "/api/v2/auth/keys",
+        headers=headers,
+        json={
+            "label": "p0m-s15-svc",
+            "subject_type": "service",
+            "subject_id": "moss-e2e",
+            "zone_id": "root",
+            "is_admin": True,
+        },
+    ).json()["key"]
+    svc_headers = {"Authorization": f"Bearer {svc}"}
+    user = "p0m-s15-user"
+    user_key = _mint_user_key(test_app, headers, user, zone)
+    delegation = _issue_delegation(
+        test_app,
+        svc_headers,
+        user,
+        "p0m-org-a",
+        zone,
+        "p0m-s15-d1",
+        purpose="runtime",
+        scope_rules=[
+            {
+                "capability": "zone.runtime.execute",
+                "resource_prefixes": [f"/sessions/p0m-s15-session-0001"],
+            }
+        ],
+    )
+    run_headers = {
+        "Authorization": f"Bearer {user_key}",
+        "X-Nexus-Zone-Delegation": delegation,
+    }
+
+    session_id = "p0m-s15-session-0001"
+    created_session = test_app.post(
+        "/v2/sessions",
+        headers={**headers, "Idempotency-Key": "p0m-s15-sess"},
+        json={"session_id": session_id, "home_zone_id": zone},
+    )
+    assert created_session.status_code == 201, created_session.text
+    pid = "p0m-s15-run-1"
+    started = test_app.post(
+        "/v2/runtime/start",
+        headers={**run_headers, "Idempotency-Key": "p0m-s15-start"},
+        json={"session_id": session_id, "pid": pid},
+    )
+    assert started.status_code == 201, started.text
+
+    # 15: an active grant (and the active run) blocks deprovision.
     blocked = test_app.delete(
         f"/v2/zones/{zone}",
         headers={**headers, "Idempotency-Key": "p0m-s15-del", "X-Nexus-Confirm-Zone": zone},
@@ -500,11 +571,22 @@ def test_p0_scenarios_15_16_deprovision_blocker_and_tombstone(nexus_server, test
         assert op["state"] == "failed", f"deprovision must not succeed with an active grant: {op}"
         assert op.get("error", {}).get("code") in ("ZONE_DELETE_BLOCKED", "ZONE_IN_USE"), op
     else:
-        assert blocked.json()["detail"]["code"] in ("ZONE_DELETE_BLOCKED", "ZONE_IN_USE"), (
-            blocked.text
-        )
+        detail = blocked.json()["detail"]
+        assert detail["code"] in ("ZONE_DELETE_BLOCKED", "ZONE_IN_USE"), blocked.text
+        # B-1: the refusal carries the blocker identities, not just counts.
+        blockers = detail.get("details") or {}
+        grant_ids = [g.get("grant_id") for g in blockers.get("grants", [])]
+        run_pids = [r.get("pid") for r in blockers.get("runs", [])]
+        assert grant_id in grant_ids, f"grant id missing from blocker details: {blockers}"
+        assert pid in run_pids, f"run pid missing from blocker details: {blockers}"
 
-    # Clear the blocker, then deprovision to completion.
+    # Clear the blockers: cancel the run, then revoke the grants.
+    cancelled = test_app.post(
+        f"/v2/runtime/runs/{pid}/cancel",
+        headers={**headers, "Idempotency-Key": "p0m-s15-cancel"},
+        json={"mode": "terminate"},
+    )
+    assert cancelled.status_code == 200, cancelled.text
     grants = test_app.get(f"/v2/zones/{zone}/grants", headers=headers).json()["grants"]
     for g in grants:
         if g["status"] != "active":
@@ -530,6 +612,182 @@ def test_p0_scenarios_15_16_deprovision_blocker_and_tombstone(nexus_server, test
     tomb = test_app.get(f"/v2/zones/{zone}", headers=headers)
     assert tomb.status_code == 200, tomb.text
     assert tomb.json()["status"] == "deleted", tomb.text
+
+    # A-1: the zone's business data is unreadable and physically gone.
+    # Read surface: every /v2 read of the deleted zone's rows 404s — the
+    # rows are purged (SESSION_NOT_FOUND &c), and the lifecycle guard
+    # (ZONE_DELETED) is defense in depth for any row that outlives the
+    # teardown (e.g. an unarmed purger assembly).
+    for path in (
+        f"/v2/sessions/{session_id}",
+        f"/v2/sessions/{session_id}/records",
+        f"/v2/runtime/runs/{pid}",
+        f"/v2/sessions/{session_id}/tasks/any-task",
+    ):
+        gone = test_app.get(path, headers=headers)
+        assert gone.status_code == 404, f"{path}: {gone.text}"
+        assert gone.json()["detail"]["code"] in (
+            "ZONE_DELETED",
+            "SESSION_NOT_FOUND",
+            "RUN_NOT_FOUND",
+            "TASK_NOT_FOUND",
+        ), gone.text
+
+    # SQLite rows: the seven zone-owned business tables are drained.
+    conn = sqlite3.connect(f"file:{nexus_server['db_path']}?mode=ro", uri=True)
+    try:
+        counts = {}
+        for table, where in (
+            ("sessions", "home_zone_id = ?"),
+            ("task_specs", "zone_id = ?"),
+            ("task_resolutions", "zone_id = ?"),
+            ("task_attempts", "zone_id = ?"),
+            ("session_runtime_runs", "execution_zone_id = ?"),
+            ("session_data_records", "zone_id = ?"),
+            ("session_zone_dependencies", "zone_id = ?"),
+        ):
+            counts[table] = conn.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE {where}", (zone,)
+            ).fetchone()[0]
+        assert all(v == 0 for v in counts.values()), counts
+    finally:
+        conn.close()
+
+    # Physical replicas: no files remain under the materialized VFS tree
+    # (empty implicit-dir skeletons are acceptable — they carry no data).
+    vfs_root = Path(nexus_server["storage_path"]) / "metastore" / "root" / "zone" / zone
+    if vfs_root.exists():
+        residual_files = [p for p in vfs_root.rglob("*") if p.is_file()]
+        assert not residual_files, f"files survived deprovision: {residual_files}"
+
+
+def test_p0_scenario_15b_cross_zone_run_purge_boundary(nexus_server, test_app) -> None:
+    """A-1 cross-zone boundary: runs follow the execution zone, task rows
+    follow the task's home zone.
+
+    A session homed on Z1 with a run executed on Z2 (explicit decision):
+    deprovisioning Z2 must remove the run row (execution placement) while
+    the Z1-owned attempt/resolution/spec rows stay — their VFS bytes live
+    under Z1's tree, not Z2's.
+    """
+    headers = {"Authorization": f"Bearer {nexus_server['api_key']}"}
+    home_zone = "p0m-s15b-z1"
+    exec_zone = "p0m-s15b-z2"
+    _create_zone(test_app, headers, home_zone, "p0m-s15b-c1")
+    _create_zone(test_app, headers, exec_zone, "p0m-s15b-c2")
+    _create_grant(
+        test_app,
+        headers,
+        exec_zone,
+        "p0m-org-b",
+        "p0m-s15b-g1",
+        "p0m-s15b-s1",
+        capabilities=["zone.data.read", "zone.data.write", "zone.runtime.execute"],
+    )
+
+    # Delegation on the EXECUTION zone (runtime/start authorizes against it).
+    svc = test_app.post(
+        "/api/v2/auth/keys",
+        headers=headers,
+        json={
+            "label": "p0m-s15b-svc",
+            "subject_type": "service",
+            "subject_id": "moss-e2e",
+            "zone_id": "root",
+            "is_admin": True,
+        },
+    ).json()["key"]
+    svc_headers = {"Authorization": f"Bearer {svc}"}
+    user = "p0m-s15b-user"
+    user_key = _mint_user_key(test_app, headers, user, home_zone)
+    delegation = _issue_delegation(
+        test_app,
+        svc_headers,
+        user,
+        "p0m-org-b",
+        exec_zone,
+        "p0m-s15b-d1",
+        purpose="runtime",
+        scope_rules=[
+            {
+                "capability": "zone.runtime.execute",
+                "resource_prefixes": [f"/sessions/p0m-s15b-session-0001"],
+            }
+        ],
+    )
+    run_headers = {
+        "Authorization": f"Bearer {user_key}",
+        "X-Nexus-Zone-Delegation": delegation,
+    }
+
+    session_id = "p0m-s15b-session-0001"
+    created_session = test_app.post(
+        "/v2/sessions",
+        headers={**headers, "Idempotency-Key": "p0m-s15b-sess"},
+        json={"session_id": session_id, "home_zone_id": home_zone},
+    )
+    assert created_session.status_code == 201, created_session.text
+    pid = "p0m-s15b-run-1"
+    started = test_app.post(
+        "/v2/runtime/start",
+        headers={**run_headers, "Idempotency-Key": "p0m-s15b-start"},
+        json={
+            "session_id": session_id,
+            "pid": pid,
+            "execution_zone_id": exec_zone,
+            "decision_reason": "p0-matrix cross-zone scenario",
+            "policy_version": "p0-matrix",
+        },
+    )
+    assert started.status_code == 201, started.text
+    run_view = started.json()
+    assert run_view["execution_zone_id"] == exec_zone, run_view
+
+    cancelled = test_app.post(
+        f"/v2/runtime/runs/{pid}/cancel",
+        headers={**headers, "Idempotency-Key": "p0m-s15b-cancel"},
+        json={"mode": "terminate"},
+    )
+    assert cancelled.status_code == 200, cancelled.text
+
+    # Clear the grant blocker (source=manual grants block deprovision).
+    grants = test_app.get(f"/v2/zones/{exec_zone}/grants", headers=headers).json()["grants"]
+    for g in grants:
+        if g["status"] != "active":
+            continue
+        rev = test_app.delete(
+            f"/v2/zones/{exec_zone}/grants/{g['grant_id']}",
+            headers={**headers, "Idempotency-Key": f"p0m-s15b-r-{g['grant_id']}"},
+        )
+        assert rev.status_code == 202, rev.text
+        _wait_operation(test_app, rev.headers["Location"].split("/")[-1], headers)
+
+    deleted = test_app.delete(
+        f"/v2/zones/{exec_zone}",
+        headers={**headers, "Idempotency-Key": "p0m-s15b-del", "X-Nexus-Confirm-Zone": exec_zone},
+    )
+    assert deleted.status_code == 202, deleted.text
+    op = _wait_operation(
+        test_app, deleted.headers["Location"].split("/")[-1], headers, timeout_s=120.0
+    )
+    assert op["state"] == "succeeded", op
+
+    conn = sqlite3.connect(f"file:{nexus_server['db_path']}?mode=ro", uri=True)
+    try:
+        runs_on_exec = conn.execute(
+            "SELECT COUNT(*) FROM session_runtime_runs WHERE pid = ?", (pid,)
+        ).fetchone()[0]
+        assert runs_on_exec == 0, "cross-zone run row must purge with the execution zone"
+        home_specs = conn.execute(
+            "SELECT COUNT(*) FROM task_specs WHERE zone_id = ?", (home_zone,)
+        ).fetchone()[0]
+        home_attempts = conn.execute(
+            "SELECT COUNT(*) FROM task_attempts WHERE zone_id = ?", (home_zone,)
+        ).fetchone()[0]
+        assert home_specs >= 1, "home-zone task rows must survive the execution zone's removal"
+        assert home_attempts >= 1, "home-zone attempt rows must survive"
+    finally:
+        conn.close()
 
 
 def test_p0_scenario_17_state_survives_full_restart(tmp_path) -> None:

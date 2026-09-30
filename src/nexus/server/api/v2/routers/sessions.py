@@ -164,6 +164,33 @@ def _require_runtime_access(
     )
 
 
+def _require_zone_alive(request: Request, zone_id: str) -> None:
+    """§5.6 defense in depth: a deprovisioned zone's data is unreadable.
+
+    The authorization helpers above intentionally answer "who may read";
+    lifecycle is a separate axis — an admin credential must not read back
+    business rows of a zone whose deletion the same control plane
+    completed. Management surfaces (tombstone/operation queries) do not
+    pass through here.
+    """
+    factory = getattr(request.app.state, "zone_session_factory", None)
+    if factory is None:
+        raise HTTPException(status_code=503, detail="zone store unavailable")
+    from nexus.storage.models.auth import ZoneModel
+
+    with factory() as session:
+        zone = session.get(ZoneModel, zone_id)
+        if zone is not None and zone.canonical_status == "deleted":
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "ZONE_DELETED",
+                    "message": "zone data has been deprovisioned",
+                    "retryable": False,
+                },
+            )
+
+
 @router.post("/sessions", status_code=201)
 def create_session(
     request: Request,
@@ -211,6 +238,7 @@ def get_session(
 ) -> dict[str, Any]:
     try:
         view = _service(request).get_session(session_id)
+        _require_zone_alive(request, view.home_zone_id)
         _require_runtime_access(
             request,
             auth_result,
@@ -264,6 +292,7 @@ def list_records(
     try:
         svc = _service(request)
         view = svc.get_session(session_id)  # 404 when the session does not exist
+        _require_zone_alive(request, view.home_zone_id)
         _require_runtime_access(
             request,
             auth_result,
@@ -479,6 +508,7 @@ def get_task(
 ) -> dict[str, Any]:
     try:
         payload = _task_service(request).get_task(session_id=session_id, task_id=task_id)
+        _require_zone_alive(request, str(payload["spec"]["storage"]["zone_id"]))
         _require_runtime_access(
             request,
             auth_result,
@@ -517,6 +547,7 @@ def get_run(
 ) -> dict[str, Any]:
     try:
         view = _service(request).get_run(pid)
+        _require_zone_alive(request, view.execution_zone_id)
         _require_runtime_access(
             request,
             auth_result,

@@ -65,7 +65,7 @@ class FakeRuntime:
         self.calls.append("mount")
         return RuntimeReceipt(ok=self.ok, runtime_revision="r3", raw={"outcome": "MOUNTED"})
 
-    def unmount(self, *, mount_ref: str, ctx) -> RuntimeReceipt:
+    def unmount(self, *, ctx) -> RuntimeReceipt:
         self.calls.append("unmount")
         return RuntimeReceipt(ok=self.ok, runtime_revision="r4", raw={"outcome": "UNMOUNTED"})
 
@@ -73,7 +73,7 @@ class FakeRuntime:
         self.calls.append("remove_replica")
         return RuntimeReceipt(ok=self.ok, raw={"outcome": "REPLICA_REMOVED"})
 
-    def deprovision(self, *, zone_id: str, deletion_epoch: int, ctx) -> RuntimeReceipt:
+    def deprovision(self, *, zone_id: str, ctx) -> RuntimeReceipt:
         self.calls.append("deprovision")
         return RuntimeReceipt(ok=True, raw={"zone_id": zone_id, "outcome": "DEPROVISIONED"})
 
@@ -109,13 +109,18 @@ def session_factory():
     # Only the zone-v1 surface (plus its FK targets) — this suite is unit-level.
     from nexus.storage.models import auth as auth_models
     from nexus.storage.models import session_v1 as sv1
+    from nexus.storage.models import task_v1 as tv1
     from nexus.storage.models import zone_v1 as zv1
 
     auth_models.ZoneModel.__table__.create(engine)
     sv1.SessionModel.__table__.create(engine)
-    with engine.begin() as connection:
-        connection.exec_driver_sql("CREATE TABLE task_attempts (attempt_id TEXT PRIMARY KEY)")
+    # FK order: task_specs → task_resolutions → task_attempts; runs reference
+    # task_attempts; dependencies reference runs.
+    tv1.TaskSpecModel.__table__.create(engine)
+    tv1.TaskResolutionModel.__table__.create(engine)
+    tv1.TaskAttemptModel.__table__.create(engine)
     sv1.SessionRuntimeRunModel.__table__.create(engine)
+    sv1.SessionZoneDependencyModel.__table__.create(engine)
     sv1.SessionDataRecordModel.__table__.create(engine)
     for t in (
         zv1.ZoneGrantModel,
@@ -282,6 +287,91 @@ def test_failed_mandatory_projection_never_activates_grant(session_factory):
         grant = session.execute(sa.select(ZoneGrantModel)).scalar_one()
         assert zone.canonical_status is None
         assert grant.status == "pending"
+
+
+def test_deprovision_of_half_built_zone_kills_pending_projection_events(session_factory):
+    """H-1 auxiliary: deprovisioning a zone whose create projection is stuck
+    must revoke the pending genesis grant, mark its apply_projections outbox
+    rows processed and fail the create operation — a late projection worker
+    pass then finds no event to resurrect the zone with."""
+    from nexus.storage.models import ZoneGrantProjectionOutboxModel
+    from nexus.storage.models.auth import ZoneModel
+
+    def fail_projection(zone_id, principal, relation, path):
+        raise RuntimeError("rebac unavailable")
+
+    svc = ZoneApplicationService(
+        session_factory,
+        FakeRuntime(),
+        worker_enabled=True,
+        projection_write=fail_projection,
+    )
+    _active_zone(svc, session_factory)  # create stuck: zone None, genesis pending
+    worker = ZoneOperationWorker(session_factory, FakeRuntime(), svc)
+
+    svc.request_deprovision("team-test-zone", principal=PRINCIPAL)
+    with session_factory() as s:
+        from nexus.storage.models import ZoneGrantModel, ZoneOperationModel
+
+        grant = s.execute(sa.select(ZoneGrantModel)).scalar_one()
+        assert grant.status == "revoked"
+        assert grant.revoke_reason == "zone deprovision superseded grant activation"
+        stuck_events = (
+            s.execute(
+                sa.select(ZoneGrantProjectionOutboxModel).where(
+                    ZoneGrantProjectionOutboxModel.event_type == "grant.apply_projections"
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert stuck_events and all(e.processed_at is not None for e in stuck_events)
+        create_op = s.execute(
+            sa.select(ZoneOperationModel).where(ZoneOperationModel.action == "create")
+        ).scalar_one()
+        assert create_op.state == "failed"
+        assert create_op.error["message"] == "zone deprovision superseded grant activation"
+
+    worker.pump_once()  # deprovision runtime receipt ok → purge + terminal state
+    with session_factory() as s:
+        assert s.get(ZoneModel, "team-test-zone").canonical_status == "deleted"
+    worker.pump_once()  # a late pass must find nothing left to resurrect
+    with session_factory() as s:
+        assert s.get(ZoneModel, "team-test-zone").canonical_status == "deleted"
+
+
+def test_projection_adjudication_refuses_pending_grant_on_deleted_zone(session_factory):
+    """H-1 main: even with the auxiliary cleanup bypassed (a grant still
+    pending on a deleted zone), the activation transaction itself refuses to
+    resurrect — the grant is revoked and the operation fails, not retried."""
+    from nexus.storage.models import ZoneGrantModel
+    from nexus.storage.models.auth import ZoneModel
+
+    svc = make_service(session_factory, FakeRuntime())
+    _active_zone(svc, session_factory)
+    result = svc.issue_grant(
+        "team-test-zone", grant_request(), idempotency_key="gk-late", principal=PRINCIPAL
+    )
+    with session_factory() as s:
+        grant = (
+            s.execute(sa.select(ZoneGrantModel).where(ZoneGrantModel.status == "pending"))
+            .scalars()
+            .one()
+        )
+        # Adversarial state injected directly: the zone finished deprovision
+        # while this grant's projection event was still pending.
+        zone = s.get(ZoneModel, "team-test-zone")
+        zone.canonical_status = "deleted"
+        s.commit()
+
+        assert svc.complete_grant_projection(grant_id=grant.grant_id) is True
+        s.expire_all()
+        assert s.get(ZoneGrantModel, grant.grant_id).status == "revoked"
+        assert s.get(ZoneModel, "team-test-zone").canonical_status == "deleted"
+        op = svc.get_operation(result.operation_id)
+        assert op["state"] == "failed"
+        assert op["retryable"] is False
+        assert op["error"]["message"] == "zone deprovision superseded grant activation"
 
 
 def test_revoke_commits_fact_epoch_and_invalidation_together(session_factory):

@@ -65,7 +65,7 @@ class ZoneGrantModel(Base):
 
     grant_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     zone_id: Mapped[str] = mapped_column(
-        String(64), ForeignKey("zones.zone_id", ondelete="RESTRICT"), nullable=False
+        String(255), ForeignKey("zones.zone_id", ondelete="RESTRICT"), nullable=False
     )
     grantee: Mapped[dict] = mapped_column(GRANTEE_JSON, nullable=False)
     capabilities: Mapped[list] = mapped_column(JSON, nullable=False)
@@ -102,7 +102,7 @@ class ZoneOperationModel(Base):
     operation_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     action: Mapped[str] = mapped_column(String(16), nullable=False)
     zone_id: Mapped[str | None] = mapped_column(
-        String(64), ForeignKey("zones.zone_id", ondelete="RESTRICT"), nullable=True
+        String(255), ForeignKey("zones.zone_id", ondelete="RESTRICT"), nullable=True
     )
     grant_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     state: Mapped[str] = mapped_column(String(24), nullable=False)
@@ -138,10 +138,10 @@ class ZoneMountModel(Base):
 
     mount_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     parent_zone_id: Mapped[str] = mapped_column(
-        String(64), ForeignKey("zones.zone_id", ondelete="RESTRICT"), nullable=False
+        String(255), ForeignKey("zones.zone_id", ondelete="RESTRICT"), nullable=False
     )
     target_zone_id: Mapped[str] = mapped_column(
-        String(64), ForeignKey("zones.zone_id", ondelete="RESTRICT"), nullable=False
+        String(255), ForeignKey("zones.zone_id", ondelete="RESTRICT"), nullable=False
     )
     path: Mapped[str] = mapped_column(String(1024), nullable=False)
     desired_state: Mapped[str] = mapped_column(String(16), nullable=False)
@@ -211,7 +211,7 @@ class ZoneAuthorizationEpochModel(Base):
     __tablename__ = "zone_authorization_epochs"
 
     zone_id: Mapped[str] = mapped_column(
-        String(64), ForeignKey("zones.zone_id", ondelete="RESTRICT"), primary_key=True
+        String(255), ForeignKey("zones.zone_id", ondelete="RESTRICT"), primary_key=True
     )
     epoch: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     advanced_at: Mapped[datetime] = mapped_column(
@@ -238,7 +238,7 @@ class ZoneDelegationModel(Base):
     org_id: Mapped[str] = mapped_column(String(64), nullable=False)
     membership_version: Mapped[str] = mapped_column(String(64), nullable=False)
     zone_id: Mapped[str] = mapped_column(
-        String(64), ForeignKey("zones.zone_id", ondelete="RESTRICT"), nullable=False
+        String(255), ForeignKey("zones.zone_id", ondelete="RESTRICT"), nullable=False
     )
     grant_id: Mapped[str] = mapped_column(String(64), nullable=False)
     grant_revision: Mapped[str] = mapped_column(String(64), nullable=False)

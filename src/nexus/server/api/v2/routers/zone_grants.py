@@ -9,7 +9,7 @@ from typing import Any, Literal, cast
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from sqlalchemy.orm import Session
 
-from nexus.contracts.zone_v1 import PrincipalRef, ZoneGrantCreateRequest, ZoneGrantSource
+from nexus.contracts.zone_v1 import ZoneGrantCreateRequest
 from nexus.server.api.v2.models.zones import (
     DelegationIssueBody,
     DelegationView,
@@ -20,6 +20,7 @@ from nexus.server.api.v2.models.zones import (
 )
 from nexus.server.api.v2.zone_security import (
     has_global_capability,
+    is_owner_or_admin,
     principal_dict,
     principal_from_auth,
     require_zone_capability,
@@ -101,13 +102,16 @@ def create_grant(
     svc = _service(request)
     require_zone_capability(request, auth_result, zone_id=zone_id, capability="zone.grants.manage")
     principal = principal_dict(auth_result)
+    # Body fields are contract-typed (H-2): grantee/capability/prefix
+    # violations were rejected at the validation layer (422), so this
+    # construction is a pure already-validated value pass.
     contract = ZoneGrantCreateRequest(
         api_version="auth.sudo.dev/v1",
         kind="ZoneGrantCreateRequest",
-        grantee=PrincipalRef.model_validate(body.grantee),
+        grantee=body.grantee,
         capabilities=body.capabilities,
         resource_prefixes=body.resource_prefixes,
-        source=ZoneGrantSource.model_validate(body.source) if body.source else None,
+        source=body.source,
         reason=body.reason,
         policy_version=body.policy_version,
         not_before=body.not_before,
@@ -227,9 +231,7 @@ def get_operation(
     op = svc.get_operation(operation_id)
     if op is None:
         raise HTTPException(status_code=404, detail={"code": "ZONE_NOT_FOUND", "retryable": False})
-    if not auth_result.get("is_admin", False) and op.get("principal_id") != auth_result.get(
-        "subject_id"
-    ):
+    if not is_owner_or_admin(auth_result, op.get("principal_id")):
         raise HTTPException(status_code=404, detail={"code": "ZONE_NOT_FOUND", "retryable": False})
     return OperationView(
         operation_id=op["operation_id"],
@@ -318,7 +320,7 @@ def get_delegation(
             raise HTTPException(
                 status_code=404, detail={"code": "GRANT_NOT_FOUND", "retryable": False}
             )
-        if not auth_result.get("is_admin", False) and d.user_id != auth_result.get("subject_id"):
+        if not is_owner_or_admin(auth_result, d.user_id):
             raise HTTPException(
                 status_code=404, detail={"code": "GRANT_NOT_FOUND", "retryable": False}
             )
@@ -364,8 +366,7 @@ def revoke_delegation(
     with _session(request) as s, s.begin():
         existing = s.get(ZoneDelegationModel, delegation_id)
         if existing is None or (
-            not auth_result.get("is_admin", False)
-            and existing.user_id != auth_result.get("subject_id")
+            not is_owner_or_admin(auth_result, existing.user_id)
             and not has_global_capability(auth_result, "zone.delegations.revoke")
         ):
             raise HTTPException(

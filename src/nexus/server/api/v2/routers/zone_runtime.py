@@ -16,6 +16,7 @@ from nexus.server.api.v2.models.zones import (
     ZoneTransferBody,
 )
 from nexus.server.api.v2.zone_security import (
+    is_owner_or_admin,
     principal_dict,
     require_global_capability,
     require_zone_capability,
@@ -238,8 +239,6 @@ def get_transfer(
     op = _service(request).get_operation(operation_id)
     if op is None or op["action"] != "transfer":
         raise HTTPException(status_code=404, detail={"code": "ZONE_NOT_FOUND", "retryable": False})
-    if not auth_result.get("is_admin", False) and op.get("principal_id") != auth_result.get(
-        "subject_id"
-    ):
+    if not is_owner_or_admin(auth_result, op.get("principal_id")):
         raise HTTPException(status_code=404, detail={"code": "ZONE_NOT_FOUND", "retryable": False})
-    return OperationView(**{key: value for key, value in op.items() if key != "principal_id"})
+    return OperationView.from_operation(op)

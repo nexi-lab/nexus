@@ -33,6 +33,19 @@ ZONE_V1_TABLES = {
     "zone_delegations",
     "rebac_relation_sources",
 }
+# The zone/session/task domain owned by this branch.  The guard asserts this
+# domain is fully migration-covered on BOTH sides (upgraded chain and ORM
+# metadata); the alembic chain and metadata carry dozens of unrelated legacy
+# drift tables that are deliberately outside the assertion domain.
+ZONE_DOMAIN_TABLES = ZONE_V1_TABLES | {
+    "sessions",
+    "session_runtime_runs",
+    "session_zone_dependencies",
+    "session_data_records",
+    "task_specs",
+    "task_resolutions",
+    "task_attempts",
+}
 
 
 @pytest.fixture()
@@ -77,8 +90,11 @@ def _columns(engine, table: str) -> set[str]:
 
 
 def test_upgrade_and_fresh_agree_on_zone_v1_tables(upgraded_sqlite, fresh_sqlite):
+    # Domain-scoped double equality: every domain model table must exist in
+    # BOTH the upgraded chain and the ORM metadata (a `>=` here previously
+    # hid the seven session/task tables having no migration at all).
     for engine in (upgraded_sqlite, fresh_sqlite):
-        assert _table_names(engine) >= ZONE_V1_TABLES
+        assert _table_names(engine) & ZONE_DOMAIN_TABLES == ZONE_DOMAIN_TABLES
     assert _columns(upgraded_sqlite, "zone_grants") == _columns(fresh_sqlite, "zone_grants")
     assert _columns(upgraded_sqlite, "zone_operations") == _columns(fresh_sqlite, "zone_operations")
     assert _columns(upgraded_sqlite, "rebac_relation_sources") == _columns(
@@ -87,6 +103,8 @@ def test_upgrade_and_fresh_agree_on_zone_v1_tables(upgraded_sqlite, fresh_sqlite
     assert _columns(upgraded_sqlite, "zone_delegations") == _columns(
         fresh_sqlite, "zone_delegations"
     )
+    for table in sorted(ZONE_DOMAIN_TABLES - ZONE_V1_TABLES):
+        assert _columns(upgraded_sqlite, table) == _columns(fresh_sqlite, table), table
 
 
 @pytest.mark.postgres

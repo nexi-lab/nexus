@@ -360,7 +360,15 @@ class ZoneApplicationService:
             exists = session.get(ZoneModel, request.zone_id)
             if exists is not None:
                 raise ServiceError(
-                    "ZONE_ALREADY_EXISTS", f"zone {request.zone_id} already exists", http_status=409
+                    "ZONE_ALREADY_EXISTS",
+                    f"zone {request.zone_id} already exists",
+                    http_status=409,
+                    details={
+                        "hint": (
+                            "a create that exhausted its outbox retries leaves the zone row "
+                            "behind; deprovision it before recreating the id"
+                        )
+                    },
                 )
 
             zone = ZoneModel(
@@ -760,6 +768,30 @@ class ZoneApplicationService:
             grant = session.get(ZoneGrantModel, grant_id)
             if grant is None or grant.status != "pending":
                 return grant is not None
+            # Final adjudication inside the SAME transaction as the activation
+            # write: if the zone entered or completed deprovision while this
+            # projection event was pending, the grant dies with the zone — a
+            # late projection must never resurrect a deleted zone (H-1) nor
+            # activate a pending grant on it.  Returning True marks the outbox
+            # event done instead of retrying.
+            zone = session.get(ZoneModel, grant.zone_id)
+            if zone is not None and zone.canonical_status in ("deleting", "deleted"):
+                grant.status = "revoked"
+                grant.revoked_at = _now()
+                grant.revoke_reason = "zone deprovision superseded grant activation"
+                operation = session.execute(
+                    select(ZoneOperationModel).where(ZoneOperationModel.grant_id == grant_id)
+                ).scalar_one_or_none()
+                if operation is not None:
+                    operation.state = "failed"
+                    operation.retryable = False
+                    operation.error = {
+                        "code": "PROJECTION_FAILED",
+                        "message": "zone deprovision superseded grant activation",
+                        "retryable": False,
+                    }
+                    operation.completed_at = _now()
+                return True
             for subject, relation, resource_path in edges:
                 existing = session.execute(
                     select(RebacRelationSourceModel).where(
@@ -1457,6 +1489,15 @@ class ZoneApplicationService:
                         ],
                     },
                 )
+            # Advance the epoch BEFORE revoking so the cleanup events carry the
+            # post-invalidation epoch (park_runs_for_revocation compares
+            # against it); same transaction, no concurrency window.
+            epoch_row = session.get(ZoneAuthorizationEpochModel, zone_id)
+            assert epoch_row is not None
+            epoch_row.epoch += 1
+            epoch_row.advanced_at = _now()
+            epoch_row.reason = "zone deprovision requested"
+            deletion_epoch = int(epoch_row.epoch)
             # §5.6: revoke the zone's own grants as part of the flow.
             for g in (
                 session.execute(
@@ -1475,15 +1516,54 @@ class ZoneApplicationService:
                     ZoneGrantProjectionOutboxModel(
                         grant_id=g.grant_id,
                         event_type="grant.cleanup_projections",
-                        payload={"grant_id": g.grant_id, "zone_id": zone_id},
+                        payload={
+                            "grant_id": g.grant_id,
+                            "zone_id": zone_id,
+                            "authorization_epoch": deletion_epoch,
+                        },
                     )
                 )
-            epoch_row = session.get(ZoneAuthorizationEpochModel, zone_id)
-            assert epoch_row is not None
-            epoch_row.epoch += 1
-            epoch_row.advanced_at = _now()
-            epoch_row.reason = "zone deprovision requested"
-            deletion_epoch = int(epoch_row.epoch)
+            # Pending grants die with the zone too: their apply_projections
+            # outbox events would otherwise activate them (and, for the
+            # genesis grant, resurrect the zone) once the projection worker
+            # catches up after deletion.
+            for g in (
+                session.execute(
+                    select(ZoneGrantModel).where(
+                        ZoneGrantModel.zone_id == zone_id, ZoneGrantModel.status == "pending"
+                    )
+                )
+                .scalars()
+                .all()
+            ):
+                g.status = "revoked"
+                g.revoked_at = _now()
+                g.revoked_by = principal
+                g.revoke_reason = "zone deprovision superseded grant activation"
+                session.execute(
+                    update(ZoneGrantProjectionOutboxModel)
+                    .where(
+                        ZoneGrantProjectionOutboxModel.grant_id == g.grant_id,
+                        ZoneGrantProjectionOutboxModel.event_type == "grant.apply_projections",
+                        ZoneGrantProjectionOutboxModel.processed_at.is_(None),
+                    )
+                    .values(processed_at=_now())
+                )
+                pending_op = session.execute(
+                    select(ZoneOperationModel).where(
+                        ZoneOperationModel.grant_id == g.grant_id,
+                        ZoneOperationModel.state.in_(("queued", "running", "waiting_dependency")),
+                    )
+                ).scalar_one_or_none()
+                if pending_op is not None:
+                    pending_op.state = "failed"
+                    pending_op.retryable = False
+                    pending_op.error = {
+                        "code": "PROJECTION_FAILED",
+                        "message": "zone deprovision superseded grant activation",
+                        "retryable": False,
+                    }
+                    pending_op.completed_at = _now()
             zone.canonical_status = "deleting"
             zone.canonical_revision = _new_id("rev")
             op = self._new_operation(
@@ -1548,7 +1628,6 @@ class ZoneApplicationService:
                 )
             elif event_type == "zone.unmount":
                 receipt = self._runtime.unmount(
-                    mount_ref=str(payload["mount_id"]),
                     ctx={
                         **ctx,
                         "parent_zone_id": payload["parent_zone_id"],
@@ -1558,7 +1637,6 @@ class ZoneApplicationService:
             elif event_type == "zone.deprovision":
                 receipt = self._runtime.deprovision(
                     zone_id=str(payload["zone_id"]),
-                    deletion_epoch=int(payload.get("deletion_epoch") or 0),
                     ctx=ctx,
                 )
             else:
@@ -1582,6 +1660,7 @@ class ZoneApplicationService:
                 fence,
                 event_type,
                 receipt.error or "runtime rejected operation",
+                rejected=bool(getattr(receipt, "rejected", False)),
             )
 
         # §5.6 physical replica teardown: the VFS materialized tree goes
@@ -1658,8 +1737,13 @@ class ZoneApplicationService:
         return OperationResult(operation_id, "running", f"{step}.unknown", True)
 
     def _record_runtime_failure(
-        self, operation_id: str, fence: int, step: str, message: str
+        self, operation_id: str, fence: int, step: str, message: str, *, rejected: bool = False
     ) -> OperationResult:
+        """Terminal failure write-back; the RETURN VALUE must mirror the
+        persisted retryable flag — the worker's outbox short-circuit keys off
+        ``state == "failed" and not retryable``."""
+        retryable = not rejected
+        code = "ZONE_RUNTIME_REJECTED" if rejected else "ZONE_RUNTIME_UNAVAILABLE"
         with self._session_factory() as session, session.begin():
             _fenced_update(
                 session,
@@ -1669,15 +1753,15 @@ class ZoneApplicationService:
                 values={
                     "state": "failed",
                     "step": step,
-                    "retryable": True,
+                    "retryable": retryable,
                     "error": {
-                        "code": "ZONE_RUNTIME_UNAVAILABLE",
+                        "code": code,
                         "message": message,
-                        "retryable": True,
+                        "retryable": retryable,
                     },
                 },
             )
-        return OperationResult(operation_id, "failed", step, True)
+        return OperationResult(operation_id, "failed", step, retryable)
 
     def get_operation(self, operation_id: str) -> dict[str, Any] | None:
         with self._session_factory() as session:

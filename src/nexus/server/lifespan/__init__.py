@@ -410,6 +410,11 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
     # --- Shutdown (reverse order) ---
     logger.info("Shutting down FastAPI Nexus server...")
 
+    # Graceful zone-worker stop BEFORE the blanket cancel pass and before the
+    # vfs gRPC channel closes: the bounded join lets an in-flight pump finish
+    # its transaction against a still-open channel.
+    await shutdown_zone_control(app)
+
     # Cancel all background tasks first
     for task in bg_tasks:
         if task and not task.done():
@@ -420,7 +425,6 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
         logger.debug("Cancelled %d background tasks", len(bg_tasks))
 
     await shutdown_vfs_grpc(app)
-    await shutdown_zone_control(app)
     await shutdown_approvals(app, svc)
     await shutdown_search(app, svc)
     await shutdown_services(app, svc)

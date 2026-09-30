@@ -44,17 +44,35 @@
       "type": "string"
     },
     "state": {
-      "enum": ["registered", "warming_up", "ready", "busy", "awaiting_input", "revocation_pending", "terminated"]
+      "enum": [
+        "registered",
+        "warming_up",
+        "ready",
+        "busy",
+        "awaiting_input",
+        "revocation_pending",
+        "terminated"
+      ]
     },
     "started_at": {
       "type": "string",
-      "format": "date-time"
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
     },
     "ended_at": {
       "type": "string",
-      "format": "date-time"
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
     }
   },
-  "required": ["api_version", "kind", "pid", "session_id", "execution_zone_id", "state", "started_at"],
+  "required": [
+    "api_version",
+    "kind",
+    "pid",
+    "session_id",
+    "execution_zone_id",
+    "state",
+    "started_at"
+  ],
   "additionalProperties": true
 }

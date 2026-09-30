@@ -429,9 +429,9 @@ def build_v2_registry(
         registry.add(
             RouterEntry(router=sessions_router, name="sessions_runtime_v2", endpoint_count=9)
         )
-        registry.add(RouterEntry(router=zones_router, name="zones_v2", endpoint_count=7))
+        registry.add(RouterEntry(router=zones_router, name="zones_v2", endpoint_count=8))
         registry.add(
-            RouterEntry(router=zone_grants_router, name="zone_grants_v2", endpoint_count=8)
+            RouterEntry(router=zone_grants_router, name="zone_grants_v2", endpoint_count=9)
         )
         registry.add(
             RouterEntry(router=zone_runtime_router, name="zone_runtime_v2", endpoint_count=6)

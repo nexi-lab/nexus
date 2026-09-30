@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import inspect, select, text, update
+from sqlalchemy import delete, inspect, select, text, update
 from sqlalchemy.orm import Session
 
 from nexus.contracts.zone_v1 import (
@@ -51,8 +51,13 @@ from nexus.remote.zone_runtime_client import (
 )
 from nexus.storage.models import (
     RebacRelationSourceModel,
+    SessionDataRecordModel,
     SessionModel,
     SessionRuntimeRunModel,
+    SessionZoneDependencyModel,
+    TaskAttemptModel,
+    TaskResolutionModel,
+    TaskSpecModel,
     ZoneAuthorizationEpochModel,
     ZoneGrantModel,
     ZoneGrantProjectionOutboxModel,
@@ -80,12 +85,23 @@ _CAPABILITY_RELATIONS = {
 class ServiceError(Exception):
     """Stable-code error surfaced as ErrorInfo; clients judge by code."""
 
-    def __init__(self, code: str, message: str, *, retryable: bool = False, http_status: int = 400):
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        retryable: bool = False,
+        http_status: int = 400,
+        details: dict[str, Any] | None = None,
+    ):
         super().__init__(message)
         self.code = code
         self.message = message
         self.retryable = retryable
         self.http_status = http_status
+        # Structured payload for actionable refusals (e.g. ZONE_DELETE_BLOCKED
+        # blocker identities); None keeps the wire shape unchanged.
+        self.details = details
 
 
 def _now() -> datetime:
@@ -149,6 +165,58 @@ def _cleanup_zone_projections(session: Session, zone_id: str) -> None:
         )
 
 
+def _purge_zone_session_data(session: Session, zone_id: str) -> None:
+    """Remove the zone's session/task business rows after runtime deletion.
+
+    §5.6 "remove physical replicas": the SQLite rows backing the /v2
+    session/task read surface are the direct data source of the read-back
+    defect — unlike the Zone/Grant/operation rows retained as history, these
+    business rows must not outlive the zone. Deletion order follows the FK
+    graph (all RESTRICT/CASCADE edges verified against the models): the two
+    RESTRICT edges invisible to nothing but easy to misorder are
+    session_runtime_runs.attempt_id → task_attempts and
+    task_attempts.resolution_id → task_resolutions — on PostgreSQL (FKs
+    enforced; SQLite connections run without PRAGMA foreign_keys) deleting
+    attempts before runs makes deprovision permanently fail.
+
+    Cross-zone boundary: attempts/resolutions belong to the task's home
+    zone (their VFS bytes materialize under the home zone's tree), so they
+    purge by ``zone_id`` only; runs record execution placement and purge by
+    execution zone OR home zone — mirroring the blocker query below.
+    """
+    home_session_ids = select(SessionModel.session_id).where(
+        SessionModel.home_zone_id == zone_id
+    )
+    run_delete_set = (
+        select(SessionRuntimeRunModel.pid)
+        .where(
+            (SessionRuntimeRunModel.execution_zone_id == zone_id)
+            | (SessionRuntimeRunModel.session_id.in_(home_session_ids))
+        )
+        .scalar_subquery()
+    )
+    session.execute(
+        delete(SessionZoneDependencyModel).where(
+            (SessionZoneDependencyModel.zone_id == zone_id)
+            | (SessionZoneDependencyModel.pid.in_(run_delete_set))
+        )
+    )
+    session.execute(
+        delete(SessionRuntimeRunModel).where(
+            SessionRuntimeRunModel.pid.in_(run_delete_set)
+        )
+    )
+    session.execute(delete(TaskAttemptModel).where(TaskAttemptModel.zone_id == zone_id))
+    session.execute(
+        delete(TaskResolutionModel).where(TaskResolutionModel.zone_id == zone_id)
+    )
+    session.execute(delete(TaskSpecModel).where(TaskSpecModel.zone_id == zone_id))
+    session.execute(
+        delete(SessionDataRecordModel).where(SessionDataRecordModel.zone_id == zone_id)
+    )
+    session.execute(delete(SessionModel).where(SessionModel.home_zone_id == zone_id))
+
+
 def _projection_edges(grant: ZoneGrantModel) -> list[tuple[dict[str, Any], str, str]]:
     """Translate one grant into deterministic, provenance-addressable ReBAC edges."""
     prefixes = grant.resource_prefixes or ["/"]
@@ -182,6 +250,7 @@ class ZoneApplicationService:
         | None = None,
         transfer_executor: Callable[[dict[str, Any], dict[str, Any], str], dict[str, Any]]
         | None = None,
+        zone_fs_purger: Callable[[str], None] | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._runtime: ZoneRuntimePort = runtime or NullZoneRuntimePort()
@@ -192,6 +261,11 @@ class ZoneApplicationService:
         self._projection_delete = projection_delete
         self._transfer_policy = transfer_policy
         self._transfer_executor = transfer_executor
+        # §5.6 physical replica teardown: clears the root-zone VFS
+        # materialized tree (/zone/<zone_id>/) after the runtime receipt.
+        # None (unarmed assembly) skips the VFS leg; SQLite rows are
+        # always purged by _purge_zone_session_data.
+        self._zone_fs_purger = zone_fs_purger
 
     @staticmethod
     def _require_principal(principal: dict[str, Any]) -> None:
@@ -1361,7 +1435,28 @@ class ZoneApplicationService:
             if active_runs:
                 blockers.append(f"{len(active_runs)} active runtime(s) must be cancelled first")
             if blockers:
-                raise ServiceError("ZONE_DELETE_BLOCKED", "; ".join(blockers), http_status=409)
+                # Blocker identities alongside the count-only message: admins
+                # must be able to act (revoke this grant, cancel this run)
+                # without spelunking the store. Message wording stays stable
+                # for older clients; details is additive.
+                raise ServiceError(
+                    "ZONE_DELETE_BLOCKED",
+                    "; ".join(blockers),
+                    http_status=409,
+                    details={
+                        "grants": [
+                            {"grant_id": g.grant_id, "grantee": g.grantee}
+                            for g in active_grants
+                        ],
+                        "runs": [
+                            {"pid": r.pid, "session_id": r.session_id, "state": r.state}
+                            for r in active_runs
+                        ],
+                        "mounts": [
+                            {"mount_id": m.mount_id} for m in active_mounts
+                        ],
+                    },
+                )
             # §5.6: revoke the zone's own grants as part of the flow.
             for g in (
                 session.execute(
@@ -1489,6 +1584,15 @@ class ZoneApplicationService:
                 receipt.error or "runtime rejected operation",
             )
 
+        # §5.6 physical replica teardown: the VFS materialized tree goes
+        # FIRST (external effect, idempotent — a crash between this and the
+        # SQL commit below is retried by the outbox and the purger re-runs
+        # harmlessly), then the SQL rows purge in the same transaction as
+        # the operation's terminal state, so a failed purge can never be
+        # recorded as succeeded.
+        if event_type == "zone.deprovision" and self._zone_fs_purger is not None:
+            self._zone_fs_purger(str(payload["zone_id"]))
+
         with self._session_factory() as session, session.begin():
             updated = _fenced_update(
                 session,
@@ -1515,6 +1619,7 @@ class ZoneApplicationService:
                 zone = session.get(ZoneModel, str(payload["zone_id"]))
                 if zone is not None:
                     _cleanup_zone_projections(session, zone.zone_id)
+                    _purge_zone_session_data(session, zone.zone_id)
                     zone.canonical_status = "deleted"
                     zone.phase = "Terminated"
                     zone.deleted_at = _now()

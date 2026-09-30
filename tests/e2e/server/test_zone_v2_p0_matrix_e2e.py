@@ -250,6 +250,20 @@ def test_p0_scenario_7_either_side_missing_denies(nexus_server, test_app) -> Non
 
     # (b) restore the relation (grant + ReBAC both present again → allow),
     # then revoke the grant → deny even with a relation manually re-added.
+    put_r = test_app.post(
+        "/api/v2/rebac/tuples",
+        headers=headers,
+        json={
+            "subject_namespace": "organization",
+            "subject_id": "p0m-org-a",
+            "relation": "direct_viewer",
+            "object_namespace": "file",
+            "object_id": "/*",
+            "zone_id": zone,
+        },
+    )
+    assert put_r.status_code in (200, 201), put_r.text
+    assert _access(test_app, zone, user_key, delegation) == 200
     grants = test_app.get(f"/v2/zones/{zone}/grants", headers=headers).json()["grants"]
     grant_id = next(g["grant_id"] for g in grants if g["grantee"]["subject_id"] == "p0m-org-a")
     rev = test_app.delete(
@@ -260,6 +274,22 @@ def test_p0_scenario_7_either_side_missing_denies(nexus_server, test_app) -> Non
     op = _wait_operation(test_app, rev.headers["Location"].split("/")[-1], headers)
     assert op["state"] == "succeeded", op
     # Scenario 9 (simplified): revocation is effective immediately — no window.
+    assert _access(test_app, zone, user_key, delegation) == 403
+    # The revoke's independent deny power: a manually re-added relation must
+    # NOT resurrect access once the grant is gone.
+    re_put = test_app.post(
+        "/api/v2/rebac/tuples",
+        headers=headers,
+        json={
+            "subject_namespace": "organization",
+            "subject_id": "p0m-org-a",
+            "relation": "direct_viewer",
+            "object_namespace": "file",
+            "object_id": "/*",
+            "zone_id": zone,
+        },
+    )
+    assert re_put.status_code in (200, 201), re_put.text
     assert _access(test_app, zone, user_key, delegation) == 403
 
 
@@ -390,8 +420,10 @@ def test_p0_scenario_13_suspend_blocks_new_grants_resume_restores(nexus_server, 
             "reason": "must be rejected while suspended",
         },
     )
-    assert blocked.status_code in (403, 409, 422, 503), blocked.text
-    assert blocked.status_code != 202, "new grant must not be accepted while the zone is suspended"
+    # Suspended zone → the service layer refuses grant issuance with a
+    # deterministic ZONE_NOT_ACTIVE conflict (not a capability denial).
+    assert blocked.status_code == 409, blocked.text
+    assert blocked.json()["detail"]["code"] == "ZONE_NOT_ACTIVE", blocked.text
     blocked_write = test_app.post(
         "/v2/sessions/p0m-s13-session/records",
         headers=headers,
@@ -1228,7 +1260,9 @@ def test_p0_c2_truth_table_supplements(nexus_server, test_app) -> None:
         f"/v2/zones/{zone}",
         headers={"Authorization": f"Bearer {ro_user_key}", "X-Nexus-Zone-ID": other_zone},
     )
-    assert spoof.status_code in (401, 403), (
+    # The dependency layer refuses to apply a zone header the token is not
+    # authorized for — the whole request fails authentication (401).
+    assert spoof.status_code == 401, (
         f"spoofed zone header must not grant: {spoof.status_code}"
     )
 
@@ -1239,7 +1273,7 @@ def test_p0_c2_truth_table_supplements(nexus_server, test_app) -> None:
         f"/v2/zones/{zone}",
         headers={"Authorization": f"Bearer {zoneless_key}"},
     )
-    assert zoneless.status_code in (401, 403), (
+    assert zoneless.status_code == 403, (
         f"zone-less non-admin must be refused: {zoneless.status_code}"
     )
 
@@ -1249,7 +1283,8 @@ def test_p0_c2_truth_table_supplements(nexus_server, test_app) -> None:
         "/v2/zones/root",
         headers={**headers, "Idempotency-Key": "p0m-c2-root-del", "X-Nexus-Confirm-Zone": "root"},
     )
-    assert root_delete.status_code in (400, 403, 404, 409, 422), root_delete.text
+    # root is reserved: RESERVED_ZONE_ID refusal on the delete path.
+    assert root_delete.status_code == 403, root_delete.text
     # root delete rejection above is the assertion (§4.5 root 禁删).
 
 

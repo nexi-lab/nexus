@@ -63,6 +63,19 @@ def require_global_capability(auth_result: dict[str, Any], capability: str) -> N
         )
 
 
+def is_owner_or_admin(auth_result: dict[str, Any], owner_subject_id: str | None) -> bool:
+    """Strict owner match (L-1): compares subject_type as well as subject_id.
+
+    An agent/service principal whose subject_id collides with a victim
+    user's id must not read or revoke that user's delegations/operations —
+    only a real user principal (or an admin) matches."""
+    if auth_result.get("is_admin", False):
+        return True
+    return auth_result.get("subject_type") == "user" and auth_result.get(
+        "subject_id"
+    ) == owner_subject_id
+
+
 def require_zone_capability(
     request: Request,
     auth_result: dict[str, Any],

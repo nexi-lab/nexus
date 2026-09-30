@@ -253,105 +253,111 @@ def nexus_server(isolated_db, tmp_path):
         dict with 'port', 'base_url', 'process'
     """
     membership = start_membership_stub()
+    # L-12(6): a warm-up failure (env minting, server boot) must still
+    # close the membership stub — it used to leak a ThreadingHTTPServer
+    # thread per failed fixture.
+    try:
+        # Set up environment
+        storage_path = tmp_path / "storage"
+        storage_path.mkdir(exist_ok=True)
+        home_path = tmp_path / "home"
+        home_path.mkdir(exist_ok=True)
 
-    # Set up environment
-    storage_path = tmp_path / "storage"
-    storage_path.mkdir(exist_ok=True)
-    home_path = tmp_path / "home"
-    home_path.mkdir(exist_ok=True)
+        # The Python HTTP server uses ``port``; its internal kernel and public
+        # gRPC face use the next two ports.
+        port = find_free_port(3)
+        base_url = f"http://127.0.0.1:{port}"
 
-    # The Python HTTP server uses ``port``; its internal kernel and public
-    # gRPC face use the next two ports.
-    port = find_free_port(3)
-    base_url = f"http://127.0.0.1:{port}"
+        # Environment for the server process
+        env = os.environ.copy()
+        env["NEXUS_JWT_SECRET"] = "test-secret-key-for-e2e-12345"
+        env["HOME"] = str(home_path)
+        # Allow PostgreSQL via NEXUS_E2E_DATABASE_URL env var; default to SQLite
+        env["NEXUS_DATABASE_URL"] = os.environ.get("NEXUS_E2E_DATABASE_URL", f"sqlite:///{isolated_db}")
+        env["PYTHONPATH"] = str(_src_path)
 
-    # Environment for the server process
-    env = os.environ.copy()
-    env["NEXUS_JWT_SECRET"] = "test-secret-key-for-e2e-12345"
-    env["HOME"] = str(home_path)
-    # Allow PostgreSQL via NEXUS_E2E_DATABASE_URL env var; default to SQLite
-    env["NEXUS_DATABASE_URL"] = os.environ.get("NEXUS_E2E_DATABASE_URL", f"sqlite:///{isolated_db}")
-    env["PYTHONPATH"] = str(_src_path)
+        # Full-profile startup requires a real credential provider.  Mint one key
+        # into the same Rust data directory the local KernelClient will open, then
+        # use that key for both the Python HTTP auth adapter and internal gRPC.
+        env["NEXUS_API_KEY"] = _mint_kernel_admin_key(env, tmp_path)
+        env["NEXUS_ZONE_DELEGATION_ISSUERS"] = "moss-e2e"
+        env["NEXUS_ZONE_MEMBERSHIP_URL"] = membership.url
+        env["NEXUS_ZONE_MEMBERSHIP_TOKEN"] = membership.token
 
-    # Full-profile startup requires a real credential provider.  Mint one key
-    # into the same Rust data directory the local KernelClient will open, then
-    # use that key for both the Python HTTP auth adapter and internal gRPC.
-    env["NEXUS_API_KEY"] = _mint_kernel_admin_key(env, tmp_path)
-    env["NEXUS_ZONE_DELEGATION_ISSUERS"] = "moss-e2e"
-    env["NEXUS_ZONE_MEMBERSHIP_URL"] = membership.url
-    env["NEXUS_ZONE_MEMBERSHIP_TOKEN"] = membership.token
+        # Issue #788: Lower min chunk size for e2e tests (default 5MB too large for test payloads)
+        env["NEXUS_UPLOAD_MIN_CHUNK_SIZE"] = "1"
+        env["NEXUS_RATE_LIMIT_ENABLED"] = "false"
+        env["NEXUS_SEARCH_DAEMON"] = "false"
 
-    # Issue #788: Lower min chunk size for e2e tests (default 5MB too large for test payloads)
-    env["NEXUS_UPLOAD_MIN_CHUNK_SIZE"] = "1"
-    env["NEXUS_RATE_LIMIT_ENABLED"] = "false"
-    env["NEXUS_SEARCH_DAEMON"] = "false"
+        # Issue #2035: Enable RecordStore + ReBAC so skills subscribe/share/unshare
+        # and share-link operations have a working EnhancedReBACManager.
+        # Without this, the server starts in "bare kernel" mode (no ReBAC).
+        env["NEXUS_RECORD_STORE_PATH"] = str(tmp_path / "record_store.db")
 
-    # Issue #2035: Enable RecordStore + ReBAC so skills subscribe/share/unshare
-    # and share-link operations have a working EnhancedReBACManager.
-    # Without this, the server starts in "bare kernel" mode (no ReBAC).
-    env["NEXUS_RECORD_STORE_PATH"] = str(tmp_path / "record_store.db")
+        # Issue #1186: Enable lock manager if Dragonfly/Redis is available
+        dragonfly_url = env.get("NEXUS_DRAGONFLY_URL") or env.get("REDIS_URL")
+        if dragonfly_url:
+            env["NEXUS_DRAGONFLY_COORDINATION_URL"] = dragonfly_url
+            env["NEXUS_ALLOW_SINGLE_DRAGONFLY"] = "true"
 
-    # Issue #1186: Enable lock manager if Dragonfly/Redis is available
-    dragonfly_url = env.get("NEXUS_DRAGONFLY_URL") or env.get("REDIS_URL")
-    if dragonfly_url:
-        env["NEXUS_DRAGONFLY_COORDINATION_URL"] = dragonfly_url
-        env["NEXUS_ALLOW_SINGLE_DRAGONFLY"] = "true"
-
-    # Start nexusd process
-    # Using python -c to invoke the daemon entry point from source
-    # --data-dir sets both storage path and database location
-    # Uses FastAPI async server (default) for full API support including Graph API
-    process = subprocess.Popen(
-        [
-            sys.executable,
-            "-c",
-            "from nexus.daemon.main import main; import sys; main(sys.argv[1:])",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(port),
-            "--data-dir",
-            str(tmp_path),
-            "--profile",
-            "full",
-        ],
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        # Use a process group so cleanup can terminate all children.  Python's
-        # native flag performs setsid safely in the child; preexec_fn can
-        # deadlock when pytest has already started background threads.
-        start_new_session=sys.platform != "win32",
-    )
-
-    # Event-driven readiness: drain stdout/stderr in background threads and
-    # wait for uvicorn's "Application startup complete" log line.  This is
-    # deterministic (no polling race) and prevents pipe-buffer deadlocks.
-    stderr_lines: list[str] = []
-    stdout_lines: list[str] = []
-    ready = threading.Event()
-
-    t_err = threading.Thread(
-        target=_drain_pipe, args=(process.stderr, stderr_lines, ready), daemon=True
-    )
-    t_out = threading.Thread(target=_drain_pipe, args=(process.stdout, stdout_lines), daemon=True)
-    t_err.start()
-    t_out.start()
-
-    # 120s safety ceiling — NOT a polling interval.  The event fires the
-    # instant the server emits the log line, so this only triggers on a
-    # genuine hang.
-    if not ready.wait(timeout=120.0):
-        process.terminate()
-        t_err.join(timeout=2)
-        t_out.join(timeout=2)
-        pytest.fail(
-            f"Server failed to start on port {port} "
-            f"(never saw 'Application startup complete').\n"
-            f"stdout: {''.join(stdout_lines)}\n"
-            f"stderr: {''.join(stderr_lines)}"
+        # Start nexusd process
+        # Using python -c to invoke the daemon entry point from source
+        # --data-dir sets both storage path and database location
+        # Uses FastAPI async server (default) for full API support including Graph API
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                "from nexus.daemon.main import main; import sys; main(sys.argv[1:])",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(port),
+                "--data-dir",
+                str(tmp_path),
+                "--profile",
+                "full",
+            ],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            # Use a process group so cleanup can terminate all children.  Python's
+            # native flag performs setsid safely in the child; preexec_fn can
+            # deadlock when pytest has already started background threads.
+            start_new_session=sys.platform != "win32",
         )
 
+        # Event-driven readiness: drain stdout/stderr in background threads and
+        # wait for uvicorn's "Application startup complete" log line.  This is
+        # deterministic (no polling race) and prevents pipe-buffer deadlocks.
+        stderr_lines: list[str] = []
+        stdout_lines: list[str] = []
+        ready = threading.Event()
+
+        t_err = threading.Thread(
+            target=_drain_pipe, args=(process.stderr, stderr_lines, ready), daemon=True
+        )
+        t_out = threading.Thread(target=_drain_pipe, args=(process.stdout, stdout_lines), daemon=True)
+        t_err.start()
+        t_out.start()
+
+        # 120s safety ceiling — NOT a polling interval.  The event fires the
+        # instant the server emits the log line, so this only triggers on a
+        # genuine hang.
+        if not ready.wait(timeout=120.0):
+            process.terminate()
+            t_err.join(timeout=2)
+            t_out.join(timeout=2)
+            pytest.fail(
+                f"Server failed to start on port {port} "
+                f"(never saw 'Application startup complete').\n"
+                f"stdout: {''.join(stdout_lines)}\n"
+                f"stderr: {''.join(stderr_lines)}"
+            )
+
+    except BaseException:
+        membership.close()
+        raise
     yield {
         "port": port,
         "base_url": base_url,

@@ -7,19 +7,47 @@
     {
       "type": "object",
       "properties": {
-        "api_version": { "const": "task.sudo.dev/v1" },
-        "kind": { "const": "TaskExecutionResolution" },
-        "resolution_id": { "type": "string", "minLength": 1 },
-        "task_id": { "type": "string", "minLength": 1 },
-        "status": { "const": "accepted" },
-        "attempt_id": { "type": "string", "minLength": 1 },
+        "api_version": {
+          "const": "task.sudo.dev/v1"
+        },
+        "kind": {
+          "const": "TaskExecutionResolution"
+        },
+        "resolution_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "task_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "const": "accepted"
+        },
+        "attempt_id": {
+          "type": "string",
+          "minLength": 1
+        },
         "execution_zone_id": {
           "$ref": "https://nexus-vfs.dev/contracts/zone-id/existing-zone-id-ref.schema.gen.json"
         },
-        "reason_code": { "type": "string", "minLength": 1 },
-        "reason": { "type": "string", "minLength": 1 },
-        "policy_version": { "type": "string", "minLength": 1 },
-        "decided_at": { "type": "string", "format": "date-time" }
+        "reason_code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "policy_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "decided_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
+        }
       },
       "required": [
         "api_version",
@@ -39,15 +67,40 @@
     {
       "type": "object",
       "properties": {
-        "api_version": { "const": "task.sudo.dev/v1" },
-        "kind": { "const": "TaskExecutionResolution" },
-        "resolution_id": { "type": "string", "minLength": 1 },
-        "task_id": { "type": "string", "minLength": 1 },
-        "status": { "const": "rejected" },
-        "reason_code": { "type": "string", "minLength": 1 },
-        "reason": { "type": "string", "minLength": 1 },
-        "policy_version": { "type": "string", "minLength": 1 },
-        "decided_at": { "type": "string", "format": "date-time" }
+        "api_version": {
+          "const": "task.sudo.dev/v1"
+        },
+        "kind": {
+          "const": "TaskExecutionResolution"
+        },
+        "resolution_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "task_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "const": "rejected"
+        },
+        "reason_code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "policy_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "decided_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
+        }
       },
       "required": [
         "api_version",

@@ -31,10 +31,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from pydantic import TypeAdapter
+from pydantic import ValidationError as PydanticValidationError
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from nexus.contracts.zone_v1 import ZonePathStr
 from nexus.storage.models import (
     SessionDataRecordModel,
     SessionModel,
@@ -56,11 +59,16 @@ RECORD_VFS_SUBPATHS: dict[str, str] = {
 
 
 class SessionRuntimeError(Exception):
-    def __init__(self, code: str, message: str, status_code: int = 400) -> None:
+    def __init__(
+        self, code: str, message: str, status_code: int = 400, *, retryable: bool | None = None
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.status_code = status_code
+        # 5xx outcomes (e.g. ZONE_RUNTIME_UNAVAILABLE) are retryable; explicit
+        # 4xx denials are not.  Callers may override with an explicit value.
+        self.retryable = status_code >= 500 if retryable is None else retryable
 
 
 @dataclass(frozen=True)
@@ -181,7 +189,11 @@ class SessionRuntimeService:
             try:
                 session.commit()
             except IntegrityError as exc:
-                raise SessionRuntimeError("SESSION_ALREADY_EXISTS", str(exc.orig), 409) from exc
+                # Fixed message on the wire — driver error text may leak schema
+                # details; the original stays on the exception chain for logs.
+                raise SessionRuntimeError(
+                    "SESSION_ALREADY_EXISTS", "session already exists", 409
+                ) from exc
             return self._view(session, record)
 
     def get_session(self, session_id: str) -> SessionView:
@@ -266,6 +278,17 @@ class SessionRuntimeService:
                 if name_part
                 else f"/sessions/{session_id}/{subpath}"
             )
+            # Second line of defence (L-2): the input layer validates the
+            # parts, but the kernel's path semantics live outside this repo —
+            # the composed path itself must satisfy the vendored zone-path
+            # projection ('..' segments, traversal shapes) before it reaches
+            # the VFS writer.
+            try:
+                TypeAdapter(ZonePathStr).validate_python(vfs_path)
+            except PydanticValidationError as exc:
+                raise SessionRuntimeError(
+                    "INVALID_PATH", f"record path is not a canonical zone path: {vfs_path}", 422
+                ) from exc
             written = self._fs_writer(vfs_path, payload, home_zone)
             ledger = session.execute(
                 select(SessionDataRecordModel).where(
@@ -289,7 +312,39 @@ class SessionRuntimeService:
                 ledger.vfs_path = vfs_path
                 ledger.bytes_written = written
                 ledger.updated_at = _utcnow()
-            session.commit()
+            try:
+                session.commit()
+            except IntegrityError:
+                # A concurrent writer inserted the same named record between
+                # our SELECT and INSERT: fall back to the update path (upsert
+                # semantics) instead of surfacing a 500.
+                session.rollback()
+                ledger = (
+                    session.execute(
+                        select(SessionDataRecordModel).where(
+                            SessionDataRecordModel.session_id == session_id,
+                            SessionDataRecordModel.record_kind == record_kind,
+                            SessionDataRecordModel.record_name == record_name,
+                        )
+                    )
+                    .scalars()
+                    .one()
+                )
+                ledger.zone_id = home_zone
+                ledger.vfs_path = vfs_path
+                ledger.bytes_written = written
+                ledger.updated_at = _utcnow()
+                session.commit()
+            except Exception:
+                # The VFS bytes are already durable but the ledger is not.
+                # The kernel exposes no VFS delete, so the orphan is logged
+                # for ops instead of being silently dropped — at-least-once
+                # write semantics (L-7①).
+                logger.exception(
+                    "record VFS bytes landed but the ledger commit failed (orphan: %s)",
+                    vfs_path,
+                )
+                raise
             return {
                 "session_id": session_id,
                 "record_kind": record_kind,
@@ -424,7 +479,9 @@ class SessionRuntimeService:
             try:
                 session.commit()
             except IntegrityError as exc:
-                raise SessionRuntimeError("RUN_ALREADY_EXISTS", str(exc.orig), 409) from exc
+                raise SessionRuntimeError(
+                    "RUN_ALREADY_EXISTS", "a run with this pid already exists", 409
+                ) from exc
             return self._run_view(session, run)
 
     def resume_run(
@@ -450,7 +507,7 @@ class SessionRuntimeService:
                 session.execute(
                     select(SessionRuntimeRunModel)
                     .where(SessionRuntimeRunModel.session_id == session_id)
-                    .order_by(SessionRuntimeRunModel.started_at.desc())
+                    .order_by(SessionRuntimeRunModel.started_at.desc(), SessionRuntimeRunModel.pid.desc())
                 )
                 .scalars()
                 .first()
@@ -492,7 +549,7 @@ class SessionRuntimeService:
                 session.execute(
                     select(SessionRuntimeRunModel)
                     .where(SessionRuntimeRunModel.session_id == session_id)
-                    .order_by(SessionRuntimeRunModel.started_at.desc())
+                    .order_by(SessionRuntimeRunModel.started_at.desc(), SessionRuntimeRunModel.pid.desc())
                 )
                 .scalars()
                 .first()
@@ -546,18 +603,37 @@ class SessionRuntimeService:
     ) -> int:
         """Fail closed after a grant/epoch change.
 
-        Every pre-existing run in the zone carries the previous epoch.  Runs
-        directly tied to the revoked grant, carrying a stale epoch, or missing
-        dependency references are parked until a fresh delegation creates a
-        new runtime generation.
+        Driven by the ``session_zone_dependencies`` index (§8.9 item 4): the
+        dependency rows carry the same grant/epoch references the run was
+        started under, so the park set is exactly the runs depending on this
+        zone whose grant matches, whose epoch is stale, or whose epoch is
+        unknown (NULL — SQL three-valued logic would silently drop those from
+        an ``epoch < :x`` comparison, so the IS NULL arm is load-bearing).
+        Today each run writes one dependency row (its execution zone); when
+        data-zone dependencies are recorded the same query parks them too.
         """
         active_states = ("registered", "warming_up", "ready", "busy", "awaiting_input")
-        parked = 0
         with self._session_factory() as session, session.begin():
+            dep_pids = (
+                session.execute(
+                    select(SessionZoneDependencyModel.pid).where(
+                        SessionZoneDependencyModel.zone_id == zone_id,
+                        or_(
+                            SessionZoneDependencyModel.grant_ref == grant_ref,
+                            SessionZoneDependencyModel.authorization_epoch.is_(None),
+                            SessionZoneDependencyModel.authorization_epoch < authorization_epoch,
+                        ),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if not dep_pids:
+                return 0
             runs = (
                 session.execute(
                     select(SessionRuntimeRunModel).where(
-                        SessionRuntimeRunModel.execution_zone_id == zone_id,
+                        SessionRuntimeRunModel.pid.in_(dep_pids),
                         SessionRuntimeRunModel.state.in_(active_states),
                     )
                 )
@@ -565,14 +641,8 @@ class SessionRuntimeService:
                 .all()
             )
             for run in runs:
-                if (
-                    run.grant_ref == grant_ref
-                    or run.authorization_epoch is None
-                    or run.authorization_epoch < authorization_epoch
-                ):
-                    run.state = "revocation_pending"
-                    parked += 1
-        return parked
+                run.state = "revocation_pending"
+            return len(runs)
 
     def park_session_runs(self, *, session_id: str) -> int:
         """Park active runs after an access-time delegation failure."""

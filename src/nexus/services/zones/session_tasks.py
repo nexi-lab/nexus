@@ -9,12 +9,13 @@ ledger.
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -27,13 +28,27 @@ from nexus.storage.models import (
     ZoneModel,
 )
 
+logger = logging.getLogger(__name__)
+
+#: Terminal runs/attempts older than this are deleted by the worker's reaper.
+#: These tables are §5.6 business data (purged on deprovision), not audit
+#: history — without a horizon they accumulate forever.
+REAP_TERMINAL_AFTER_S = 7 * 86400
+
+#: A queued attempt with no run after this long is a crash orphan (the M-11
+#: window: create_attempt committed, start_run/attach never happened).
+REAP_ORPHAN_AFTER_S = 900
+
 
 class SessionTaskError(Exception):
-    def __init__(self, code: str, message: str, status_code: int = 400) -> None:
+    def __init__(
+        self, code: str, message: str, status_code: int = 400, *, retryable: bool | None = None
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.status_code = status_code
+        self.retryable = status_code >= 500 if retryable is None else retryable
 
 
 @dataclass(frozen=True)
@@ -140,7 +155,16 @@ class SessionTaskService:
                 session.rollback()
                 existing = self._task_for_session(session, session_id)
                 if existing is None:
-                    raise SessionTaskError("TASK_CREATE_CONFLICT", str(exc.orig), 409) from exc
+                    # Fixed message on the wire; the driver error stays on the
+                    # exception chain for logs.  The spec.json written above
+                    # is orphaned VFS evidence (the kernel exposes no delete).
+                    logger.warning(
+                        "task spec.json landed but the row commit failed (orphan: %s)",
+                        path,
+                    )
+                    raise SessionTaskError(
+                        "TASK_CREATE_CONFLICT", "task creation raced with a concurrent writer", 409
+                    ) from exc
                 return self._task_ref(session, existing)
             return self._task_ref(session, task)
 
@@ -187,7 +211,13 @@ class SessionTaskService:
                 decided_at=decided_at,
             )
             session.add(resolution)
-            session.commit()
+            try:
+                session.commit()
+            except Exception:
+                logger.warning(
+                    "resolution json landed but the row commit failed (orphan: %s)", path
+                )
+                raise
             return self._resolution_json(resolution)
 
     def create_attempt(
@@ -275,7 +305,16 @@ class SessionTaskService:
                 created_at=decided_at,
             )
             session.add_all((resolution, attempt))
-            session.commit()
+            try:
+                session.commit()
+            except Exception:
+                logger.warning(
+                    "attempt json snapshots landed but the row commit failed "
+                    "(orphans: %s, %s)",
+                    resolution_path,
+                    attempt_path,
+                )
+                raise
             return self._attempt_ref(attempt)
 
     def attach_pid(self, *, attempt_id: str, pid: str) -> AttemptRef:
@@ -319,7 +358,7 @@ class SessionTaskService:
                         SessionRuntimeRunModel.session_id == session_id,
                         SessionRuntimeRunModel.attempt_id.is_not(None),
                     )
-                    .order_by(SessionRuntimeRunModel.started_at.desc())
+                    .order_by(SessionRuntimeRunModel.started_at.desc(), SessionRuntimeRunModel.pid.desc())
                 )
                 .scalars()
                 .first()
@@ -360,6 +399,67 @@ class SessionTaskService:
                 }
                 attempt.ended_at = now
             return len(attempts)
+
+    def reap_orphan_attempts(self, *, max_age_s: float = REAP_ORPHAN_AFTER_S) -> int:
+        """Fail queued attempts that never acquired a run.
+
+        Covers the M-11 crash window (create_attempt committed, then the
+        process died before start_run/attach_pid): every state-anchored
+        cleanup path keys off a run, so without this reaper such attempts
+        would read as forever-queued."""
+        cutoff = _utcnow() - timedelta(seconds=max_age_s)
+        with self._session_factory() as session, session.begin():
+            orphans = (
+                session.execute(
+                    select(TaskAttemptModel).where(
+                        TaskAttemptModel.state == "queued",
+                        TaskAttemptModel.created_at < cutoff,
+                        ~select(SessionRuntimeRunModel.pid)
+                        .where(SessionRuntimeRunModel.attempt_id == TaskAttemptModel.attempt_id)
+                        .exists(),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            now = _utcnow()
+            for attempt in orphans:
+                attempt.state = "failed"
+                attempt.failure = {
+                    "code": "START_INTERRUPTED",
+                    "message": "run never started",
+                    "retryable": False,
+                }
+                attempt.ended_at = now
+            return len(orphans)
+
+    def reap_terminal_rows(self, *, older_than_s: float = REAP_TERMINAL_AFTER_S) -> int:
+        """Delete terminal runs/attempts past the horizon (L-7③).
+
+        §5.6 already treats these tables as purgeable business data; this is
+        the steady-state counterpart so long-lived deployments do not
+        accumulate terminal rows unboundedly.  Runs go first — attempts with
+        a live run reference are left alone (FK RESTRICT)."""
+        cutoff = _utcnow() - timedelta(seconds=older_than_s)
+        with self._session_factory() as session, session.begin():
+            runs = session.execute(
+                delete(SessionRuntimeRunModel).where(
+                    SessionRuntimeRunModel.ended_at.is_not(None),
+                    SessionRuntimeRunModel.ended_at < cutoff,
+                )
+            )
+            attempts = session.execute(
+                delete(TaskAttemptModel).where(
+                    TaskAttemptModel.ended_at.is_not(None),
+                    TaskAttemptModel.ended_at < cutoff,
+                    ~select(SessionRuntimeRunModel.pid)
+                    .where(SessionRuntimeRunModel.attempt_id == TaskAttemptModel.attempt_id)
+                    .exists(),
+                )
+            )
+            return int(getattr(runs, "rowcount", 0) or 0) + int(
+                getattr(attempts, "rowcount", 0) or 0
+            )
 
     def get_task(self, *, session_id: str, task_id: str) -> dict[str, Any]:
         with self._session_factory() as session:

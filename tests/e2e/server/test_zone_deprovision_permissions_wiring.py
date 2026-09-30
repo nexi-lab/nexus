@@ -1,8 +1,14 @@
-"""E2E test: Zone deprovision with FastAPI, ReBAC permissions, and non-admin users.
+"""WIRING test (renamed from _e2e, M-15): zone deprovision authorization on
+an in-memory ReBAC and an always-ok runtime receipt.
 
-Tests the full zone lifecycle with actual permission enforcement:
+This suite verifies the ROUTER↔SERVICE wiring (capability gates, status
+codes, SQL state) — NOT real ReBAC semantics: the rebac_check here is a
+test-supplied in-memory function and the runtime never refuses.  Real-stack
+semantics live in the full-process e2e suites.
+
+Checks:
 1. Register two users (owner + non-member)
-2. Create zone (owner auto-enrolled via ReBAC)
+2. Create zone (owner auto-enrolled via the in-memory ReBAC)
 3. Non-member cannot DELETE zone (403)
 4. Owner can DELETE zone (202)
 5. Verify idempotent retry on terminated zone

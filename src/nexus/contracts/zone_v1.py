@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 from jsonschema import Draft202012Validator
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
 RFC3339_PATTERN = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$"
 DECIMAL_STRING_PATTERN = r"^[0-9]+$"
@@ -103,6 +103,13 @@ KNOWN_ERROR_CODES: frozenset[str] = frozenset(
         "UNSUPPORTED_CAPABILITY",
         "PROJECTION_PENDING",
         "PROJECTION_FAILED",
+        "ZONE_ACCESS_DENIED",
+        "INVALID_TASK_SPEC",
+        "ZONE_DELETED",
+        "ZONE_IDENTITY_DRIFT",
+        "CROSS_ZONE_DECISION_REQUIRED",
+        "INVALID_REQUEST",
+        "ZONE_RUNTIME_REJECTED",
     }
 )
 
@@ -187,6 +194,14 @@ class ZonePatchPlacement(BaseModel):
     region: str | None = Field(default=None, min_length=1)
     data_domain: Literal["office", "core", "general"] | None = None
 
+    @model_validator(mode="after")
+    def _require_at_least_one_key(self) -> ZonePatchPlacement:
+        # Schema-side minProperties: 1 — an empty deployment patch is a no-op
+        # that would still bump the revision.
+        if self.region is None and self.data_domain is None:
+            raise ValueError("deployment patch requires at least one placement key")
+        return self
+
 
 class ZonePatchRequest(BaseModel):
     """Whitelisted-field patch (§6.2) — deliberately not Partial[Zone].
@@ -222,7 +237,7 @@ class ZoneGrant(BaseModel):
     grant_id: str = Field(min_length=1)
     zone_id: ExistingZoneIdRefStr
     grantee: PrincipalRef
-    capabilities: list[str] = Field(min_length=1)
+    capabilities: list[Annotated[str, Field(pattern=CAPABILITY_PATTERN)]] = Field(min_length=1)
     resource_prefixes: list[ZonePathStr] | None = None
     source: ZoneGrantSource | None = None
     issued_by: PrincipalRef
@@ -248,7 +263,7 @@ class ZoneGrantCreateRequest(BaseModel):
     api_version: Literal["auth.sudo.dev/v1"]
     kind: Literal["ZoneGrantCreateRequest"]
     grantee: PrincipalRef
-    capabilities: list[str] = Field(min_length=1)
+    capabilities: list[Annotated[str, Field(pattern=CAPABILITY_PATTERN)]] = Field(min_length=1)
     resource_prefixes: list[ZonePathStr] | None = None
     source: ZoneGrantSource | None = None
     reason: str = Field(min_length=1)
@@ -344,7 +359,7 @@ class ZoneOperation(BaseModel):
         "transfer",
         "deprovision",
     ]
-    zone_id: str | None = Field(default=None, min_length=1)
+    zone_id: ExistingZoneIdRefStr | None = None
     grant_id: str | None = Field(default=None, min_length=1)
     state: Literal["queued", "running", "waiting_dependency", "succeeded", "failed"]
     step: str = Field(min_length=1)

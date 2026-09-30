@@ -16,6 +16,7 @@ from collections.abc import Callable
 from typing import Any
 
 from fastapi import FastAPI
+from sqlalchemy.exc import SQLAlchemyError
 
 from nexus.remote.zone_runtime_client import NullZoneRuntimePort, ZoneRuntimePort
 from nexus.services.zones.authz import AuthorizationService
@@ -23,6 +24,12 @@ from nexus.services.zones.membership import MembershipUnreachable, MossMembershi
 from nexus.services.zones.service import ZoneApplicationService
 
 logger = logging.getLogger(__name__)
+
+#: Worker loop cadence (seconds). Small for responsive outbox pickup.
+WORKER_TICK_S = 0.25
+#: Grace window for the worker loop to finish an in-flight pump at shutdown
+#: before the lifespan's blanket task-cancel pass takes over.
+WORKER_GRACE_S = 5.0
 
 
 class ZoneControlNotArmed(RuntimeError):
@@ -239,6 +246,12 @@ def zone_worker(app: FastAPI) -> Any:
                 return bool(allowed)
         except MembershipUnreachable:
             return None
+        except SQLAlchemyError:
+            # Store trouble is unknown, not "dependency gone": a transient DB
+            # error must not park runs (that would be fail-closed on the wrong
+            # axis) — keep the dependency retrying instead.
+            logger.exception("dependency revalidation hit a store error")
+            return None
         except Exception:
             return False
 
@@ -280,7 +293,7 @@ def _runtime_ready(runtime: ZoneRuntimePort) -> bool:
         "zone-runtime:deprovision",
         "zone-runtime:operation-journal",
     }
-    # The pinned 763f8c0 runtime snapshots ``permission.provider_armed``
+    # The pinned bc89aa6 runtime snapshots ``permission.provider_armed``
     # before service declarations install the ReBAC provider.  The Rust full
     # profile independently refuses startup if that provider is absent, while
     # this assembly separately requires the live Python ReBAC/projection
@@ -422,14 +435,30 @@ async def startup_zone_control(app: FastAPI) -> list[asyncio.Task[Any]]:
             except Exception:
                 logger.exception("zone operation worker iteration failed")
             try:
-                await asyncio.wait_for(stop.wait(), timeout=0.25)
+                await asyncio.wait_for(stop.wait(), timeout=WORKER_TICK_S)
             except TimeoutError:
                 continue
 
-    return [asyncio.create_task(run(), name="zone-operation-worker")]
+    tasks = [asyncio.create_task(run(), name="zone-operation-worker")]
+    app.state.zone_worker_tasks = tasks
+    return tasks
 
 
 async def shutdown_zone_control(app: FastAPI) -> None:
+    """Graceful worker stop: signal, then bounded-join the loop so an
+    in-flight pump finishes its transaction; the lifespan's blanket cancel
+    pass remains the backstop for whatever outlives the grace window."""
     stop = getattr(app.state, "zone_worker_stop", None)
     if stop is not None:
         stop.set()
+    tasks = getattr(app.state, "zone_worker_tasks", None)
+    if tasks:
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True), timeout=WORKER_GRACE_S
+            )
+        except TimeoutError:
+            logger.warning(
+                "zone worker did not stop within %.0fs; leaving it to the cancel pass",
+                WORKER_GRACE_S,
+            )

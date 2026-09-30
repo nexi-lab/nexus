@@ -45,13 +45,13 @@ class Runtime:
     def mount(self, *, parent_zone_id, target_zone_id, path, ctx):
         return RuntimeReceipt(ok=True, runtime_revision="1:2:2", raw={"outcome": "MOUNTED"})
 
-    def unmount(self, *, mount_ref, ctx):
+    def unmount(self, *, ctx):
         return RuntimeReceipt(ok=True, runtime_revision="1:3:3", raw={"outcome": "UNMOUNTED"})
 
     def remove_replica(self, *, zone_id, force, ctx):
         return RuntimeReceipt(ok=True, raw={"outcome": "REPLICA_REMOVED"})
 
-    def deprovision(self, *, zone_id, deletion_epoch, ctx):
+    def deprovision(self, *, zone_id, ctx):
         return RuntimeReceipt(ok=True, raw={"outcome": "DEPROVISIONED"})
 
     def probe_capabilities(self, *, ctx):
@@ -135,6 +135,136 @@ def test_openapi_fixture_matches_registered_zone_surface() -> None:
         (method, path) for path, operations in fixture["paths"].items() for method in operations
     }
     assert actual == expected
+
+
+def test_get_transfer_serializes_operation_datetimes_as_iso() -> None:
+    """M-2: the service returns raw ORM datetimes; pydantic v2 does not coerce
+    datetime→str, so the view must convert — the pre-fix GET
+    /zone-transfers/{id} was a guaranteed 500 the moment transfer arming made
+    it reachable."""
+    from datetime import UTC, datetime
+
+    from nexus.storage.models import ZoneOperationModel
+
+    app = _app()
+    factory = app.state.zone_session_factory
+    now = datetime.now(UTC)
+    with factory() as s:
+        s.add(
+            ZoneOperationModel(
+                operation_id="op_transfer_1",
+                action="transfer",
+                zone_id=None,
+                state="failed",
+                step="transfer-policy",
+                retryable=False,
+                idempotency_scope='["moss-provisioner", "zone.transfer", "team-alpha"]',
+                idempotency_key="tk1",
+                request_hash="rh",
+                created_at=now,
+                updated_at=now,
+                completed_at=now,
+            )
+        )
+        s.commit()
+    with TestClient(app) as client:
+        resp = client.get("/v2/zone-transfers/op_transfer_1")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["operation_id"] == "op_transfer_1"
+        assert body["action"] == "transfer"
+        # ISO-8601 strings, not raw datetime reprs (pydantic v2 does not
+        # coerce datetime→str; SQLite datetimes come back tz-naive).
+        assert "T" in body["created_at"] and "T" in body["completed_at"]
+
+
+def test_contract_invalid_payloads_are_422_not_500() -> None:
+    """H-2: every contract-shape violation must be a 422 with a machine
+    code — the pre-fix handler-internal contract construction turned each of
+    these into an unhandled ValidationError (HTTP 500)."""
+    from fastapi.exceptions import RequestValidationError
+
+    from nexus.server.fastapi_server import zone_v2_validation_error_handler
+
+    app = _app()
+    app.add_exception_handler(RequestValidationError, zone_v2_validation_error_handler)
+    headers = {"Idempotency-Key": "h2-case"}
+
+    with TestClient(app) as client:
+        # zone_id admission shape (schema: 3-63 lowercase/digits/hyphen, and
+        # root/__control__ reserved).
+        for bad_id in ("root", "TeamUP", "-abc"):
+            resp = client.post(
+                "/v2/zones", headers=headers, json={"zone_id": bad_id, "display_name": "X"}
+            )
+            assert resp.status_code == 422, (bad_id, resp.text)
+            assert resp.json()["detail"]["code"] == "INVALID_ZONE_ID", bad_id
+
+        # deployment.location outside the frozen enum.
+        resp = client.post(
+            "/v2/zones",
+            headers=headers,
+            json={
+                "zone_id": "team-beta",
+                "display_name": "B",
+                "deployment": {"location": "mars", "trust_domain": "td"},
+            },
+        )
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["detail"]["code"] == "INVALID_REQUEST"
+
+        # deployment.location missing — the server no longer defaults it to
+        # "cloud"; the frozen schema marks it required.
+        resp = client.post(
+            "/v2/zones",
+            headers=headers,
+            json={
+                "zone_id": "team-beta",
+                "display_name": "B",
+                "deployment": {"trust_domain": "td"},
+            },
+        )
+        assert resp.status_code == 422, resp.text
+
+        # grant body: unknown subject_type literal.
+        resp = client.post(
+            "/v2/zones/team-alpha/grants",
+            headers=headers,
+            json={
+                "grantee": {"subject_type": "team", "subject_id": "t1"},
+                "capabilities": ["zone.data.read"],
+                "reason": "r",
+            },
+        )
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["detail"]["code"] == "INVALID_REQUEST"
+
+        # grant body: path-traversal prefix — the schema layer rejects '..'
+        # components, and so must the body layer.
+        resp = client.post(
+            "/v2/zones/team-alpha/grants",
+            headers=headers,
+            json={
+                "grantee": {"subject_type": "user", "subject_id": "u1"},
+                "capabilities": ["zone.data.read"],
+                "resource_prefixes": ["../etc"],
+                "reason": "r",
+            },
+        )
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["detail"]["code"] == "INVALID_REQUEST"
+
+        # capability outside the open registry's pattern.
+        resp = client.post(
+            "/v2/zones/team-alpha/grants",
+            headers=headers,
+            json={
+                "grantee": {"subject_type": "user", "subject_id": "u1"},
+                "capabilities": ["read"],
+                "reason": "r",
+            },
+        )
+        assert resp.status_code == 422, resp.text
 
 
 def test_create_and_mount_are_operation_backed() -> None:

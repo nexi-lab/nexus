@@ -12,11 +12,13 @@ POST /v2/runtime/runs/{pid}/cancel   terminate or park revocation_pending
 
 from __future__ import annotations
 
-from typing import Any
+import logging
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import ValidationError
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StrictStr, ValidationError
 
+from nexus.contracts.exceptions import InvalidPathError
 from nexus.contracts.zone_v1 import ResourceRef
 from nexus.server.api.v2.zone_security import (
     VerifiedZoneDelegation,
@@ -27,6 +29,57 @@ from nexus.server.api.v2.zone_security import (
 from nexus.server.dependencies import require_auth
 from nexus.services.zones.session_runtime import SessionRuntimeError, SessionRuntimeService
 from nexus.services.zones.session_tasks import SessionTaskError, SessionTaskService
+
+logger = logging.getLogger(__name__)
+
+
+def _client_component(value: str) -> str:
+    """Reject path-bearing / traversal / control-character client strings
+    before they are ever composed into a VFS path (M-17)."""
+    if "/" in value or ".." in value or any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
+        raise ValueError("client strings must not contain '/', '..' or control characters")
+    return value
+
+
+#: session/pid identifiers: single path-free component, column-width bounded.
+SessionIdStr = Annotated[str, Field(max_length=64), AfterValidator(_client_component)]
+PidStr = Annotated[str, Field(max_length=64), AfterValidator(_client_component)]
+#: record names additionally bound by the ledger column width.
+RecordNameStr = Annotated[str, Field(max_length=256), AfterValidator(_client_component)]
+
+
+class SessionCreateBody(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    session_id: SessionIdStr
+    home_zone_id: str = Field(min_length=1, max_length=64)
+    owner: dict[str, Any] | None = None
+    policy_version: str | None = None
+
+
+class WriteRecordBody(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    record_kind: Literal["session", "transcript", "context", "artifact", "verify"]
+    data: StrictStr
+    record_name: RecordNameStr = "default"
+    zone_id: str | None = None
+
+
+class StartBody(BaseModel):
+    # extra="allow": _start consumes free-form pass-through fields off the
+    # dumped dict (delegation_ref / resource_refs / execution_zone_id / …);
+    # "ignore" would silently strip them and break every start request.
+    model_config = ConfigDict(extra="allow")
+
+    pid: PidStr
+    session_id: SessionIdStr
+
+
+class CancelRunBody(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    mode: str = "terminate"
 
 router = APIRouter(prefix="/v2", tags=["sessions-runtime-v2"])
 
@@ -52,16 +105,18 @@ def _task_service(request: Request) -> SessionTaskService:
 
 
 def _svc_error(exc: SessionRuntimeError) -> HTTPException:
+    # retryable is carried by the error itself (M-18): a 503-class
+    # ZONE_RUNTIME_UNAVAILABLE must be retryable, matching zone_security.
     return HTTPException(
         status_code=exc.status_code,
-        detail={"code": exc.code, "message": exc.message, "retryable": False},
+        detail={"code": exc.code, "message": exc.message, "retryable": exc.retryable},
     )
 
 
 def _task_svc_error(exc: SessionTaskError) -> HTTPException:
     return HTTPException(
         status_code=exc.status_code,
-        detail={"code": exc.code, "message": exc.message, "retryable": False},
+        detail={"code": exc.code, "message": exc.message, "retryable": exc.retryable},
     )
 
 
@@ -164,6 +219,35 @@ def _require_runtime_access(
     )
 
 
+def _require_runtime_access_or_not_found(
+    request: Request,
+    auth_result: dict[str, Any],
+    *,
+    not_found_code: str,
+    zone_id: str,
+    capability: str,
+    resource_path: str,
+) -> None:
+    """Anti-enumeration (L-8③) on the sessions read surface: an access
+    denial answers with the same 404 shape as the resource not existing,
+    mirroring the zones surface's authorize-before-lookup order."""
+    try:
+        _require_runtime_access(
+            request,
+            auth_result,
+            zone_id=zone_id,
+            capability=capability,
+            resource_path=resource_path,
+        )
+    except HTTPException as exc:
+        if exc.status_code == 403:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": not_found_code, "message": "not found", "retryable": False},
+            ) from exc
+        raise
+
+
 def _require_zone_alive(request: Request, zone_id: str) -> None:
     """§5.6 defense in depth: a deprovisioned zone's data is unreadable.
 
@@ -194,14 +278,12 @@ def _require_zone_alive(request: Request, zone_id: str) -> None:
 @router.post("/sessions", status_code=201)
 def create_session(
     request: Request,
-    body: dict[str, Any],
+    body: SessionCreateBody,
     auth_result: dict[str, Any] = Depends(require_auth),
 ) -> dict[str, Any]:
     svc = _service(request)
-    session_id = str(body.get("session_id") or "").strip()
-    home_zone_id = str(body.get("home_zone_id") or "").strip()
-    if not session_id or not home_zone_id:
-        raise HTTPException(status_code=422, detail={"code": "MISSING_FIELDS", "retryable": False})
+    session_id = body.session_id
+    home_zone_id = body.home_zone_id
 
     # The ingress policy check: the caller must hold zone.data.write on the
     # named home zone. A client payload alone never establishes authority.
@@ -222,9 +304,9 @@ def create_session(
         view = svc.create_session(
             session_id=session_id,
             home_zone_id=home_zone_id,
-            owner=body.get("owner") or principal_dict(auth_result),
+            owner=body.owner or principal_dict(auth_result),
             created_by=principal_dict(auth_result),
-            policy_version=str(body.get("policy_version") or "p1a-default"),
+            policy_version=body.policy_version or "p1a-default",
             capability_check=capability_check,
         )
     except SessionRuntimeError as exc:
@@ -239,9 +321,10 @@ def get_session(
     try:
         view = _service(request).get_session(session_id)
         _require_zone_alive(request, view.home_zone_id)
-        _require_runtime_access(
+        _require_runtime_access_or_not_found(
             request,
             auth_result,
+            not_found_code="SESSION_NOT_FOUND",
             zone_id=view.home_zone_id,
             capability="zone.data.read",
             resource_path=f"/sessions/{session_id}",
@@ -255,16 +338,13 @@ def get_session(
 def write_record(
     session_id: str,
     request: Request,
-    body: dict[str, Any],
+    body: WriteRecordBody,
     auth_result: dict[str, Any] = Depends(require_auth),
 ) -> dict[str, Any]:
     svc = _service(request)
-    record_kind = str(body.get("record_kind") or "").strip()
-    data = str(body.get("data") or "")
-    record_name = str(body.get("record_name") or "default")
-    zone_hint = body.get("zone_id")
     try:
         view = svc.get_session(session_id)
+        _require_zone_alive(request, view.home_zone_id)
         _require_runtime_access(
             request,
             auth_result,
@@ -274,13 +354,18 @@ def write_record(
         )
         return svc.write_session_record(
             session_id=session_id,
-            record_kind=record_kind,
-            payload=data.encode("utf-8"),
-            record_name=record_name,
-            zone_hint=str(zone_hint) if zone_hint is not None else None,
+            record_kind=body.record_kind,
+            payload=body.data.encode("utf-8"),
+            record_name=body.record_name,
+            zone_hint=body.zone_id,
         )
     except SessionRuntimeError as exc:
         raise _svc_error(exc) from exc
+    except InvalidPathError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "INVALID_PATH", "message": str(exc), "retryable": False},
+        ) from exc
 
 
 @router.get("/sessions/{session_id}/records")
@@ -293,9 +378,10 @@ def list_records(
         svc = _service(request)
         view = svc.get_session(session_id)  # 404 when the session does not exist
         _require_zone_alive(request, view.home_zone_id)
-        _require_runtime_access(
+        _require_runtime_access_or_not_found(
             request,
             auth_result,
+            not_found_code="SESSION_NOT_FOUND",
             zone_id=view.home_zone_id,
             capability="zone.data.read",
             resource_path=f"/sessions/{session_id}",
@@ -307,17 +393,18 @@ def list_records(
 
 def _start(
     request: Request,
-    body: dict[str, Any],
+    body: StartBody,
     auth_result: dict[str, Any],
     *,
     resume: bool = False,
 ) -> dict[str, Any]:
     svc = _service(request)
     task_svc = _task_service(request)
-    pid = str(body.get("pid") or "").strip()
-    session_id = str(body.get("session_id") or "").strip()
-    if not pid or not session_id:
-        raise HTTPException(status_code=422, detail={"code": "MISSING_FIELDS", "retryable": False})
+    pid = body.pid
+    session_id = body.session_id
+    # The body model validated the client strings (M-17); the remaining
+    # free-form fields are consumed below via the dict view.
+    body = body.model_dump()
 
     try:
         session_view = svc.get_session(session_id)
@@ -397,6 +484,7 @@ def _start(
         except HTTPException:
             return False
 
+    attempt: Any = None  # bound only after create_attempt commits (M-11)
     try:
         if resume:
             latest_attempt = task_svc.latest_attempt(session_id=session_id)
@@ -488,14 +576,31 @@ def _start(
                     attempt_id=attempt.attempt_id,
                     zone_active_check=zone_active_check,
                 )
+                task_svc.attach_pid(attempt_id=attempt.attempt_id, pid=pid)
             except SessionRuntimeError as exc:
                 task_svc.mark_failed(attempt_id=attempt.attempt_id, error=exc)
                 raise
-            task_svc.attach_pid(attempt_id=attempt.attempt_id, pid=pid)
     except SessionTaskError as exc:
         raise _task_svc_error(exc) from exc
     except SessionRuntimeError as exc:
         raise _svc_error(exc) from exc
+    except Exception:
+        # Non-domain failure (DB hiccup, process-level error): a committed
+        # attempt must not strand as a forever-queued orphan.  Guarded on
+        # `attempt is not None` — create_attempt's own failures raise
+        # SessionTaskError above, before any attempt exists (M-11).
+        if attempt is not None:
+            try:
+                task_svc.mark_failed(
+                    attempt_id=attempt.attempt_id,
+                    error=SessionRuntimeError("START_INTERRUPTED", "start interrupted", 500),
+                )
+            except Exception:
+                logger.exception(
+                    "failed to mark attempt %s after a non-domain start failure",
+                    attempt.attempt_id,
+                )
+        raise
     return view.as_json()
 
 
@@ -509,9 +614,10 @@ def get_task(
     try:
         payload = _task_service(request).get_task(session_id=session_id, task_id=task_id)
         _require_zone_alive(request, str(payload["spec"]["storage"]["zone_id"]))
-        _require_runtime_access(
+        _require_runtime_access_or_not_found(
             request,
             auth_result,
+            not_found_code="TASK_NOT_FOUND",
             zone_id=str(payload["spec"]["storage"]["zone_id"]),
             capability="zone.data.read",
             resource_path=f"/sessions/{session_id}",
@@ -524,7 +630,7 @@ def get_task(
 @router.post("/runtime/start", status_code=201)
 def runtime_start(
     request: Request,
-    body: dict[str, Any],
+    body: StartBody,
     auth_result: dict[str, Any] = Depends(require_auth),
 ) -> dict[str, Any]:
     return _start(request, body, auth_result)
@@ -533,7 +639,7 @@ def runtime_start(
 @router.post("/runtime/resume", status_code=201)
 def runtime_resume(
     request: Request,
-    body: dict[str, Any],
+    body: StartBody,
     auth_result: dict[str, Any] = Depends(require_auth),
 ) -> dict[str, Any]:
     """Resume = a fresh pid under the same session (ADR-001 §4.2). The
@@ -548,9 +654,10 @@ def get_run(
     try:
         view = _service(request).get_run(pid)
         _require_zone_alive(request, view.execution_zone_id)
-        _require_runtime_access(
+        _require_runtime_access_or_not_found(
             request,
             auth_result,
+            not_found_code="RUN_NOT_FOUND",
             zone_id=view.execution_zone_id,
             capability="zone.runtime.execute",
             resource_path=f"/sessions/{view.session_id}",
@@ -564,11 +671,11 @@ def get_run(
 def cancel_run(
     pid: str,
     request: Request,
-    body: dict[str, Any],
+    body: CancelRunBody,
     response: Response,
     auth_result: dict[str, Any] = Depends(require_auth),
 ) -> dict[str, Any]:
-    mode = str(body.get("mode") or "terminate")
+    mode = body.mode
     try:
         svc = _service(request)
         current = svc.get_run(pid)

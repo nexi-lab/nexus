@@ -27,9 +27,21 @@
 //!
 //! | Permission | Candidate relations                     |
 //! |------------|-----------------------------------------|
-//! | Read       | `viewer`, `reader`, `writer`, `owner`   |
-//! | Write      | `writer`, `owner`                       |
-//! | Traverse   | `viewer`, `reader`, `writer`, `owner`   |
+//! | Read       | `viewer`, `reader`, `writer`, `owner`, `direct_viewer` |
+//! | Write      | `writer`, `owner`, `direct_editor`, `direct_owner`    |
+//! | Traverse   | `viewer`, `reader`, `writer`, `owner`, `direct_viewer` |
+//!
+//! The `direct_*` relations are what the Nexus zone-grant projection
+//! writes (Python `_CAPABILITY_RELATIONS`); the enforcer must accept
+//! both vocabularies until one retires the other.
+//!
+//! # Projection API status — NOT WIRED
+//!
+//! `apply_grant_projection` / `revoke_grant_projection` below have no
+//! production caller yet (unit tests only).  The Python side owns the
+//! canonical authorization epoch (SQL table, advanced in the same
+//! transaction as the grant fact); the Rust-side epoch helpers were
+//! removed rather than kept as a second, unsynchronized epoch source.
 //!
 //! Rationale: matches the Zanzibar convention that a stronger
 //! relation implies the weaker one.  A future namespace-config
@@ -83,12 +95,13 @@ use crate::store::ReBACTupleStoreError;
 use crate::tuple_key;
 
 const GRANT_META_PREFIX: &str = "__grant_source__";
-const AUTH_EPOCH_PREFIX: &str = "__authorization_epoch__";
 
 /// Relations that satisfy each `Permission` in the fixed v1 map.
 ///
 /// Zanzibar's convention: stronger → weaker.  A caller with `owner`
-/// implicitly reads and writes; a `writer` implicitly reads.  A
+/// implicitly reads and writes; a `writer` implicitly reads.  The
+/// `direct_*` relations mirror the Python zone-grant projection's
+/// vocabulary (`direct_viewer`/`direct_editor`/`direct_owner`).  A
 /// namespace-config import (follow-up) replaces this with per-
 /// namespace expansion.
 ///
@@ -97,8 +110,10 @@ const AUTH_EPOCH_PREFIX: &str = "__authorization_epoch__";
 #[inline]
 fn candidate_relations(permission: Permission) -> &'static [&'static str] {
     match permission {
-        Permission::Read | Permission::Traverse => &["viewer", "reader", "writer", "owner"],
-        Permission::Write => &["writer", "owner"],
+        Permission::Read | Permission::Traverse => {
+            &["viewer", "reader", "writer", "owner", "direct_viewer"]
+        }
+        Permission::Write => &["writer", "owner", "direct_editor", "direct_owner"],
     }
 }
 
@@ -178,6 +193,14 @@ impl RebacPermissionProvider {
 
     /// Revoke exactly one grant's derived references. A tuple remains when a
     /// second grant or a manual/authoritative write still owns it.
+    ///
+    /// Atomicity note: the per-tuple `put`/`delete` sequence below is not
+    /// transactional across tuples; a mid-loop failure leaves earlier tuples
+    /// revoked and later ones intact (the caller retries the whole revoke,
+    /// which is idempotent per tuple).  A missing meta row returns `Ok(0)`
+    /// — tuples written by a crash between apply's per-tuple puts and the
+    /// meta put are not discoverable through this path and remain until a
+    /// direct store audit removes them.
     pub fn revoke_grant_projection(
         &self,
         zone: &str,
@@ -195,7 +218,14 @@ impl RebacPermissionProvider {
         let owner = format!("grant:{source_grant_id}");
         let mut removed = 0;
         for key in text.lines().filter(|line| !line.is_empty()) {
-            let mut owners = decode_owners(store.get(key)?.as_deref());
+            let existing = store.get(key)?;
+            let mut owners = decode_owners(existing.as_deref());
+            // Mirror apply's upgrade: an empty value is the HTTP endpoint's
+            // idempotent-replay marker and means "manual" — the tuple must
+            // survive this revoke, not be deleted as ownerless (M-6).
+            if existing.as_deref().is_some_and(<[u8]>::is_empty) {
+                owners.insert("manual".to_string());
+            }
             if owners.remove(&owner) {
                 removed += 1;
             }
@@ -208,38 +238,6 @@ impl RebacPermissionProvider {
         store.delete(&meta_key)?;
         self.cache.invalidate(zone);
         Ok(removed)
-    }
-
-    /// Advance and return the monotonic authorization epoch stored alongside
-    /// the ReBAC graph. Callers commit their canonical fact first; execution
-    /// boundaries reject stale observed epochs with [`Self::epoch_is_current`].
-    pub fn advance_authorization_epoch(&self, zone: &str) -> Result<u64, ReBACTupleStoreError> {
-        reject_meta_segment(zone)?;
-        let store = self.cache.store();
-        let key = authorization_epoch_key(zone);
-        let current = store
-            .get(&key)?
-            .as_deref()
-            .and_then(|bytes| std::str::from_utf8(bytes).ok())
-            .and_then(|value| value.parse::<u64>().ok())
-            .unwrap_or(0);
-        let next = current.saturating_add(1);
-        store.put(&key, next.to_string().as_bytes())?;
-        Ok(next)
-    }
-
-    pub fn epoch_is_current(
-        &self,
-        zone: &str,
-        observed_epoch: u64,
-    ) -> Result<bool, ReBACTupleStoreError> {
-        reject_meta_segment(zone)?;
-        let value = self.cache.store().get(&authorization_epoch_key(zone))?;
-        let current = value
-            .as_deref()
-            .and_then(|bytes| std::str::from_utf8(bytes).ok())
-            .and_then(|raw| raw.parse::<u64>().ok());
-        Ok(current.is_some_and(|epoch| epoch == observed_epoch))
     }
 
     /// Extract the subject `Entity` from an `OperationContext`.
@@ -335,10 +333,6 @@ fn reject_meta_segment(value: &str) -> Result<(), ReBACTupleStoreError> {
 
 fn grant_meta_key(zone: &str, source_grant_id: &str) -> String {
     format!("{GRANT_META_PREFIX}|{zone}|{source_grant_id}")
-}
-
-fn authorization_epoch_key(zone: &str) -> String {
-    format!("{AUTH_EPOCH_PREFIX}|{zone}")
 }
 
 fn decode_owners(value: Option<&[u8]>) -> std::collections::BTreeSet<String> {
@@ -740,22 +734,41 @@ mod tests {
     }
 
     #[test]
-    fn authorization_epoch_rejects_stale_observation() {
+    fn revoke_keeps_tuple_when_provenance_was_replayed_empty() {
+        // M-6: the /v2/rebac/tuples endpoint's idempotent replay overwrites
+        // provenance with b"".  Revoke must upgrade that to "manual" (like
+        // apply) instead of reading an empty owner set and deleting the
+        // tuple another principal still owns.
         let store = Arc::new(InMemoryReBACTupleStore::new());
-        let cache = Arc::new(ReBACGraphCache::new(store));
+        let edge = tuple("file", "/shared/*", "reader", "user", "alice");
+        let key = tuple_key::encode("team", &edge).expect("key");
+        let cache = Arc::new(ReBACGraphCache::new(
+            Arc::clone(&store) as Arc<dyn ReBACTupleStore>
+        ));
         let provider = RebacPermissionProvider::new(cache);
 
-        let first = provider
-            .advance_authorization_epoch("team")
-            .expect("first epoch");
-        assert!(provider
-            .epoch_is_current("team", first)
-            .expect("current epoch"));
         provider
-            .advance_authorization_epoch("team")
-            .expect("second epoch");
-        assert!(!provider
-            .epoch_is_current("team", first)
-            .expect("stale epoch"));
+            .apply_grant_projection("team", "grant-a", &[edge])
+            .expect("grant-a");
+        // Simulate the HTTP endpoint's idempotent replay wiping provenance.
+        store.put(&key, b"").expect("replay");
+        provider
+            .revoke_grant_projection("team", "grant-a")
+            .expect("revoke-a");
+        assert_eq!(store.get(&key).expect("get"), Some(b"manual".to_vec()));
+    }
+
+    #[test]
+    fn direct_projection_relations_are_enforcer_candidates() {
+        // M-5: the Python zone-grant projection writes direct_viewer/
+        // direct_editor/direct_owner; the enforcer's candidate sets must
+        // accept them or every kernel gate would deny projected grants.
+        assert!(candidate_relations(Permission::Read).contains(&"direct_viewer"));
+        assert!(candidate_relations(Permission::Traverse).contains(&"direct_viewer"));
+        assert!(candidate_relations(Permission::Write).contains(&"direct_editor"));
+        assert!(candidate_relations(Permission::Write).contains(&"direct_owner"));
+        // legacy vocabulary stays intact
+        assert!(candidate_relations(Permission::Read).contains(&"viewer"));
+        assert!(candidate_relations(Permission::Write).contains(&"writer"));
     }
 }

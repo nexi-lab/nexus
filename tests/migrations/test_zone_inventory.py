@@ -77,12 +77,9 @@ def test_inventory_classifies_all_nine_buckets_and_touches_nothing(session) -> N
     assert report.items["zone_sql_only"] == (sql_only,)
     assert report.items["zone_runtime_only"] == ("inv-runtime-only",)
     assert report.items["zone_terminated_sql_live_runtime"] == (terminated_live,)
-    assert (
-        report.items["zone_illegal_historical_id"] == (illegal,)
-        or report.items["zone_illegal_historical_id"] == ()
-    )
-    # The illegal id was never inserted above (it fails the model layer), so
-    # the bucket is exercised via direct classification in the second test.
+    # The illegal id is never insertable (the model layer rejects it); the
+    # classification itself is covered by direct-SQL test below.
+    assert report.items["zone_illegal_historical_id"] == ()
     assert report.items["api_key_zone_unattributable"] == ("key-unknown",)
     assert report.counts["api_key_zone_unattributable"] == 1
     assert report.moss_side == MOSS_SIDE_INVENTORY_CLASSES

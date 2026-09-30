@@ -67,9 +67,9 @@ pub fn encode(zone: &str, tuple: &ReBACTuple) -> Result<String, ReBACTupleStoreE
         segments.push(sr);
     }
     for seg in &segments {
-        if seg.contains(SEP) {
+        if seg.contains(SEP) || seg.contains('\n') {
             return Err(ReBACTupleStoreError::Backend(format!(
-                "rebac tuple segment contains reserved delimiter {SEP:?}: {seg:?}"
+                "rebac tuple segment contains reserved delimiter {SEP:?} or newline: {seg:?}"
             )));
         }
     }
@@ -171,6 +171,15 @@ mod tests {
 
         let bad_zone_result = encode("root|other", &t("doc", "a", "r", "u", "alice", None));
         assert!(bad_zone_result.is_err(), "must reject pipe in zone");
+    }
+
+    #[test]
+    fn encode_rejects_segment_containing_newline() {
+        // L-9: a '\n' in a segment would split ambiguously in the
+        // grant-meta provenance list, which joins keys with '\n' — a silent
+        // drop at revoke time.  Reject at the write site instead.
+        let bad = t("doc", "a\nb", "reader", "user", "alice", None);
+        assert!(encode("root", &bad).is_err(), "must reject newline in id");
     }
 
     #[test]

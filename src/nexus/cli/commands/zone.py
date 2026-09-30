@@ -40,6 +40,29 @@ from nexus.cli.utils import (
 from nexus.contracts.constants import DEFAULT_GRPC_BIND_ADDR
 
 
+def _refuse_dropped_local_options(
+    *, hostname: str | None, data_dir: str, bind: str
+) -> None:
+    """M-13: legacy local-ZoneManager flags have no /v2 remote equivalent —
+    refuse loudly instead of silently dropping them (a silent drop produced
+    exit-0 fake successes for documented flags)."""
+    unsupported = [
+        name
+        for name, value in (
+            ("--hostname", hostname),
+            ("--data-dir", data_dir if data_dir != "./nexus-data/zones" else None),
+            ("--bind", bind if bind != DEFAULT_GRPC_BIND_ADDR else None),
+        )
+        if value
+    ]
+    if unsupported:
+        raise click.UsageError(
+            "not supported via the remote zone API: "
+            + ", ".join(unsupported)
+            + " (the server owns placement)"
+        )
+
+
 @click.group()
 def zone() -> None:
     """Zone management — federation and portability.
@@ -141,8 +164,6 @@ def create_zone_cmd(
     Examples:
         nexus zone create my-zone
 
-        nexus zone create shared-zone --peers peer2:2126,peer3:2126
-
         nexus zone create my-zone --hostname nexus-1
 
         nexus zone create my-zone --dry-run
@@ -153,12 +174,18 @@ def create_zone_cmd(
 
     if hostname is None:
         hostname = socket.gethostname()
-    del data_dir, bind
+    # M-13: refuse legacy local options the remote API cannot honour.
+    if peers:
+        raise click.UsageError(
+            "--peers is not supported via the remote zone API "
+            "(participants join via `nexus zone join`)"
+        )
+    _refuse_dropped_local_options(hostname=None, data_dir=data_dir, bind=bind)
 
     try:
         if dry_run:
             preview = dry_run_preview(
-                "zone create", path=zone_id, details={"hostname": hostname, "peers": peers}
+                "zone create", path=zone_id, details={"hostname": hostname}
             )
             render_dry_run(preview)
             return
@@ -237,11 +264,7 @@ def join_zone_cmd(
     Examples:
         nexus zone join shared-zone --peers leader:2126,peer2:2126
     """
-    import socket
-
-    if hostname is None:
-        hostname = socket.gethostname()
-    del hostname, data_dir, bind
+    _refuse_dropped_local_options(hostname=hostname, data_dir=data_dir, bind=bind)
 
     try:
         peer_list = [p.strip() for p in peers.split(",")]
@@ -414,11 +437,7 @@ def mount_zone_cmd(
 
         nexus zone mount /shared team-zone --dry-run
     """
-    import socket
-
-    if hostname is None:
-        hostname = socket.gethostname()
-    del hostname, data_dir, bind
+    _refuse_dropped_local_options(hostname=hostname, data_dir=data_dir, bind=bind)
 
     try:
         if dry_run:
@@ -444,8 +463,10 @@ def mount_zone_cmd(
         )
 
         console.print(
-            f"[nexus.success]Mounted zone '{target_zone}' at '{mount_path}' in zone '{parent_zone}'[/nexus.success]"
+            f"[nexus.success]Mount of '{target_zone}' at '{mount_path}' in zone "
+            f"'{parent_zone}' accepted (async)[/nexus.success]"
         )
+        console.print("  Track it with: nexus zone wait <operation_id>")
 
         console.print(f"  Operation: {result.get('operation_id', 'unknown')}")
     except Exception as e:
@@ -506,11 +527,7 @@ def unmount_zone_cmd(
 
         nexus zone unmount /shared --dry-run
     """
-    import socket
-
-    if hostname is None:
-        hostname = socket.gethostname()
-    del hostname, data_dir, bind
+    _refuse_dropped_local_options(hostname=hostname, data_dir=data_dir, bind=bind)
 
     try:
         if dry_run:
@@ -522,20 +539,27 @@ def unmount_zone_cmd(
             render_dry_run(preview)
             return
 
-        listing = api_call(
-            remote_url,
-            remote_api_key,
-            "GET",
-            f"/v2/zone-mounts?zone_id={parent_zone}",
-        )
-        mount = next(
-            (
-                item
-                for item in listing.get("mounts", [])
-                if item.get("parent_zone_id") == parent_zone and item.get("path") == mount_path
-            ),
-            None,
-        )
+        # L-11: the server pages mounts (default limit 50) — follow
+        # next_cursor until the target is found or the listing is exhausted.
+        mount = None
+        cursor = None
+        while mount is None:
+            query = f"/v2/zone-mounts?zone_id={parent_zone}"
+            if cursor:
+                query += f"&cursor={cursor}"
+            listing = api_call(remote_url, remote_api_key, "GET", query)
+            mount = next(
+                (
+                    item
+                    for item in listing.get("mounts", [])
+                    if item.get("parent_zone_id") == parent_zone
+                    and item.get("path") == mount_path
+                ),
+                None,
+            )
+            cursor = listing.get("next_cursor")
+            if mount is None and not cursor:
+                break
         if mount is None:
             raise RuntimeError(f"No mount at {parent_zone}:{mount_path}")
         result = api_call(
@@ -547,10 +571,47 @@ def unmount_zone_cmd(
         )
 
         console.print(
-            f"[nexus.success]Unmounted '{mount_path}' from zone '{parent_zone}'[/nexus.success]"
+            f"[nexus.success]Unmount of '{mount_path}' from zone '{parent_zone}' "
+            "accepted (async)[/nexus.success]"
         )
+        console.print("  Track it with: nexus zone wait <operation_id>")
 
         console.print(f"  Operation: {result.get('operation_id', 'unknown')}")
+    except Exception as e:
+        handle_error(e)
+
+
+@zone.command(name="wait")
+@click.argument("operation_id", type=str)
+@REMOTE_URL_OPTION
+@REMOTE_API_KEY_OPTION
+def wait_operation_cmd(
+    operation_id: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
+    """Poll a zone operation until it settles.
+
+    L-11: the zone surface accepts mutations asynchronously (202 + operation);
+    without a polling command the caller could not observe progress.
+    """
+    import time as _time
+
+    try:
+        deadline = _time.monotonic() + 120.0
+        while True:
+            op = api_call(
+                remote_url, remote_api_key, "GET", f"/v2/zone-operations/{operation_id}"
+            )
+            state = str(op.get("state") or "")
+            console.print(f"operation {operation_id}: {state} ({op.get('step', '')})")
+            if state in ("succeeded", "failed"):
+                if state == "failed":
+                    raise RuntimeError(f"operation {operation_id} failed: {op.get('error')}")
+                return
+            if _time.monotonic() > deadline:
+                raise RuntimeError(f"operation {operation_id} not settled in 120s")
+            _time.sleep(1.0)
     except Exception as e:
         handle_error(e)
 

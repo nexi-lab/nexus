@@ -72,6 +72,17 @@ def test_shadow_compare_legacy_and_v2_reads_agree(nexus_server, test_app) -> Non
     for zone_id in ("shadow-one", "shadow-two"):
         assert zone_id in legacy_by_id, f"legacy surface missing {zone_id}: {legacy_by_id}"
 
+    # L-12(4): reverse direction — a live legacy-only zone absent from the v2
+    # surface would silently lose visibility.  Legitimately absent: deleted
+    # legacy zones (hidden by default on /v2) and the unmapped system zones
+    # (root/__control__ legacy rows carry no canonical status, so /v2's
+    # `!= deleted` filter never returns them).
+    for zid, legacy_item in legacy_by_id.items():
+        legacy_status = str(legacy_item.get("status") or legacy_item.get("phase") or "")
+        if legacy_status == "Terminated" or zid in ("root", "__control__"):
+            continue
+        assert zid in v2_zones, f"v2 surface missing live legacy zone {zid}"
+
     for zone_id, canonical in v2_zones.items():
         legacy_item = legacy_by_id.get(zone_id)
         if legacy_item is None:

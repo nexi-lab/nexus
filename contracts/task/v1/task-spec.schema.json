@@ -5,17 +5,30 @@
   "description": "P1b implicit runtime task. The Nexus Session Runtime Service derives this write-once record from an authenticated runtime start; there is no public Task write API.",
   "type": "object",
   "properties": {
-    "api_version": { "const": "task.sudo.dev/v1" },
-    "kind": { "const": "TaskSpec" },
-    "task_id": { "type": "string", "minLength": 1 },
-    "session_id": { "type": "string", "minLength": 1 },
+    "api_version": {
+      "const": "task.sudo.dev/v1"
+    },
+    "kind": {
+      "const": "TaskSpec"
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1
+    },
     "requested_by": {
       "$ref": "https://contracts.sudo.dev/schemas/common/v1/principal-ref.schema.json"
     },
     "input": {
       "type": "object",
       "properties": {
-        "instruction": { "type": "string", "minLength": 1 },
+        "instruction": {
+          "type": "string",
+          "minLength": 1
+        },
         "resource_refs": {
           "type": "array",
           "items": {
@@ -23,11 +36,20 @@
           }
         }
       },
-      "required": ["instruction", "resource_refs"],
+      "required": [
+        "instruction",
+        "resource_refs"
+      ],
       "additionalProperties": false
     },
-    "requested_mode": { "const": "auto" },
-    "created_at": { "type": "string", "format": "date-time" }
+    "requested_mode": {
+      "const": "auto"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
+    }
   },
   "required": [
     "api_version",

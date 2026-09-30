@@ -20,6 +20,10 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+import grpc
+
+from nexus.contracts.exceptions import RemoteTimeoutError
+
 logger = logging.getLogger(__name__)
 
 
@@ -33,6 +37,11 @@ class RuntimeReceipt:
     runtime_revision: str | None = None
     capabilities: tuple[str, ...] = ()
     error: str | None = None
+    # True only for a DETERMINISTIC runtime refusal (journal REJECTED, or a
+    # gRPC status the server maps from a definitive ZoneRuntimeError).  An
+    # unavailable/deadline/unknown outcome stays rejected=False so callers
+    # keep treating it as unknown-and-retryable.
+    rejected: bool = False
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -42,6 +51,30 @@ class ZoneRuntimeUnavailable(Exception):
     Timeouts surface here — callers treat the operation as unknown and poll,
     never as failed-and-retry-with-a-new-idempotency-key.
     """
+
+
+class ZoneRuntimeRejected(Exception):
+    """The runtime answered with a deterministic refusal.
+
+    Mapped by the server from a definitive ``ZoneRuntimeError`` variant
+    (permission denied / invalid argument / failed precondition / not found);
+    unlike :class:`ZoneRuntimeUnavailable` this outcome must not be retried.
+    """
+
+
+#: gRPC statuses treated as unknown-and-retryable.  Everything else an
+#: ``RpcError`` can carry is a deterministic refusal.  INTERNAL stays here on
+#: purpose: the server maps both business-internal errors and worker panics
+#: to it, and a client cannot tell them apart — a needless retry is cheaper
+#: than falsely terminating a recoverable operation.
+_UNKNOWN_GRPC_STATUSES = frozenset(
+    {
+        grpc.StatusCode.UNAVAILABLE,
+        grpc.StatusCode.DEADLINE_EXCEEDED,
+        grpc.StatusCode.INTERNAL,
+        grpc.StatusCode.UNKNOWN,
+    }
+)
 
 
 class ZoneRuntimePort(Protocol):
@@ -59,15 +92,13 @@ class ZoneRuntimePort(Protocol):
         self, *, parent_zone_id: str, target_zone_id: str, path: str, ctx: dict[str, Any]
     ) -> RuntimeReceipt: ...
 
-    def unmount(self, *, mount_ref: str, ctx: dict[str, Any]) -> RuntimeReceipt: ...
+    def unmount(self, *, ctx: dict[str, Any]) -> RuntimeReceipt: ...
 
     def remove_replica(
         self, *, zone_id: str, force: bool, ctx: dict[str, Any]
     ) -> RuntimeReceipt: ...
 
-    def deprovision(
-        self, *, zone_id: str, deletion_epoch: int, ctx: dict[str, Any]
-    ) -> RuntimeReceipt: ...
+    def deprovision(self, *, zone_id: str, ctx: dict[str, Any]) -> RuntimeReceipt: ...
 
     def get_operation(self, *, operation_id: str, ctx: dict[str, Any]) -> RuntimeReceipt: ...
 
@@ -77,7 +108,7 @@ class ZoneRuntimePort(Protocol):
 class KernelRpcZoneRuntimePort:
     """ZoneRuntimePort over the existing kernel RPC channel.
 
-    The 763f8c0 typed zone-runtime surface is reached through the cluster
+    The bc89aa6 typed zone-runtime surface is reached through the cluster
     service registry this process already holds (``kernel_client``-style
     channel). Method names mirror the zone_runtime service; payloads are
     plain JSON, and the trusted ``ctx`` (authenticated OperationContext
@@ -95,8 +126,17 @@ class KernelRpcZoneRuntimePort:
             if call is None:
                 raise TypeError("call channel does not expose typed zone_runtime_call")
             raw = call(method, payload, timeout_s=self._timeout_s)
-        except TimeoutError as exc:
+        except (TimeoutError, RemoteTimeoutError) as exc:
             raise ZoneRuntimeUnavailable(f"{method} timed out") from exc
+        except grpc.RpcError as exc:
+            # RpcError here means the transport DID deliver the call and the
+            # server answered with a non-OK status: only the unknown-family
+            # statuses stay retryable, every other status is a deterministic
+            # server refusal.
+            code = exc.code()
+            if code in _UNKNOWN_GRPC_STATUSES:
+                raise ZoneRuntimeUnavailable(f"{method} unreachable: {code}") from exc
+            raise ZoneRuntimeRejected(f"{method} rejected: {code}: {exc}") from exc
         except Exception as exc:  # transport-level failure: unknown, not failed
             raise ZoneRuntimeUnavailable(f"{method} unreachable: {exc}") from exc
         if not isinstance(raw, dict):
@@ -104,7 +144,10 @@ class KernelRpcZoneRuntimePort:
         return raw
 
     def _invoke(self, method: str, payload: dict[str, Any]) -> RuntimeReceipt:
-        raw = self._call_raw(method, payload)
+        try:
+            raw = self._call_raw(method, payload)
+        except ZoneRuntimeRejected as exc:
+            return RuntimeReceipt(ok=False, rejected=True, error=str(exc), raw={"method": method})
         return receipt_from_raw(raw)
 
     @staticmethod
@@ -173,7 +216,10 @@ class KernelRpcZoneRuntimePort:
             },
         )
 
-    def unmount(self, *, mount_ref: str, ctx: dict[str, Any]) -> RuntimeReceipt:
+    def unmount(self, *, ctx: dict[str, Any]) -> RuntimeReceipt:
+        # The server locates the mount by (parent_zone_id, mount_path) and
+        # owns the deletion epoch itself; there is no mount_ref/deletion_epoch
+        # wire field, so the signature must not pretend to send one.
         parent_zone_id = str(ctx.get("parent_zone_id") or "")
         path = str(ctx.get("path") or "")
         if not parent_zone_id or not path:
@@ -185,7 +231,6 @@ class KernelRpcZoneRuntimePort:
                 "request_hash": 0,
                 "parent_zone_id": parent_zone_id,
                 "mount_path": path,
-                "mount_ref": mount_ref,
             },
         )
 
@@ -200,16 +245,13 @@ class KernelRpcZoneRuntimePort:
             },
         )
 
-    def deprovision(
-        self, *, zone_id: str, deletion_epoch: int, ctx: dict[str, Any]
-    ) -> RuntimeReceipt:
+    def deprovision(self, *, zone_id: str, ctx: dict[str, Any]) -> RuntimeReceipt:
         return self._invoke(
             "ZoneDeprovision",
             {
                 "operation_id": self._operation_id(ctx),
                 "request_hash": 0,
                 "zone_id": zone_id,
-                "deletion_epoch": deletion_epoch,
             },
         )
 
@@ -227,7 +269,18 @@ class KernelRpcZoneRuntimePort:
                 error=receipt.error,
                 raw={**receipt.raw, "journal": raw},
             )
+        if status == "REJECTED":
+            # The server journal's deterministic refusal — carry its reason
+            # through instead of collapsing it into "unreachable".
+            return RuntimeReceipt(
+                ok=False,
+                rejected=True,
+                error=str(raw.get("error") or "runtime rejected operation"),
+                raw=raw,
+            )
         if status == "FAILED":
+            # Dead branch on the pinned server (journal states are
+            # PENDING|COMPLETED|REJECTED); kept for protocol evolution.
             return RuntimeReceipt(
                 ok=False, error=str(raw.get("error") or "runtime failed"), raw=raw
             )
@@ -299,15 +352,13 @@ class NullZoneRuntimePort:
     ) -> RuntimeReceipt:
         return RuntimeReceipt(ok=False, error="zone runtime not armed")
 
-    def unmount(self, *, mount_ref: str, ctx: dict[str, Any]) -> RuntimeReceipt:
+    def unmount(self, *, ctx: dict[str, Any]) -> RuntimeReceipt:
         return RuntimeReceipt(ok=False, error="zone runtime not armed")
 
     def remove_replica(self, *, zone_id: str, force: bool, ctx: dict[str, Any]) -> RuntimeReceipt:
         return RuntimeReceipt(ok=False, error="zone runtime not armed")
 
-    def deprovision(
-        self, *, zone_id: str, deletion_epoch: int, ctx: dict[str, Any]
-    ) -> RuntimeReceipt:
+    def deprovision(self, *, zone_id: str, ctx: dict[str, Any]) -> RuntimeReceipt:
         return RuntimeReceipt(ok=False, error="zone runtime not armed")
 
     def get_operation(self, *, operation_id: str, ctx: dict[str, Any]) -> RuntimeReceipt:

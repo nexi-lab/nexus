@@ -54,6 +54,10 @@ fn create_vault(_kernel_handle: &KernelHandle) -> Box<VaultPlugin> {
         .unwrap_or_else(|_| PathBuf::from("./nexus-data"));
     let vault_dir = data_dir.join("vault");
     std::fs::create_dir_all(&vault_dir).expect("create vault data dir");
+    // Preserve literal legacy filenames during migration on Windows.
+    let vault_dir = vault_dir
+        .canonicalize()
+        .expect("canonicalize vault data dir");
 
     let kernel = Arc::new(kernel::kernel::Kernel::new());
     let meta_path = vault_dir.join("vault-meta.redb");

@@ -1,5 +1,5 @@
 {
-  "$id": "https://nexus-vfs.dev/contracts/zone-path/zone-path.schema.gen.json",
+  "$id": "https://contracts.sudo.dev/schemas/common/v1/zone-path.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Canonical zone-relative wire path. This is not a product ResourceRef.",
   "maxLength": 1024,

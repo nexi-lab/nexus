@@ -1,5 +1,5 @@
 {
-  "$comment": "Path-traversal fixtures locking the §4.6 security rule: resource_prefixes are zone-internal absolute paths; '..' components, dot components, cross-zone prefixes and ambiguous encodings are rejected at the schema layer via the vendored zone-path projection (forbidden components '.' and '..').",
+  "$comment": "Path-traversal fixtures locking the §4.6 security rule: resource_prefixes are zone-internal absolute paths; '..' components, dot components, cross-zone prefixes and ambiguous encodings are rejected at the schema layer via the owned zone-path contract (forbidden components '.' and '..').",
   "cases": [
     {
       "name": "grant-prefix-dotdot-rejected",
@@ -83,7 +83,7 @@
         "zone_id": "cloud-user-1001",
         "path": "/__sys__/control"
       },
-      "$comment": "The zone-path projection reserves __sys__ components."
+      "$comment": "The zone-path contract reserves __sys__ components."
     }
   ]
 }

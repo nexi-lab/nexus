@@ -251,6 +251,7 @@ class ZoneApplicationService:
         transfer_executor: Callable[[dict[str, Any], dict[str, Any], str], dict[str, Any]]
         | None = None,
         zone_fs_purger: Callable[[str], None] | None = None,
+        rebac_invalidate: Callable[[], None] | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._runtime: ZoneRuntimePort = runtime or NullZoneRuntimePort()
@@ -266,6 +267,13 @@ class ZoneApplicationService:
         # None (unarmed assembly) skips the VFS leg; SQLite rows are
         # always purged by _purge_zone_session_data.
         self._zone_fs_purger = zone_fs_purger
+        # The deprovision purge deletes rebac tuples with raw SQL, which
+        # bypasses the ReBAC writer — no revision moves, so cached
+        # permission decisions would keep answering allow for a deleted
+        # zone. The assembly binds the manager's cache-clear here; None
+        # (unarmed assembly) leaves the flush to the next natural
+        # invalidation.
+        self._rebac_invalidate = rebac_invalidate
 
     @staticmethod
     def _require_principal(principal: dict[str, Any]) -> None:
@@ -1712,6 +1720,11 @@ class ZoneApplicationService:
                         zone_id=zone.zone_id,
                         operation_id=operation_id,
                     )
+        if event_type == "zone.deprovision" and self._rebac_invalidate is not None:
+            # After the purge transaction commits: the raw tuple deletes
+            # above never bumped a revision, so cached decisions are
+            # stale until this flush runs.
+            self._rebac_invalidate()
         return OperationResult(operation_id, "succeeded", f"{event_type}.read-back", False)
 
     def _record_runtime_unknown(

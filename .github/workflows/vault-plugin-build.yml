@@ -44,7 +44,7 @@ jobs:
         run: "cargo test -p services --features service-password-vault password_vault::"
 
       - name: Run shared secret storage migration tests
-        run: "cargo test -p services --features service-generic-secrets generic_secrets::storage::"
+        run: "cargo test -p services --features service-password-vault generic_secrets::storage::"
 
   build:
     name: vault-plugin / ${{ matrix.artifact_name }}

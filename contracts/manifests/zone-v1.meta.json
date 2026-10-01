@@ -30,6 +30,7 @@
   "kind_meta": {
     "common/v1/principal-ref.schema.json": { "compatibility": "experimental" },
     "common/v1/resource-ref.schema.json": { "compatibility": "experimental" },
+    "common/v1/zone-path.schema.json": { "compatibility": "experimental" },
     "auth/v1/zone.schema.json": { "compatibility": "experimental" },
     "auth/v1/zone-create-request.schema.json": { "compatibility": "experimental" },
     "auth/v1/zone-patch-request.schema.json": { "compatibility": "experimental" },

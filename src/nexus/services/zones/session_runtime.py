@@ -507,7 +507,9 @@ class SessionRuntimeService:
                 session.execute(
                     select(SessionRuntimeRunModel)
                     .where(SessionRuntimeRunModel.session_id == session_id)
-                    .order_by(SessionRuntimeRunModel.started_at.desc(), SessionRuntimeRunModel.pid.desc())
+                    .order_by(
+                        SessionRuntimeRunModel.started_at.desc(), SessionRuntimeRunModel.pid.desc()
+                    )
                 )
                 .scalars()
                 .first()
@@ -549,7 +551,9 @@ class SessionRuntimeService:
                 session.execute(
                     select(SessionRuntimeRunModel)
                     .where(SessionRuntimeRunModel.session_id == session_id)
-                    .order_by(SessionRuntimeRunModel.started_at.desc(), SessionRuntimeRunModel.pid.desc())
+                    .order_by(
+                        SessionRuntimeRunModel.started_at.desc(), SessionRuntimeRunModel.pid.desc()
+                    )
                 )
                 .scalars()
                 .first()

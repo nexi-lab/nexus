@@ -264,7 +264,7 @@ class ServerHarness:
 
         Exhausting the retries is a hard failure (L-12): silently continuing
         made every downstream assertion run against a dead server."""
-        for attempt in range(tries):
+        for _attempt in range(tries):
             try:
                 client.get("/v2/zone-capabilities", headers=headers)
                 return

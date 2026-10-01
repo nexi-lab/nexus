@@ -24,7 +24,6 @@ jobs:
           python-version: "3.14"
       - name: Install Python deps for the contract suite
         run: uv pip install "pydantic[email]>=2.13.4" "jsonschema>=4.20.0" pytest pytest-xdist pytest-asyncio ruff mypy
-          uv pip install "pydantic[email]>=2.13.4" "jsonschema>=4.20.0" pytest pytest-xdist pytest-asyncio ruff mypy
       - name: Vendor/lock/manifest reproducibility
         run: .venv/bin/python contracts/tools/sync_vendor.py --check
       - name: Lint contract code

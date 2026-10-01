@@ -236,7 +236,11 @@ jobs:
             echo "::error::could not extract nexus-vfs rev pin from Cargo.toml"
             exit 1
           fi
-          cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --rev "$REV" --bin nexusd-cluster nexus-cluster
+          # --force: the shared rust-cache can restore a prior
+          # `nexusd-cluster` binary owned by a different package (e.g.
+          # the retired nexus-local `nexusd` assembly); cargo refuses to
+          # overwrite across owners without it.
+          cargo install --locked --force --git https://github.com/nexi-lab/nexus-vfs --rev "$REV" --bin nexusd-cluster nexus-cluster
 
       - name: Validate API/RPC surface matrix
         if: steps.surface-filter.outputs.surface == 'true'

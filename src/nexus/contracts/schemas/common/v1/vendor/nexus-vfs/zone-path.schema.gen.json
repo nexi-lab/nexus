@@ -1,0 +1,50 @@
+{
+  "$id": "urn:sudo:nexus-vfs:zone-path:v1",
+  "$schema": "urn:sudo:nexus-vfs:meta:zone-path:v1",
+  "description": "Strict zone-relative absolute path for new product-independent reference boundaries.",
+  "minLength": 1,
+  "sudoZonePath": {
+    "absolute": true,
+    "automatic_normalization": false,
+    "case_folding": "none",
+    "empty": "reject",
+    "forbidden_characters": [
+      "\u0000",
+      "\\"
+    ],
+    "forbidden_exact_segments": [
+      ".",
+      ".."
+    ],
+    "percent_decoding": "none",
+    "repeated_separators": "reject",
+    "root": "/",
+    "scope": "zone-relative",
+    "separator": "/",
+    "trailing_separator": "root-only",
+    "unicode_normalization": "none",
+    "unicode_scalar_values_only": true
+  },
+  "title": "ZonePath",
+  "type": "string",
+  "x-sudo-owner": {
+    "canonical_source": "contracts/zone-path/spec.json",
+    "fixture_source": "contracts/zone-path/cases.json",
+    "generated": true,
+    "repository": "nexus-vfs"
+  },
+  "x-sudo-semantics": {
+    "automatic_normalization": false,
+    "case_folding": "none",
+    "input_encoding": "UTF-8",
+    "legacy_raw_vfs_paths_in_scope": false,
+    "percent_decoding": "none",
+    "persisted_keys_rewritten": false,
+    "root": "/",
+    "scope": "zone-relative",
+    "separator": "/",
+    "unicode_normalization": "none",
+    "unicode_scalar_values_only": true,
+    "validation_timing": "before-authorization-routing-storage"
+  }
+}

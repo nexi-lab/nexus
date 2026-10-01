@@ -1,0 +1,48 @@
+{
+  "$comment": [
+    "SSOT for the zone-id format. Every consumer derives its rules from this",
+    "file rather than restating them: the Rust validator is generated from it at",
+    "compile time (rust/contracts/build.rs -> OUT_DIR, never committed), and",
+    "non-Rust consumers generate from the same file.",
+    "",
+    "Prose describing this format already existed in several places and matched",
+    "no implementation, because nothing enforced it. The point of this file is",
+    "that there is now exactly one place to change it.",
+    "",
+    "Reserved ids are listed by the constant that owns them, not by value:",
+    "rust/contracts/src/constants.rs is the SSOT for what those strings are."
+  ],
+  "$id": "urn:sudo:nexus-vfs:zone-id:v1",
+  "version": 1,
+  "length": {
+    "min": 3,
+    "max": 63,
+    "why": "DNS-label bounds. Zone ids appear in hostnames and certificate SANs; anything a label cannot carry is unusable there."
+  },
+  "charset": {
+    "allowed": "abcdefghijklmnopqrstuvwxyz0123456789-",
+    "why": "Lowercase alphanumeric plus hyphen. Case is excluded rather than folded: two ids differing only in case would be one zone in DNS and two on disk."
+  },
+  "edges": {
+    "no_leading": "-",
+    "no_trailing": "-",
+    "why": "A leading or trailing hyphen is not a valid DNS label."
+  },
+  "reserved": {
+    "constants": [
+      "ROOT_ZONE_ID",
+      "CONTROL_ZONE_ID"
+    ],
+    "why": "Tenant-creatable ids must not collide with zones the kernel owns. CONTROL_ZONE_ID is additionally unspellable under the charset rule above, which is deliberate; ROOT_ZONE_ID is not, so it needs this list."
+  },
+  "mutability": {
+    "immutable_after_create": true,
+    "why": "The id is the first path segment of everything in the zone, so renaming is not renaming. Changing --cluster-init from one id to another on a live deployment created a fresh empty zone and abandoned the old one, with no error at any layer (observed 2026-09-09)."
+  },
+  "projection": {
+    "json_schema": "schema.json",
+    "fixtures": "vectors.json",
+    "scope": "lexical",
+    "reserved_values": "owner-runtime-constants"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "api_version": "common.sudo.dev/v2",
+  "kind": "ResourceRef",
+  "zone_id": "workspace-main",
+  "path": "/reports/future.txt"
+}

@@ -15,8 +15,9 @@ import threading
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import insert, or_, select
+from sqlalchemy import insert, or_, select, tuple_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.sql.elements import ColumnElement
 
 from nexus.bricks.rebac.cache.tiger.db_timeouts import apply_tiger_write_timeouts
 from nexus.storage.models.permissions import TigerResourceMapModel as TRM
@@ -25,6 +26,9 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Connection, Engine
 
 logger = logging.getLogger(__name__)
+
+# Rows per multi-row INSERT (3 bind params each — well under Postgres' 65535).
+_BULK_INSERT_CHUNK = 1000
 
 
 class TigerResourceMap:
@@ -192,12 +196,19 @@ class TigerResourceMap:
                 for resource_type, resource_id in missing
             ]
             if self._is_postgresql:
-                connection.execute(
-                    pg_insert(TRM).on_conflict_do_nothing(
-                        index_elements=["resource_type", "resource_id"],
-                    ),
-                    rows,
-                )
+                # ONE multi-row statement per chunk.  Passing ``rows`` as
+                # executemany params ran one round trip per row: ~1.7 s per
+                # 500-row chunk against a remote Postgres, so the boot-time
+                # resource-map sync of ~150k paths held a connection busy for
+                # ~10 min and stalled concurrent writes behind it.
+                for i in range(0, len(rows), _BULK_INSERT_CHUNK):
+                    connection.execute(
+                        pg_insert(TRM)
+                        .values(rows[i : i + _BULK_INSERT_CHUNK])
+                        .on_conflict_do_nothing(
+                            index_elements=["resource_type", "resource_id"],
+                        )
+                    )
             else:
                 connection.execute(insert(TRM).prefix_with("OR IGNORE"), rows)
             connection.commit()
@@ -347,10 +358,16 @@ class TigerResourceMap:
         batch_size = 500
         for i in range(0, len(to_fetch), batch_size):
             batch = to_fetch[i : i + batch_size]
-            conditions = [(TRM.resource_type == rt) & (TRM.resource_id == rid) for rt, rid in batch]
-            stmt = select(TRM.resource_type, TRM.resource_id, TRM.resource_int_id).where(
-                or_(*conditions)
-            )
+            where: ColumnElement[bool]
+            if self._is_postgresql:
+                # Row-value IN: one index probe per key instead of planning a
+                # 500-way OR.
+                where = tuple_(TRM.resource_type, TRM.resource_id).in_(batch)
+            else:
+                where = or_(
+                    *[(TRM.resource_type == rt) & (TRM.resource_id == rid) for rt, rid in batch]
+                )
+            stmt = select(TRM.resource_type, TRM.resource_id, TRM.resource_int_id).where(where)
             result = conn.execute(stmt)
 
             # Process results and update cache

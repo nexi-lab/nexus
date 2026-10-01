@@ -74,11 +74,16 @@ jobs:
         env:
           NEXUS_E2E_DATABASE_URL: postgresql+psycopg2://postgres:nexus@127.0.0.1:5432/nexus_zone_test
         run: uv run pytest -n 0 tests/contracts tests/migrations/test_zone_v1_storage.py tests/unit/services/test_zone_service.py tests/unit/server/test_zone_v2_api.py tests/unit/remote/test_zone_runtime_client.py
-      - name: Build full-profile kernel for real E2E
-        run: cargo build -p nexusd --features full
+      - name: Build kernel from the pinned nexus-vfs rev
+        shell: bash
+        run: |
+          REV=$(grep -m1 -o 'rev = "[0-9a-f]\{40\}"' Cargo.toml | grep -o '[0-9a-f]\{40\}')
+          git clone --quiet https://github.com/nexi-lab/nexus-vfs "${RUNNER_TEMP}/nexus-vfs"
+          git -C "${RUNNER_TEMP}/nexus-vfs" checkout --quiet "${REV}"
+          cargo build --manifest-path "${RUNNER_TEMP}/nexus-vfs/rust/profiles/cluster/Cargo.toml"
       - name: Full-profile Zone HTTP E2E
         env:
-          NEXUS_KERNEL_BINARY: ${{ github.workspace }}/target/debug/nexusd-cluster
+          NEXUS_KERNEL_BINARY: ${{ runner.temp }}/nexus-vfs/target/debug/nexusd-cluster
         # shadow_compare is cross-platform (httpx only, conftest has POSIX
         # branches) — it runs here on ubuntu.
         run: uv run pytest -n 0 tests/e2e/server/test_zone_routes_e2e.py tests/e2e/server/test_zone_deprovision_e2e.py tests/e2e/server/test_full_profile_control_plane_e2e.py tests/e2e/server/test_zone_shadow_compare_e2e.py
@@ -94,11 +99,16 @@ jobs:
           python-version: "3.12"
       - uses: dtolnay/rust-toolchain@stable
       - run: uv sync --group dev
-      - name: Build full-profile kernel for real E2E
-        run: cargo build -p nexusd --features full
+      - name: Build kernel from the pinned nexus-vfs rev
+        shell: bash
+        run: |
+          REV=$(grep -m1 -o 'rev = "[0-9a-f]\{40\}"' Cargo.toml | grep -o '[0-9a-f]\{40\}')
+          git clone --quiet https://github.com/nexi-lab/nexus-vfs "${RUNNER_TEMP}/nexus-vfs"
+          git -C "${RUNNER_TEMP}/nexus-vfs" checkout --quiet "${REV}"
+          cargo build --manifest-path "${RUNNER_TEMP}/nexus-vfs/rust/profiles/cluster/Cargo.toml"
       - name: Windows-only Zone E2E suites
         env:
-          NEXUS_KERNEL_BINARY: ${{ github.workspace }}/target/debug/nexusd-cluster
+          NEXUS_KERNEL_BINARY: ${{ runner.temp }}/nexus-vfs/target/debug/nexusd-cluster
         run: uv run pytest -n 0 tests/e2e/server/test_zone_v2_p0_matrix_e2e.py tests/e2e/server/test_zone_v2_fault_injection_e2e.py tests/e2e/server/test_session_runtime_p1a_e2e.py tests/e2e/server/test_session_runtime_p1b_e2e.py
 
   typescript-sdk:
@@ -125,6 +135,10 @@ jobs:
         with:
           components: rustfmt, clippy
       - run: cargo fmt --all --check
-      - run: cargo test -p nexus-rebac
-      - run: cargo build -p nexusd --features full
-      - run: cargo test -p nexusd --features full
+      - name: Build kernel from the pinned nexus-vfs rev
+        shell: bash
+        run: |
+          REV=$(grep -m1 -o 'rev = "[0-9a-f]\{40\}"' Cargo.toml | grep -o '[0-9a-f]\{40\}')
+          git clone --quiet https://github.com/nexi-lab/nexus-vfs "${RUNNER_TEMP}/nexus-vfs"
+          git -C "${RUNNER_TEMP}/nexus-vfs" checkout --quiet "${REV}"
+          cargo build --manifest-path "${RUNNER_TEMP}/nexus-vfs/rust/profiles/cluster/Cargo.toml"

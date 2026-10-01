@@ -1,0 +1,6 @@
+{
+  "api_version": "common.sudo.dev/v1",
+  "kind": "ResourceRef",
+  "zone_id": "BAD ZONE",
+  "path": "/reports/file.txt"
+}

@@ -1184,6 +1184,17 @@ multiple ranked lists are available. RRF makes the final order depend on rank
 agreement instead of raw score scale, which is why exact text hits and semantic
 neighbors can both appear near the top.
 
+To search several subtrees at once, repeat `path` (or pass a list as `path`
+in a `/api/v2/search/query/batch` entry). The result is one fused ranking over
+the union. Don't run one query per subtree and merge the lists by `score`:
+fused scores are normalised per result list, so the top hit of every list
+scores about the same.
+
+```bash
+curl -H "Authorization: Bearer $NEXUS_API_KEY" \
+  "$NEXUS_URL/api/v2/search/query?q=revenue&type=hybrid&path=/ws/documents/&path=/ws/notes/"
+```
+
 Use `nexus path-context` when the result path alone is ambiguous:
 
 ```bash

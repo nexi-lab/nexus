@@ -168,7 +168,11 @@ jobs:
           REV: ${{ steps.vfs_rev.outputs.sha }}
         run: |
           set -euo pipefail
-          cargo install --locked \
+          # --force: the shared rust-cache can restore a prior
+          # `nexusd-cluster` binary owned by a different package (e.g.
+          # the retired nexus-local `nexusd` assembly); cargo refuses
+          # to overwrite across owners without it.
+          cargo install --locked --force \
             --git https://github.com/nexi-lab/nexus-vfs \
             --rev "$REV" \
             --bin nexusd-cluster nexus-cluster

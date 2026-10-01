@@ -40,7 +40,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
 from nexus.bricks.search.results import BACKEND_LEG_TIMING_KEYS as _BACKEND_LEG_TIMING_KEYS
-from nexus.contracts.search_types import BatchQueryFailure, SearchRequest
+from nexus.contracts.search_types import BatchQueryFailure, SearchRequest, split_path_scope
 from nexus.lib.pagination import build_paginated_list_response
 from nexus.lib.rebac_filter import apply_rebac_filter as _apply_rebac_filter
 from nexus.lib.rebac_filter import compute_rebac_fetch_limit as _compute_rebac_fetch_limit
@@ -257,7 +257,15 @@ async def search_query(
     q: str = Query(..., description="Search query text", min_length=1),
     type: str = Query("hybrid", description="Search type: keyword, semantic, or hybrid"),
     limit: int = Query(10, description="Maximum number of results", ge=1, le=100),
-    path: str | None = Query(None, description="Optional path prefix filter"),
+    path: list[str] | None = Query(
+        None,
+        description=(
+            "Optional path prefix filter. Repeat it (path=/a/&path=/b/) to search "
+            "several subtrees as ONE fused ranking — fused scores are only "
+            "comparable within one result list, so do not merge per-prefix "
+            "queries by score."
+        ),
+    ),
     alpha: float = Query(0.5, description="Semantic vs keyword weight (0.0-1.0)", ge=0.0, le=1.0),
     fusion: str = Query("rrf", description="Fusion method: rrf, weighted, or rrf_weighted"),
     rrf_k: int = Query(60, description="RRF rank constant for hybrid fusion", ge=1, le=1000),
@@ -365,6 +373,13 @@ async def search_query(
             detail=f"Invalid graph_mode: {graph_mode}. Must be 'none', 'low', 'high', 'dual', or 'auto'",
         )
 
+    path_filter, path_filters = split_path_scope(path)
+    if path_filters and (federated or graph_mode != "none"):
+        raise HTTPException(
+            status_code=400,
+            detail="Multiple path prefixes are not supported for federated or graph_mode search",
+        )
+
     target_zone = zone_id if zone_id != ROOT_ZONE_ID else None
 
     # Token zone allow-list for the federated path (#3785). An EXPLICIT
@@ -385,7 +400,7 @@ async def search_query(
                 q=q,
                 search_type=type,
                 limit=limit,
-                path_filter=path,
+                path_filter=path_filter,
                 alpha=alpha,
                 fusion_method=fusion,
                 rrf_k=rrf_k,
@@ -403,7 +418,8 @@ async def search_query(
             q=q,
             search_type=type,
             limit=limit,
-            path_filter=path,
+            path_filter=path_filter,
+            path_filters=path_filters,
             alpha=alpha,
             fusion_method=fusion,
             rrf_k=rrf_k,
@@ -421,6 +437,29 @@ async def search_query(
         )
 
     return await run_zone_scoped(_get_zone_registry(request), target_zone, _work)
+
+
+PATH_CONTEXT_FRESHNESS_ENV = "NEXUS_PATH_CONTEXT_FRESHNESS_SECONDS"
+DEFAULT_PATH_CONTEXT_FRESHNESS_SECONDS = 1.0
+
+
+def path_context_freshness_seconds() -> float:
+    """How long a zone's path-context fingerprint is trusted between DB checks.
+
+    Without a window every search paid a ``COUNT(*), MAX(updated_at)``
+    round trip (~10% of server CPU under load).  Writes through this
+    process's path-context routes invalidate immediately; the window only
+    bounds how long another process's write can go unseen.  ``0``
+    restores the per-query check.
+    """
+    raw = os.environ.get(PATH_CONTEXT_FRESHNESS_ENV, "").strip()
+    if not raw:
+        return DEFAULT_PATH_CONTEXT_FRESHNESS_SECONDS
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        logger.warning("%s=%r is not a number; using default", PATH_CONTEXT_FRESHNESS_ENV, raw)
+        return DEFAULT_PATH_CONTEXT_FRESHNESS_SECONDS
 
 
 async def _resolve_path_prefix_boosts(request: Request, zone_id: str | None) -> dict[str, float]:
@@ -471,7 +510,9 @@ async def _resolve_path_prefix_boosts(request: Request, zone_id: str | None) -> 
             caches.pop(stale, None)
         cache = caches.get(loop)
         if cache is None:
-            cache = PathContextCache(store=store)
+            cache = PathContextCache(
+                store=store, fingerprint_ttl_s=path_context_freshness_seconds()
+            )
             caches[loop] = cache
 
         effective_zone = zone_id or ROOT_ZONE_ID
@@ -503,6 +544,7 @@ async def _handle_single_zone_search(
     recency: str | None = None,
     recency_weight: float | None = None,
     recency_half_life_days: float | None = None,
+    path_filters: tuple[str, ...] = (),
     graph_mode: str,
     expand: str,
     auth_result: dict[str, Any],
@@ -626,6 +668,7 @@ async def _handle_single_zone_search(
             search_type=search_type,
             limit=fetch_limit,
             path_filter=path_filter,
+            path_filters=path_filters,
             alpha=alpha,
             fusion_method=fusion_method,
             rrf_k=rrf_k,
@@ -1019,6 +1062,7 @@ async def search_query_batch(
                 spec.limit, has_enforcer=permission_enforcer is not None
             ),
             path_filter=spec.path_filter,
+            path_filters=spec.path_filters,
             alpha=spec.alpha,
             fusion_method=spec.fusion_method,
             rrf_k=spec.rrf_k,

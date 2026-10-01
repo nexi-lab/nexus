@@ -107,6 +107,7 @@ class CacheCoordinator:
         cache_ttl_seconds: int = 300,
         get_tuple_version: "Callable[[], int] | None" = None,
         set_tuple_version: "Callable[[int], None] | None" = None,
+        increment_zone_revision: "Callable[[str | None, Any], int] | None" = None,
     ) -> None:
         """Initialize the coordinator.
 
@@ -169,6 +170,10 @@ class CacheCoordinator:
         self._cache_ttl_seconds = _ttl
         self._get_tuple_version = _get_tv
         self._set_tuple_version = _set_tv
+        # Expired-tuple cleanup is a tuple mutation like any write: it must
+        # bump each affected zone's revision, which revision-validated
+        # decision caches rely on to retire derived decisions.
+        self._increment_zone_revision = increment_zone_revision
 
         # Callback registries for external caches (boundary, visibility, etc.)
         self._boundary_invalidators: list[
@@ -911,6 +916,10 @@ class CacheCoordinator:
                     expires_at=datetime.now(UTC),
                     conn=conn,
                 )
+
+            if self._increment_zone_revision is not None:
+                for zone in sorted({row["zone_id"] or ROOT_ZONE_ID for row in expired_tuples}):
+                    self._increment_zone_revision(zone, conn)
 
             conn.commit()
             if expired_tuples and self._set_tuple_version and self._get_tuple_version:

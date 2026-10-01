@@ -1,0 +1,100 @@
+{
+  "$dynamicAnchor": "meta",
+  "$id": "urn:sudo:nexus-vfs:meta:zone-path:v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$vocabulary": {
+    "https://json-schema.org/draft/2020-12/vocab/applicator": true,
+    "https://json-schema.org/draft/2020-12/vocab/content": true,
+    "https://json-schema.org/draft/2020-12/vocab/core": true,
+    "https://json-schema.org/draft/2020-12/vocab/format-annotation": true,
+    "https://json-schema.org/draft/2020-12/vocab/meta-data": true,
+    "https://json-schema.org/draft/2020-12/vocab/unevaluated": true,
+    "https://json-schema.org/draft/2020-12/vocab/validation": true,
+    "urn:sudo:nexus-vfs:vocab:zone-path:v1": true
+  },
+  "allOf": [
+    {
+      "$ref": "https://json-schema.org/draft/2020-12/schema"
+    }
+  ],
+  "properties": {
+    "sudoZonePath": {
+      "additionalProperties": false,
+      "properties": {
+        "absolute": {
+          "const": true
+        },
+        "automatic_normalization": {
+          "const": false
+        },
+        "case_folding": {
+          "const": "none"
+        },
+        "empty": {
+          "const": "reject"
+        },
+        "forbidden_characters": {
+          "items": {
+            "maxLength": 1,
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "forbidden_exact_segments": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "percent_decoding": {
+          "const": "none"
+        },
+        "repeated_separators": {
+          "const": "reject"
+        },
+        "root": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "scope": {
+          "const": "zone-relative"
+        },
+        "separator": {
+          "maxLength": 1,
+          "minLength": 1,
+          "type": "string"
+        },
+        "trailing_separator": {
+          "const": "root-only"
+        },
+        "unicode_normalization": {
+          "const": "none"
+        },
+        "unicode_scalar_values_only": {
+          "const": true
+        }
+      },
+      "required": [
+        "scope",
+        "absolute",
+        "root",
+        "separator",
+        "empty",
+        "repeated_separators",
+        "trailing_separator",
+        "forbidden_exact_segments",
+        "forbidden_characters",
+        "unicode_scalar_values_only",
+        "unicode_normalization",
+        "case_folding",
+        "percent_decoding",
+        "automatic_normalization"
+      ],
+      "type": "object"
+    }
+  },
+  "title": "nexus-vfs ZonePath contract dialect"
+}

@@ -109,17 +109,65 @@ jobs:
         timeout-minutes: 30
         run: |
           start=$(date +%s)
-          uv run --no-sync python -Xfaulthandler -m pytest tests/unit -v --durations=10 -n auto --dist loadgroup \
+          # `timeout` here is what makes the branch below reachable at all. The kill
+          # has to be OURS: when GitHub enforces `timeout-minutes` it takes the whole
+          # step down, so nothing after the pytest line runs — which is why the
+          # $status check was dead code, and why the known exit-time hang (#4667)
+          # burned the full 30 minutes and reported a bare
+          # "The action 'Run unit tests' has timed out" with no diagnosis.
+          #
+          # 15m, not 20: the duration gate below fails over 1200s, so a run accepted
+          # here must land under it. The suite's target is 180s, so this is already 5x
+          # the worst anyone expects.
+          # SIGTERM first, SIGKILL only if it will not go: a terminating process still
+          # runs its atexit handlers and can print, which is where a diagnosis for
+          # #4667 would come from. A SIGKILL leaves nothing behind but the exit code.
+          #
+          # Resolved rather than assumed: macOS runners have no GNU `timeout`
+          # (coreutils is not in the image), and hard-coding it turned this step into
+          # `timeout: command not found` there. The hang being guarded against is the
+          # Linux xdist one in #4667, so where the tool exists the kill is ours and the
+          # branch below runs; where it does not, the step's `timeout-minutes` stays the
+          # only limit, exactly as before. An empty variable expands to nothing, which
+          # runs pytest directly.
+          WATCHDOG=""
+          if command -v timeout >/dev/null 2>&1; then
+            WATCHDOG="timeout -s TERM --kill-after=60s 15m"
+          elif command -v gtimeout >/dev/null 2>&1; then
+            WATCHDOG="gtimeout -s TERM --kill-after=60s 15m"
+          else
+            echo "::warning::no GNU timeout on this runner — the unit-test watchdog is inactive here, only the step's 30m limit applies"
+          fi
+          set +e
+          $WATCHDOG \
+            uv run --no-sync python -Xfaulthandler -m pytest tests/unit -v --durations=10 -n auto --dist loadgroup \
             --timeout=60 --timeout-method=signal -p no:cacheprovider \
-            --cov=nexus --cov-report=term-missing --cov-report=xml
-          status=$?
+            --cov=nexus --cov-report=term-missing --cov-report=xml 2>&1 | tee pytest_unit.log
+          status=${PIPESTATUS[0]}
+          set -e
           echo $(( $(date +%s) - start )) > unit_test_duration_sec.txt
-          # timeout returns 137 (128+9=SIGKILL) when it kills the process.
-          # Treat this as success if tests actually passed (duration file exists
-          # and was written before the kill).
-          if [ $status -eq 137 ] && [ -f unit_test_duration_sec.txt ]; then
-            echo "::warning::pytest killed by timeout watchdog (tokio thread hang). Tests passed."
-            exit 0
+          # 143 = 128+SIGTERM (it took the hint), 137 = 128+SIGKILL (it did not).
+          if [ "$status" -eq 137 ] || [ "$status" -eq 143 ]; then
+            # A suite that PASSED and then would not exit is #4667: an xdist worker
+            # leaves a tokio thread alive, so the process hangs after the verdict is
+            # already known. Accepting that is reasonable; accepting a kill on faith
+            # is not, and that is what this used to do — its old guard was
+            # `[ -f unit_test_duration_sec.txt ]`, a file written by the line above it
+            # on every path, so the condition was always true and ANY kill, including
+            # a genuine mid-run hang, would have been reported as a pass.
+            #
+            # The verdict now comes from pytest's own summary line. Only that line is
+            # read: `-v` output contains test NAMES with "failed" in them, so matching
+            # the whole log would fail on a green run.
+            summary=$(grep -aE "^=+.*(passed|failed|error)" pytest_unit.log | tail -1)
+            if [ -n "$summary" ] \
+              && printf '%s' "$summary" | grep -q "passed" \
+              && ! printf '%s' "$summary" | grep -qE "failed|error"; then
+              echo "::warning::pytest hung at exit after a green suite (#4667), killed at 15m and accepted on its own summary: ${summary}"
+              exit 0
+            fi
+            echo "::error::pytest was killed at 15m with no passing summary — a real hang, not the exit-time one. Last summary line: ${summary:-<none>}"
+            exit 1
           fi
           exit $status
         shell: bash
@@ -201,7 +249,11 @@ jobs:
             echo "::error::could not extract nexus-vfs rev pin from Cargo.toml"
             exit 1
           fi
-          cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --rev "$REV" --bin nexusd-cluster nexus-cluster
+          # --force: the shared rust-cache can restore a prior
+          # `nexusd-cluster` binary owned by a different package (e.g.
+          # the retired nexus-local `nexusd` assembly); cargo refuses to
+          # overwrite across owners without it.
+          cargo install --locked --force --git https://github.com/nexi-lab/nexus-vfs --rev "$REV" --bin nexusd-cluster nexus-cluster
           sudo ln -sf $(which nexusd-cluster) /usr/local/bin/nexus-cluster
 
       # Pre-build the nexus-server image once with buildx + GHA layer cache.
@@ -267,7 +319,14 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      NEXUS_DATABASE_URL: postgresql://nexus_test:nexus_test@localhost:5432/nexus_test
+      # `+psycopg2` pins SQLAlchemy to the psycopg2 driver.  Without
+      # it, SQLAlchemy 2.x's `postgresql://` scheme prefers the
+      # psycopg (v3) dialect, which imports `psycopg` at engine-create
+      # time; the runner only installs psycopg2-binary, so the tests
+      # fail at fixture setup with a ModuleNotFoundError.  Making the
+      # driver explicit is the least-surprise fix — the tests all rely
+      # on psycopg2-binary already being on the venv.
+      NEXUS_DATABASE_URL: postgresql+psycopg2://nexus_test:nexus_test@localhost:5432/nexus_test
     steps:
       - name: Skip notice (no code changes)
         if: needs.detect-changes.outputs.code_changed != 'true'
@@ -698,39 +757,71 @@ jobs:
 
       - name: Install nexusd-cluster (the shipped production binary)
         if: needs.detect-changes.outputs.code_changed == 'true'
-        # Production ships the nexus-local `nexusd` crate as `nexusd-cluster`
+        # Production ships nexus-vfs's `nexus-cluster` crate as `nexusd-cluster`
         # — the KERNEL-ARCHITECTURE §7 `cluster` profile PLUS the
-        # managed_agent control plane. It composes nexus-vfs cluster boot +
-        # managed_agent, so it must be built from THIS tree (`--path
-        # rust/nexusd`) — the gate then tests the EXACT binary the image
-        # ships. The pure nexus-vfs `nexusd-cluster` (no services) is gated
-        # in nexus-vfs CI (cluster-binary-build.yml, incl. its ≤15.5 MiB size
-        # budget), so it is not re-installed here. `--locked` honors the
-        # source tree's Cargo.lock (the nexus-vfs pin the preflight validated).
+        # managed_agent control plane (relocated into nexus-vfs by #241).
+        # The earlier nexus-local assembly (`rust/nexusd`) was retired once
+        # the service crates it composed relocated into nexus-vfs itself
+        # (2026-09-24), so there is now ONE production build path and this
+        # gate installs it via `cargo install --git nexus-vfs` at the same
+        # rev the preflight validated. The rev is read from Cargo.toml at
+        # runtime (rather than hardcoded here) so a pin bump lands in ONE
+        # place; the preflight above guarantees this rev matches Cargo.lock
+        # and every Dockerfile ARG. `--locked` honors the nexus-vfs
+        # Cargo.lock at that rev.
         run: |
-          echo "Installing nexusd-cluster from the nexus-local crate rust/nexusd"
-          cargo install --locked --path rust/nexusd --bin nexusd-cluster
+          NEXUS_VFS_REV=$(grep -oE 'nexus-vfs", rev = "[a-f0-9]{40}' Cargo.toml \
+            | grep -oE '[a-f0-9]{40}' | sort -u)
+          if [ -z "$NEXUS_VFS_REV" ] || [ "$(echo "$NEXUS_VFS_REV" | wc -l)" -ne 1 ]; then
+            echo "::error::could not extract a single nexus-vfs rev from Cargo.toml (got: $NEXUS_VFS_REV)"
+            exit 1
+          fi
+          echo "Installing nexusd-cluster from nexus-vfs @ ${NEXUS_VFS_REV}"
+          # --force: the Swatinem/rust-cache shared-key restores
+          # ~/.cargo/bin from a prior run; before this cutover it held a
+          # `nexusd-cluster` binary installed as part of the nexus-local
+          # `nexusd v0.1.0 (rust/nexusd)` crate, which cargo refuses to
+          # overwrite with the `nexus-cluster` package's copy. Force
+          # replacement here — every run reinstalls from the pinned rev
+          # and the cache only exists to save compile time, not to
+          # preserve stale binaries.
+          cargo install --locked --force \
+            --git https://github.com/nexi-lab/nexus-vfs \
+            --rev "${NEXUS_VFS_REV}" \
+            --bin nexusd-cluster \
+            nexus-cluster
 
       - name: nexusd-cluster size budget (cluster profile purity)
         if: needs.detect-changes.outputs.code_changed == 'true'
         # The production cluster binary is size-gated (KERNEL-ARCHITECTURE §7;
-        # mirrors nexus-vfs cluster-binary-build.yml's linux budget). The
-        # nexus-vfs gate only covers the PURE cluster binary; production ships
-        # this nexus-local one (cluster profile + managed_agent), so it needs
-        # its own guard. managed_agent is a small control-plane addition
-        # (~14.9 MiB release/stripped); driver-s3 / connectors must NOT leak
-        # into the default (slim) build — that leak is the #36 regression this
-        # gate exists to catch.
+        # mirrors nexus-vfs cluster-binary-build.yml's linux budget). As of
+        # 2026-09-24 the nexus-repo assembly is retired and this gate runs
+        # against the very same binary nexus-vfs's own gate measures, so
+        # this budget is largely redundant with the upstream one — kept as
+        # a belt-and-suspenders leak-catcher for the pin (a rev bump that
+        # doubles the binary would slip past a stale upstream gate but not
+        # this one).  driver-s3 / connectors must NOT leak into the default
+        # (slim) build — that leak is the #36 regression this gate catches.
         run: |
           BIN="$HOME/.cargo/bin/nexusd-cluster"
-          # 16.5 MiB. Tracks the nexus-vfs linux cluster budget (17039360 =
-          # 16.25 MiB at pin b98c08e62, itself raised for the DT_STREAM P3
-          # series) PLUS the managed_agent control-plane overhead this
-          # nexus-local binary adds on top. Raised from 15.5 MiB when the
-          # nexus-vfs pin advanced to b98c08e62 (P3 kernel growth). Still a
-          # tight leak-catcher: a driver/connector leaking into the slim build
-          # is far more than the ~0.2 MiB headroom here.
-          MAX=17301504
+          # 17.0 MiB = the nexus-vfs linux cluster budget (17563648 = 16.75
+          # MiB) plus 0.25 MiB for what this assembly adds on top: the nexus
+          # service crates, and the managed-agent `subprocess-host` feature
+          # that the vfs cluster build does not enable. It is DERIVED from the
+          # nexus-vfs number rather than measured here, so a pin bump that
+          # legitimately grows the kernel moves both budgets together instead
+          # of failing this gate for growth nexus-vfs already accepted.
+          #
+          # Raised from 16.5 MiB when the pin advanced to 191fa0efa: nexus-vfs
+          # raised its own budget from 16.25 to 16.75 MiB for the managed-agent
+          # control plane relocated INTO nexusd-cluster (nexus-vfs#241), while
+          # this cap still tracked the pre-relocation number. That relocation
+          # is also why managed_agent is no longer a nexus-local crate — it
+          # arrives inside the vfs dependency.
+          #
+          # Still a leak-catcher. driver-s3 and the connectors are megabytes,
+          # so the ~0.5 MiB of slack this leaves cannot hide one.
+          MAX=17825792
           actual=$(stat -c%s "$BIN")
           echo "nexusd-cluster size: $actual bytes (max: $MAX)"
           if [ "$actual" -gt "$MAX" ]; then
@@ -881,7 +972,14 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      NEXUS_DATABASE_URL: postgresql://nexus_test:nexus_test@localhost:5432/nexus_test
+      # `+psycopg2` pins SQLAlchemy to the psycopg2 driver.  Without
+      # it, SQLAlchemy 2.x's `postgresql://` scheme prefers the
+      # psycopg (v3) dialect, which imports `psycopg` at engine-create
+      # time; the runner only installs psycopg2-binary, so the tests
+      # fail at fixture setup with a ModuleNotFoundError.  Making the
+      # driver explicit is the least-surprise fix — the tests all rely
+      # on psycopg2-binary already being on the venv.
+      NEXUS_DATABASE_URL: postgresql+psycopg2://nexus_test:nexus_test@localhost:5432/nexus_test
     steps:
       - name: Skip notice (no code changes)
         if: needs.detect-changes.outputs.code_changed != 'true'

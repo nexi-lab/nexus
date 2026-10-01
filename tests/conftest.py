@@ -238,3 +238,71 @@ def _reset_stream_secret_fixture():
         _reset_stream_secret()
     except ImportError:
         pass
+
+
+# ---------------------------------------------------------------------------
+# Issue #4667: name what refuses to die, at session end.
+#
+# The `Test Python 3.14 on ubuntu-latest` flake is a HANG, not a failure: a gw0
+# worker crashes, the run reaches ~98%, and then nothing happens until the job
+# timeout kills it. A rerun goes green, so the cause is never in the log — the
+# issue says as much ("hasn't yet been captured in a durability report").
+#
+# Same reasoning as the `wedge_watchdog` marker above: a wall-clock timeout is
+# silent and uninformative, so the answer is to make the process say what it is
+# waiting on before the clock runs out. A leaked child process (#4777 left a
+# ~30-thread `nexus-cluster` orphan per CLI run) or a live non-daemon thread is
+# exactly what keeps a worker from exiting, and both are cheap to enumerate.
+#
+# This runs at `sessionfinish`, BEFORE interpreter shutdown, so the report lands
+# in the log even when the shutdown itself is what hangs.
+# ---------------------------------------------------------------------------
+
+
+def pytest_sessionfinish(session, exitstatus):  # noqa: ARG001 — pytest hook signature
+    """Report child processes and non-daemon threads still alive.
+
+    Always prints one line, including when clean. Silence would be
+    indistinguishable from "the hook never ran", which is the mistake this kind of
+    check exists to prevent.
+    """
+    import threading
+
+    worker = os.environ.get("PYTEST_XDIST_WORKER", "main")
+
+    lingering_threads = [
+        t
+        for t in threading.enumerate()
+        if t is not threading.main_thread() and t.is_alive() and not t.daemon
+    ]
+
+    children: list[str] = []
+    children_note = ""
+    try:
+        import psutil
+
+        for child in psutil.Process().children(recursive=True):
+            try:
+                cmd = " ".join(child.cmdline())[:120] or child.name()
+            except (psutil.AccessDenied, psutil.NoSuchProcess):
+                cmd = "<unreadable>"
+            children.append(f"pid={child.pid} {cmd}")
+    except ImportError:
+        children_note = " (psutil absent — child processes not checked)"
+    except Exception as exc:  # a diagnostic must never fail the run
+        children_note = f" (child scan failed: {exc})"
+
+    if not lingering_threads and not children:
+        print(f"[leak-check {worker}] clean{children_note}", file=sys.stderr)
+        return
+
+    print(f"[leak-check {worker}] SOMETHING IS STILL ALIVE{children_note}", file=sys.stderr)
+    for t in lingering_threads:
+        print(f"[leak-check {worker}]   non-daemon thread: {t.name}", file=sys.stderr)
+    for c in children:
+        print(f"[leak-check {worker}]   child process: {c}", file=sys.stderr)
+    print(
+        f"[leak-check {worker}] any of these can keep this worker from exiting; "
+        "see nexi-lab/nexus#4667",
+        file=sys.stderr,
+    )

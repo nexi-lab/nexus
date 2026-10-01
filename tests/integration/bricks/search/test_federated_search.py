@@ -1045,186 +1045,23 @@ class TestPerFileRebacWired:
         rebac.rebac_check_batch.assert_not_called()
 
 
-# =============================================================================
-# Bug fix: SearchDelegation minted for remote zones (Codex finding #2)
-# =============================================================================
+class TestCrossDaemonPythonSurfaceRetired:
+    """The two former classes here — `TestSearchDelegationMinting` and
+    `TestRemoteZoneSearch` — covered the Python-side
+    `_search_remote_zone` + `_mint_search_delegation` methods that
+    minted a `SearchDelegation` and dispatched a remote leg over the
+    `transport.call_rpc` path.  Both are retired: cross-daemon
+    federated search now lives on the Rust axum surface
+    (`nexus-http-api::backends::tonic_remote::TonicRemoteSearchBackend`
+    on the source side, `nexus-search-plugin::delegation_gate` on the
+    destination side).  This regression pin catches a future re-add
+    on the Python side that would re-open the SSOT split."""
 
+    def test_python_dispatcher_no_longer_owns_cross_daemon_methods(self) -> None:
+        from nexus.bricks.search.federated_search import FederatedSearchDispatcher
 
-class TestSearchDelegationMinting:
-    @pytest.mark.asyncio
-    async def test_mints_delegation_for_remote_zone(self) -> None:
-        """Remote zones should mint a SearchDelegation and send via transport."""
-        from unittest.mock import MagicMock, patch
-
-        from nexus.bricks.search.zone_registry import (
-            ZoneSearchCapabilities,
-            ZoneSearchRegistry,
-        )
-
-        default_daemon = AsyncMock()
-        registry = ZoneSearchRegistry(default_daemon=default_daemon)
-
-        # Register as remote with transport
-        mock_transport = MagicMock()
-        mock_transport.call_rpc = MagicMock(
-            return_value=[
-                {"path": "remote.txt", "chunk_text": "x", "score": 0.9},
-            ]
-        )
-        registry.register_remote(
-            "zone_remote",
-            mock_transport,
-            capabilities=ZoneSearchCapabilities(zone_id="zone_remote"),
-        )
-
-        rebac = _make_rebac(["zone_remote"])
-
-        dispatcher = FederatedSearchDispatcher(
-            daemon=default_daemon,
-            rebac=rebac,
-            registry=registry,
-        )
-
-        # Track delegation minting
-        mint_calls: list = []
-        original_mint = dispatcher._mint_search_delegation
-
-        def tracking_mint(subject, source_zone_id, target_zones):
-            mint_calls.append((subject, target_zones))
-            return original_mint(subject, source_zone_id, target_zones)
-
-        with patch.object(dispatcher, "_mint_search_delegation", side_effect=tracking_mint):
-            resp = await dispatcher.search("test", subject=("user", "alice"))
-
-        assert len(resp.results) == 1
-        assert len(mint_calls) == 1
-        assert mint_calls[0][0] == ("user", "alice")
-        assert "zone_remote" in mint_calls[0][1]
-
-        # Verify transport.call_rpc was called with delegation_id as auth_token
-        mock_transport.call_rpc.assert_called_once()
-        call_args = mock_transport.call_rpc.call_args[0]
-        assert call_args[0] == "search"  # method
-        assert call_args[1]["query"] == "test"  # params
-        # call_args[2] is read_timeout (None), call_args[3] is auth_token
-        delegation_token = call_args[3]
-        assert delegation_token is not None
-        assert delegation_token.startswith("sd_")  # SearchDelegation ID format
-
-    @pytest.mark.asyncio
-    async def test_no_delegation_for_local_zone(self) -> None:
-        """When a zone uses the default (local) daemon, no delegation is minted."""
-        from unittest.mock import patch
-
-        daemon = _make_daemon({"zone_local": [_make_result("local.txt", 5.0)]})
-        rebac = _make_rebac(["zone_local"])
-
-        dispatcher = FederatedSearchDispatcher(daemon=daemon, rebac=rebac)
-
-        mint_calls: list = []
-        original_mint = dispatcher._mint_search_delegation
-
-        def tracking_mint(subject, source_zone_id, target_zones):
-            mint_calls.append(True)
-            return original_mint(subject, source_zone_id, target_zones)
-
-        with patch.object(dispatcher, "_mint_search_delegation", side_effect=tracking_mint):
-            resp = await dispatcher.search("test", subject=("user", "alice"))
-
-        assert len(resp.results) == 1
-        assert len(mint_calls) == 0  # No delegation minted for local
-
-
-# =============================================================================
-# Remote zone search via gRPC transport (Codex final finding)
-# =============================================================================
-
-
-class TestRemoteZoneSearch:
-    @pytest.mark.asyncio
-    async def test_remote_zone_uses_transport(self) -> None:
-        """Remote zones should search via transport.call_rpc, not daemon.search."""
-        from unittest.mock import MagicMock
-
-        from nexus.bricks.search.zone_registry import (
-            ZoneSearchCapabilities,
-            ZoneSearchRegistry,
-        )
-
-        default_daemon = AsyncMock()
-        registry = ZoneSearchRegistry(default_daemon=default_daemon)
-
-        # Register a remote zone with a mock transport
-        mock_transport = MagicMock()
-        mock_transport.call_rpc = MagicMock(
-            return_value=[
-                {"path": "remote_doc.txt", "chunk_text": "remote content", "score": 0.9},
-            ]
-        )
-        registry.register_remote(
-            "zone_remote",
-            mock_transport,
-            capabilities=ZoneSearchCapabilities(zone_id="zone_remote"),
-        )
-
-        rebac = _make_rebac(["zone_remote"])
-
-        dispatcher = FederatedSearchDispatcher(
-            daemon=default_daemon,
-            rebac=rebac,
-            registry=registry,
-        )
-        resp = await dispatcher.search("test query", subject=("user", "alice"))
-
-        # Transport should have been called with "search" method and delegation auth
-        mock_transport.call_rpc.assert_called_once()
-        call_args = mock_transport.call_rpc.call_args[0]
-        assert call_args[0] == "search"  # method name
-        assert call_args[1]["query"] == "test query"  # params
-        assert call_args[1]["zone_id"] == "zone_remote"
-        # Verify delegation_id passed as auth_token (4th positional arg)
-        auth_token = call_args[3]
-        assert auth_token is not None
-        assert auth_token.startswith("sd_")
-
-        # Results should be tagged with zone provenance
-        assert len(resp.results) == 1
-        assert resp.results[0]["zone_id"] == "zone_remote"
-        assert resp.results[0]["zone_qualified_path"] == "zone_remote:remote_doc.txt"
-        assert "zone_remote" in resp.zones_searched
-
-    @pytest.mark.asyncio
-    async def test_remote_failure_goes_to_zones_failed(self) -> None:
-        """Transport errors should appear in zones_failed."""
-        from unittest.mock import MagicMock
-
-        from nexus.bricks.search.zone_registry import (
-            ZoneSearchCapabilities,
-            ZoneSearchRegistry,
-        )
-
-        default_daemon = AsyncMock()
-        registry = ZoneSearchRegistry(default_daemon=default_daemon)
-
-        mock_transport = MagicMock()
-        mock_transport.call_rpc = MagicMock(side_effect=ConnectionError("node offline"))
-        registry.register_remote(
-            "zone_dead",
-            mock_transport,
-            capabilities=ZoneSearchCapabilities(zone_id="zone_dead"),
-        )
-
-        rebac = _make_rebac(["zone_dead"])
-        dispatcher = FederatedSearchDispatcher(
-            daemon=default_daemon,
-            rebac=rebac,
-            registry=registry,
-        )
-        resp = await dispatcher.search("test", subject=("user", "alice"))
-
-        assert len(resp.zones_failed) == 1
-        assert resp.zones_failed[0].zone_id == "zone_dead"
-        assert resp.results == []
+        assert not hasattr(FederatedSearchDispatcher, "_search_remote_zone")
+        assert not hasattr(FederatedSearchDispatcher, "_mint_search_delegation")
 
 
 class TestResultToDictContextShape:
@@ -1328,59 +1165,6 @@ class TestTierBoostFederated:
         merged = _merge_by_raw_score([("za", [za]), ("zb", [zb])], limit=2)
         assert [m["path"] for m in merged] == ["docs/b.md", "chat/a.md"]
         assert merged[1]["tier_boost"] == 0.4
-
-
-class TestRemoteSearchEnvelope:
-    """Codex review R1: the server-side RPC search handler returns a
-    ``{"results": [...]}`` envelope; the bare-list check discarded it and
-    real remote zones contributed zero results."""
-
-    def _dispatcher_with_remote(self, raw_result):
-        from unittest.mock import MagicMock
-
-        from nexus.bricks.search.federated_search import FederatedSearchDispatcher
-
-        registry = MagicMock()
-        registry.is_remote.return_value = True
-        transport = MagicMock()
-        transport.call_rpc.return_value = raw_result
-        registry.get_transport.return_value = transport
-        dispatcher = FederatedSearchDispatcher.__new__(FederatedSearchDispatcher)
-        dispatcher._registry = registry
-        dispatcher._mint_search_delegation = MagicMock(return_value=MagicMock(delegation_id="d-1"))
-        return dispatcher
-
-    @pytest.mark.asyncio
-    async def test_dict_envelope_unwrapped(self) -> None:
-        dispatcher = self._dispatcher_with_remote(
-            {"results": [{"path": "/a.md", "score": 0.9, "tier_boost": 0.5}]}
-        )
-        results = await dispatcher._search_remote_zone(
-            zone_id="zr",
-            query="q",
-            search_type="hybrid",
-            limit=5,
-            path_filter=None,
-            alpha=0.5,
-            fusion_method="rrf",
-        )
-        assert len(results) == 1
-        assert results[0]["zone_id"] == "zr"
-        assert results[0]["tier_boost"] == 0.5
-
-    @pytest.mark.asyncio
-    async def test_bare_list_still_accepted(self) -> None:
-        dispatcher = self._dispatcher_with_remote([{"path": "/a.md", "score": 0.9}])
-        results = await dispatcher._search_remote_zone(
-            zone_id="zr",
-            query="q",
-            search_type="hybrid",
-            limit=5,
-            path_filter=None,
-            alpha=0.5,
-            fusion_method="rrf",
-        )
-        assert len(results) == 1 and results[0]["zone_qualified_path"] == "zr:/a.md"
 
 
 class TestTierBoostTrustBoundary:

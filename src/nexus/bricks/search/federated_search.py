@@ -24,7 +24,6 @@ import json
 import logging
 import math
 import time
-import uuid
 from dataclasses import dataclass
 from typing import Any
 
@@ -226,32 +225,6 @@ class FederatedSearchDispatcher:
 
         return (search_type, None)
 
-    def _mint_search_delegation(
-        self,
-        subject: tuple[str, str],
-        source_zone_id: str,
-        target_zones: frozenset[str],
-    ) -> Any:
-        """Mint a short-lived SearchDelegation for remote zone queries.
-
-        This credential authorizes the remote zone to execute search RPCs
-        on behalf of the original requester. The delegation is:
-        - Read-only (hard method allowlist: search, semantic_search)
-        - Short-lived (30s TTL)
-        - Scoped to specific target zones
-
-        Called by the dispatcher when a zone is served by a remote daemon
-        (Phase 2). The delegation is sent as part of the gRPC auth context.
-        """
-        from nexus.contracts.search_delegation import SearchDelegation
-
-        return SearchDelegation(
-            delegation_id=f"sd_{uuid.uuid4().hex[:12]}",
-            source_zone_id=source_zone_id,
-            target_zones=target_zones,
-            subject=subject,
-        )
-
     async def _search_zone(
         self,
         zone_id: str,
@@ -264,10 +237,16 @@ class FederatedSearchDispatcher:
         recency: str | None = None,
         recency_weight: float | None = None,
         recency_half_life_days: float | None = None,
-        subject: tuple[str, str] | None = None,
         rrf_k: int = 60,
     ) -> list[Any]:
-        """Search a single zone with capability-aware routing."""
+        """Search a single zone with capability-aware routing.
+
+        `subject` used to be threaded through here so the retired
+        cross-daemon path could mint a `SearchDelegation` — that
+        path now lives in Rust (see
+        `nexus-http-api::backends::tonic_remote::TonicRemoteSearchBackend`)
+        and the local branch does not need identity here; the
+        parameter is dropped as dead code."""
         effective_type, alpha_override = self._get_effective_search_type(zone_id, search_type)
         effective_alpha = alpha_override if alpha_override is not None else alpha
         # 13B safety promotion (keyword -> hybrid alpha=1.0 under leaky BM25S/
@@ -280,32 +259,21 @@ class FederatedSearchDispatcher:
         if effective_type != search_type and fusion_method == "weighted":
             effective_fusion = "rrf_weighted"
 
-        # Phase 2: Check if this zone has a remote transport in the registry.
-        # If so, search via gRPC with a SearchDelegation credential.
-        # rrf_k travels on the wire like alpha/fusion_method so the payload is
-        # complete whenever the remote side can serve it. The recency knobs
-        # (recency / recency_weight / recency_half_life_days, #4543) are
-        # intentionally NOT forwarded — older remote nodes reject unknown
-        # search params, so remote zones stay unboosted until the RPC surface
-        # is versioned. KNOWN GAP (pre-#4541, applies to every field including
-        # query): the remote ``search`` RPC is rejected by
-        # ``parse_method_params`` as an unknown method — it has no
-        # METHOD_PARAMS schema and is not @rpc_expose'd — so registry-remote
-        # zones currently land in ``zones_failed`` and no fusion knob (or any
-        # param) reaches them. Tracked as #4556; fixing the RPC
-        # surface is out of scope for the fusion-param plumbing.
-        if self._registry is not None and self._registry.is_remote(zone_id):
-            return await self._search_remote_zone(
-                zone_id=zone_id,
-                query=query,
-                search_type=effective_type,
-                limit=limit,
-                path_filter=path_filter,
-                alpha=effective_alpha,
-                fusion_method=effective_fusion,
-                rrf_k=rrf_k,
-                subject=subject,
-            )
+        # Cross-daemon dispatch lives on the Rust axum surface —
+        # `nexus-http-api::backends::tonic_remote::TonicRemoteSearchBackend`
+        # mints a `SearchDelegation` per remote leg and dials the
+        # peer daemon's `nexus.search.v1.SearchService.Query` with
+        # the delegation on tonic metadata.  Callers reaching this
+        # Python dispatcher for a zone that would previously have
+        # been marked remote should route their request through
+        # `POST /v2/search/query` on the Rust axum server instead —
+        # its federated fast-out picks up multi-zone callers via the
+        # same ReBAC access rule.
+        #
+        # A `registry.is_remote(zone_id)` mapping surviving here is
+        # a stale piece of config; the local branch below runs
+        # against the default daemon, which is the correct
+        # "single-daemon plus Rust cross-daemon path" behaviour.
 
         # Local zone: call daemon.search() directly.
         # #4620: each local leg carries ITS zone's path-context tier
@@ -371,82 +339,6 @@ class FederatedSearchDispatcher:
             r.zone_id = zone_id
 
         return tagged_results
-
-    async def _search_remote_zone(
-        self,
-        zone_id: str,
-        query: str,
-        search_type: str,
-        limit: int,
-        path_filter: str | None,
-        alpha: float,
-        fusion_method: str,
-        subject: tuple[str, str] | None = None,
-        rrf_k: int = 60,
-    ) -> list[Any]:
-        """Search a remote zone via gRPC with SearchDelegation auth.
-
-        Mints a short-lived delegation, sends it as the auth_token in
-        a Call RPC to the remote node's search method, and converts
-        the response back into result dicts.
-        """
-        assert self._registry is not None  # Checked by caller
-        transport = self._registry.get_transport(zone_id)
-        if transport is None:
-            raise RuntimeError(f"No transport registered for remote zone {zone_id}")
-
-        # Mint delegation scoped to this zone
-        delegation = self._mint_search_delegation(
-            subject=subject or ("user", "anonymous"),
-            source_zone_id="local",
-            target_zones=frozenset({zone_id}),
-        )
-
-        logger.debug(
-            "[FEDERATED] Remote search zone=%s delegation=%s",
-            zone_id,
-            delegation.delegation_id,
-        )
-
-        # Build search params for the remote Call RPC
-        params = {
-            "query": query,
-            "search_type": search_type,
-            "limit": limit,
-            "zone_id": zone_id,
-            "alpha": alpha,
-            "fusion_method": fusion_method,
-            "rrf_k": rrf_k,
-        }
-        if path_filter:
-            params["path_filter"] = path_filter
-
-        # Send via gRPC — the delegation_id is passed as auth_token
-        # so the remote servicer's SearchDelegation guard can validate it.
-        raw_result = await asyncio.to_thread(
-            transport.call_rpc,
-            "search",
-            params,
-            None,  # read_timeout (use default)
-            delegation.delegation_id,  # auth_token override
-        )
-
-        # Convert remote response to result dicts with zone tagging.
-        # Issue #4544 (Codex review R1) / #4541 review: the server-side RPC
-        # search handler returns a ``{"results": [...]}`` envelope
-        # (handle_search in src/nexus/server/rpc/handlers/filesystem.py),
-        # which the bare-list check silently discarded — real remote zones
-        # contributed zero results. Older transports may hand back a bare
-        # list — accept both shapes.
-        if isinstance(raw_result, dict):
-            raw_result = raw_result.get("results", [])
-        results = raw_result if isinstance(raw_result, list) else []
-        for r in results:
-            if isinstance(r, dict):
-                r["zone_id"] = zone_id
-                r["zone_qualified_path"] = f"{zone_id}:{r.get('path', '')}"
-
-        return results
 
     def _should_skip_zone(self, zone_id: str, search_type: str) -> bool:
         """Phase 3: Check if a zone should be skipped entirely.
@@ -748,8 +640,19 @@ class FederatedSearchDispatcher:
             if pooling_cap is None:
                 return base
             effective_type, _ = self._get_effective_search_type(zone_id, search_type)
-            is_remote = self._registry is not None and self._registry.is_remote(zone_id)
-            if effective_type == "hybrid" and not is_remote:
+            # Local HYBRID zones cap internally at the daemon (full-
+            # union backfill) — widening them here would compound
+            # multipliers into pathological retrieval windows
+            # (round-6 review), so they keep the base window.  The
+            # wider window applies only where dispatcher-side capping
+            # is the only protection: semantic/keyword effective
+            # types.  Cross-daemon remote zones no longer dispatch
+            # through this Python path — the Rust axum
+            # `/v2/search/query` federated fast-out
+            # (`nexus-http-api::handlers::search::query`) owns that
+            # branch — so the historical `is_remote` extra widening
+            # for that shape does not apply here.
+            if effective_type == "hybrid":
                 return base
             # Bounded widening (round-10 review): the emission cap has no
             # configured maximum, so amplification saturates at ×5.
@@ -773,7 +676,6 @@ class FederatedSearchDispatcher:
                         recency=recency,
                         recency_weight=recency_weight,
                         recency_half_life_days=recency_half_life_days,
-                        subject=subject,
                     ),
                     timeout=self._config.zone_timeout_seconds,
                 )
@@ -837,7 +739,6 @@ class FederatedSearchDispatcher:
                             recency=recency,
                             recency_weight=recency_weight,
                             recency_half_life_days=recency_half_life_days,
-                            subject=subject,
                         ),
                         timeout=self._config.zone_timeout_seconds,
                     )

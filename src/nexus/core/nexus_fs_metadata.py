@@ -808,6 +808,25 @@ class MetadataMixin:
         _unlink_start = time.perf_counter()
         zone_id, agent_id, _is_admin, _rust_ctx = self._prepare_rust_ctx(context)
         _unlink_result = self._kernel.sys_unlink(path, _rust_ctx, recursive)
+        if (
+            not _unlink_result.hit
+            and _unlink_result.entry_type == 0
+            and isinstance(_pre_delete_meta, dict)
+            and _pre_delete_meta.get("is_directory")
+            and _pre_delete_meta.get("entry_type") not in (DT_MOUNT, 5)
+        ):
+            # An implicit directory: the backend holds it (path_local
+            # creates parent dirs on write) but no metastore row exists, so
+            # the kernel's unlink misses — exists/glob reported the directory
+            # while delete answered 404 and nothing could remove it.  Give
+            # it an explicit DT_DIR row and delete it through the normal
+            # rmdir path (emptiness check, backend rmdir, rmdir post-hooks).
+            self._kernel.sys_setattr(
+                path,
+                entry_type=DT_DIR,
+                zone_id=_pre_delete_meta.get("zone_id") or zone_id or ROOT_ZONE_ID,
+            )
+            _unlink_result = self._kernel.sys_unlink(path, _rust_ctx, recursive)
 
         if _unlink_result.hit:
             # Rust handled the full operation (§12e: DT_DIR handled via internal sys_rmdir).
@@ -1792,53 +1811,19 @@ class MetadataMixin:
         details: bool,
         context: OperationContext | None,
         all_zones: bool = False,
+        entry_types: dict[str, int] | None = None,
     ) -> builtins.list[Any]:
-        """Expand explicit child directories that live behind their own metastore route.
+        """See :func:`nexus.core.readdir_expansion.expand_recursive_readdir`."""
+        from nexus.core.readdir_expansion import expand_recursive_readdir
 
-        ``all_zones`` is forwarded to the nested ``sys_readdir`` calls so an
-        admin's explicit cross-zone listing (#4740) keeps the same view while
-        descending into child routes.
-        """
-        from collections import deque
-
-        by_path: dict[str, Any] = {}
-        pending_dirs: deque[str] = deque()
-
-        def remember(item: Any) -> None:
-            path = self._readdir_item_path(item)
-            if path is None or path in by_path:
-                return
-            by_path[path] = item
-            if self._readdir_item_is_dir(item, context=context):
-                pending_dirs.append(path)
-
-        for entry in entries:
-            remember(entry)
-
-        max_entries = 100_000
-        while pending_dirs and len(by_path) < max_entries:
-            directory = pending_dirs.popleft()
-            try:
-                child_entries = self.sys_readdir(
-                    directory,
-                    recursive=True,
-                    details=details,
-                    context=context,
-                    all_zones=all_zones,
-                )
-            except Exception as exc:
-                logger.debug("recursive sys_readdir expansion skipped for %s: %s", directory, exc)
-                continue
-            for child in child_entries:
-                remember(child)
-
-        if pending_dirs:
-            logger.warning(
-                "recursive sys_readdir expansion truncated at %d entries under explicit dirs",
-                max_entries,
-            )
-
-        return [by_path[path] for path in sorted(by_path)]
+        return expand_recursive_readdir(
+            self,
+            entries,
+            details=details,
+            context=context,
+            all_zones=all_zones,
+            entry_types=entry_types,
+        )
 
     # Issue #3388: Internal metastore prefixes that must not appear in
     # user-facing directory listings (search checkpoints, ReBAC namespaces).
@@ -2122,6 +2107,7 @@ class MetadataMixin:
                 details=False,
                 context=context,
                 all_zones=all_zones,
+                entry_types={e.path: e.entry_type for e in _entries},
             )
         _emit_list()
         return _result

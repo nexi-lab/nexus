@@ -18,10 +18,12 @@ from collections.abc import Iterator
 from datetime import datetime
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.protocols.secrets_audit_log import SecretsAuditLogProtocol
+from nexus.server.dependencies import require_auth
 
 logger = logging.getLogger(__name__)
 
@@ -66,13 +68,37 @@ def _build_filters(
 
 
 # --------------------------------------------------------------------------
-# Dependency — injected by fastapi_server.py
+# Dependency
 # --------------------------------------------------------------------------
 
 
-def get_secrets_audit_logger() -> tuple[SecretsAuditLogProtocol, str]:
-    """Placeholder dependency — overridden by fastapi_server.py."""
-    raise HTTPException(status_code=500, detail="Secrets audit not configured")
+def get_secrets_audit_logger(
+    request: Request,
+    auth_result: dict[str, Any] = Depends(require_auth),
+) -> tuple[SecretsAuditLogProtocol, str]:
+    """Admin-only audit logger over ``app.state.record_store`` + caller zone.
+
+    Resolved here rather than through ``app.dependency_overrides``: a
+    non-empty overrides map makes FastAPI re-analyze every sub-dependency
+    of EVERY route on every request (pydantic schema builds per call —
+    ~20% of server CPU on the search hot path).
+    """
+    if not auth_result.get("is_admin", False):
+        raise HTTPException(
+            status_code=403,
+            detail="Secrets audit log access requires admin privileges",
+        )
+    state = request.app.state
+    audit_logger = getattr(state, "secrets_audit_logger", None)
+    if audit_logger is None:
+        record_store = getattr(state, "record_store", None)
+        if record_store is None:
+            raise HTTPException(status_code=500, detail="Secrets audit not configured")
+        from nexus.storage.secrets_audit_logger import SecretsAuditLogger
+
+        audit_logger = SecretsAuditLogger(record_store=record_store)
+        state.secrets_audit_logger = audit_logger
+    return audit_logger, auth_result.get("zone_id", ROOT_ZONE_ID)
 
 
 # --------------------------------------------------------------------------

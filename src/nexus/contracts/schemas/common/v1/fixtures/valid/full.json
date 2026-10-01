@@ -1,0 +1,10 @@
+{
+  "api_version": "common.sudo.dev/v1",
+  "kind": "ResourceRef",
+  "zone_id": "workspace-main",
+  "path": "/reports/quarterly.pdf",
+  "version": "rev_01J8Z6X0KQ",
+  "digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "media_type": "application/pdf",
+  "size_bytes": "4096"
+}

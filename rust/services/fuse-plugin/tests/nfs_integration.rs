@@ -121,21 +121,43 @@ unsafe extern "C" fn mock_sys_read(
     }
 }
 
+/// Honours `offset` the way `PathLocalBackend` does: offset 0 replaces the
+/// file, a non-zero offset grows to `max(len, offset + n)`, zero-filling any
+/// hole, and splices in place.
+///
+/// A mock that ignored the offset and replaced the file every time would let an
+/// offset test pass here while the real backend did something else — which is
+/// the whole reason the offset exists.
 unsafe extern "C" fn mock_sys_write(
     kernel: *const c_void,
     path: *const c_char,
     data: *const u8,
     data_len: usize,
+    offset: u64,
 ) -> i32 {
     let mock = &*(kernel as *const MockKernel);
     let path_str = CStr::from_ptr(path).to_str().unwrap();
     let content = std::slice::from_raw_parts(data, data_len).to_vec();
     let mut entries = mock.entries.lock().unwrap();
+    let data = if offset == 0 {
+        content
+    } else {
+        let off = offset as usize;
+        let mut cur = entries
+            .get(path_str)
+            .map(|e| e.data.clone())
+            .unwrap_or_default();
+        if cur.len() < off + content.len() {
+            cur.resize(off + content.len(), 0);
+        }
+        cur[off..off + content.len()].copy_from_slice(&content);
+        cur
+    };
     entries.insert(
         path_str.to_string(),
         MockEntry {
             is_dir: false,
-            data: content,
+            data,
         },
     );
     0
@@ -634,17 +656,32 @@ unsafe extern "C" fn slow_mock_sys_write(
     path: *const c_char,
     data: *const u8,
     data_len: usize,
+    offset: u64,
 ) -> i32 {
     let mock = &*(kernel as *const SlowMockKernel);
     std::thread::sleep(mock.stat_delay);
     let path_str = CStr::from_ptr(path).to_str().unwrap();
     let content = std::slice::from_raw_parts(data, data_len).to_vec();
     let mut entries = mock.entries.lock().unwrap();
+    let data = if offset == 0 {
+        content
+    } else {
+        let off = offset as usize;
+        let mut cur = entries
+            .get(path_str)
+            .map(|e| e.data.clone())
+            .unwrap_or_default();
+        if cur.len() < off + content.len() {
+            cur.resize(off + content.len(), 0);
+        }
+        cur[off..off + content.len()].copy_from_slice(&content);
+        cur
+    };
     entries.insert(
         path_str.to_string(),
         MockEntry {
             is_dir: false,
-            data: content,
+            data,
         },
     );
     0

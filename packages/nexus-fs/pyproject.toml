@@ -147,6 +147,10 @@ exclude = [
     "**/tasks/**",
     "**/tools/**",
     "**/validation/**",
+    # Product ResourceRef is owner-conformance preparation in the full package.
+    # Exclude it from slim until a real slim consumer and jsonschema dependency exist.
+    "**/contracts/resource_ref.py",
+    "**/contracts/schemas/common/v1/**",
     # Top-level modules that belong to the full runtime
     # _kernel_api_groups.py is included (listed in include above) — needed to
     # suppress the validation-disabled warning at import time.

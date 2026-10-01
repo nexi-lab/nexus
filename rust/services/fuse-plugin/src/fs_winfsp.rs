@@ -372,7 +372,7 @@ impl FileSystemContext for NexusWinFsp {
             // Compose create from empty-payload sys_write — same
             // pattern the fuser side uses; the kernel treats
             // "write-to-nonexistent-path" as create-on-write.
-            kernel_callbacks::sys_write(&self.kernel, &path, &[])
+            kernel_callbacks::sys_write(&self.kernel, &path, &[], 0)
                 .map_err(|e| FspError::NTSTATUS(errno_to_status(e)))?;
         }
         let json = kernel_callbacks::sys_stat(&self.kernel, &path)
@@ -416,7 +416,7 @@ impl FileSystemContext for NexusWinFsp {
         if context.is_dir {
             return Err(FspError::NTSTATUS(STATUS_NOT_A_DIRECTORY));
         }
-        kernel_callbacks::sys_write(&self.kernel, &context.path, &[])
+        kernel_callbacks::sys_write(&self.kernel, &context.path, &[], 0)
             .map_err(|e| FspError::NTSTATUS(errno_to_status(e)))?;
         Self::populate_file_info(file_info, 0, false);
         Ok(())
@@ -468,24 +468,31 @@ impl FileSystemContext for NexusWinFsp {
         if context.is_dir {
             return Err(FspError::NTSTATUS(STATUS_NOT_A_DIRECTORY));
         }
-        // First cut: O_TRUNC semantics — `sys_write` rewrites the
-        // whole file.  An offset != 0 write surfaces as
-        // STATUS_INVALID_DEVICE_REQUEST until the offset-aware kernel
-        // callback lands; CC's task-file workflow always rewrites the
-        // whole JSON document so offset==0 is the common path.
+        // Offsets are honoured as of plugin ABI v7; this used to refuse
+        // past byte zero with STATUS_INVALID_DEVICE_REQUEST.
         winfsp_diag!(
             "write path={} offset={} len={}",
             context.path,
             offset,
             buffer.len()
         );
-        if offset != 0 {
-            return Err(FspError::NTSTATUS(STATUS_INVALID_DEVICE_REQUEST));
-        }
-        kernel_callbacks::sys_write(&self.kernel, &context.path, buffer)
+        kernel_callbacks::sys_write(&self.kernel, &context.path, buffer, offset)
             .map_err(|e| FspError::NTSTATUS(errno_to_status(e)))?;
-        // Refresh file_info with the new size.
-        Self::populate_file_info(file_info, buffer.len() as u64, false);
+        // At offset 0 the write replaced the file, so its length is the
+        // new size. Past that the backend decides — a patch into the
+        // middle of a longer file leaves it longer than offset+len — and
+        // guessing would report a size that truncates WinFsp's cached
+        // view. So ask, and only on the path that needs asking.
+        let size = if offset == 0 {
+            buffer.len() as u64
+        } else {
+            kernel_callbacks::sys_stat(&self.kernel, &context.path)
+                .ok()
+                .and_then(|json| parse_stat(&json))
+                .map(|(size, _)| size)
+                .unwrap_or(offset + buffer.len() as u64)
+        };
+        Self::populate_file_info(file_info, size, false);
         Ok(buffer.len() as u32)
     }
 

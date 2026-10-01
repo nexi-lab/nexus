@@ -1,0 +1,38 @@
+{
+  "$id": "urn:sudo:nexus-vfs:zone-id:v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "allOf": [
+    {
+      "not": {
+        "pattern": "[^abcdefghijklmnopqrstuvwxyz0123456789\\-]"
+      }
+    },
+    {
+      "pattern": "^[abcdefghijklmnopqrstuvwxyz0123456789]"
+    },
+    {
+      "pattern": "[abcdefghijklmnopqrstuvwxyz0123456789]$"
+    }
+  ],
+  "description": "Portable lexical ZoneId form. Tenant creation additionally rejects owner-reserved constants at runtime.",
+  "maxLength": 63,
+  "minLength": 3,
+  "title": "ZoneId",
+  "type": "string",
+  "x-sudo-owner": {
+    "canonical_source": "contracts/zone-id/spec.json",
+    "fixture_source": "contracts/zone-id/vectors.json",
+    "generated": true,
+    "repository": "nexus-vfs"
+  },
+  "x-sudo-semantics": {
+    "case_folding": "none",
+    "projection_scope": "lexical",
+    "reserved_constants": [
+      "ROOT_ZONE_ID",
+      "CONTROL_ZONE_ID"
+    ],
+    "reserved_values_in_lexical_projection": false,
+    "tenant_create_validator": "contracts::zone_id::validate_zone_id"
+  }
+}

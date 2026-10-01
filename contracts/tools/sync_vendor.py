@@ -31,7 +31,6 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CARGO_TOML = REPO_ROOT / "Cargo.toml"
-HTTP_API_CARGO_TOML = REPO_ROOT / "rust" / "services" / "http-api" / "Cargo.toml"
 VENDOR_DIR = REPO_ROOT / "contracts" / "vendor" / "nexus-vfs.gen"
 SOURCE_LOCK = REPO_ROOT / "contracts" / "source-lock.gen.json"
 MANIFEST_META = REPO_ROOT / "contracts" / "manifests" / "zone-v1.meta.json"
@@ -68,21 +67,20 @@ CHECK = "--check" in sys.argv
 
 
 def pinned_rev() -> str:
-    """Extract the one revision used by both direct dependency surfaces."""
+    """Extract the one revision used by the workspace Cargo manifest."""
     revs: set[str] = set()
-    for cargo_toml in (CARGO_TOML, HTTP_API_CARGO_TOML):
-        matches = set(
-            re.findall(
-                r'git\s*=\s*"https://github\.com/nexi-lab/nexus-vfs"\s*,\s*rev\s*=\s*"([0-9a-f]{40})"',
-                cargo_toml.read_text(encoding="utf-8"),
-            )
+    matches = set(
+        re.findall(
+            r'git\s*=\s*"https://github\.com/nexi-lab/nexus-vfs"\s*,\s*rev\s*=\s*"([0-9a-f]{40})"',
+            CARGO_TOML.read_text(encoding="utf-8"),
         )
-        if not matches:
-            raise SystemExit(f"no nexus-vfs revision found in {cargo_toml}")
-        revs.update(matches)
+    )
+    if not matches:
+        raise SystemExit(f"no nexus-vfs revision found in {CARGO_TOML}")
+    revs.update(matches)
     if len(revs) != 1:
         raise SystemExit(
-            f"expected one nexus-vfs rev across both Cargo manifests, found {sorted(revs)}; "
+            f"expected one nexus-vfs rev across the Cargo manifest, found {sorted(revs)}; "
             "the source lock derives from the Cargo pin, so this must stay uniform"
         )
     return revs.pop()

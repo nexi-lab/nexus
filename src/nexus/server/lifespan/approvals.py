@@ -161,14 +161,14 @@ async def startup_approvals(app: "FastAPI", svc: "LifespanServices") -> list[asy
     try:
         import asyncpg
 
-        from nexus.core.db_utils import sqlalchemy_url_to_asyncpg_dsn
+        from nexus.core.db_utils import sqlalchemy_url_to_postgres_dsn
     except ImportError as e:
         logger.warning("[APPROVALS] asyncpg not installed; approvals disabled: %s", e)
         app.state.approvals_stack = None
         app.state.policy_gate = None
         return []
 
-    pg_dsn = sqlalchemy_url_to_asyncpg_dsn(svc.database_url)
+    pg_dsn = sqlalchemy_url_to_postgres_dsn(svc.database_url)
     try:
         _min_size = svc.profile_tuning.pool.asyncpg_min_size
         _max_size = svc.profile_tuning.pool.asyncpg_max_size

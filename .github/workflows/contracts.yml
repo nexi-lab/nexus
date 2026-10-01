@@ -23,12 +23,14 @@ jobs:
         with:
           python-version: "3.14"
       - name: Install Python deps for the contract suite
-        run: uv pip install --system "pydantic[email]>=2.13.4" "jsonschema>=4.20.0" pytest pytest-xdist pytest-asyncio ruff mypy
+        run: |
+          uv venv
+          uv pip install "pydantic[email]>=2.13.4" "jsonschema>=4.20.0" pytest pytest-xdist pytest-asyncio ruff mypy
       - name: Vendor/lock/manifest reproducibility
-        run: python contracts/tools/sync_vendor.py --check
+        run: .venv/bin/python contracts/tools/sync_vendor.py --check
       - name: Lint contract code
         run: |
-          ruff check src/nexus/contracts/zone_v1.py tests/contracts/ contracts/tools/sync_vendor.py
-          ruff format --check src/nexus/contracts/zone_v1.py tests/contracts/ contracts/tools/sync_vendor.py
+          .venv/bin/ruff check src/nexus/contracts/zone_v1.py tests/contracts/ contracts/tools/sync_vendor.py
+          .venv/bin/ruff format --check src/nexus/contracts/zone_v1.py tests/contracts/ contracts/tools/sync_vendor.py
       - name: Contract conformance (shared fixtures judge schema + adapter)
-        run: python -m pytest -n 0 tests/contracts -q
+        run: .venv/bin/python -m pytest -n 0 tests/contracts -q

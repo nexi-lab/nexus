@@ -177,9 +177,7 @@ def list_zones(
 
         with session() as s:
             authorized_zone_ids = set(
-                s.execute(
-                    select(ZoneGrantModel.zone_id).where(ZoneGrantModel.status == "active")
-                )
+                s.execute(select(ZoneGrantModel.zone_id).where(ZoneGrantModel.status == "active"))
                 .scalars()
                 .all()
             )

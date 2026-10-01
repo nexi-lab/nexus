@@ -71,9 +71,10 @@ def is_owner_or_admin(auth_result: dict[str, Any], owner_subject_id: str | None)
     only a real user principal (or an admin) matches."""
     if auth_result.get("is_admin", False):
         return True
-    return auth_result.get("subject_type") == "user" and auth_result.get(
-        "subject_id"
-    ) == owner_subject_id
+    return (
+        auth_result.get("subject_type") == "user"
+        and auth_result.get("subject_id") == owner_subject_id
+    )
 
 
 def require_zone_capability(

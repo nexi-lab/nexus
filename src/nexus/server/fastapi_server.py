@@ -75,6 +75,8 @@ async def zone_v2_validation_error_handler(
         "retryable": False,
     }
     return JSONResponse(status_code=422, content={"detail": detail})
+
+
 from nexus.server.auth.oauth_init import (  # noqa: E402
     initialize_oauth_provider as _initialize_oauth_provider,
 )

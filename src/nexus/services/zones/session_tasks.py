@@ -309,8 +309,7 @@ class SessionTaskService:
                 session.commit()
             except Exception:
                 logger.warning(
-                    "attempt json snapshots landed but the row commit failed "
-                    "(orphans: %s, %s)",
+                    "attempt json snapshots landed but the row commit failed (orphans: %s, %s)",
                     resolution_path,
                     attempt_path,
                 )
@@ -358,7 +357,9 @@ class SessionTaskService:
                         SessionRuntimeRunModel.session_id == session_id,
                         SessionRuntimeRunModel.attempt_id.is_not(None),
                     )
-                    .order_by(SessionRuntimeRunModel.started_at.desc(), SessionRuntimeRunModel.pid.desc())
+                    .order_by(
+                        SessionRuntimeRunModel.started_at.desc(), SessionRuntimeRunModel.pid.desc()
+                    )
                 )
                 .scalars()
                 .first()

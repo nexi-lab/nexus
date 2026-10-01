@@ -99,6 +99,22 @@ EXPECTED_MODELS = [
     "DocumentSkeletonModel",
     # Path context cache for search/path metadata (Issue #3773)
     "PathContextModel",
+    # Zone v1 (canonical persistence, grants, sessions, rebac projection)
+    "ZoneGrantModel",
+    "ZoneMountModel",
+    "ZoneOperationModel",
+    "ZoneDelegationModel",
+    "ZoneAuthorizationEpochModel",
+    "ZoneRuntimeOutboxModel",
+    "ZoneGrantProjectionOutboxModel",
+    "SessionModel",
+    "SessionDataRecordModel",
+    "SessionRuntimeRunModel",
+    "SessionZoneDependencyModel",
+    "TaskSpecModel",
+    "TaskResolutionModel",
+    "TaskAttemptModel",
+    "RebacRelationSourceModel",
 ]
 
 

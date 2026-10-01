@@ -568,7 +568,7 @@ def test_p0_scenarios_15_16_deprovision_blocker_and_tombstone(nexus_server, test
         scope_rules=[
             {
                 "capability": "zone.runtime.execute",
-                "resource_prefixes": [f"/sessions/p0m-s15-session-0001"],
+                "resource_prefixes": ["/sessions/p0m-s15-session-0001"],
             }
         ],
     )
@@ -743,7 +743,7 @@ def test_p0_scenario_15b_cross_zone_run_purge_boundary(nexus_server, test_app) -
         scope_rules=[
             {
                 "capability": "zone.runtime.execute",
-                "resource_prefixes": [f"/sessions/p0m-s15b-session-0001"],
+                "resource_prefixes": ["/sessions/p0m-s15b-session-0001"],
             }
         ],
     )

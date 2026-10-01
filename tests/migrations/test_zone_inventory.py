@@ -35,7 +35,6 @@ def test_inventory_classifies_all_nine_buckets_and_touches_nothing(session) -> N
     consistent = "inv-consistent"
     sql_only = "inv-sql-only"
     terminated_live = "inv-terminated-live"
-    illegal = "inv_ILLEGAL_uppercase"
 
     for zone_id, status in (
         (consistent, "active"),

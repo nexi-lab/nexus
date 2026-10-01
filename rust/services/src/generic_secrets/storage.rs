@@ -24,6 +24,8 @@ const DT_DIR: i32 = 1;
 /// Encoded set:
 /// - `% : / \ < > " | ? *` (NTFS-illegal + `%` self-encoding)
 /// - ASCII control chars `0x00..=0x1F`
+/// - Trailing dots/spaces and DOS device names, including names with extensions
+/// - Adjacent dots (the path backend rejects `..` anywhere in a path)
 /// - **All non-ASCII bytes `0x80..=0xFF`** so multi-byte UTF-8 sequences in
 ///   namespace/key inputs are preserved byte-for-byte across the round-trip.
 ///   Without this, `b as char` on a high byte would yield `U+0080..U+00FF`
@@ -38,13 +40,31 @@ const DT_DIR: i32 = 1;
 /// `zazzy-chasing-pizza.md` "头号约束" for the rationale.
 fn escape_path_component(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
-    for b in s.bytes() {
+    let bytes = s.as_bytes();
+    let suffix_start = s.trim_end_matches(['.', ' ']).len();
+    let stem = s
+        .split('.')
+        .next()
+        .unwrap_or("")
+        .trim_end_matches(' ')
+        .to_ascii_uppercase();
+    let reserved = matches!(
+        stem.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$" | "CLOCK$"
+    ) || (stem.len() == 4
+        && (stem.starts_with("COM") || stem.starts_with("LPT"))
+        && matches!(stem.as_bytes()[3], b'1'..=b'9'));
+    for (i, &b) in bytes.iter().enumerate() {
         let needs_encode = matches!(
             b,
             b'%' | b':' | b'/' | b'\\' | b'<' | b'>' | b'"' | b'|' | b'?' | b'*'
             | 0x00..=0x1F
             | 0x80..=0xFF
-        );
+        ) || i >= suffix_start
+            || (reserved && i == 0)
+            || (b == b'.'
+                && (bytes.get(i.wrapping_sub(1)) == Some(&b'.')
+                    || bytes.get(i + 1) == Some(&b'.')));
         if needs_encode {
             out.push('%');
             out.push_str(&format!("{:02X}", b));
@@ -78,9 +98,8 @@ fn unescape_path_component(s: &str) -> String {
         out.push(bytes[i]);
         i += 1;
     }
-    // Encoded bytes are always valid UTF-8 since we only encode ASCII-range
-    // bytes and pass others through. So from_utf8_lossy is a safety net,
-    // not load-bearing.
+    // Our encoder preserves UTF-8 byte-for-byte. The lossy conversion only
+    // protects listing against malformed, externally created paths.
     String::from_utf8_lossy(&out).into_owned()
 }
 
@@ -363,7 +382,7 @@ impl SecretStorage {
         Ok(out)
     }
 
-    /// Migrate any pre-v0.1.2 files whose path segments were stored
+    /// Migrate older files whose path segments were stored
     /// literally (e.g. `service:shareone` written by v0.1.1 on Linux/macOS
     /// where NTFS-illegal chars survived the trip to disk) onto the
     /// canonical percent-encoded layout. Idempotent — on a clean canonical
@@ -374,14 +393,15 @@ impl SecretStorage {
     /// SSOT (every other method here targets canonical paths only — there
     /// is no fallback / dual-layout logic to maintain).
     pub(crate) fn migrate_legacy_layout(&self) -> Result<(), PasswordVaultError> {
-        self.migrate_subtree_entries()?;
+        self.migrate_subtree_files("entries")?;
         self.migrate_subtree_versions()?;
+        self.migrate_subtree_files("blobs")?;
         Ok(())
     }
 
-    fn migrate_subtree_entries(&self) -> Result<(), PasswordVaultError> {
-        // depth-2: /entries/{ns}/{key}
-        let root = format!("{}/entries", self.root);
+    fn migrate_subtree_files(&self, subtree: &str) -> Result<(), PasswordVaultError> {
+        // depth-2: /{entries,blobs}/{ns}/{key}
+        let root = format!("{}/{subtree}", self.root);
         let ns_paths: Vec<String> = self
             .kernel
             .sys_readdir(
@@ -420,7 +440,10 @@ impl SecretStorage {
                     _ => continue,
                 };
                 let key_logical = unescape_path_component(&key_segment);
-                let canonical = self.entries_path(&ns_logical, &key_logical);
+                let canonical = format!(
+                    "{root}/{canonical_ns_segment}/{}",
+                    escape_path_component(&key_logical)
+                );
                 if key_path == canonical {
                     continue; // already canonical
                 }
@@ -872,6 +895,31 @@ mod tests {
     }
 
     #[test]
+    fn escape_windows_suffixes_and_device_names_without_aliasing() {
+        for (logical, encoded) in [
+            ("account.", "account%2E"),
+            ("account ", "account%20"),
+            ("account. .", "account%2E%20%2E"),
+            (".", "%2E"),
+            ("..", "%2E%2E"),
+            ("a..b", "a%2E%2Eb"),
+            ("CON", "%43ON"),
+            ("con.txt", "%63on.txt"),
+            ("NUL .txt", "%4EUL .txt"),
+            ("COM1", "%43OM1"),
+            ("lpt9.txt", "%6Cpt9.txt"),
+            ("CONIN$", "%43ONIN$"),
+            ("account_", "account_"),
+            ("account%2E", "account%252E"),
+            ("example.com", "example.com"),
+            ("COM10", "COM10"),
+        ] {
+            assert_eq!(escape_path_component(logical), encoded, "{logical}");
+            assert_eq!(unescape_path_component(encoded), logical);
+        }
+    }
+
+    #[test]
     fn unescape_tolerates_invalid_percent_sequences() {
         // Malformed inputs must pass through verbatim, not panic, not
         // return Result. This protects `list_indexes` from crashing on
@@ -1024,6 +1072,55 @@ mod tests {
         assert_eq!(versions.len(), 1);
         assert_eq!(versions[0].version, 1);
         assert_eq!(versions[0].ciphertext, b"secret");
+    }
+
+    #[test]
+    fn migrate_trailing_dot_preserves_index_and_every_version() {
+        let (kernel, ctx) = mount_with_legacy_data();
+        for path in [
+            "/vault/entries/passwords",
+            "/vault/versions/passwords/account.",
+        ] {
+            mkdir_raw(&kernel, path);
+        }
+        kernel
+            .write(
+                "/vault/entries/passwords/account.",
+                &ctx,
+                &bincode::serialize(&index(2, false)).unwrap(),
+                0,
+            )
+            .unwrap();
+        for version in 1..=2 {
+            kernel
+                .write(
+                    &format!("/vault/versions/passwords/account./{version:010}"),
+                    &ctx,
+                    &bincode::serialize(&entry(version, b"encrypted history")).unwrap(),
+                    0,
+                )
+                .unwrap();
+        }
+        let storage = SecretStorage::new_on_existing_mount(kernel, "/vault").unwrap();
+        for _ in 0..2 {
+            storage.migrate_legacy_layout().unwrap();
+            assert_eq!(
+                storage
+                    .get_index("passwords", "account.")
+                    .unwrap()
+                    .unwrap()
+                    .current_version,
+                2
+            );
+            let versions = storage.list_versions("passwords", "account.").unwrap();
+            assert_eq!(versions.len(), 2);
+            assert!(versions
+                .iter()
+                .all(|v| v.ciphertext == b"encrypted history"));
+            let listed = storage.list_indexes(Some("passwords")).unwrap();
+            assert_eq!(listed.len(), 1);
+            assert_eq!(listed[0].1, "account.");
+        }
     }
 
     #[test]

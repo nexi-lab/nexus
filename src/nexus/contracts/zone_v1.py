@@ -27,6 +27,7 @@ DIGEST_PATTERN = r"^[a-z0-9-]+:[A-Za-z0-9+/=._-]+$"
 CAPABILITY_PATTERN = r"^zone\.[a-z-]+\.[a-z-]+$"
 
 _VENDOR_DIR = Path(__file__).resolve().parents[3] / "contracts" / "vendor" / "nexus-vfs.gen"
+_OWNED_CONTRACTS_DIR = Path(__file__).resolve().parents[3] / "contracts"
 
 
 @cache
@@ -47,6 +48,27 @@ def _via_projection(filename: str, value: str) -> str:
     return value
 
 
+@cache
+def _owned_validator(rel_path: str) -> Draft202012Validator:
+    """Compile an owned contract schema once.
+
+    Same adapter pattern as the vendored projections — the model delegates
+    to the schema file instead of restating the rules, so schema and model
+    can never disagree.  zone-path moved from a nexus-vfs projection to an
+    owned contract (the upstream projection was retired in favor of a
+    portable-primitive spec whose semantics differ); the frozen rules this
+    product depends on live here now.
+    """
+    doc = json.loads((_OWNED_CONTRACTS_DIR / rel_path).read_text(encoding="utf-8"))
+    return Draft202012Validator(doc)
+
+
+def _via_owned(rel_path: str, value: str) -> str:
+    if not _owned_validator(rel_path).is_valid(value):
+        raise ValueError(f"{value!r} fails the {rel_path} schema")
+    return value
+
+
 #: Zone identity as an existing/historical reference (kernel-owned ids allowed).
 ExistingZoneIdRefStr = Annotated[
     str, AfterValidator(lambda v: _via_projection("existing-zone-id-ref.schema.gen.json", v))
@@ -57,7 +79,7 @@ TenantZoneIdCreateStr = Annotated[
 ]
 #: Zone-relative absolute path (component/depth/reserved-prefix rules).
 ZonePathStr = Annotated[
-    str, AfterValidator(lambda v: _via_projection("zone-path.schema.gen.json", v))
+    str, AfterValidator(lambda v: _via_owned("common/v1/zone-path.schema.json", v))
 ]
 
 #: Open registry of known capabilities (§4.6). Unknown codes are legal wire

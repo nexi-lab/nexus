@@ -35,6 +35,7 @@ CONTRACTS_DIR = Path(__file__).resolve().parents[2] / "contracts"
 OWNED_SCHEMAS = [
     "common/v1/principal-ref.schema.json",
     "common/v1/resource-ref.schema.json",
+    "common/v1/zone-path.schema.json",
     "auth/v1/zone.schema.json",
     "auth/v1/zone-create-request.schema.json",
     "auth/v1/zone-patch-request.schema.json",

@@ -42,6 +42,7 @@ def arm_zone_services(
     session_factory: Any,
     runtime: ZoneRuntimePort | None = None,
     rebac_check: Any = None,
+    rebac_invalidate: Any = None,
     projection_write: Any = None,
     projection_delete: Any = None,
     membership_check: Any = None,
@@ -122,6 +123,7 @@ def arm_zone_services(
         transfer_policy=transfer_policy,
         transfer_executor=transfer_executor,
         zone_fs_purger=_zone_fs_purger if fs is not None else None,
+        rebac_invalidate=rebac_invalidate,
     )
     authz = AuthorizationService(
         session_factory,
@@ -371,8 +373,13 @@ async def startup_zone_control(app: FastAPI) -> list[asyncio.Task[Any]]:
         runtime = KernelRpcZoneRuntimePort(nexus_fs)
 
     rebac_check = projection_write = projection_delete = None
+    rebac_invalidate = None
     if rebac_manager is not None:
         rebac_check, projection_write, projection_delete = _rebac_bindings(rebac_manager)
+        # The deprovision purge bypasses the ReBAC writer (raw SQL deletes),
+        # so cached permission decisions outlive the zone unless flushed.
+        if hasattr(rebac_manager, "clear_permission_cache"):
+            rebac_invalidate = rebac_manager.clear_permission_cache
 
     issuers = frozenset(
         value.strip()
@@ -403,6 +410,7 @@ async def startup_zone_control(app: FastAPI) -> list[asyncio.Task[Any]]:
         session_factory=session_factory,
         runtime=runtime,
         rebac_check=rebac_check,
+        rebac_invalidate=rebac_invalidate,
         projection_write=projection_write,
         projection_delete=projection_delete,
         membership_check=app.state.moss_membership_verifier,

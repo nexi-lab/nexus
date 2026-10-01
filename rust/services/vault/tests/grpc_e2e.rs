@@ -34,6 +34,7 @@
 use std::sync::Arc;
 
 use kernel::abc::object_store::ObjectStore;
+use kernel::kernel::convenience::KernelConvenience;
 use services::generic_secrets::proto::generic_secrets_service_client::GenericSecretsServiceClient;
 use services::generic_secrets::proto::generic_secrets_service_server::GenericSecretsServiceServer;
 use services::generic_secrets::proto::*;
@@ -57,9 +58,14 @@ struct Harness {
 
 impl Harness {
     async fn start() -> Self {
+        Self::start_with_legacy(false).await
+    }
+
+    async fn start_with_legacy(legacy: bool) -> Self {
         let dir = TempDir::new().unwrap();
         let vault_dir = dir.path().join("vault");
         std::fs::create_dir_all(&vault_dir).unwrap();
+        let vault_dir = vault_dir.canonicalize().unwrap();
 
         let kernel = Arc::new(kernel::kernel::Kernel::new());
         let meta_path = vault_dir.join("vault-meta.redb");
@@ -101,6 +107,80 @@ impl Harness {
 
         let master_key_path = vault_dir.join("master.key");
         let master_key = crypto::load_or_create_master_key(&master_key_path).unwrap();
+
+        if legacy {
+            use services::generic_secrets::proto::generic_secrets_service_server::GenericSecretsService;
+            let seed = GenericSecretsServiceImpl::new_on_existing_mount(
+                kernel.clone(),
+                "/vault",
+                crypto::load_or_create_master_key(&master_key_path).unwrap(),
+            )
+            .unwrap();
+            for version in 1..=2 {
+                seed.put_secret(tonic::Request::new(PutSecretRequest {
+                    namespace: "passwords".into(),
+                    key: "legacy".into(),
+                    value: format!("historical-{version}"),
+                    description: None,
+                }))
+                .await
+                .unwrap();
+            }
+            let ctx = kernel::kernel::OperationContext::new(
+                "vault-storage",
+                "root",
+                true,
+                Some("vault-storage"),
+                true,
+            );
+            kernel
+                .sys_setattr(
+                    "/vault/versions/passwords/legacy.",
+                    1,
+                    "",
+                    None,
+                    None,
+                    None,
+                    "memory",
+                    "root",
+                    false,
+                    0,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .unwrap();
+            for suffix in [
+                "entries/passwords/legacy",
+                "versions/passwords/legacy/0000000001",
+                "versions/passwords/legacy/0000000002",
+            ] {
+                let src = format!("/vault/{suffix}");
+                let dst = src.replace("/legacy", "/legacy.");
+                let bytes = KernelConvenience::read(&*kernel, &src, &ctx, 0, 0)
+                    .unwrap()
+                    .data
+                    .unwrap();
+                kernel.write(&dst, &ctx, &bytes, 0).unwrap();
+                for result in kernel.sys_unlink(
+                    &[kernel::kernel::UnlinkRequest {
+                        path: src,
+                        recursive: false,
+                    }],
+                    &ctx,
+                ) {
+                    result.unwrap();
+                }
+            }
+        }
 
         let svc =
             GenericSecretsServiceImpl::new_on_existing_mount(kernel, "/vault", master_key).unwrap();
@@ -168,6 +248,82 @@ async fn put_get_round_trip_through_real_grpc_transport() {
     assert_eq!(got.value, "sk-grpc-e2e");
     assert_eq!(got.version, 1);
 
+    h.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn legacy_dot_files_migrate_on_real_disk_without_losing_history() {
+    let h = Harness::start_with_legacy(true).await;
+    let mut client = GenericSecretsServiceClient::connect(h.url()).await.unwrap();
+    for version in 1..=2 {
+        let got = client
+            .get_secret(GetSecretRequest {
+                namespace: "passwords".into(),
+                key: "legacy.".into(),
+                version: Some(version),
+            })
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(got.value, format!("historical-{version}"));
+    }
+    h.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn windows_sensitive_names_remain_distinct_on_real_disk() {
+    let h = Harness::start().await;
+    let mut client = GenericSecretsServiceClient::connect(h.url()).await.unwrap();
+    let keys = [
+        "account",
+        "account.",
+        "account_",
+        "account%2E",
+        "account ",
+        "account. .",
+        "a..b",
+        "CON",
+        "con.txt",
+        "LPT1",
+        "NUL",
+        "normal.example",
+    ];
+    // Namespaces use the same encoding and must also survive device names
+    // and trailing characters on every platform.
+    for namespace in ["passwords", "service. ", "AUX"] {
+        for (i, key) in keys.iter().enumerate() {
+            for version in 1..=2 {
+                client
+                    .put_secret(PutSecretRequest {
+                        namespace: namespace.into(),
+                        key: (*key).into(),
+                        value: format!("value-{i}-{version}"),
+                        description: None,
+                    })
+                    .await
+                    .unwrap();
+            }
+        }
+        for (i, key) in keys.iter().enumerate() {
+            for version in 1..=2 {
+                let got = client
+                    .get_secret(GetSecretRequest {
+                        namespace: namespace.into(),
+                        key: (*key).into(),
+                        version: Some(version),
+                    })
+                    .await
+                    .unwrap()
+                    .into_inner();
+                assert_eq!(
+                    got.value,
+                    format!("value-{i}-{version}"),
+                    "{namespace}/{key}"
+                );
+                assert_eq!(got.version, version);
+            }
+        }
+    }
     h.shutdown().await;
 }
 

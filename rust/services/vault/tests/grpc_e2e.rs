@@ -113,7 +113,7 @@ impl Harness {
             let seed = GenericSecretsServiceImpl::new_on_existing_mount(
                 kernel.clone(),
                 "/vault",
-                master_key,
+                crypto::load_or_create_master_key(&master_key_path).unwrap(),
             )
             .unwrap();
             for version in 1..=2 {

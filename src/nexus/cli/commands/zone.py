@@ -40,9 +40,7 @@ from nexus.cli.utils import (
 from nexus.contracts.constants import DEFAULT_GRPC_BIND_ADDR
 
 
-def _refuse_dropped_local_options(
-    *, hostname: str | None, data_dir: str, bind: str
-) -> None:
+def _refuse_dropped_local_options(*, hostname: str | None, data_dir: str, bind: str) -> None:
     """M-13: legacy local-ZoneManager flags have no /v2 remote equivalent —
     refuse loudly instead of silently dropping them (a silent drop produced
     exit-0 fake successes for documented flags)."""
@@ -184,9 +182,7 @@ def create_zone_cmd(
 
     try:
         if dry_run:
-            preview = dry_run_preview(
-                "zone create", path=zone_id, details={"hostname": hostname}
-            )
+            preview = dry_run_preview("zone create", path=zone_id, details={"hostname": hostname})
             render_dry_run(preview)
             return
 
@@ -552,8 +548,7 @@ def unmount_zone_cmd(
                 (
                     item
                     for item in listing.get("mounts", [])
-                    if item.get("parent_zone_id") == parent_zone
-                    and item.get("path") == mount_path
+                    if item.get("parent_zone_id") == parent_zone and item.get("path") == mount_path
                 ),
                 None,
             )
@@ -600,9 +595,7 @@ def wait_operation_cmd(
     try:
         deadline = _time.monotonic() + 120.0
         while True:
-            op = api_call(
-                remote_url, remote_api_key, "GET", f"/v2/zone-operations/{operation_id}"
-            )
+            op = api_call(remote_url, remote_api_key, "GET", f"/v2/zone-operations/{operation_id}")
             state = str(op.get("state") or "")
             console.print(f"operation {operation_id}: {state} ({op.get('step', '')})")
             if state in ("succeeded", "failed"):

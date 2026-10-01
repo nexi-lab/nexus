@@ -1262,9 +1262,7 @@ def test_p0_c2_truth_table_supplements(nexus_server, test_app) -> None:
     )
     # The dependency layer refuses to apply a zone header the token is not
     # authorized for — the whole request fails authentication (401).
-    assert spoof.status_code == 401, (
-        f"spoofed zone header must not grant: {spoof.status_code}"
-    )
+    assert spoof.status_code == 401, f"spoofed zone header must not grant: {spoof.status_code}"
 
     # (4) zone-less non-admin: a user key bound to no usable zone is refused
     # on zone endpoints (no grant, no delegation → deny).
@@ -1356,6 +1354,4 @@ def test_p0_c2_office_core_data_domain_default_deny(nexus_server, test_app) -> N
     # (§11.2 "Office 不默认读 Core" — the default across data domains is
     # denial; nothing about data_domain itself widens or narrows access).
     denied = _access(test_app, core_zone, user_key, delegation)
-    assert denied == 403, (
-        f"office-domain principal must not read core zone by default: {denied}"
-    )
+    assert denied == 403, f"office-domain principal must not read core zone by default: {denied}"

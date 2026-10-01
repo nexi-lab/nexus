@@ -437,9 +437,9 @@ def test_fault_classes_6_7_revoke_killed_before_broadcast_stays_fail_closed(tmp_
                 grant_state = next(
                     (
                         g["status"]
-                        for g in client.get(
-                            f"/v2/zones/{zone}/grants", headers=headers
-                        ).json()["grants"]
+                        for g in client.get(f"/v2/zones/{zone}/grants", headers=headers).json()[
+                            "grants"
+                        ]
                         if g["grant_id"] == grant_id
                     ),
                     None,

@@ -8121,34 +8121,34 @@ operations:
   transports:
     http:
       name: POST /v2/runtime/start
-      source: src/nexus/server/api/v2/routers/sessions.py:630
+      source: src/nexus/server/api/v2/routers/sessions.py:631
   profiles:
     lite: supported
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  correctness_test: tests/e2e/server/test_session_runtime_p1a_e2e.py
+  perf_class: control
+  perf_link: control-plane operation; tests/e2e/server/test_session_runtime_p1a_e2e.py
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4846
 - id: sessions.v2_sessions
   module: uncategorized
   summary: ''
   transports:
     http:
       name: GET /v2/sessions/{session_id}/tasks/{task_id}
-      source: src/nexus/server/api/v2/routers/sessions.py:607
+      source: src/nexus/server/api/v2/routers/sessions.py:608
   profiles:
     lite: supported
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  correctness_test: tests/e2e/server/test_session_runtime_p1a_e2e.py
+  perf_class: control
+  perf_link: control-plane operation; tests/e2e/server/test_session_runtime_p1a_e2e.py
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4846
 - id: set.hook_count
   module: uncategorized
   summary: ''
@@ -9845,11 +9845,11 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  correctness_test: tests/e2e/server/test_zone_routes_e2e.py
+  perf_class: control
+  perf_link: control-plane operation; tests/e2e/server/test_zone_routes_e2e.py
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4846
 - id: zone_grants.v2_auth
   module: zone
   summary: ''
@@ -9862,11 +9862,11 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  correctness_test: tests/e2e/server/test_zone_v2_p0_matrix_e2e.py
+  perf_class: control
+  perf_link: control-plane operation; tests/e2e/server/test_zone_v2_p0_matrix_e2e.py
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4846
 - id: zone_grants.v2_zone_capabilities
   module: zone
   summary: ''
@@ -9879,11 +9879,11 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  correctness_test: tests/e2e/server/test_zone_v2_p0_matrix_e2e.py
+  perf_class: control
+  perf_link: control-plane operation; tests/e2e/server/test_zone_v2_p0_matrix_e2e.py
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4846
 - id: zone_grants.v2_zone_operations
   module: zone
   summary: ''
@@ -9896,11 +9896,11 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  correctness_test: tests/e2e/server/test_zone_routes_e2e.py
+  perf_class: control
+  perf_link: control-plane operation; tests/e2e/server/test_zone_routes_e2e.py
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4846
 - id: zone_grants.v2_zones
   module: zone
   summary: ''
@@ -9913,11 +9913,11 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  correctness_test: tests/e2e/server/test_zone_v2_p0_matrix_e2e.py
+  perf_class: control
+  perf_link: control-plane operation; tests/e2e/server/test_zone_v2_p0_matrix_e2e.py
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4846
 - id: zone_routes.api_zones
   module: zone
   summary: ''
@@ -9947,11 +9947,11 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  correctness_test: tests/e2e/server/test_full_profile_control_plane_e2e.py
+  perf_class: control
+  perf_link: control-plane operation; tests/e2e/server/test_full_profile_control_plane_e2e.py
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4846
 - id: zone_runtime.v2_zone_transfers
   module: zone
   summary: ''
@@ -9964,11 +9964,11 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  correctness_test: tests/e2e/server/test_full_profile_control_plane_e2e.py
+  perf_class: control
+  perf_link: control-plane operation; tests/e2e/server/test_full_profile_control_plane_e2e.py
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4846
 - id: zone_runtime.v2_zones
   module: zone
   summary: ''
@@ -9981,28 +9981,28 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  correctness_test: tests/e2e/server/test_zone_routes_e2e.py
+  perf_class: control
+  perf_link: control-plane operation; tests/e2e/server/test_zone_routes_e2e.py
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4846
 - id: zones.v2_zones
   module: uncategorized
   summary: ''
   transports:
     http:
       name: POST /v2/zones/{zone_id}:suspend
-      source: src/nexus/server/api/v2/routers/zones.py:310
+      source: src/nexus/server/api/v2/routers/zones.py:308
   profiles:
     lite: supported
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  correctness_test: tests/e2e/server/test_zone_routes_e2e.py
+  perf_class: control
+  perf_link: control-plane operation; tests/e2e/server/test_zone_routes_e2e.py
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4846
 parity_warnings:
 - operation_id: _search_indexed_dirs.index_directory
   has:

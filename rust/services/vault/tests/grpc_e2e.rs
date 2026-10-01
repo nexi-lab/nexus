@@ -172,6 +172,63 @@ async fn put_get_round_trip_through_real_grpc_transport() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn windows_sensitive_names_remain_distinct_on_real_disk() {
+    let h = Harness::start().await;
+    let mut client = GenericSecretsServiceClient::connect(h.url()).await.unwrap();
+    let keys = [
+        "account",
+        "account.",
+        "account_",
+        "account%2E",
+        "account ",
+        "account. .",
+        "a..b",
+        "CON",
+        "con.txt",
+        "LPT1",
+        "NUL",
+        "normal.example",
+    ];
+    // Namespaces use the same encoding and must also survive device names
+    // and trailing characters on every platform.
+    for namespace in ["passwords", "service. ", "AUX"] {
+        for (i, key) in keys.iter().enumerate() {
+            for version in 1..=2 {
+                client
+                    .put_secret(PutSecretRequest {
+                        namespace: namespace.into(),
+                        key: (*key).into(),
+                        value: format!("value-{i}-{version}"),
+                        description: None,
+                    })
+                    .await
+                    .unwrap();
+            }
+        }
+        for (i, key) in keys.iter().enumerate() {
+            for version in 1..=2 {
+                let got = client
+                    .get_secret(GetSecretRequest {
+                        namespace: namespace.into(),
+                        key: (*key).into(),
+                        version: Some(version),
+                    })
+                    .await
+                    .unwrap()
+                    .into_inner();
+                assert_eq!(
+                    got.value,
+                    format!("value-{i}-{version}"),
+                    "{namespace}/{key}"
+                );
+                assert_eq!(got.version, version);
+            }
+        }
+    }
+    h.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sealed_round_trip_through_real_grpc_transport() {
     let h = Harness::start().await;
     let mut client = GenericSecretsServiceClient::connect(h.url()).await.unwrap();

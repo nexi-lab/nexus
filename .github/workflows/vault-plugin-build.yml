@@ -43,6 +43,9 @@ jobs:
         # check-yaml mis-reads as a mapping continuation if unquoted.
         run: "cargo test -p services --features service-password-vault password_vault::"
 
+      - name: Run shared secret storage migration tests
+        run: "cargo test -p services --features service-generic-secrets generic_secrets::storage::"
+
   build:
     name: vault-plugin / ${{ matrix.artifact_name }}
     runs-on: ${{ matrix.os }}
@@ -186,6 +189,11 @@ jobs:
         env:
           VAULT_DYLIB_PATH: ${{ github.workspace }}/target/release/${{ matrix.dylib }}
         run: cargo test --release -p nexus-vault dylib_e2e -- --test-threads=1
+
+      - name: Run real-disk gRPC E2E tests
+        if: ${{ !matrix.target }}
+        shell: bash
+        run: cargo test --release -p nexus-vault --test grpc_e2e
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

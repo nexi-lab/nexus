@@ -64,7 +64,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
         with:
-          python-version: "3.12"
+          python-version: "3.14"
       - uses: dtolnay/rust-toolchain@stable
       - run: uv sync --group dev
       - run: uv run python contracts/tools/sync_vendor.py --check
@@ -91,7 +91,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
         with:
-          python-version: "3.12"
+          python-version: "3.14"
       - uses: dtolnay/rust-toolchain@stable
       - run: uv sync --group dev
       - name: Build full-profile kernel for real E2E

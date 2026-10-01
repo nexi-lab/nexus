@@ -139,9 +139,7 @@ def test_rejected_journal_verdict_is_deterministic_not_unreachable() -> None:
                 }
             return super().zone_runtime_call(method, payload, timeout_s=timeout_s)
 
-    receipt = KernelRpcZoneRuntimePort(RejectedChannel()).get_operation(
-        operation_id="op-1", ctx={}
-    )
+    receipt = KernelRpcZoneRuntimePort(RejectedChannel()).get_operation(operation_id="op-1", ctx={})
     assert not receipt.ok
     assert receipt.rejected
     assert receipt.error == "zone quota exceeded for org"

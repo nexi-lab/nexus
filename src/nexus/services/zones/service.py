@@ -184,9 +184,7 @@ def _purge_zone_session_data(session: Session, zone_id: str) -> None:
     purge by ``zone_id`` only; runs record execution placement and purge by
     execution zone OR home zone — mirroring the blocker query below.
     """
-    home_session_ids = select(SessionModel.session_id).where(
-        SessionModel.home_zone_id == zone_id
-    )
+    home_session_ids = select(SessionModel.session_id).where(SessionModel.home_zone_id == zone_id)
     run_delete_set = (
         select(SessionRuntimeRunModel.pid)
         .where(
@@ -202,18 +200,12 @@ def _purge_zone_session_data(session: Session, zone_id: str) -> None:
         )
     )
     session.execute(
-        delete(SessionRuntimeRunModel).where(
-            SessionRuntimeRunModel.pid.in_(run_delete_set)
-        )
+        delete(SessionRuntimeRunModel).where(SessionRuntimeRunModel.pid.in_(run_delete_set))
     )
     session.execute(delete(TaskAttemptModel).where(TaskAttemptModel.zone_id == zone_id))
-    session.execute(
-        delete(TaskResolutionModel).where(TaskResolutionModel.zone_id == zone_id)
-    )
+    session.execute(delete(TaskResolutionModel).where(TaskResolutionModel.zone_id == zone_id))
     session.execute(delete(TaskSpecModel).where(TaskSpecModel.zone_id == zone_id))
-    session.execute(
-        delete(SessionDataRecordModel).where(SessionDataRecordModel.zone_id == zone_id)
-    )
+    session.execute(delete(SessionDataRecordModel).where(SessionDataRecordModel.zone_id == zone_id))
     session.execute(delete(SessionModel).where(SessionModel.home_zone_id == zone_id))
 
 
@@ -1485,16 +1477,13 @@ class ZoneApplicationService:
                     http_status=409,
                     details={
                         "grants": [
-                            {"grant_id": g.grant_id, "grantee": g.grantee}
-                            for g in active_grants
+                            {"grant_id": g.grant_id, "grantee": g.grantee} for g in active_grants
                         ],
                         "runs": [
                             {"pid": r.pid, "session_id": r.session_id, "state": r.state}
                             for r in active_runs
                         ],
-                        "mounts": [
-                            {"mount_id": m.mount_id} for m in active_mounts
-                        ],
+                        "mounts": [{"mount_id": m.mount_id} for m in active_mounts],
                     },
                 )
             # Advance the epoch BEFORE revoking so the cleanup events carry the

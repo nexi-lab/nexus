@@ -273,7 +273,9 @@ def nexus_server(isolated_db, tmp_path):
         env["NEXUS_JWT_SECRET"] = "test-secret-key-for-e2e-12345"
         env["HOME"] = str(home_path)
         # Allow PostgreSQL via NEXUS_E2E_DATABASE_URL env var; default to SQLite
-        env["NEXUS_DATABASE_URL"] = os.environ.get("NEXUS_E2E_DATABASE_URL", f"sqlite:///{isolated_db}")
+        env["NEXUS_DATABASE_URL"] = os.environ.get(
+            "NEXUS_E2E_DATABASE_URL", f"sqlite:///{isolated_db}"
+        )
         env["PYTHONPATH"] = str(_src_path)
 
         # Full-profile startup requires a real credential provider.  Mint one key
@@ -337,7 +339,9 @@ def nexus_server(isolated_db, tmp_path):
         t_err = threading.Thread(
             target=_drain_pipe, args=(process.stderr, stderr_lines, ready), daemon=True
         )
-        t_out = threading.Thread(target=_drain_pipe, args=(process.stdout, stdout_lines), daemon=True)
+        t_out = threading.Thread(
+            target=_drain_pipe, args=(process.stdout, stdout_lines), daemon=True
+        )
         t_err.start()
         t_out.start()
 

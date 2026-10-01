@@ -109,6 +109,7 @@ fn vault_cdylib_dlopens_with_required_symbols() {
         for sym in [
             symbols::SERVICE_CREATE,
             symbols::SERVICE_DISPATCH,
+            symbols::SERVICE_GRPC_DISPATCH,
             symbols::SERVICE_DESTROY,
         ] {
             let _: libloading::Symbol<unsafe extern "C" fn()> = lib

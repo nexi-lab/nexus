@@ -45,13 +45,13 @@ PROJECTIONS = [
     "contracts/zone-id/system-zone-id.schema.gen.json",
     "contracts/zone-id/existing-zone-id-ref.schema.gen.json",
     "contracts/zone-id/remote-learned-zone-id.schema.gen.json",
-    "contracts/zone-path/zone-path.schema.gen.json",
 ]
 
 # This repo's own product schemas; the manifest covers exactly these kinds.
 OWNED_SCHEMAS = [
     "common/v1/principal-ref.schema.json",
     "common/v1/resource-ref.schema.json",
+    "common/v1/zone-path.schema.json",
     "auth/v1/zone.schema.json",
     "auth/v1/zone-create-request.schema.json",
     "auth/v1/zone-patch-request.schema.json",

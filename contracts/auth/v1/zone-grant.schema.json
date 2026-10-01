@@ -33,7 +33,7 @@
     "resource_prefixes": {
       "type": "array",
       "items": {
-        "$ref": "https://nexus-vfs.dev/contracts/zone-path/zone-path.schema.gen.json",
+        "$ref": "https://contracts.sudo.dev/schemas/common/v1/zone-path.schema.json",
         "description": "Zone-internal absolute path prefix; canonicalized and .. / cross-zone / ambiguous encodings rejected at admission."
       }
     },

@@ -227,6 +227,7 @@ mod tests {
         _: *const std::ffi::c_char,
         _: *const u8,
         _: usize,
+        _: u64,
     ) -> i32 {
         -3
     }

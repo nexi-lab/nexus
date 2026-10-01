@@ -74,12 +74,9 @@ jobs:
       - run: uv sync --group dev
       - run: uv run python contracts/tools/sync_vendor.py --check
       - run: uv run python scripts/generate_zone_runtime_client.py --check
-      - name: Diagnose venv contents (temporary)
-        run: |
-          ls .venv/bin | grep -cE '.' || true
-          uv pip list 2>/dev/null | grep -iE "^(ruff|pytest|mypy) " || echo "NONE of ruff/pytest/mypy installed"
-          uv run python -c "import importlib.util; print('ruff spec:', importlib.util.find_spec('ruff'))"
-      - run: uv run ruff check src/nexus/contracts/zone_v1.py src/nexus/services/zones src/nexus/server/api/v2 contracts/tools/sync_vendor.py scripts/generate_zone_runtime_client.py tests/contracts tests/unit/services/test_zone_service.py tests/unit/server/test_zone_v2_api.py
+      # uvx: the CI venv resolved without the ruff entry (pytest/mypy landed
+      # fine — uv version/cache behavior); run the linter tool-detached.
+      - run: uvx ruff check src/nexus/contracts/zone_v1.py src/nexus/services/zones src/nexus/server/api/v2 contracts/tools/sync_vendor.py scripts/generate_zone_runtime_client.py tests/contracts tests/unit/services/test_zone_service.py tests/unit/server/test_zone_v2_api.py
       - name: Python contract, storage, and service tests
         env:
           NEXUS_E2E_DATABASE_URL: postgresql+psycopg2://postgres:nexus@127.0.0.1:5432/nexus_zone_test

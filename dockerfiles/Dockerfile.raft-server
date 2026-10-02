@@ -26,6 +26,7 @@ WORKDIR /build
 COPY Cargo.toml Cargo.lock scripts/nexus_vfs_revision.py /build/
 RUN NEXUS_VFS_REV="$(python3 /build/nexus_vfs_revision.py /build/Cargo.toml)" && \
     cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --rev "${NEXUS_VFS_REV}" --bin nexus-raft-server raft
+RUN cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --rev "${NEXUS_VFS_REV}" --bin nexus-raft-server raft
 
 # ---------- Production image ----------
 FROM debian:bookworm-slim

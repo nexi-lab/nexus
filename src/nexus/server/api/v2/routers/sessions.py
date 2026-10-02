@@ -543,7 +543,7 @@ def _start(
                         task_id=task.task_id,
                         reason_code="ZONE_ACCESS_DENIED",
                         reason="a declared resource reference is not accessible",
-                        policy_version=str(body.get("policy_version") or task.policy_version),
+                        policy_version=str(payload.get("policy_version") or task.policy_version),
                     )
                     raise HTTPException(
                         status_code=403,
@@ -559,8 +559,8 @@ def _start(
                 task_id=task.task_id,
                 execution_zone_id=execution_zone,
                 reason_code="CROSS_ZONE_POLICY_ACCEPTED" if cross_zone else "HOME_ZONE_DEFAULT",
-                reason=str(body.get("decision_reason") or "session home zone default"),
-                policy_version=str(body.get("policy_version") or task.policy_version),
+                reason=str(payload.get("decision_reason") or "session home zone default"),
+                policy_version=str(payload.get("policy_version") or task.policy_version),
             )
             try:
                 view = svc.start_run(
@@ -572,8 +572,8 @@ def _start(
                     delegation_ref=verified.delegation_id,
                     grant_ref=verified.grant_id,
                     authorization_epoch=verified.authorization_epoch,
-                    decision_reason=body.get("decision_reason") or None,
-                    policy_version=body.get("policy_version") or None,
+                    decision_reason=payload.get("decision_reason") or None,
+                    policy_version=payload.get("policy_version") or None,
                     attempt_id=attempt.attempt_id,
                     zone_active_check=zone_active_check,
                 )

@@ -96,6 +96,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Set up vault storage.
     let vault_dir = args.data_dir.join("vault");
     std::fs::create_dir_all(&vault_dir)?;
+    // Windows canonical paths retain the verbatim prefix. Legacy filenames
+    // ending in '.' must remain readable while storage migrates them; normal
+    // Win32 paths silently trim that suffix even when the file exists.
+    let vault_dir = vault_dir.canonicalize()?;
 
     let kernel = Arc::new(kernel::kernel::Kernel::new());
     let meta_path = vault_dir.join("vault-meta.redb");

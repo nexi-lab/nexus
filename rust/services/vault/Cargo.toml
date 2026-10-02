@@ -16,7 +16,7 @@ path = "src/bin/nexusd_vault.rs"
 
 [dependencies]
 # Plugin ABI — stable C ABI contract for dylib plugins.
-nexus-plugin-abi = { workspace = true }
+nexus-plugin-abi = { workspace = true, features = ["tonic"] }
 # Our PasswordVaultService impl. Enabling the feature pulls in
 # aes-gcm / hmac / sha1 / base32 / prost-types / tonic-prost (all
 # gated under service-password-vault in services/Cargo.toml).

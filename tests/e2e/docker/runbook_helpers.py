@@ -760,24 +760,39 @@ def wait_zone_ready(
     Two consecutive successful responses (500 ms apart) pins that the
     second response wasn't the leading edge of an in-flight apply.
     """
-    deadline = time.time() + timeout
+    deadline = time.monotonic() + timeout
     stable_window = 2  # consecutive successful observations
     successes = 0
     last_stat: dict = {}
-    while True:
-        last_stat = vfs_stat(target, mount_path, api_key=api_key, zone_id=zone_id, timeout=5)
+    while time.monotonic() < deadline:
+        try:
+            last_stat = vfs_stat(
+                target,
+                mount_path,
+                api_key=api_key,
+                zone_id=zone_id,
+                timeout=min(5, deadline - time.monotonic()),
+            )
+        except grpc.RpcError as error:
+            # A restarted node may accept TCP before it can serve a Stat.
+            # Retry transport warm-up within the existing readiness budget;
+            # permanent refusals (including auth errors) still fail immediately.
+            if error.code() not in (
+                grpc.StatusCode.UNAVAILABLE,
+                grpc.StatusCode.DEADLINE_EXCEEDED,
+            ):
+                raise
+            last_stat = {"error": f"{error.code().name}: {error.details()}"}
         if "error" not in last_stat:
             successes += 1
             if successes >= stable_window:
                 return
         else:
             successes = 0
-        if time.time() >= deadline:
-            pytest.fail(
-                f"Zone '{zone_id}' not ready on {target} within {timeout}s "
-                f"(last stat result: {last_stat})"
-            )
-        time.sleep(0.5)
+        time.sleep(min(0.5, max(0, deadline - time.monotonic())))
+    pytest.fail(
+        f"Zone '{zone_id}' not ready on {target} within {timeout}s (last stat result: {last_stat})"
+    )
 
 
 # ---------------------------------------------------------------------------

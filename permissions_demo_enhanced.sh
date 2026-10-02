@@ -235,6 +235,8 @@ ensure_demo_zones() {
 import os
 import sys
 
+from nexus.core.db_utils import sqlalchemy_url_to_postgres_dsn
+
 try:
     import psycopg2
 except Exception as exc:
@@ -247,7 +249,7 @@ zones = (
     ("acme", "ACME", "ACME demo zone"),
 )
 
-with psycopg2.connect(db_url) as conn:
+with psycopg2.connect(sqlalchemy_url_to_postgres_dsn(db_url)) as conn:
     with conn.cursor() as cursor:
         cursor.executemany(
             """
@@ -329,6 +331,8 @@ nexus_python << 'CLEANUP'
 import sys, os
 sys.path.insert(0, os.path.join(os.environ['NEXUS_REPO_ROOT'], 'src'))
 
+from nexus.core.db_utils import sqlalchemy_url_to_postgres_dsn
+
 base = os.getenv('DEMO_BASE')
 
 # 1. Delete stale demo ReBAC tuples directly. Avoid an unfiltered
@@ -342,7 +346,7 @@ try:
     users = ['alice', 'bob', 'charlie', 'acme_user']
     groups = ['project1-editors', 'project1-viewers']
 
-    with psycopg2.connect(db_url) as conn:
+    with psycopg2.connect(sqlalchemy_url_to_postgres_dsn(db_url)) as conn:
         with conn.cursor() as cursor:
             cursor.execute(
                 """DELETE FROM rebac_tuples
@@ -377,7 +381,7 @@ try:
 
     db_url = os.getenv('NEXUS_DATABASE_URL', 'postgresql://postgres:nexus@localhost/nexus')
 
-    with psycopg2.connect(db_url) as conn:
+    with psycopg2.connect(sqlalchemy_url_to_postgres_dsn(db_url)) as conn:
         with conn.cursor() as cursor:
             # First, check what exists
             cursor.execute(

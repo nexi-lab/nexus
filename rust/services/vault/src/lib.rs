@@ -23,9 +23,10 @@ use std::ffi::c_char;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use nexus_plugin_abi::{declare_service_plugin, KernelHandle};
+use nexus_plugin_abi::grpc::{GrpcContext, GrpcError};
+use nexus_plugin_abi::{declare_grpc_dispatch, declare_service_plugin, KernelHandle};
 use prost::Message;
-use tonic::Request;
+use tonic::Status;
 
 use services::password_vault::proto::password_vault_service_server::PasswordVaultService;
 use services::password_vault::proto::*;
@@ -53,6 +54,10 @@ fn create_vault(_kernel_handle: &KernelHandle) -> Box<VaultPlugin> {
         .unwrap_or_else(|_| PathBuf::from("./nexus-data"));
     let vault_dir = data_dir.join("vault");
     std::fs::create_dir_all(&vault_dir).expect("create vault data dir");
+    // Preserve literal legacy filenames during migration on Windows.
+    let vault_dir = vault_dir
+        .canonicalize()
+        .expect("canonicalize vault data dir");
 
     let kernel = Arc::new(kernel::kernel::Kernel::new());
     let meta_path = vault_dir.join("vault-meta.redb");
@@ -131,253 +136,239 @@ fn create_vault(_kernel_handle: &KernelHandle) -> Box<VaultPlugin> {
 }
 
 fn dispatch_vault(plugin: &VaultPlugin, method: &str, payload: &[u8]) -> Result<Vec<u8>, i32> {
-    // Phase P bytes-level gRPC routing. Methods starting with '/' are
-    // full gRPC paths forwarded by `nexus-vfs` `PluginProxyService` —
-    // translate to the legacy short-name arms below so there is exactly
-    // one match table per concern.
-    if method.starts_with('/') {
-        return dispatch_grpc(plugin, method, payload);
-    }
+    dispatch_method(plugin, method, payload, &GrpcContext::default())
+        .map_err(status_to_plugin_error)
+}
+
+fn dispatch_method(
+    plugin: &VaultPlugin,
+    method: &str,
+    payload: &[u8],
+    context: &GrpcContext,
+) -> Result<Vec<u8>, Status> {
     match method {
         "put_entry" => {
-            let req = PutEntryRequest::decode(payload).map_err(|_| -2)?;
+            let req = PutEntryRequest::decode(payload)
+                .map_err(|e| Status::invalid_argument(e.to_string()))?;
             let resp = plugin
                 .rt
-                .block_on(plugin.svc.put_entry(Request::new(req)))
-                .map_err(|_| -3)?
+                .block_on(plugin.svc.put_entry(context.request(req)?))?
                 .into_inner();
-            let mut buf = Vec::new();
-            resp.encode(&mut buf).map_err(|_| -3)?;
-            Ok(buf)
+            Ok(resp.encode_to_vec())
         }
         "get_entry" => {
-            let req = GetEntryRequest::decode(payload).map_err(|_| -2)?;
+            let req = GetEntryRequest::decode(payload)
+                .map_err(|e| Status::invalid_argument(e.to_string()))?;
             let resp = plugin
                 .rt
-                .block_on(plugin.svc.get_entry(Request::new(req)))
-                .map_err(status_to_plugin_error)?
+                .block_on(plugin.svc.get_entry(context.request(req)?))?
                 .into_inner();
-            let mut buf = Vec::new();
-            resp.encode(&mut buf).map_err(|_| -3)?;
-            Ok(buf)
+            Ok(resp.encode_to_vec())
         }
         "list_entries" => {
-            let req = ListEntriesRequest::decode(payload).map_err(|_| -2)?;
+            let req = ListEntriesRequest::decode(payload)
+                .map_err(|e| Status::invalid_argument(e.to_string()))?;
             let resp = plugin
                 .rt
-                .block_on(plugin.svc.list_entries(Request::new(req)))
-                .map_err(|_| -3)?
+                .block_on(plugin.svc.list_entries(context.request(req)?))?
                 .into_inner();
-            let mut buf = Vec::new();
-            resp.encode(&mut buf).map_err(|_| -3)?;
-            Ok(buf)
+            Ok(resp.encode_to_vec())
         }
         "delete_entry" => {
-            let req = DeleteEntryRequest::decode(payload).map_err(|_| -2)?;
+            let req = DeleteEntryRequest::decode(payload)
+                .map_err(|e| Status::invalid_argument(e.to_string()))?;
             let resp = plugin
                 .rt
-                .block_on(plugin.svc.delete_entry(Request::new(req)))
-                .map_err(status_to_plugin_error)?
+                .block_on(plugin.svc.delete_entry(context.request(req)?))?
                 .into_inner();
-            let mut buf = Vec::new();
-            resp.encode(&mut buf).map_err(|_| -3)?;
-            Ok(buf)
+            Ok(resp.encode_to_vec())
         }
         "restore_entry" => {
-            let req = RestoreEntryRequest::decode(payload).map_err(|_| -2)?;
+            let req = RestoreEntryRequest::decode(payload)
+                .map_err(|e| Status::invalid_argument(e.to_string()))?;
             let resp = plugin
                 .rt
-                .block_on(plugin.svc.restore_entry(Request::new(req)))
-                .map_err(status_to_plugin_error)?
+                .block_on(plugin.svc.restore_entry(context.request(req)?))?
                 .into_inner();
-            let mut buf = Vec::new();
-            resp.encode(&mut buf).map_err(|_| -3)?;
-            Ok(buf)
+            Ok(resp.encode_to_vec())
         }
         "list_versions" => {
-            let req = ListVersionsRequest::decode(payload).map_err(|_| -2)?;
+            let req = ListVersionsRequest::decode(payload)
+                .map_err(|e| Status::invalid_argument(e.to_string()))?;
             let resp = plugin
                 .rt
-                .block_on(plugin.svc.list_versions(Request::new(req)))
-                .map_err(status_to_plugin_error)?
+                .block_on(plugin.svc.list_versions(context.request(req)?))?
                 .into_inner();
-            let mut buf = Vec::new();
-            resp.encode(&mut buf).map_err(|_| -3)?;
-            Ok(buf)
+            Ok(resp.encode_to_vec())
         }
         "generate_totp" => {
-            let req = GenerateTotpRequest::decode(payload).map_err(|_| -2)?;
+            let req = GenerateTotpRequest::decode(payload)
+                .map_err(|e| Status::invalid_argument(e.to_string()))?;
             let resp = plugin
                 .rt
-                .block_on(plugin.svc.generate_totp(Request::new(req)))
-                .map_err(status_to_plugin_error)?
+                .block_on(plugin.svc.generate_totp(context.request(req)?))?
                 .into_inner();
-            let mut buf = Vec::new();
-            resp.encode(&mut buf).map_err(|_| -3)?;
-            Ok(buf)
+            Ok(resp.encode_to_vec())
         }
         "get_attachment" => {
-            let req = GetAttachmentRequest::decode(payload).map_err(|_| -2)?;
+            let req = GetAttachmentRequest::decode(payload)
+                .map_err(|e| Status::invalid_argument(e.to_string()))?;
             let resp = plugin
                 .rt
-                .block_on(plugin.svc.get_attachment(Request::new(req)))
-                .map_err(status_to_plugin_error)?
+                .block_on(plugin.svc.get_attachment(context.request(req)?))?
                 .into_inner();
-            let mut buf = Vec::new();
-            resp.encode(&mut buf).map_err(|_| -3)?;
-            Ok(buf)
+            Ok(resp.encode_to_vec())
         }
         // ── Generic secrets dispatch ──────────────────────────────────
         "secret_put" => {
-            let req = secrets_proto::PutSecretRequest::decode(payload).map_err(|_| -2)?;
+            let req = secrets_proto::PutSecretRequest::decode(payload)
+                .map_err(|e| Status::invalid_argument(e.to_string()))?;
             let resp = plugin
                 .rt
-                .block_on(plugin.secrets_svc.put_secret(Request::new(req)))
-                .map_err(status_to_plugin_error)?
+                .block_on(plugin.secrets_svc.put_secret(context.request(req)?))?
                 .into_inner();
-            let mut buf = Vec::new();
-            resp.encode(&mut buf).map_err(|_| -3)?;
-            Ok(buf)
+            Ok(resp.encode_to_vec())
         }
         "secret_get" => {
-            let req = secrets_proto::GetSecretRequest::decode(payload).map_err(|_| -2)?;
+            let req = secrets_proto::GetSecretRequest::decode(payload)
+                .map_err(|e| Status::invalid_argument(e.to_string()))?;
             let resp = plugin
                 .rt
-                .block_on(plugin.secrets_svc.get_secret(Request::new(req)))
-                .map_err(status_to_plugin_error)?
+                .block_on(plugin.secrets_svc.get_secret(context.request(req)?))?
                 .into_inner();
-            let mut buf = Vec::new();
-            resp.encode(&mut buf).map_err(|_| -3)?;
-            Ok(buf)
+            Ok(resp.encode_to_vec())
         }
         "secret_delete" => {
-            let req = secrets_proto::DeleteSecretRequest::decode(payload).map_err(|_| -2)?;
+            let req = secrets_proto::DeleteSecretRequest::decode(payload)
+                .map_err(|e| Status::invalid_argument(e.to_string()))?;
             let resp = plugin
                 .rt
-                .block_on(plugin.secrets_svc.delete_secret(Request::new(req)))
-                .map_err(status_to_plugin_error)?
+                .block_on(plugin.secrets_svc.delete_secret(context.request(req)?))?
                 .into_inner();
-            let mut buf = Vec::new();
-            resp.encode(&mut buf).map_err(|_| -3)?;
-            Ok(buf)
+            Ok(resp.encode_to_vec())
         }
         "secret_restore" => {
-            let req = secrets_proto::RestoreSecretRequest::decode(payload).map_err(|_| -2)?;
+            let req = secrets_proto::RestoreSecretRequest::decode(payload)
+                .map_err(|e| Status::invalid_argument(e.to_string()))?;
             let resp = plugin
                 .rt
-                .block_on(plugin.secrets_svc.restore_secret(Request::new(req)))
-                .map_err(status_to_plugin_error)?
+                .block_on(plugin.secrets_svc.restore_secret(context.request(req)?))?
                 .into_inner();
-            let mut buf = Vec::new();
-            resp.encode(&mut buf).map_err(|_| -3)?;
-            Ok(buf)
+            Ok(resp.encode_to_vec())
         }
         "secret_list" => {
-            let req = secrets_proto::ListSecretsRequest::decode(payload).map_err(|_| -2)?;
+            let req = secrets_proto::ListSecretsRequest::decode(payload)
+                .map_err(|e| Status::invalid_argument(e.to_string()))?;
             let resp = plugin
                 .rt
-                .block_on(plugin.secrets_svc.list_secrets(Request::new(req)))
-                .map_err(status_to_plugin_error)?
+                .block_on(plugin.secrets_svc.list_secrets(context.request(req)?))?
                 .into_inner();
-            let mut buf = Vec::new();
-            resp.encode(&mut buf).map_err(|_| -3)?;
-            Ok(buf)
+            Ok(resp.encode_to_vec())
         }
         "secret_list_versions" => {
-            let req = secrets_proto::ListSecretVersionsRequest::decode(payload).map_err(|_| -2)?;
-            let resp = plugin
-                .rt
-                .block_on(plugin.secrets_svc.list_secret_versions(Request::new(req)))
-                .map_err(status_to_plugin_error)?
-                .into_inner();
-            let mut buf = Vec::new();
-            resp.encode(&mut buf).map_err(|_| -3)?;
-            Ok(buf)
-        }
-        "secret_batch_put" => {
-            let req = secrets_proto::BatchPutSecretsRequest::decode(payload).map_err(|_| -2)?;
-            let resp = plugin
-                .rt
-                .block_on(plugin.secrets_svc.batch_put_secrets(Request::new(req)))
-                .map_err(status_to_plugin_error)?
-                .into_inner();
-            let mut buf = Vec::new();
-            resp.encode(&mut buf).map_err(|_| -3)?;
-            Ok(buf)
-        }
-        "secret_batch_get" => {
-            let req = secrets_proto::BatchGetSecretsRequest::decode(payload).map_err(|_| -2)?;
-            let resp = plugin
-                .rt
-                .block_on(plugin.secrets_svc.batch_get_secrets(Request::new(req)))
-                .map_err(status_to_plugin_error)?
-                .into_inner();
-            let mut buf = Vec::new();
-            resp.encode(&mut buf).map_err(|_| -3)?;
-            Ok(buf)
-        }
-        "secret_delete_version" => {
-            let req = secrets_proto::DeleteSecretVersionRequest::decode(payload).map_err(|_| -2)?;
-            let resp = plugin
-                .rt
-                .block_on(plugin.secrets_svc.delete_secret_version(Request::new(req)))
-                .map_err(status_to_plugin_error)?
-                .into_inner();
-            let mut buf = Vec::new();
-            resp.encode(&mut buf).map_err(|_| -3)?;
-            Ok(buf)
-        }
-        "secret_update_description" => {
-            let req =
-                secrets_proto::UpdateSecretDescriptionRequest::decode(payload).map_err(|_| -2)?;
+            let req = secrets_proto::ListSecretVersionsRequest::decode(payload)
+                .map_err(|e| Status::invalid_argument(e.to_string()))?;
             let resp = plugin
                 .rt
                 .block_on(
                     plugin
                         .secrets_svc
-                        .update_secret_description(Request::new(req)),
-                )
-                .map_err(status_to_plugin_error)?
+                        .list_secret_versions(context.request(req)?),
+                )?
                 .into_inner();
-            let mut buf = Vec::new();
-            resp.encode(&mut buf).map_err(|_| -3)?;
-            Ok(buf)
+            Ok(resp.encode_to_vec())
+        }
+        "secret_batch_put" => {
+            let req = secrets_proto::BatchPutSecretsRequest::decode(payload)
+                .map_err(|e| Status::invalid_argument(e.to_string()))?;
+            let resp = plugin
+                .rt
+                .block_on(plugin.secrets_svc.batch_put_secrets(context.request(req)?))?
+                .into_inner();
+            Ok(resp.encode_to_vec())
+        }
+        "secret_batch_get" => {
+            let req = secrets_proto::BatchGetSecretsRequest::decode(payload)
+                .map_err(|e| Status::invalid_argument(e.to_string()))?;
+            let resp = plugin
+                .rt
+                .block_on(plugin.secrets_svc.batch_get_secrets(context.request(req)?))?
+                .into_inner();
+            Ok(resp.encode_to_vec())
+        }
+        "secret_delete_version" => {
+            let req = secrets_proto::DeleteSecretVersionRequest::decode(payload)
+                .map_err(|e| Status::invalid_argument(e.to_string()))?;
+            let resp = plugin
+                .rt
+                .block_on(
+                    plugin
+                        .secrets_svc
+                        .delete_secret_version(context.request(req)?),
+                )?
+                .into_inner();
+            Ok(resp.encode_to_vec())
+        }
+        "secret_update_description" => {
+            let req = secrets_proto::UpdateSecretDescriptionRequest::decode(payload)
+                .map_err(|e| Status::invalid_argument(e.to_string()))?;
+            let resp = plugin
+                .rt
+                .block_on(
+                    plugin
+                        .secrets_svc
+                        .update_secret_description(context.request(req)?),
+                )?
+                .into_inner();
+            Ok(resp.encode_to_vec())
         }
         "secret_get_sealed" => {
-            let req = secrets_proto::GetSecretRequest::decode(payload).map_err(|_| -2)?;
+            let req = secrets_proto::GetSecretRequest::decode(payload)
+                .map_err(|e| Status::invalid_argument(e.to_string()))?;
             let resp = plugin
                 .rt
-                .block_on(plugin.secrets_svc.get_secret_sealed(Request::new(req)))
-                .map_err(status_to_plugin_error)?
+                .block_on(plugin.secrets_svc.get_secret_sealed(context.request(req)?))?
                 .into_inner();
-            let mut buf = Vec::new();
-            resp.encode(&mut buf).map_err(|_| -3)?;
-            Ok(buf)
+            Ok(resp.encode_to_vec())
         }
         "secret_put_sealed" => {
-            let req = secrets_proto::PutSecretSealedRequest::decode(payload).map_err(|_| -2)?;
+            let req = secrets_proto::PutSecretSealedRequest::decode(payload)
+                .map_err(|e| Status::invalid_argument(e.to_string()))?;
             let resp = plugin
                 .rt
-                .block_on(plugin.secrets_svc.put_secret_sealed(Request::new(req)))
-                .map_err(status_to_plugin_error)?
+                .block_on(plugin.secrets_svc.put_secret_sealed(context.request(req)?))?
                 .into_inner();
-            let mut buf = Vec::new();
-            resp.encode(&mut buf).map_err(|_| -3)?;
-            Ok(buf)
+            Ok(resp.encode_to_vec())
         }
-        _ => Err(-1), // PluginResult::NotFound
+        _ => Err(Status::unimplemented("unknown vault method")),
     }
 }
 
-/// Translate a Phase P bytes-level gRPC path into a `dispatch_vault`
-/// legacy method name, then re-enter. Keeping a single match table
-/// per concern avoids duplicating prost-decode + tonic-call boilerplate.
-///
-/// `full_path` is the gRPC `:path` header verbatim, including the
-/// leading `/` (e.g. `/nexus.secrets.v1.GenericSecretsService/PutSecret`).
-fn dispatch_grpc(plugin: &VaultPlugin, full_path: &str, payload: &[u8]) -> Result<Vec<u8>, i32> {
-    let path = full_path.trim_start_matches('/');
-    let (service, method) = path.split_once('/').ok_or(-2)?;
+/// Dispatch a full gRPC path with the original metadata and status.
+fn dispatch_grpc(
+    plugin: &VaultPlugin,
+    full_path: &str,
+    payload: &[u8],
+    context: &GrpcContext,
+) -> Result<Vec<u8>, GrpcError> {
+    dispatch_grpc_inner(plugin, full_path, payload, context).map_err(|status| GrpcError {
+        code: status.code() as u32,
+        message: status.message().to_owned(),
+    })
+}
+
+fn dispatch_grpc_inner(
+    plugin: &VaultPlugin,
+    full_path: &str,
+    payload: &[u8],
+    context: &GrpcContext,
+) -> Result<Vec<u8>, Status> {
+    let path = full_path
+        .strip_prefix('/')
+        .ok_or_else(|| Status::unimplemented("invalid gRPC path"))?;
+    let (service, method) = path
+        .split_once('/')
+        .ok_or_else(|| Status::unimplemented("invalid gRPC path"))?;
     let legacy = match (service, method) {
         // GenericSecretsService
         ("nexus.secrets.v1.GenericSecretsService", "PutSecret") => "secret_put",
@@ -405,14 +396,14 @@ fn dispatch_grpc(plugin: &VaultPlugin, full_path: &str, payload: &[u8]) -> Resul
         ("nexus.password_vault.v1.PasswordVaultService", "ListVersions") => "list_versions",
         ("nexus.password_vault.v1.PasswordVaultService", "GenerateTotp") => "generate_totp",
         ("nexus.password_vault.v1.PasswordVaultService", "GetAttachment") => "get_attachment",
-        _ => return Err(-1), // PluginResult::NotFound
+        _ => return Err(Status::unimplemented("unknown vault method")),
     };
-    dispatch_vault(plugin, legacy, payload)
+    dispatch_method(plugin, legacy, payload, context)
 }
 
 fn status_to_plugin_error(status: tonic::Status) -> i32 {
     match status.code() {
-        tonic::Code::NotFound => -1,
+        tonic::Code::NotFound | tonic::Code::Unimplemented => -1,
         tonic::Code::InvalidArgument => -2,
         _ => -3,
     }
@@ -423,15 +414,10 @@ declare_service_plugin!("password-vault", VaultPlugin, {
     dispatch: dispatch_vault,
 });
 
-// ── Optional Phase P symbol: opt this plugin into cluster gRPC routing ──
-//
-// Exposes the two gRPC service full names hosted by this plugin so
-// `nexusd-cluster` can route external tonic traffic at `/<service>/<method>`
-// into our `nexus_service_dispatch`. See `nexus-plugin-abi`'s
-// `symbols::SERVICE_GRPC_SERVICES` for the contract. Bytes-level dispatch
-// happens via the existing v2 symbol — no API version bump needed.
-//
-// Storage is `'static` so the kernel never frees the pointer.
+declare_grpc_dispatch!(VaultPlugin, dispatch_grpc);
+
+// Service names routed by the host to nexus_service_dispatch_grpc.
+// Storage is static, so the host does not free this pointer.
 
 /// # Safety
 ///
@@ -624,6 +610,47 @@ mod dylib_e2e {
             })
         }
 
+        fn grpc(
+            &self,
+            method: &str,
+            payload: &[u8],
+        ) -> Result<Vec<u8>, nexus_plugin_abi::grpc::GrpcError> {
+            unsafe {
+                let dispatch: libloading::Symbol<nexus_plugin_abi::grpc::DispatchFn> =
+                    self.lib.get(b"nexus_service_dispatch_grpc").unwrap();
+                let free: libloading::Symbol<nexus_plugin_abi::NexusFreeFn> =
+                    self.lib.get(b"nexus_free").unwrap();
+                let method = CString::new(method).unwrap();
+                let mut buf = std::ptr::null_mut();
+                let mut len = 0;
+                let code = dispatch(
+                    self.svc,
+                    method.as_ptr(),
+                    payload.as_ptr(),
+                    payload.len(),
+                    std::ptr::null(),
+                    0,
+                    false,
+                    &mut buf,
+                    &mut len,
+                );
+                let data = if len == 0 {
+                    Vec::new()
+                } else {
+                    std::slice::from_raw_parts(buf, len).to_vec()
+                };
+                free(buf, len);
+                if code == 0 {
+                    Ok(data)
+                } else {
+                    Err(nexus_plugin_abi::grpc::GrpcError {
+                        code,
+                        message: String::from_utf8(data).unwrap(),
+                    })
+                }
+            }
+        }
+
         /// Dispatch a method through the C ABI, returning the response
         /// bytes or a plugin error code.
         fn dispatch(&self, method: &str, payload: &[u8]) -> Result<Vec<u8>, i32> {
@@ -644,7 +671,15 @@ mod dylib_e2e {
                 );
 
                 if rc == 0 {
-                    Ok(Vec::from_raw_parts(out_buf, out_len, out_len))
+                    let data = if out_len == 0 {
+                        Vec::new()
+                    } else {
+                        std::slice::from_raw_parts(out_buf, out_len).to_vec()
+                    };
+                    let free: libloading::Symbol<nexus_plugin_abi::NexusFreeFn> =
+                        self.lib.get(b"nexus_free").unwrap();
+                    free(out_buf, out_len);
+                    Ok(data)
                 } else {
                     Err(rc)
                 }
@@ -660,6 +695,46 @@ mod dylib_e2e {
                 destroy(self.svc);
             }
         }
+    }
+
+    #[test]
+    fn grpc_cdylib_preserves_status_and_success_bytes() {
+        let Some(fix) = DylibFixture::try_new() else {
+            return;
+        };
+        let get = encode(&secrets::GetSecretRequest {
+            namespace: "grpc".into(),
+            key: "key".into(),
+            version: None,
+        });
+        let path = "/nexus.secrets.v1.GenericSecretsService/GetSecret";
+        let error = fix.grpc(path, &get).unwrap_err();
+        assert_eq!(error.code, 5, "{}", error.message);
+        assert!(!error.message.is_empty());
+        assert_eq!(fix.grpc(path, &[255]).unwrap_err().code, 3);
+        assert_eq!(
+            fix.grpc("/nexus.secrets.v1.GenericSecretsService/Unknown", &[])
+                .unwrap_err()
+                .code,
+            12
+        );
+        fix.grpc(
+            "/nexus.secrets.v1.GenericSecretsService/PutSecret",
+            &encode(&secrets::PutSecretRequest {
+                namespace: "grpc".into(),
+                key: "key".into(),
+                value: "round-trip".into(),
+                description: None,
+            }),
+        )
+        .unwrap();
+        let reply = fix.grpc(path, &get).unwrap();
+        assert_eq!(
+            secrets::GetSecretResponse::decode(reply.as_slice())
+                .unwrap()
+                .value,
+            "round-trip"
+        );
     }
 
     // ── Test 1: dlopen + verify all C ABI symbols exist ─────────────
@@ -684,6 +759,9 @@ mod dylib_e2e {
                 lib.get(b"nexus_service_create").expect("create");
             let _: libloading::Symbol<nexus_plugin_abi::ServiceDispatchFn> =
                 lib.get(b"nexus_service_dispatch").expect("dispatch");
+            let _: libloading::Symbol<nexus_plugin_abi::grpc::DispatchFn> = lib
+                .get(b"nexus_service_dispatch_grpc")
+                .expect("gRPC dispatch");
             let _: libloading::Symbol<nexus_plugin_abi::ServiceDestroyFn> =
                 lib.get(b"nexus_service_destroy").expect("destroy");
 
@@ -704,7 +782,7 @@ mod dylib_e2e {
             );
 
             // ── Phase P opt-in: cluster reads this to route /<svc>/<method>
-            //     gRPC traffic into our nexus_service_dispatch. ──
+            //     gRPC traffic into our nexus_service_dispatch_grpc. ──
             let grpc_fn: libloading::Symbol<nexus_plugin_abi::PluginGrpcServicesFn> = lib
                 .get(nexus_plugin_abi::symbols::SERVICE_GRPC_SERVICES.as_bytes())
                 .expect("plugin_grpc_services");
@@ -1146,7 +1224,11 @@ mod dispatch_e2e {
             "get_attachment",
             "/nexus.password_vault.v1.PasswordVaultService/GetAttachment",
         ] {
-            let resp_bytes = dispatch_vault(&plugin, method, &req).unwrap();
+            let resp_bytes = if method.starts_with('/') {
+                dispatch_grpc(&plugin, method, &req, &GrpcContext::default()).unwrap()
+            } else {
+                dispatch_vault(&plugin, method, &req).unwrap()
+            };
             let resp = GetAttachmentResponse::decode(resp_bytes.as_slice()).unwrap();
             assert_eq!(resp.attachment.unwrap().data, b"qr bytes");
         }
@@ -2296,10 +2378,11 @@ mod dispatch_e2e {
             value: "sk-grpc-routed".into(),
             description: None,
         });
-        let resp = dispatch_vault(
+        let resp = dispatch_grpc(
             &plugin,
             "/nexus.secrets.v1.GenericSecretsService/PutSecret",
             &put,
+            &GrpcContext::default(),
         )
         .unwrap();
         let put_resp = secrets_proto::PutSecretResponse::decode(resp.as_slice()).unwrap();
@@ -2310,10 +2393,11 @@ mod dispatch_e2e {
             key: "api_key".into(),
             version: None,
         });
-        let resp = dispatch_vault(
+        let resp = dispatch_grpc(
             &plugin,
             "/nexus.secrets.v1.GenericSecretsService/GetSecret",
             &get,
+            &GrpcContext::default(),
         )
         .unwrap();
         let got = secrets_proto::GetSecretResponse::decode(resp.as_slice()).unwrap();
@@ -2327,10 +2411,11 @@ mod dispatch_e2e {
             entry: Some(entry("grpc-routed", "pw", None)),
             audit: None,
         });
-        let resp = dispatch_vault(
+        let resp = dispatch_grpc(
             &plugin,
             "/nexus.password_vault.v1.PasswordVaultService/PutEntry",
             &payload,
+            &GrpcContext::default(),
         )
         .unwrap();
         let put_resp = PutEntryResponse::decode(resp.as_slice()).unwrap();
@@ -2347,10 +2432,11 @@ mod dispatch_e2e {
             value: "ed25519-bytes".into(),
             description: None,
         });
-        dispatch_vault(
+        dispatch_grpc(
             &plugin,
             "/nexus.secrets.v1.GenericSecretsService/PutSecret",
             &put,
+            &GrpcContext::default(),
         )
         .unwrap();
 
@@ -2359,10 +2445,11 @@ mod dispatch_e2e {
             key: "dogfood".into(),
             version: None,
         });
-        let resp = dispatch_vault(
+        let resp = dispatch_grpc(
             &plugin,
             "/nexus.secrets.v1.GenericSecretsService/GetSecretSealed",
             &get_sealed,
+            &GrpcContext::default(),
         )
         .unwrap();
         let sealed = secrets_proto::GetSecretSealedResponse::decode(resp.as_slice()).unwrap();
@@ -2376,10 +2463,11 @@ mod dispatch_e2e {
             ciphertext: sealed.ciphertext,
             description: None,
         });
-        dispatch_vault(
+        dispatch_grpc(
             &plugin,
             "/nexus.secrets.v1.GenericSecretsService/PutSecretSealed",
             &put_sealed,
+            &GrpcContext::default(),
         )
         .unwrap();
 
@@ -2388,10 +2476,11 @@ mod dispatch_e2e {
             key: "dogfood-restored".into(),
             version: None,
         });
-        let resp = dispatch_vault(
+        let resp = dispatch_grpc(
             &plugin,
             "/nexus.secrets.v1.GenericSecretsService/GetSecret",
             &get,
+            &GrpcContext::default(),
         )
         .unwrap();
         let got = secrets_proto::GetSecretResponse::decode(resp.as_slice()).unwrap();
@@ -2399,16 +2488,28 @@ mod dispatch_e2e {
     }
 
     #[test]
-    fn grpc_path_unknown_service_returns_not_found() {
+    fn grpc_path_unknown_service_returns_unimplemented() {
         let (_dir, plugin) = fresh_plugin();
-        let err = dispatch_vault(&plugin, "/some.unknown.Svc/Foo", &[]).unwrap_err();
-        assert_eq!(err, -1);
+        let err = dispatch_grpc(
+            &plugin,
+            "/some.unknown.Svc/Foo",
+            &[],
+            &GrpcContext::default(),
+        )
+        .unwrap_err();
+        assert_eq!(err.code, 12);
     }
 
     #[test]
-    fn grpc_path_missing_method_returns_invalid_argument() {
+    fn grpc_path_missing_method_returns_unimplemented() {
         let (_dir, plugin) = fresh_plugin();
-        let err = dispatch_vault(&plugin, "/no-method-separator-here", &[]).unwrap_err();
-        assert_eq!(err, -2);
+        let err = dispatch_grpc(
+            &plugin,
+            "/no-method-separator-here",
+            &[],
+            &GrpcContext::default(),
+        )
+        .unwrap_err();
+        assert_eq!(err.code, 12);
     }
 }

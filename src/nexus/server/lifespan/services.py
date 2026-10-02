@@ -504,9 +504,9 @@ async def _startup_scheduler(app: "FastAPI", svc: "LifespanServices") -> None:
     try:
         import asyncpg
 
-        from nexus.core.db_utils import sqlalchemy_url_to_asyncpg_dsn
+        from nexus.core.db_utils import sqlalchemy_url_to_postgres_dsn
 
-        pg_dsn = sqlalchemy_url_to_asyncpg_dsn(svc.database_url)
+        pg_dsn = sqlalchemy_url_to_postgres_dsn(svc.database_url)
         try:
             _min_size = svc.profile_tuning.pool.asyncpg_min_size
             _max_size = svc.profile_tuning.pool.asyncpg_max_size

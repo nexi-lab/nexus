@@ -40,19 +40,23 @@ def normalize_database_url(url: str | None) -> str | None:
     return url
 
 
-def sqlalchemy_url_to_asyncpg_dsn(url: str) -> str:
-    """Convert a SQLAlchemy database URL to an asyncpg-compatible DSN.
+def sqlalchemy_url_to_postgres_dsn(url: str) -> str:
+    """Convert a SQLAlchemy PostgreSQL URL for a native database client.
 
-    Strips ``+asyncpg`` and ``+psycopg2`` driver suffixes so the URL
-    can be passed directly to ``asyncpg.create_pool()``.
+    psycopg2 and asyncpg accept PostgreSQL URIs, not SQLAlchemy's
+    ``postgresql+driver`` dialect names. Only change the scheme: credentials
+    and query parameters may themselves contain a driver's name.
 
     Examples::
 
-        >>> sqlalchemy_url_to_asyncpg_dsn("postgresql+asyncpg://host/db")
+        >>> sqlalchemy_url_to_postgres_dsn("postgresql+asyncpg://host/db")
         'postgresql://host/db'
-        >>> sqlalchemy_url_to_asyncpg_dsn("postgresql+psycopg2://host/db")
+        >>> sqlalchemy_url_to_postgres_dsn("postgresql+psycopg2://host/db")
         'postgresql://host/db'
-        >>> sqlalchemy_url_to_asyncpg_dsn("postgresql://host/db")
+        >>> sqlalchemy_url_to_postgres_dsn("postgresql://host/db")
         'postgresql://host/db'
     """
-    return url.replace("+asyncpg", "").replace("+psycopg2", "")
+    scheme, separator, rest = url.partition("://")
+    if separator and scheme.split("+", 1)[0] in ("postgres", "postgresql"):
+        return f"postgresql://{rest}"
+    return url

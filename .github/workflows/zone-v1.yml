@@ -88,6 +88,10 @@ jobs:
           git clone --quiet https://github.com/nexi-lab/nexus-vfs "${RUNNER_TEMP}/nexus-vfs"
           git -C "${RUNNER_TEMP}/nexus-vfs" checkout --quiet "${REV}"
           cargo build --manifest-path "${RUNNER_TEMP}/nexus-vfs/rust/profiles/cluster/Cargo.toml"
+          # The ServerHarness suites resolve the kernel via PATH (which) or
+          # repo target/, not the env var; export the clone's target dir so
+          # both resolution paths work (.exe auto-matches under Git Bash).
+          echo "${RUNNER_TEMP}/nexus-vfs/target/debug" >> "$GITHUB_PATH"
       - name: Full-profile Zone HTTP E2E
         env:
           NEXUS_KERNEL_BINARY: ${{ runner.temp }}/nexus-vfs/target/debug/nexusd-cluster
@@ -113,6 +117,10 @@ jobs:
           git clone --quiet https://github.com/nexi-lab/nexus-vfs "${RUNNER_TEMP}/nexus-vfs"
           git -C "${RUNNER_TEMP}/nexus-vfs" checkout --quiet "${REV}"
           cargo build --manifest-path "${RUNNER_TEMP}/nexus-vfs/rust/profiles/cluster/Cargo.toml"
+          # The ServerHarness suites resolve the kernel via PATH (which) or
+          # repo target/, not the env var; export the clone's target dir so
+          # both resolution paths work (.exe auto-matches under Git Bash).
+          echo "${RUNNER_TEMP}/nexus-vfs/target/debug" >> "$GITHUB_PATH"
       - name: Windows-only Zone E2E suites
         env:
           NEXUS_KERNEL_BINARY: ${{ runner.temp }}/nexus-vfs/target/debug/nexusd-cluster
@@ -149,3 +157,7 @@ jobs:
           git clone --quiet https://github.com/nexi-lab/nexus-vfs "${RUNNER_TEMP}/nexus-vfs"
           git -C "${RUNNER_TEMP}/nexus-vfs" checkout --quiet "${REV}"
           cargo build --manifest-path "${RUNNER_TEMP}/nexus-vfs/rust/profiles/cluster/Cargo.toml"
+          # The ServerHarness suites resolve the kernel via PATH (which) or
+          # repo target/, not the env var; export the clone's target dir so
+          # both resolution paths work (.exe auto-matches under Git Bash).
+          echo "${RUNNER_TEMP}/nexus-vfs/target/debug" >> "$GITHUB_PATH"

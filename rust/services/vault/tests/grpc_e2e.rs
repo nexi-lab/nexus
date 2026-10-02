@@ -137,6 +137,7 @@ impl Harness {
             kernel
                 .sys_setattr(
                     "/vault/versions/passwords/legacy.",
+                    &ctx,
                     1,
                     "",
                     None,

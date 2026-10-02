@@ -50,9 +50,9 @@
 <h2>Implementation and rollout</h2>
 <p>The wire codec, authenticated kernel transport and subprocess adapter live in nexus-vfs. Sudocode engine-acp hosts the shared ACP handlers and peer normalization; engine-host supplies SessionEngine and direct Kernel-backed storage. nexusd-cohost composes these with its websocket feature disabled. The kernel never depends on sudocode.</p>
 <h3>Review branches and delivery status</h3>
-<p>The implementation is committed on <code>codex/session-mailbox</code> in all five repositories. It has been verified with locally built dependencies. It has not been pushed, published or deployed. The consumer pins still need a coordinated release update; these commits are not independently releasable against the old SDK and daemon.</p>
+<p>The implementation is committed on <code>codex/session-mailbox</code> in all five repositories. It has been verified with locally built dependencies. Draft review is in progress. Nexus now pins the mailbox implementation in Cargo.toml, Cargo.lock and every Dockerfile. Sudocode still requires a published daemon tag; Moss and Sudowork still require the published SDK and matching runtime pins. Nothing has been merged, published or deployed; the consumer changes must remain in draft until those dependencies are available.</p>
 <table><tr><th>Repository</th><th>Review commit</th></tr>
-<tr><td>nexus-vfs</td><td>a1bee9ff7</td></tr>
+<tr><td>nexus-vfs</td><td>8518a80bb; <a href="https://github.com/nexi-lab/nexus-vfs/pull/380">PR #380</a></td></tr>
 <tr><td>sudocode</td><td>ad78c1fe, based on merged prerequisite #849 (17533e02)</td></tr>
 <tr><td>moss</td><td>fb106db</td></tr>
 <tr><td>sudowork</td><td>1b51f5c4</td></tr>
@@ -60,13 +60,13 @@
 <p>The two owned Nexus worktrees remain. Temporary consumer worktrees can be recreated from their retained branches:</p>
 <pre>git -C ../sudocode worktree add ../sudocode-codex-session-mailbox codex/session-mailbox
 git -C ../moss worktree add ../moss-codex codex/session-mailbox
-git -C ../sudowork worktree add ../sudowork-codex-session-mailbox codex/session-mailbox</pre>
+git -C ../sudowork worktree add ../sudowork-codex-session-mailbox-release codex/session-mailbox</pre>
 <h3>Local verification before release</h3>
 <p>The committed consumer pins still name the currently published dependencies. Use the preparation script to verify this coordinated change before publishing new artifacts. It builds SDK 0.5.0, installs its tarball with Bun --no-save, and writes an external Cargo configuration covering all eight Nexus workspace dependencies. It leaves consumer manifests and their published lockfiles unchanged.</p>
 <pre>python scripts/prepare_session_mailbox_workspace.py \
   --nexus-vfs ../nexus-vfs-codex \
   --sudocode ../sudocode-codex-session-mailbox \
-  --moss ../moss-codex --sudowork ../sudowork-codex-session-mailbox \
+  --moss ../moss-codex --sudowork ../sudowork-codex-session-mailbox-release \
   --output ../.codex-targets/session-mailbox-package
 
 # From the sudocode rust/ directory (use the generated absolute config path):
@@ -76,6 +76,11 @@ cargo check -p nexusd-cohost --features daemon,driver-ai \
   --config /path/to/session-mailbox-package/nexus-vfs-patches.toml</pre>
 <p>The output contains the SDK tarball, its SHA-256, source commit IDs, dirty-tree indicators and Cargo patch file. Cargo may regenerate its lock for the local patch graph; that generated lock must not be committed as the published dependency graph. Install normal repository dependencies before running the preparation script.</p>
 <h3>Release order</h3>
+<p>Removing the fd interface is a breaking daemon change: target the next minor daemon release, <code>v0.8.0</code>, and Node SDK <code>0.5.0</code>. These are proposed release versions, not published artifacts. A release tag must identify the reviewed source; retain cloud co-host as disabled throughout preparation.</p>
+<ol><li>Review and merge nexus-vfs, then publish the daemon and SDK. Verify the actual release artifacts and checksums before changing consumer locks.</li>
+<li>Update all eight Nexus dependency tags in sudocode together, regenerate Cargo.lock from the published source, and run the locked driver-ai co-host build and authenticated mailbox end-to-end test. Its CI deliberately requires a published daemon tag; do not replace that guarantee with a branch dependency.</li>
+<li>Update Moss and Sudowork to the published SDK URL and regenerate their Bun locks. In Sudowork also update both nexus-vfs and nexusd-cluster in runtime-versions.json and every matching daemon checksum in runtime-sha256.json. Preserve the independently versioned plugin checksums.</li>
+<li>Run clean installs, consumer tests, and the real SDK smoke against the pinned daemon. Publish the matching co-host and consumer artifacts, then deploy the compatible set. Upgrading only the daemon breaks old fd clients.</li></ol>
 <p>Release nexus-vfs and Node SDK 0.5.0 first; pin every Nexus workspace crate in sudocode to the same revision; then build nexusd-cohost and update moss and sudowork together. Keep cloud co-host disabled until that compatible set is deployed. Remove fd clients and the Kubernetes direct-spawn bypass in the client update. Protocol mismatch is a visible setup failure.</p>
 <p>Regression coverage includes real subprocess framing; co-host streaming, tool approval, denial, cancellation and next-turn reuse; peer approval routing; durable resume under a new pid; stale frames and duplicate delivery; client approval ID zero; transient reads; and unknown append outcomes. The Python integration harness exercises the same frames through the daemon's gRPC surface.</p>
 <h2>Verification record</h2>

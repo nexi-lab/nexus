@@ -11,16 +11,29 @@ from nexus.bricks.search.daemon import SearchDaemon
 from nexus.contracts.search_types import SearchRequest
 from nexus.grpc.search.v1 import search_pb2, search_pb2_grpc
 from nexus.lib.request_credentials import request_api_key
+from nexus.runtime.zone_runner import ZoneRegistry
 from nexus.server.middleware.request_credentials import RequestCredentialsMiddleware
+from nexus.server.zone_execution import run_zone_scoped
 
 
 @pytest.mark.asyncio
 async def test_http_credentials_are_isolated_on_shared_channel():
     seen = []
     both = asyncio.Event()
+    cancel_started = asyncio.Event()
+    cancelled = asyncio.Event()
 
     class Receiver(search_pb2_grpc.SearchServiceServicer):
+        async def Health(self, request, context):
+            return search_pb2.HealthResponse()
+
         async def Query(self, request, context):
+            if request.q == "cancel":
+                cancel_started.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    cancelled.set()
             seen.append((request.q, dict(context.invocation_metadata()).get("authorization")))
             if len(seen) == 2:
                 both.set()
@@ -32,13 +45,18 @@ async def test_http_credentials_are_isolated_on_shared_channel():
     port = server.add_insecure_port("127.0.0.1:0")
     await server.start()
     daemon = SearchDaemon(target=f"127.0.0.1:{port}")
+    zones = ZoneRegistry()
+    await daemon.get_health()
     app = FastAPI()
     app.add_middleware(RequestCredentialsMiddleware)
 
     @app.get("/query")
     async def query(q: str):
-        await daemon.search(SearchRequest(query=q))
-        return {"ok": True}
+        async def work():
+            await daemon.search(SearchRequest(query=q))
+            return {"ok": True}
+
+        return await run_zone_scoped(zones, q, work)
 
     try:
         async with httpx.AsyncClient(
@@ -50,6 +68,14 @@ async def test_http_credentials_are_isolated_on_shared_channel():
             )
             assert all(response.status_code == 200 for response in responses)
             assert sorted(seen) == [("alice", "Bearer sk-alice"), ("bob", "Bearer sk-bob")]
+            pending = asyncio.create_task(
+                client.get("/query?q=cancel", headers={"Authorization": "Bearer sk-cancel"})
+            )
+            await asyncio.wait_for(cancel_started.wait(), 5)
+            pending.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await pending
+            await asyncio.wait_for(cancelled.wait(), 5)
             assert request_api_key.get() is None
             await client.get("/query?q=anonymous")
             await client.get("/query?q=invalid", headers={"Authorization": "Basic abc"})
@@ -62,8 +88,10 @@ async def test_http_credentials_are_isolated_on_shared_channel():
                 ("invalid", "Bearer "),
                 ("duplicate", "Bearer "),
             ]
+        await zones.runner_for("shutdown").call(daemon.shutdown)
     finally:
         await daemon.shutdown()
+        await asyncio.to_thread(zones.stop_all)
         await server.stop(None)
 
 

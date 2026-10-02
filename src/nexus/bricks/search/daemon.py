@@ -9,11 +9,14 @@ queue; this file exists so Python callers keep the same
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import threading
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import grpc
 
@@ -24,6 +27,8 @@ from nexus.lib.request_credentials import request_api_key
 
 if TYPE_CHECKING:
     from nexus.contracts.search_types import SearchRequest
+
+T = TypeVar("T")
 
 logger = logging.getLogger(__name__)
 
@@ -214,15 +219,15 @@ _FUSION_METHOD_MAP = {
 
 
 class SearchDaemon:
-    """Rust-plugin-backed search daemon.  Same SearchBrickProtocol
-    surface as :class:`SearchDaemon`; methods forward to the plugin
-    via gRPC.
+    """Async client for the Rust search plugin.
 
-    Cheap to construct — the gRPC channel is opened lazily on first
-    call so a lite deployment that never search-queries pays nothing.
+    One lazy channel serves callers from any event loop. Calls and shutdown
+    run on the channel's owning loop while preserving request credentials.
     """
 
     def __init__(self, target: str | None = None) -> None:
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._loop_lock = threading.Lock()
         self._target = target or os.environ.get(_TARGET_ENV, _DEFAULT_TARGET)
         self._channel: grpc.aio.Channel | None = None
         self._stub: search_pb2_grpc.SearchServiceStub | None = None
@@ -249,16 +254,51 @@ class SearchDaemon:
         return
 
     async def shutdown(self) -> None:
-        if self._channel is not None:
-            await self._channel.close()
-            self._channel = None
-            self._stub = None
+        if self._loop is None:
+            return
+
+        async def close() -> None:
+            if self._channel is not None:
+                await self._channel.close()
+                self._channel = None
+                self._stub = None
+
+        await self._on_channel_loop(close)
+
+    async def _on_channel_loop(self, work: Callable[[], Awaitable[T]]) -> T:
+        """Keep the shared channel on its owner loop, including during shutdown."""
+        current = asyncio.get_running_loop()
+        if self._loop is None:
+            with self._loop_lock:
+                if self._loop is None:
+                    self._loop = current
+        owner = self._loop
+        if owner is current:
+            return await work()
+        if not owner.is_running():
+            raise RuntimeError("Search channel owner loop is not running")
+
+        async def invoke() -> T:
+            return await work()
+
+        # Threadsafe submission preserves the caller's ContextVars. Cancellation
+        # of wrap_future also cancels the submitted RPC on the channel loop.
+        invocation = invoke()
+        try:
+            submitted = asyncio.run_coroutine_threadsafe(invocation, owner)
+        except RuntimeError:
+            invocation.close()
+            raise
+        return await asyncio.wrap_future(submitted)
+
+    async def _rpc(self, method: str, request: Any) -> Any:
+        async def invoke() -> Any:
+            return await getattr(self._get_stub(), method)(request)
+
+        return await self._on_channel_loop(invoke)
 
     def _get_stub(self) -> search_pb2_grpc.SearchServiceStub:
-        """Lazy channel + stub construction.  aio channel so the
-        Python daemon's async methods stay async without a thread hop.
-        Channel security follows the NEXUS_SEARCH_PLUGIN_TLS* env
-        contract — see :func:`_build_channel`."""
+        """Construct the channel lazily on its owning event loop."""
         if self._stub is None:
             self._channel = _build_channel(self._target)
             self._stub = search_pb2_grpc.SearchServiceStub(self._channel)
@@ -278,8 +318,8 @@ class SearchDaemon:
         — same contract shape as the batch endpoint's per-entry
         failures (#4612).
         """
-        resp = await self._get_stub().Query(
-            _request_to_pb(request, chunks_per_page=self._chunks_per_page)
+        resp = await self._rpc(
+            "Query", _request_to_pb(request, chunks_per_page=self._chunks_per_page)
         )
         if resp.HasField("error"):
             logger.warning("rust search returned error: %s", resp.error)
@@ -313,7 +353,7 @@ class SearchDaemon:
         req = search_pb2.BatchQueryRequest(
             queries=[_request_to_pb(r, chunks_per_page=self._chunks_per_page) for r in requests]
         )
-        resp = await self._get_stub().BatchQuery(req)
+        resp = await self._rpc("BatchQuery", req)
         out: list[list[BaseSearchResult] | BatchQueryFailure] = []
         for sub in resp.responses:
             if sub.HasField("error"):
@@ -329,7 +369,7 @@ class SearchDaemon:
         zone_id: str | None = None,
     ) -> dict[str, Any]:
         req = search_pb2.LocateRequest(path=path, zone_id=zone_id or "")
-        resp = await self._get_stub().Locate(req)
+        resp = await self._rpc("Locate", req)
         return {
             "indexed": resp.indexed,
             "chunk_count": resp.chunk_count,
@@ -362,7 +402,7 @@ class SearchDaemon:
                 entry.mtime_ms = int(d["mtime_ms"])
             pb_docs.append(entry)
         req = search_pb2.IndexDocumentsRequest(documents=pb_docs, zone_id=zone_id or "")
-        resp = await self._get_stub().IndexDocuments(req)
+        resp = await self._rpc("IndexDocuments", req)
         # Fail closed: a populated error means FTS/ANN persistence broke
         # mid-batch — swallowing it here would let the route 200 an
         # incomplete index (review R1).  The route maps the raised
@@ -405,7 +445,7 @@ class SearchDaemon:
             change_type=change_type,
             zone_id=zone_id or "",
         )
-        resp = await self._get_stub().NotifyFileChange(req)
+        resp = await self._rpc("NotifyFileChange", req)
         # Fail closed (review R4): a delete whose tombstone could not
         # be persisted must not report success — swallowing the error
         # here would leave orphaned vectors behind an HTTP 200.
@@ -421,7 +461,7 @@ class SearchDaemon:
         directory_path: str,
     ) -> dict[str, bool]:
         req = search_pb2.AddIndexedDirectoryRequest(path=directory_path, zone_id=zone_id)
-        resp = await self._get_stub().AddIndexedDirectory(req)
+        resp = await self._rpc("AddIndexedDirectory", req)
         return {"added": resp.added}
 
     async def remove_indexed_directory(
@@ -430,19 +470,19 @@ class SearchDaemon:
         directory_path: str,
     ) -> str:
         req = search_pb2.RemoveIndexedDirectoryRequest(path=directory_path, zone_id=zone_id)
-        resp = await self._get_stub().RemoveIndexedDirectory(req)
+        resp = await self._rpc("RemoveIndexedDirectory", req)
         return "removed" if resp.removed else "not_found"
 
     async def list_indexed_directories(self, zone_id: str) -> list[str]:
         req = search_pb2.ListIndexedDirectoriesRequest(zone_id=zone_id)
-        resp = await self._get_stub().ListIndexedDirectories(req)
+        resp = await self._rpc("ListIndexedDirectories", req)
         return [d.path for d in resp.directories]
 
     # ── Zone indexing modes ────────────────────────────────────
 
     async def set_zone_indexing_mode(self, zone_id: str, mode: str) -> Any:
         req = search_pb2.SetZoneIndexingModeRequest(zone_id=zone_id, mode=mode)
-        resp = await self._get_stub().SetZoneIndexingMode(req)
+        resp = await self._rpc("SetZoneIndexingMode", req)
         if resp.HasField("error"):
             raise ValueError(resp.error)
         return {"zone_id": zone_id, "mode": mode}
@@ -450,13 +490,13 @@ class SearchDaemon:
     async def get_zone_indexing_modes(self) -> dict[str, str]:
         """Snapshot per-zone indexing modes from the plugin."""
         req = search_pb2.ListZoneIndexingModesRequest()
-        resp = await self._get_stub().ListZoneIndexingModes(req)
+        resp = await self._rpc("ListZoneIndexingModes", req)
         return {m.zone_id: m.mode for m in resp.modes}
 
     # ── Health + stats ────────────────────────────────────────
 
     async def get_health(self) -> dict[str, Any]:
-        resp = await self._get_stub().Health(search_pb2.HealthRequest())
+        resp = await self._rpc("Health", search_pb2.HealthRequest())
         return {
             "status": resp.status,
             "detail": resp.detail,
@@ -485,7 +525,7 @@ class SearchDaemon:
         #4736: the HTTP route passes the caller's token zone so a tenant's
         ``fts_doc_count`` / ``last_index_seq`` describe ITS index.
         """
-        resp = await self._get_stub().Stats(search_pb2.StatsRequest(zone_id=zone_id or ""))
+        resp = await self._rpc("Stats", search_pb2.StatsRequest(zone_id=zone_id or ""))
         return {
             "fts_doc_count": resp.fts_doc_count,
             "fts_path_count": resp.fts_path_count,

@@ -26,6 +26,7 @@ from nexus.contracts.search_types import SearchRequest
 from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
 from nexus.lib.request_credentials import request_api_key
 from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
+from nexus.runtime.zone_runner import ZoneRegistry
 from nexus.server.api.v2.routers.search import router
 from nexus.server.lifespan.vfs_grpc import VFSGrpcServicer
 from nexus.server.middleware.request_credentials import RequestCredentialsMiddleware
@@ -36,6 +37,7 @@ async def main() -> None:
     target = os.environ["NEXUS_SEARCH_PLUGIN_TARGET"]
     base = os.environ.get("NEXUS_SEARCH_TEST_HTTP", "http://127.0.0.1:2327")
     daemon = SearchDaemon(target=target)
+    zones = ZoneRegistry()
     credentials = grpc.ssl_channel_credentials(
         root_certificates=Path(os.environ["NEXUS_SEARCH_PLUGIN_TLS_CA"]).read_bytes(),
         private_key=Path(os.environ["NEXUS_SEARCH_PLUGIN_TLS_KEY"]).read_bytes(),
@@ -131,7 +133,7 @@ async def main() -> None:
             app.state.record_store = object()
             app.state.async_read_session_factory = object()
             app.state.permission_enforcer = None
-            app.state.zone_registry = None
+            app.state.zone_registry = zones
             app.state.subscription_manager = None
             app.state.exposed_methods = {}
             app.state.nexus_fs = Services()
@@ -286,6 +288,7 @@ async def main() -> None:
             )
         finally:
             await daemon.shutdown()
+            await asyncio.to_thread(zones.stop_all)
             await channel.close()
 
 

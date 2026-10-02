@@ -53,7 +53,7 @@ COPY --from=nexus-vfs-src . /build/nexus-vfs
 RUN cargo install \
     --locked \
     --path /build/nexus-vfs/rust/profiles/cluster \
-    --bin nexusd-cluster
+    --features http-api --bin nexusd-cluster
 
 # ---------- Search plugin cdylib ----------
 FROM rust:1-slim-bookworm AS plugin-builder

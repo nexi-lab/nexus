@@ -52,7 +52,7 @@ COPY --from=nexus-vfs-src . /build/nexus-vfs
 RUN cargo install \
     --locked \
     --path /build/nexus-vfs/rust/profiles/cluster \
-    --bin nexusd-cluster
+    --features http-api --bin nexusd-cluster
 
 # ---------- Production image ----------
 FROM debian:bookworm-slim

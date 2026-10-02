@@ -87,8 +87,7 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
         app.state.search_daemon = candidate
         app.state.search_daemon_enabled = True
 
-        # Wire the daemon into SearchService so semantic_search queries
-        # route through the plugin instead of falling back to SQL ILIKE.
+        # Publish the healthy plugin connection to service-layer callers.
         with contextlib.suppress(AttributeError):
             search_svc = svc.nexus_fs.service("search")
             if search_svc is not None:

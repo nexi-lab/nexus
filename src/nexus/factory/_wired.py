@@ -194,39 +194,7 @@ def _boot_post_kernel_services(
     # not core filesystem enumeration.
     search_service: Any = None
     try:
-        import os as _os
-
         from nexus.bricks.search.search_service import SearchService
-
-        # Issue #3778: thread the active deployment profile so semantic_search
-        # can detect SANDBOX and route to the BM25S fallback with a stamped
-        # ``semantic_degraded=True`` flag.  Profile is sourced from env (set
-        # by connect()/CLI); falls back to None for callers that don't set it.
-        # ``nx._config`` isn't yet attached at this point in the boot — the
-        # env var is the canonical signal here.
-        _profile = (_os.environ.get("NEXUS_PROFILE") or "").strip().lower() or None
-
-        # Issue #3778: local sqlite-vec backend (SANDBOX profile).
-        #
-        # On SANDBOX: vector search is ON by default — the [sandbox] extra
-        # bundles ``sqlite-vec`` + ``fastembed`` so the offline path works
-        # out of the box. Users can opt out with
-        # ``NEXUS_DISABLE_VECTOR_SEARCH=1`` (e.g. to skip the ~30 MB ONNX
-        # model download). On other profiles vector search remains opt-in
-        # via ``NEXUS_ENABLE_VECTOR_SEARCH=1``.
-        #
-        # Issue #3778 (R2 review): look up an already-constructed federation
-        # dispatcher on the ServiceRegistry / NexusFS if one is available, so
-        # the SANDBOX semantic path actually dispatches when the deployment
-        # wired federation in from outside (non-default, but not impossible).
-        # The canonical construction site for dispatchers is the HTTP router
-        # (server/api/v2/routers/search.py); factory-level boot does not
-        # build one. For true SANDBOX (single-process, no peers) this stays
-        # None and the semantic path falls through the "no-peers" synth
-        # FederatedSearchResponse → BM25S degradation, which is correct.
-        _federation_dispatcher = getattr(nx, "_federation_dispatcher", None) or services.get(
-            "federation_dispatcher"
-        )
 
         search_service = SearchService(
             metadata_store=nx._kernel,
@@ -237,13 +205,8 @@ def _boot_post_kernel_services(
             default_context=nx._init_cred,
             record_store=getattr(nx, "_record_store", None),
             nexus_fs=nx,
-            deployment_profile=_profile,
-            federation_dispatcher=_federation_dispatcher,
         )
-        logger.debug(
-            "[BOOT:WIRED] SearchService created (kernel-level, profile=%s)",
-            _profile,
-        )
+        logger.debug("[BOOT:WIRED] SearchService created")
     except Exception as exc:
         logger.warning(
             "[BOOT:WIRED] SearchService unavailable (glob/grep will not work): %s",

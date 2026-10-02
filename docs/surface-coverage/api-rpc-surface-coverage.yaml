@@ -7975,7 +7975,7 @@ operations:
     full: supported
   usage_example: 'MCP: nexus_semantic_search(query="auth flow", search_mode="hybrid", limit=5)'
   correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestSemanticSearchTool; tests/integration/bricks/search/test_federated_search.py::TestRemoteZoneSearch;
-    tests/unit/bricks/search/test_federated_degraded.py::TestSearchServiceSandboxFallback
+    tests/unit/bricks/search/test_search_plugin_contract.py; tests/e2e/self_contained/test_sandbox_mcp.py; scripts/test_search_service_plugin.py
   perf_class: hot
   perf_link: tests/benchmarks/test_search_protocol_benchmark.py; docs/benchmarks/2026-04-18-sandbox-vs-gbrain.md; tests/benchmarks/bench_sandbox_federation_latency.py::TestFederatedSearchFanoutLatency
   gap_issue: null

@@ -84,15 +84,6 @@ class FederatedSearchConfig:
     result_cache_enabled: bool = False  # Opt-in
 
 
-# NOTE: ZoneFailure / FederatedSearchResponse / FederationUnreachableError
-# moved to nexus.bricks.search.search_degraded (imported above); the
-# read-authz helpers readable_zone_filter / token_zone_filter_from_auth
-# moved to nexus.bricks.search.search_auth; daemon_pooling_cap moved to
-# nexus.bricks.search.daemon (its natural home).  is_all_peers_failed
-# also moved to search_degraded.  What remains here is the actual
-# cross-zone dispatcher + its private helpers.
-
-
 def _zone_results_degraded(results: Any) -> bool:
     """True when a zone's results carry the #3778 degradation marker — either
     list-level (``SearchResultList.semantic_degraded``, which survives empty

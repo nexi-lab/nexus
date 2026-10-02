@@ -176,12 +176,9 @@ the query text is identical.
 - PR 5: ~1-2 days
 - Total ~8-10 days elapsed, executable in parallel with other kernel work.
 
-## Follow-on: full `SearchService` delete
+## Current Python callers
 
-After PR 5, `src/nexus/bricks/search/search_service.py` (~4400 LoC)
-still owns the SQL fallback, the daemon shim, the ReBAC post-filter
-and the SANDBOX BM25S degraded path.  Everything except the SANDBOX
-fallback is behind Rust-served handlers now; a follow-on arc can
-delete SearchService entirely once the SANDBOX degraded path either
-moves to Rust or is dropped (the Rust plugin's own BM25S is a
-plausible substitute; verify recall parity first).
+`SearchService` still serves list/glob/grep and adapts indexed query results for
+Python callers. Query and stats require the Rust Search plugin. File-level
+permission checks remain at the Python boundary until its callers carry the
+kernel authorization context through the production transport.

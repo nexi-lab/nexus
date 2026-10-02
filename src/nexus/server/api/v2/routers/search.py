@@ -785,24 +785,8 @@ async def _handle_federated_search(
 
     Delegates to FederatedSearchDispatcher which fans out search
     across all accessible zones and fuses results via raw score merge.
-
-    Issue #3778: when the active deployment profile is SANDBOX and every
-    federated peer reports unreachable, delegates to
-    ``SearchService._semantic_with_sandbox_fallback`` so the response
-    surfaces BM25S results stamped with ``semantic_degraded=True``.
     """
-    # FederatedSearchDispatcher stays: it does cross-ZONE ReBAC-aware
-    # auth intersection + per-zone capability routing + short-lived
-    # SearchDelegation minting for remote-zone RPCs.  The Rust plugin's
-    # peer fan-out is orthogonal — same-zone, cross-plugin-instance —
-    # and does not replace this dispatcher.
     from nexus.bricks.search.federated_search import FederatedSearchDispatcher
-    from nexus.bricks.search.search_degraded import is_all_peers_failed
-
-    # Issue #4269 (Codex R3): the SANDBOX BM25S fallback below runs AFTER the
-    # dispatcher returns and is not in fed_response.latency_ms, so track its
-    # time separately and fold it into the reported total.
-    fed_fallback_ms = 0.0
 
     # Resolve ReBAC service
     rebac = getattr(request.app.state, "rebac_service", None)
@@ -851,70 +835,7 @@ async def _handle_federated_search(
         zone_filter=zone_filter,
     )
 
-    # Issue #3778: SANDBOX profile — degrade semantic federation to local
-    # BM25S when every peer is unreachable.  Stamp results with
-    # ``semantic_degraded=True`` so callers can distinguish degraded pages.
-    semantic_degraded = False
-    profile = (getattr(request.app.state, "deployment_profile", "") or "").lower()
-    if (
-        profile == "sandbox"
-        and search_type in ("semantic", "hybrid")
-        and is_all_peers_failed(fed_response)
-    ):
-        nexus_fs = getattr(request.app.state, "nexus_fs", None)
-        search_service = None
-        if nexus_fs is not None:
-            try:
-                search_service = nexus_fs.service("search")
-            except Exception:
-                search_service = None
-
-        if search_service is not None:
-            from nexus.server.dependencies import get_operation_context
-
-            op_context = get_operation_context(auth_result)
-            # Issue #4542 round-6: this all-peers-failed fallback replaces the
-            # dispatcher's capped results wholesale, so it must honor the
-            # per-document cap itself — fetch wider, cap, trim.
-            from nexus.bricks.search.daemon import daemon_pooling_cap
-
-            _fb_cap = daemon_pooling_cap(search_daemon)
-            fallback_start = time.perf_counter()
-            bm25s_results = await search_service.semantic_search(
-                query=q,
-                path=path_filter or "/",
-                limit=limit if _fb_cap is None else limit * 2,
-                search_mode="semantic",  # triggers SANDBOX fallback inside SearchService
-                context=op_context,
-            )
-            if _fb_cap is not None:
-                from nexus.bricks.search.result_builders import cap_chunks_per_page
-
-                bm25s_results = cap_chunks_per_page(list(bm25s_results), chunks_per_page=_fb_cap)[
-                    :limit
-                ]
-            # Record the degraded-path BM25S fallback work so the bound
-            # total_ms / fallback_ms reflect it (Codex R3).
-            fed_fallback_ms = (time.perf_counter() - fallback_start) * 1000
-            # semantic_search stamped semantic_degraded=True on each dict
-            # AND sets LAST_SEMANTIC_DEGRADED for this task — we prefer the
-            # contextvar so an empty BM25S result still surfaces degradation
-            # (R2 review).
-            fed_response.results = list(bm25s_results)
-            from nexus.contracts.search_types import LAST_SEMANTIC_DEGRADED
-
-            semantic_degraded = LAST_SEMANTIC_DEGRADED.get() or any(
-                isinstance(r, dict) and r.get("semantic_degraded") is True for r in bm25s_results
-            )
-
-    # Issue #4269 (Codex R2): /search/query auto-promotes multi-zone tokens
-    # into this federated path, so without binding here those request_completed
-    # logs would omit even search_total_ms — an observability blind spot for
-    # cross-zone searches. total_ms = dispatcher latency + the SANDBOX BM25S
-    # fallback (Codex R3), which runs after the dispatcher returns and is not in
-    # fed_response.latency_ms. (Per-leg backend timings are not aggregated
-    # across zones by the dispatcher.)
-    fed_total_ms = fed_response.latency_ms + fed_fallback_ms
+    fed_total_ms = fed_response.latency_ms
     fed_latency_breakdown = {"total_ms": round(fed_total_ms, 2)}
     # Per-leg backend timings aggregated across local zones (Codex R6): surface
     # index_load_ms / keyword_ms / vector_ms / fusion_ms so a cold federated
@@ -922,10 +843,6 @@ async def _handle_federated_search(
     for key, value in (getattr(fed_response, "search_timing", None) or {}).items():
         if isinstance(value, int | float):
             fed_latency_breakdown[key] = round(float(value), 2)
-    if fed_fallback_ms:
-        fed_latency_breakdown["fallback_ms"] = round(
-            fed_latency_breakdown.get("fallback_ms", 0.0) + fed_fallback_ms, 2
-        )
     _bind_search_phase_timings(fed_latency_breakdown)
 
     response_dict: dict[str, Any] = {
@@ -946,9 +863,7 @@ async def _handle_federated_search(
         response_dict["zones_skipped"] = fed_response.zones_skipped
     if fed_response.cached:
         response_dict["cached"] = True
-    # Either the #3778 sandbox BM25S fallback (local flag) or a zone-level
-    # degraded dense leg reported by the dispatcher (#4541 review round 9).
-    if semantic_degraded or getattr(fed_response, "semantic_degraded", False):
+    if getattr(fed_response, "semantic_degraded", False):
         response_dict["semantic_degraded"] = True
     return response_dict
 

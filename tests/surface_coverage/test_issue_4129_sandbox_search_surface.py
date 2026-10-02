@@ -11,12 +11,10 @@ OWNING_ISSUE = 4129
 
 SANDBOX_SEARCH_ROWS = {
     "glob.batch",
-    "initialize.semantic_search",
     "search.cli",
     "search.glob",
     "search.grep",
     "semantic.search",
-    "semantic.search_index",
     "semantic.search_stats",
 }
 
@@ -47,18 +45,18 @@ def test_sandbox_search_mcp_tools_link_to_search_rows() -> None:
     assert by_id["semantic.search"].transports["mcp"].name == "nexus_semantic_search"
 
 
-def test_user_guide_contains_sandbox_search_degraded_and_source_story() -> None:
+def test_user_guide_describes_plugin_query_contract() -> None:
     text = _USER_GUIDE.read_text(encoding="utf-8")
 
     for needle in [
         "Sandbox search workflow",
-        "semantic_degraded",
+        "NEXUS_SEARCH_PLUGIN_TARGET",
         'nexus search query "auth flow" --mode hybrid --json',
         'nx.service("search").semantic_search(',
         "nexus_semantic_search",
-        "keyword_score",
-        "vector_score",
+        "Missing plugins and failed",
+        "scripts/test_search_service_plugin.py",
         "docs/benchmarks/2026-04-18-sandbox-vs-gbrain.md",
-        "Missing-surface gate verdict",
+        "Search surfaces",
     ]:
         assert needle in text

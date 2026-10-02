@@ -41,12 +41,12 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def channel_spies(monkeypatch: pytest.MonkeyPatch):
     calls: dict[str, object] = {}
 
-    def fake_insecure(target):
+    def fake_insecure(target, **kwargs):
         calls["mode"] = "insecure"
         calls["target"] = target
         return object()
 
-    def fake_secure(target, creds):
+    def fake_secure(target, creds, **kwargs):
         calls["mode"] = "secure"
         calls["target"] = target
         calls["creds"] = creds

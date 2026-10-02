@@ -861,8 +861,6 @@ async def _handle_federated_search(
     }
     if fed_response.zones_skipped:
         response_dict["zones_skipped"] = fed_response.zones_skipped
-    if fed_response.cached:
-        response_dict["cached"] = True
     if getattr(fed_response, "semantic_degraded", False):
         response_dict["semantic_degraded"] = True
     return response_dict

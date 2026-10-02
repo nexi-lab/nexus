@@ -37,6 +37,7 @@ from fastmcp.tools.tool import Tool, ToolResult
 
 from nexus.bricks.mcp.profiles import TOOL_PATH_PREFIX
 from nexus.bricks.mcp.tool_utils import tool_error
+from nexus.lib.request_credentials import request_api_key
 
 if TYPE_CHECKING:
     import mcp.types as mt
@@ -335,7 +336,7 @@ class ToolNamespaceMiddleware(Middleware):
             logger.warning("Failed to extract subject identity from context: %s", e)
 
         try:
-            api_key = await _maybe_await(ctx.get_state("api_key"))
+            api_key = request_api_key.get()
             if api_key:
                 return ("api_key", str(api_key))
         except Exception as e:
@@ -367,7 +368,7 @@ class ToolNamespaceMiddleware(Middleware):
             logger.warning("Failed to extract subject identity from context: %s", e)
 
         try:
-            api_key = _sync_state_or_none(ctx, "api_key")
+            api_key = request_api_key.get()
             if api_key:
                 return ("api_key", str(api_key))
         except Exception as e:

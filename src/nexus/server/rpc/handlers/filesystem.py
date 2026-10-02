@@ -387,7 +387,7 @@ async def handle_semantic_search_index(
 
 
 async def handle_semantic_search(nexus_fs: "NexusFS", params: Any, _context: Any) -> dict[str, Any]:
-    """Handle semantic_search method — natural language search via SQL fallback."""
+    """Handle semantic_search through SearchService."""
     search = nexus_fs.service("search")
     if search is None:
         raise ValueError("SearchService not available")

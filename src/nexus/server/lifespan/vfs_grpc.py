@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 import grpc
 
 from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
+from nexus.lib.request_credentials import api_key_from_authorization, request_api_key
 from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.lib.zone_scoping import scope_params_for_zone
 from nexus.runtime.zone_resolution import target_zone_for_context
@@ -192,12 +193,22 @@ class VFSGrpcServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
         client_host = _client_host_from_context(context)
         try:
             params = decode_rpc_message(request.payload) if request.payload else {}
-            result = await self._dispatch(
-                request.method,
-                params,
-                request.auth_token,
-                client_host=client_host,
+            raw_token = request.auth_token
+            credential = (
+                api_key_from_authorization(raw_token)
+                if raw_token.startswith("Bearer ")
+                else raw_token or None
             )
+            scope_token = request_api_key.set(credential)
+            try:
+                result = await self._dispatch(
+                    request.method,
+                    params,
+                    request.auth_token,
+                    client_host=client_host,
+                )
+            finally:
+                request_api_key.reset(scope_token)
             return vfs_pb2.CallResponse(
                 payload=encode_rpc_message({"result": result}),
                 is_error=False,

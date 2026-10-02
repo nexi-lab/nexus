@@ -1,26 +1,11 @@
-"""Federated cross-zone search dispatcher (Issue #3147, Phases 1-3).
+"""Search accessible zones through the plugin and merge their authorized results.
 
-Fans out search queries across accessible zones, fuses results via N-way
-RRF fusion, and returns merged results with zone provenance metadata.
-
-Phase 1: Single daemon, multi-zone fan-out via zone_id parameter.
-Phase 2: Per-zone daemons via ZoneSearchRegistry, SearchDelegation auth.
-Phase 3: Zone-capability-aware query routing, result caching, partial results.
-
-Design decisions (from review):
-- 1A: No score normalization — RRF handles heterogeneous score distributions.
-- 2A: Zone-level auth only (no per-file ReBAC in Phase 1).
-- 5A: Reuses existing rrf_multi_fusion from fusion.py.
-- 8A: Returns zones_searched / zones_failed metadata.
-- 13B: Forces semantic path for keyword search to avoid BM25S/Zoekt zone leak.
-- 14A: Per-zone timeout via asyncio.wait_for.
-- 15A: Short-TTL cache on zone discovery.
-- 16A: Bounded fan-out via asyncio.Semaphore.
+Fan-out has bounded concurrency and per-zone deadlines. The registry selects
+zone daemons and supported modes; the plugin enforces caller access on every
+query. Zone discovery is cached briefly, while every result is fetched anew.
 """
 
 import asyncio
-import hashlib
-import json
 import logging
 import math
 import time
@@ -45,8 +30,6 @@ DEFAULT_ZONE_TIMEOUT_SECONDS = 5.0
 DEFAULT_MAX_CONCURRENT_ZONES = 5
 DEFAULT_ZONE_CACHE_TTL_SECONDS = 60.0
 DEFAULT_OVER_FETCH_FACTOR = 2
-DEFAULT_RESULT_CACHE_TTL_SECONDS = 30.0
-DEFAULT_RESULT_CACHE_MAX_ENTRIES = 256
 
 
 @dataclass
@@ -78,10 +61,6 @@ class FederatedSearchConfig:
     over_fetch_factor: int = DEFAULT_OVER_FETCH_FACTOR
     # Cross-zone fusion strategy (default: raw_score for homogeneous zones)
     fusion_strategy: str = FederatedFusionStrategy.RAW_SCORE
-    # Phase 3: Result caching
-    result_cache_ttl_seconds: float = DEFAULT_RESULT_CACHE_TTL_SECONDS
-    result_cache_max_entries: int = DEFAULT_RESULT_CACHE_MAX_ENTRIES
-    result_cache_enabled: bool = False  # Opt-in
 
 
 def _zone_results_degraded(results: Any) -> bool:
@@ -118,17 +97,7 @@ def _aggregate_zone_timing(timings: list[dict[str, float]]) -> dict[str, float]:
 
 
 class FederatedSearchDispatcher:
-    """Fans out search queries across zones and fuses results via RRF.
-
-    Phase 1: Uses a single daemon for all zones.
-    Phase 2: Uses ZoneSearchRegistry to dispatch to per-zone daemons.
-    Phase 3: Considers zone capabilities to skip unsupported search modes.
-
-    The daemon's SQL WHERE zone_id filtering handles zone isolation
-    for database-backed searches (pgvector, FTS). In-memory backends
-    (BM25S, Zoekt) do not support zone_id filtering, so federated
-    keyword search forces the semantic path (decision 13B).
-    """
+    """Fan out across accessible zones and fuse authorized results."""
 
     def __init__(
         self,
@@ -152,8 +121,6 @@ class FederatedSearchDispatcher:
         self._path_prefix_boosts_resolver = path_prefix_boosts_resolver
         # Zone discovery cache: subject_key -> (zones, expiry_time)
         self._zone_cache: dict[str, tuple[list[str], float]] = {}
-        # Phase 3: Result cache: cache_key -> (response, expiry_time)
-        self._result_cache: dict[str, tuple[FederatedSearchResponse, float]] = {}
 
     def _get_daemon_for_zone(self, zone_id: str) -> Any:
         """Get the daemon to use for a specific zone.
@@ -230,14 +197,7 @@ class FederatedSearchDispatcher:
         recency_half_life_days: float | None = None,
         rrf_k: int = 60,
     ) -> list[Any]:
-        """Search a single zone with capability-aware routing.
-
-        `subject` used to be threaded through here so the retired
-        cross-daemon path could mint a `SearchDelegation` — that
-        path now lives in Rust (see
-        `nexus-http-api::backends::tonic_remote::TonicRemoteSearchBackend`)
-        and the local branch does not need identity here; the
-        parameter is dropped as dead code."""
+        """Search one zone using its supported mode and the caller's credentials."""
         effective_type, alpha_override = self._get_effective_search_type(zone_id, search_type)
         effective_alpha = alpha_override if alpha_override is not None else alpha
         # 13B safety promotion (keyword -> hybrid alpha=1.0 under leaky BM25S/
@@ -250,28 +210,7 @@ class FederatedSearchDispatcher:
         if effective_type != search_type and fusion_method == "weighted":
             effective_fusion = "rrf_weighted"
 
-        # Cross-daemon dispatch lives on the Rust axum surface —
-        # `nexus-http-api::backends::tonic_remote::TonicRemoteSearchBackend`
-        # mints a `SearchDelegation` per remote leg and dials the
-        # peer daemon's `nexus.search.v1.SearchService.Query` with
-        # the delegation on tonic metadata.  Callers reaching this
-        # Python dispatcher for a zone that would previously have
-        # been marked remote should route their request through
-        # `POST /v2/search/query` on the Rust axum server instead —
-        # its federated fast-out picks up multi-zone callers via the
-        # same ReBAC access rule.
-        #
-        # A `registry.is_remote(zone_id)` mapping surviving here is
-        # a stale piece of config; the local branch below runs
-        # against the default daemon, which is the correct
-        # "single-daemon plus Rust cross-daemon path" behaviour.
-
-        # Local zone: call daemon.search() directly.
-        # #4620: each local leg carries ITS zone's path-context tier
-        # weights. Remote legs stay unboosted — the remote RPC surface
-        # drops every search param today (#4556 above), and the remote
-        # node's own rows belong to the remote deployment anyway.
-        # Fail-open: a resolver error costs the boost, never the leg.
+        # Each local leg carries its zone's path-context weights.
         path_prefix_boosts: dict[str, float] | None = None
         if self._path_prefix_boosts_resolver is not None:
             try:
@@ -345,113 +284,6 @@ class FederatedSearchDispatcher:
             return False
 
         return search_type == "semantic" and not caps.supports_semantic
-
-    def _make_cache_key(
-        self,
-        query: str,
-        subject: tuple[str, str],
-        search_type: str,
-        limit: int,
-        path_filter: str | None,
-        alpha: float = 0.5,
-        fusion_method: str = "rrf",
-        rrf_k: int = 60,
-        recency: str | None = None,
-        recency_weight: float | None = None,
-        recency_half_life_days: float | None = None,
-        zone_filter: frozenset[str] | None = None,
-    ) -> str:
-        """Phase 3: Create a cache key for result caching.
-
-        Fusion knobs are part of the key: they change result ordering now
-        that the daemon honours them (#4541), so requests differing only in
-        alpha / fusion_method / rrf_k must not share a cache entry. The
-        recency knobs (#4543) are included for the same reason.
-
-        The token's zone allow-list (#3785) is also part of the key: cache
-        lookup happens before accessible zones are intersected with the
-        filter, so without it a broadly-scoped request could seed a cache
-        entry that a later narrowly-scoped token would read back — leaking
-        results from zones outside that token's scope (#4541 review).
-
-        Canonical-JSON serialization (round-5 review): delimiter
-        concatenation allowed cross-field collisions — subject_id
-        ``alice|foo`` + query ``bar`` hashed identically to ``alice`` +
-        ``foo|bar`` — and cache lookup precedes ReBAC, so a collision would
-        leak another subject's results. JSON escaping makes field
-        boundaries unambiguous, and the empty allow-list (``[]``, zero
-        zones) stays distinct from the wildcard (``null``).
-        """
-        raw = json.dumps(
-            [
-                subject[0],
-                subject[1],
-                query,
-                search_type,
-                limit,
-                path_filter,
-                alpha,
-                fusion_method,
-                rrf_k,
-                recency,
-                recency_weight,
-                recency_half_life_days,
-                sorted(zone_filter) if zone_filter is not None else None,
-            ],
-            separators=(",", ":"),
-        )
-        return hashlib.sha256(raw.encode()).hexdigest()[:32]
-
-    def _get_cached_result(
-        self, cache_key: str, start: float | None = None
-    ) -> FederatedSearchResponse | None:
-        """Phase 3: Check result cache.
-
-        ``start`` is the current request's perf_counter() origin; when provided,
-        the cache hit reports the ACTUAL cache-lookup elapsed rather than
-        replaying the original miss's wall time (Codex R9) — so a cache hit that
-        executed no backend work does not masquerade as a slow cold query.
-        """
-        if not self._config.result_cache_enabled:
-            return None
-        cached = self._result_cache.get(cache_key)
-        if cached is None:
-            return None
-        response, expiry = cached
-        if time.monotonic() > expiry:
-            del self._result_cache[cache_key]
-            return None
-        hit_latency_ms = (time.perf_counter() - start) * 1000 if start is not None else 0.0
-        return FederatedSearchResponse(
-            results=response.results,
-            zones_searched=response.zones_searched,
-            zones_failed=response.zones_failed,
-            zones_skipped=response.zones_skipped,
-            latency_ms=hit_latency_ms,
-            cached=True,
-            # A cache hit executes no BM25/vector/index work, so it must NOT
-            # replay the original query's per-leg phase timings — that would
-            # report backend work that did not happen (Codex R8). Leave empty;
-            # the ``cached=True`` flag marks the response.
-            search_timing={},
-            # Degradation IS a property of the cached payload — a hit serves
-            # the same (possibly empty) degraded results, so the marker must
-            # survive the clone (#4541 review round 10).
-            semantic_degraded=response.semantic_degraded,
-        )
-
-    def _cache_result(self, cache_key: str, response: FederatedSearchResponse) -> None:
-        """Phase 3: Store result in cache."""
-        if not self._config.result_cache_enabled:
-            return
-        # Evict oldest if at capacity
-        if len(self._result_cache) >= self._config.result_cache_max_entries:
-            oldest_key = min(self._result_cache, key=lambda k: self._result_cache[k][1])
-            del self._result_cache[oldest_key]
-        self._result_cache[cache_key] = (
-            response,
-            time.monotonic() + self._config.result_cache_ttl_seconds,
-        )
 
     async def search(
         self,
@@ -556,25 +388,6 @@ class FederatedSearchDispatcher:
             FederatedSearchResponse with fused results and zone metadata.
         """
         start = time.perf_counter()
-
-        # Phase 3: Check result cache
-        cache_key = self._make_cache_key(
-            query,
-            subject,
-            search_type,
-            limit,
-            path_filter,
-            alpha,
-            fusion_method,
-            rrf_k,
-            recency=recency,
-            recency_weight=recency_weight,
-            recency_half_life_days=recency_half_life_days,
-            zone_filter=zone_filter,
-        )
-        cached = self._get_cached_result(cache_key, start=start)
-        if cached is not None:
-            return cached
 
         # 1. Zone discovery (decision 2A: zone-level auth is sufficient)
         accessible_zones = await self._get_accessible_zones(subject)
@@ -696,7 +509,6 @@ class FederatedSearchDispatcher:
                     search_timing=zone_timing,
                     semantic_degraded=zone_degraded,
                 )
-                self._cache_result(cache_key, resp)
                 return resp
             except Exception as e:
                 logger.warning("[FEDERATED] Zone %s failed: %s", zone_id, e)
@@ -858,7 +670,6 @@ class FederatedSearchDispatcher:
             search_timing=_aggregate_zone_timing(zone_timings),
             semantic_degraded=any_zone_degraded,
         )
-        self._cache_result(cache_key, resp)
         return resp
 
     def _pooling_chunks_per_page(self) -> int | None:
@@ -879,10 +690,6 @@ class FederatedSearchDispatcher:
         else:
             cache_key = f"{subject[0]}:{subject[1]}"
             self._zone_cache.pop(cache_key, None)
-
-    def invalidate_result_cache(self) -> None:
-        """Clear the result cache."""
-        self._result_cache.clear()
 
 
 def _merge_by_raw_score(

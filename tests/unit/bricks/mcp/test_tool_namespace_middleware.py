@@ -624,12 +624,18 @@ class TestSubjectExtraction:
         assert subject == ("agent", "bot-1")
 
     def test_extract_falls_back_to_api_key(self):
+        from nexus.lib.request_credentials import request_api_key
+
         mw = make_middleware()
         ctx = FakeMiddlewareContext(
             fastmcp_context=FakeContext({"api_key": "sk-test-123"}),
         )
-        subject = mw._extract_subject(ctx)  # type: ignore[arg-type]
-        assert subject == ("api_key", "sk-test-123")
+        token = request_api_key.set("sk-test-123")
+        try:
+            subject = mw._extract_subject(ctx)
+            assert subject == ("api_key", "sk-test-123")
+        finally:
+            request_api_key.reset(token)
 
     def test_extract_returns_none_when_no_context(self):
         mw = make_middleware()
@@ -666,10 +672,16 @@ class TestResolveVisibleTools:
 
     def test_falls_back_to_api_key(self):
         mw = make_middleware(granted_tools=["nexus_read_file"])
-        ctx = FakeContext({"api_key": "sk-test"})
-        result = mw.resolve_visible_tools(ctx)
-        assert result is not None
-        assert "nexus_read_file" in result
+        from nexus.lib.request_credentials import request_api_key
+
+        ctx = FakeContext({})
+        token = request_api_key.set("sk-test")
+        try:
+            result = mw.resolve_visible_tools(ctx)
+            assert result is not None
+            assert "nexus_read_file" in result
+        finally:
+            request_api_key.reset(token)
 
     def test_ctx_without_get_state_returns_none(self):
         mw = make_middleware(granted_tools=["nexus_read_file"])

@@ -4,11 +4,13 @@ Tests parameter validation, response structure, and error handling
 for the search endpoint, including the federated=true parameter.
 """
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+
+from nexus.contracts.search_types import SearchRequest
 
 # =============================================================================
 # search_query endpoint validation (via FastAPI TestClient)
@@ -56,7 +58,7 @@ class TestSearchQueryEndpoint:
             "rerank_ms": 0.0,
         }
 
-        async def mock_search(**kwargs: Any) -> list[_MockResult]:
+        async def mock_search(request: SearchRequest) -> list[_MockResult]:
             return [
                 _MockResult(path="result.txt", chunk_text="found", score=0.9),
             ]
@@ -126,9 +128,9 @@ class TestSearchQueryEndpoint:
         app: Any = client.app
         seen: dict[str, Any] = {}
 
-        async def mock_search(**kwargs: Any) -> list[_MockResult]:
+        async def mock_search(request: SearchRequest) -> list[_MockResult]:
             seen.clear()
-            seen.update(kwargs)
+            seen.update(asdict(request))
             return [_MockResult()]
 
         app.state.search_daemon.search = mock_search
@@ -152,7 +154,7 @@ class TestSearchQueryEndpoint:
 
         app: Any = client.app
 
-        async def mock_search(**kwargs: Any) -> SearchResultList:
+        async def mock_search(request: SearchRequest) -> SearchResultList:
             degraded = SearchResultList([])
             degraded.semantic_degraded = True
             return degraded
@@ -225,7 +227,7 @@ class TestSearchQueryEndpoint:
             "rerank_ms": 999.0,
         }
 
-        async def mock_search(**kwargs: Any) -> _TimedResults:
+        async def mock_search(request: SearchRequest) -> _TimedResults:
             return timed_results
 
         app.state.search_daemon.search = mock_search

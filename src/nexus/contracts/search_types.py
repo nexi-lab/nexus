@@ -13,7 +13,6 @@ Issue #929: Adaptive algorithm selection for search operations.
 Issue #1499: Shared query analysis patterns for query routing and expansion.
 """
 
-import contextvars
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -37,8 +36,6 @@ __all__ = [
     "AGGREGATION_WORDS",
     "MULTIHOP_PATTERNS",
     "COMPLEX_PATTERNS",
-    # Per-task semantic-degradation flag (Issue #3778 R2)
-    "LAST_SEMANTIC_DEGRADED",
     # SearchBrickProtocol.search bundled request (#4553 follow-up B)
     "SearchRequest",
     "split_path_scope",
@@ -142,16 +139,6 @@ class BatchQueryFailure:
 
     error: str
 
-
-# Per-task flag recording whether the last SANDBOX semantic_search call
-# degraded to BM25S (Issue #3778 R2 review). Response-envelope builders
-# (MCP, HTTP routers) can read this after awaiting semantic_search so the
-# degradation flag surfaces even when the fallback returned zero results.
-# Living in contracts (not the search brick) keeps cross-brick callers
-# legal under the LEGO architecture principle.
-LAST_SEMANTIC_DEGRADED: contextvars.ContextVar[bool] = contextvars.ContextVar(
-    "nexus_last_semantic_degraded", default=False
-)
 
 # Grep strategy thresholds (Issue #2071: non-resource thresholds stay as constants)
 GREP_SEQUENTIAL_THRESHOLD = 10  # Below this file count, use sequential (no overhead)

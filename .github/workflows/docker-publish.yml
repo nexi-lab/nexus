@@ -836,6 +836,11 @@ jobs:
           print("search contract smoke OK (health/index/stats/batch/write+index/refresh)")
           PY
 
+      - name: Verify SearchService against the published plugin
+        run: |
+          docker cp scripts/test_search_service_plugin.py nexus-e2e:/tmp/test_search_service_plugin.py
+          docker exec nexus-e2e python /tmp/test_search_service_plugin.py
+
       - name: Run build perf e2e
         if: steps.vfs_grpc.outputs.available == 'true'
         run: |

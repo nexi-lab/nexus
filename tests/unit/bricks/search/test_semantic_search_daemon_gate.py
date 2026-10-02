@@ -1,19 +1,4 @@
-"""Daemon-eligibility gate for the gRPC ``semantic_search`` surface (#4628).
-
-Post-P12 (#4598) the wired ``_search_daemon`` is the Rust-plugin gRPC
-shim, which exposes a dial ``_target`` but none of the pre-P12 backend
-attributes (``_backend`` / ``_fts_backend`` / ``_vector_backend``) the
-delegation gate in ``_semantic_search_impl`` used to sniff.  The gate
-therefore silently dropped every gRPC ``semantic_search`` call to the
-SQL-ILIKE fallback — wrong ranking, no hybrid fusion, no ``title_score``
-— while the HTTP surface (which reaches the daemon directly) worked.
-
-These tests pin the fixed gate:
-  1. a shim-shaped daemon (only ``_target``) IS delegated to, and the
-     title-arm attribution rides through, and
-  2. a service with no daemon at all still raises the documented
-     "not available" error instead of pretending the shim path exists.
-"""
+"""SearchService preserves plugin results and permission checks."""
 
 from __future__ import annotations
 
@@ -36,11 +21,9 @@ class _DaemonRow:
 
 
 class _FakePluginShim:
-    """Shape of the post-P12 Rust-plugin gRPC shim: a dial target and
-    an async ``search`` — no legacy backend attributes."""
+    """Public query and indexing methods used by the service."""
 
     def __init__(self, rows: list[_DaemonRow]) -> None:
-        self._target = "localhost:2126"
         self.requests: list[object] = []
         self._rows = rows
         # Recorded documents that the index_documents RPC received —
@@ -54,9 +37,9 @@ class _FakePluginShim:
         }
         self.index_documents_should_raise: Exception | None = None
 
-    async def search(self, request: object) -> list[_DaemonRow]:
+    async def search_with_error(self, request: object) -> tuple[list[_DaemonRow], str | None]:
         self.requests.append(request)
-        return self._rows
+        return self._rows, None
 
     async def index_documents(
         self,
@@ -117,8 +100,7 @@ class TestPluginShimGate:
         """#4628 review R2: an enforcing deployment must not serve a
         context-less call through the daemon path — the post-search
         ReBAC filter only runs with a context, so delegation would
-        return unfiltered paths and chunk text.  The SQL fallback
-        fails closed here; the daemon path must match."""
+        return unfiltered paths and chunk text."""
         shim = _FakePluginShim(
             [_DaemonRow(path="/private/secret.md", chunk_text="secret body", score=0.9)]
         )

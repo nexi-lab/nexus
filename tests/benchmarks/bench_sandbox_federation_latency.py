@@ -2,15 +2,13 @@
 
 These benchmarks do not require a live hub. They pin the expected cost class
 for the local control branches that wrap the real network calls:
-handshake parsing/mapping, remote-zone read dispatch, federated search fanout,
-and the local-only degraded branch used when the hub is down.
+handshake parsing/mapping, remote-zone read dispatch, and federated search fanout.
 """
 
 from __future__ import annotations
 
 import time
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -18,11 +16,8 @@ from nexus.backends.storage.remote_zone import RemoteZoneBackend
 from nexus.bricks.search.federated_search import (
     FederatedSearchConfig,
     FederatedSearchDispatcher,
-    FederatedSearchResponse,
-    ZoneFailure,
 )
 from nexus.bricks.search.results import BaseSearchResult
-from nexus.bricks.search.search_service import SearchService
 from nexus.contracts.types import OperationContext
 from nexus.remote import federation_handshake
 
@@ -182,39 +177,3 @@ class TestFederatedSearchFanoutLatency:
 
         stats = await _measure_async_us(_run_once, iterations=200)
         assert stats["p99_us"] < 20_000.0, stats
-
-
-class TestSandboxHubDownDegradedLatency:
-    @pytest.mark.asyncio
-    async def test_local_only_degraded_branch_under_10ms_synthetic(self) -> None:
-        service = SearchService(
-            metadata_store=MagicMock(),
-            enforce_permissions=False,
-            deployment_profile="sandbox",
-        )
-
-        async def _federation_failed() -> FederatedSearchResponse:
-            return FederatedSearchResponse(
-                results=[],
-                zones_searched=["company", "shared"],
-                zones_failed=[
-                    ZoneFailure(zone_id="company", error="hub unavailable"),
-                    ZoneFailure(zone_id="shared", error="hub unavailable"),
-                ],
-            )
-
-        async def _local_bm25() -> list[BaseSearchResult]:
-            return [
-                BaseSearchResult(path="/zone/local/README.md", chunk_text="fallback", score=0.5)
-            ]
-
-        async def _run_once() -> None:
-            results = await service._semantic_with_sandbox_fallback(
-                _federation_failed,
-                _local_bm25,
-            )
-            assert len(results) == 1
-            assert results[0].semantic_degraded is True
-
-        stats = await _measure_async_us(_run_once, iterations=200)
-        assert stats["p99_us"] < 10_000.0, stats

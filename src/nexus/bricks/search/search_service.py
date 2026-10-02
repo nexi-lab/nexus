@@ -1,13 +1,4 @@
-"""Search Service - Extracted from NexusFSSearchMixin (Issue #1287).
-
-This service handles all search operations:
-- File listing with pagination and permission filtering
-- Glob pattern matching with adaptive algorithms
-- Content searching (grep) with 5 strategies
-- Semantic search with embeddings
-
-Extracted from: nexus_fs_search.py (2,817 lines)
-"""
+"""Workspace listing, glob and grep, plus indexed queries through the search plugin."""
 
 import asyncio
 import builtins
@@ -36,7 +27,6 @@ from nexus.contracts.search_types import (
     GREP_SEQUENTIAL_THRESHOLD,
     GREP_TRIGRAM_THRESHOLD,
     GREP_ZOEKT_THRESHOLD,
-    LAST_SEMANTIC_DEGRADED,
     GlobStrategy,
     SearchRequest,
     SearchStrategy,
@@ -170,15 +160,13 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from nexus.bricks.rebac.enforcer import PermissionEnforcer
     from nexus.bricks.rebac.manager import ReBACManager
+    from nexus.bricks.search.daemon import SearchDaemon
     from nexus.contracts.types import OperationContext
     from nexus.core.nexus_fs import NexusFS
 
 
 class SearchService:
-    """Independent search service extracted from NexusFS.
-
-    Handles file listing, glob matching, grep, and semantic search.
-    Semantic search methods (formerly in SemanticSearchMixin) are inlined.
+    """File listing, glob matching, grep, and indexed search.
 
     Uses adaptive algorithm selection (Issue #929) to choose optimal
     strategies based on data characteristics. No direct filesystem
@@ -200,8 +188,6 @@ class SearchService:
         grep_parallel_workers: int = GREP_PARALLEL_WORKERS,
         file_cache: Any | None = None,
         zoekt_client: Any | None = None,
-        deployment_profile: str | None = None,
-        federation_dispatcher: Any | None = None,
     ):
         """Initialize search service.
 
@@ -212,13 +198,9 @@ class SearchService:
             rebac_manager: ReBAC manager for relationship-based permissions
             enforce_permissions: Whether to enforce permission checks
             default_context: Default operation context (embedded mode)
-            record_store: RecordStoreABC for SQL engine (needed for semantic search)
+            record_store: RecordStoreABC for file-path metadata
             nexus_fs: NexusFS instance for file ops, routing, and dependency tracking
             zoekt_client: Injected ZoektClient instance (Issue #2188).
-            deployment_profile: Active deployment profile name (Issue #3778).
-                When set to ``"sandbox"``, a semantic search that goes through
-                ``_semantic_with_sandbox_fallback`` will degrade gracefully to
-                local BM25S when federation reports all peers unreachable.
         """
         self.metadata = metadata_store
         # Kernel handle, kept ONLY for kernel-ABI methods that have no
@@ -258,19 +240,6 @@ class SearchService:
         self._cross_zone_cache: TTLCache[tuple[str, ...], builtins.list[str]] = TTLCache(
             maxsize=1024, ttl=5.0
         )
-
-        # Issue #3778: SANDBOX profile — degrade semantic search to BM25S when
-        # federation reports all peers unreachable. The warn-once flag lives on
-        # the instance so a long-running sandbox doesn't spam the log.
-        self._deployment_profile = (deployment_profile or "").lower() or None
-        self._sandbox_fallback_warned = False
-
-        # Issue #3778 (R1 review): optional real federation dispatcher. When
-        # set, SANDBOX semantic fallback routes through it instead of
-        # fabricating an empty "no-peers" FederatedSearchResponse — so if a
-        # future deployment wires a dispatcher into a sandbox-profile server
-        # the real federation attempt is made before BM25 degradation.
-        self._federation_dispatcher = federation_dispatcher
 
         logger.info("[SearchService] Initialized")
 
@@ -3711,298 +3680,8 @@ class SearchService:
         return [h for h in hits if h.get("path", "") in readable]
 
     # =========================================================================
-    # Semantic Search (inlined from SemanticSearchMixin, Issue #1287, #2075)
+    # Indexed search
     # =========================================================================
-
-    async def _semantic_with_sandbox_fallback(
-        self,
-        federation_call: "Any",
-        bm25s_call: "Any",
-    ) -> "builtins.list[Any]":
-        """Run federated semantic search with SANDBOX-profile BM25S fallback.
-
-        Issue #3778. When the active profile is SANDBOX and federation reports
-        that every peer failed (see ``is_all_peers_failed``), we fall back to
-        the local BM25S callable and stamp each result with
-        ``semantic_degraded=True``. A WARNING is logged only on the first
-        fallback per ``SearchService`` instance; subsequent fallbacks are
-        silent to avoid flooding a long-running sandbox's logs.
-
-        The callables are supplied by the caller so this method is easy to
-        test and has no hard dependency on specific federation / BM25S
-        constructor shapes.
-
-        Args:
-            federation_call: zero-arg awaitable that returns a
-                ``FederatedSearchResponse``. Wrap the real dispatcher's
-                ``.search(...)`` with functools.partial or a lambda.
-            bm25s_call: zero-arg awaitable that returns a list of
-                ``BaseSearchResult`` (or any object with ``semantic_degraded``
-                assignable). Executed only when federation reports all peers
-                failed AND the profile is SANDBOX.
-
-        Returns:
-            A list of results. When the SANDBOX fallback kicks in, each item
-            has ``semantic_degraded = True``. Otherwise the federation's
-            results are returned as-is (``semantic_degraded`` unset).
-        """
-        # Defer imports so the main code path doesn't pay for them.
-        from nexus.bricks.search.search_degraded import is_all_peers_failed
-
-        fed_response = await federation_call()
-
-        is_sandbox = self._deployment_profile == "sandbox"
-        if not is_sandbox:
-            return list(fed_response.results)
-
-        if not is_all_peers_failed(fed_response):
-            return list(fed_response.results)
-
-        # Record degradation in the contextvar so envelope builders (MCP/HTTP)
-        # can detect it even if the BM25S fallback returned zero items.
-        LAST_SEMANTIC_DEGRADED.set(True)
-
-        # SANDBOX + all peers failed → fall back to local BM25S.
-        if not self._sandbox_fallback_warned:
-            logger.warning(
-                "[SearchService] SANDBOX: federation unreachable (zones_searched=%d, "
-                "zones_failed=%d) — degrading semantic search to local BM25S. "
-                "Results will be marked semantic_degraded=True. Further occurrences "
-                "will be logged at DEBUG.",
-                len(fed_response.zones_searched),
-                len(fed_response.zones_failed),
-            )
-            self._sandbox_fallback_warned = True
-        else:
-            logger.debug("[SearchService] SANDBOX semantic fallback to BM25S (already warned once)")
-
-        import contextlib
-
-        bm25s_results = await bm25s_call()
-        stamped: builtins.list[Any] = []
-        for r in bm25s_results:
-            # Result may not accept the attribute (e.g. a plain dict / frozen
-            # dataclass) — in that case skip stamping but still return it so
-            # the caller gets *something*.
-            with contextlib.suppress(AttributeError):
-                r.semantic_degraded = True
-            stamped.append(r)
-        return stamped
-
-    async def _semantic_search_sandbox(
-        self,
-        *,
-        query: str,
-        path: str,
-        limit: int,
-        context: "OperationContext | None",
-        search_mode: str = "semantic",  # noqa: ARG002  advisory now — no in-process vec lane exists post-#4761
-    ) -> builtins.list[dict[str, Any]]:
-        """SANDBOX-profile semantic_search: federation → BM25S.
-
-        The in-process `SqliteVecBackend` lanes (RRF hybrid + local
-        KNN) were removed as part of the R10 arc — the Rust search-
-        plugin is now the sole semantic backend, and the SANDBOX
-        profile is on the federation/BM25S fallback chain
-        production `full` deployments already use.
-
-        The remaining chain on SANDBOX is:
-
-        1. **Federation**: when a real dispatcher is wired, invoke
-           it; SANDBOX vanilla has no peers, so the response is
-           synthesised as "no peers" — that causes
-           ``_semantic_with_sandbox_fallback`` to invoke the BM25S
-           callable.
-        2. **BM25S** (via the local SearchDaemon's keyword path), or
-           the SQL chunk search when no daemon is wired. Results
-           carry ``semantic_degraded=True`` so MCP / HTTP clients
-           can warn users that the answer is keyword-only.
-        """
-        # Reset the degraded flag at the entry point of a SANDBOX search so
-        # callers read a value that reflects THIS call only. The contextvar
-        # is then set to True inside _semantic_with_sandbox_fallback when
-        # fallback actually fires.
-        LAST_SEMANTIC_DEGRADED.set(False)
-
-        # Issue #4542 round-9 review: an explicitly scoped credential with no
-        # READABLE zone fails closed BEFORE any retrieval work. An empty
-        # readable scope is an authorization outcome, not a peer outage — it
-        # must not reach the local hybrid/vector paths, and it must not be
-        # laundered through is_all_peers_failed into the un-scoped BM25S/SQL
-        # fallback.
-        if context is not None and not (
-            getattr(context, "is_admin", False) or getattr(context, "is_system", False)
-        ):
-            from nexus.bricks.search.search_auth import readable_zone_filter
-
-            _readable_scope = readable_zone_filter(
-                getattr(context, "zone_set", None) or (),
-                getattr(context, "zone_perms", None) or (),
-            )
-            if _readable_scope is not None and not _readable_scope:
-                return []
-
-        # SANDBOX chain: the in-process `SqliteVecBackend` (deleted in
-        # #4761) previously served an RRF hybrid + semantic-only pass
-        # here; both are gone.  SANDBOX now goes straight to the
-        # federation dispatcher (when wired) + BM25S fallback below —
-        # the same path production `full` deployments already use.
-        # `search_mode` becomes advisory: no local vec lane exists, so
-        # `"hybrid"` and `"semantic"` collapse to the fed/BM25S chain.
-
-        # Try a real federation dispatcher when one is wired;
-        # otherwise synthesise an empty FederatedSearchResponse so the
-        # shared fallback wrapper invokes the BM25S callable and stamps
-        # ``semantic_degraded=True`` on every result.
-        from nexus.bricks.search.search_degraded import (
-            FederatedSearchResponse,
-            ZoneFailure,
-        )
-
-        async def _fed_call() -> FederatedSearchResponse:
-            dispatcher = self._federation_dispatcher
-            if dispatcher is not None:
-                # R1 review: real dispatcher present — invoke it so we don't
-                # silently bypass remote peers and return keyword fallback
-                # when semantic retrieval is actually reachable. The wrapper
-                # only degrades when all peers fail.
-                try:
-                    subject = (
-                        (getattr(context, "subject_type", None) or "user"),
-                        (getattr(context, "user_id", None) or ""),
-                    )
-                    # Issue #4542 round-7 review: propagate the context's
-                    # zone allow-list into the inner dispatch. Without it, a
-                    # scoped token whose allowed zone is unavailable could
-                    # receive results from any zone its SUBJECT can reach
-                    # (credential-scope breach). ``OperationContext.zone_set``
-                    # is the contract-level allow-list (#3785); admin/system
-                    # contexts keep the legacy unbounded federation.
-                    _ctx_zone_set = getattr(context, "zone_set", None) or ()
-                    _unbounded = bool(
-                        getattr(context, "is_admin", False)
-                        or getattr(context, "is_system", False)
-                        or not _ctx_zone_set
-                    )
-                    # Round-8 review: search is a READ — write-only zone
-                    # grants must not be searchable, so derive the filter
-                    # from zone_perms (r/x only) when present.
-                    from nexus.bricks.search.search_auth import (
-                        readable_zone_filter,
-                    )
-
-                    return await dispatcher.search(
-                        query=query,
-                        subject=subject,
-                        search_type="semantic",
-                        limit=limit,
-                        zone_filter=None
-                        if _unbounded
-                        else readable_zone_filter(
-                            _ctx_zone_set, getattr(context, "zone_perms", None)
-                        ),
-                    )
-                except Exception as exc:
-                    # Real dispatch failed — treat as all-peers-failed so the
-                    # wrapper triggers BM25 fallback with semantic_degraded.
-                    logger.warning(
-                        "[SANDBOX semantic] federation dispatch raised; degrading to BM25S: %s",
-                        exc,
-                    )
-                    return FederatedSearchResponse(
-                        results=[],
-                        zones_searched=[],
-                        zones_failed=[ZoneFailure(zone_id="<dispatcher>", error=str(exc))],
-                    )
-
-            # No dispatcher wired (true SANDBOX case) — is_all_peers_failed
-            # returns True and the wrapper invokes the BM25S callable below.
-            return FederatedSearchResponse(
-                results=[],
-                zones_searched=[],
-                zones_failed=[],
-            )
-
-        async def _bm25s_call() -> builtins.list[dict[str, Any]]:
-            # Prefer the daemon's keyword path (BM25S when available).
-            daemon = getattr(self, "_search_daemon", None)
-            if daemon is not None and getattr(daemon, "_backend", None) is not None:
-                fetch_limit = (
-                    limit * 3 if self._enforce_permissions and self._permission_enforcer else limit
-                )
-                zone_id = getattr(context, "zone_id", None) if context else None
-                from nexus.server.path_utils import unscope_internal_path as _unscope
-
-                db_path = _unscope(path) if path != "/" else None
-                daemon_results = await daemon.search(
-                    SearchRequest(
-                        query=query,
-                        search_type="keyword",
-                        limit=fetch_limit,
-                        path_filter=db_path,
-                        zone_id=zone_id,
-                    )
-                )
-                hits: builtins.list[dict[str, Any]] = []
-                for r in daemon_results:
-                    entry: dict[str, Any] = {
-                        "path": r.path,
-                        "chunk_text": getattr(r, "chunk_text", ""),
-                        "score": round(r.score, 4),
-                        "chunk_index": getattr(r, "chunk_index", 0),
-                        "start_offset": getattr(r, "start_offset", 0) or 0,
-                        "end_offset": getattr(r, "end_offset", 0) or 0,
-                        "line_start": getattr(r, "line_start", 0) or 0,
-                        "line_end": getattr(r, "line_end", 0) or 0,
-                    }
-                    ctx_val = getattr(r, "context", None)
-                    if ctx_val is not None:
-                        entry["context"] = ctx_val
-                    hits.append(entry)
-
-                if (
-                    self._enforce_permissions
-                    and self._permission_enforcer
-                    and hits
-                    and context is not None
-                ):
-                    hits = self._filter_hit_dicts_by_read_permission(hits, context)
-
-                return hits[:limit]
-
-            # No daemon wired — fall back to the SQL chunk search so SANDBOX
-            # still returns *something* when a RecordStore is present.
-            if self._record_store is not None:
-                return await self._sql_chunk_search(query, path, limit, context=context)
-
-            return []
-
-        stamped = await self._semantic_with_sandbox_fallback(_fed_call, _bm25s_call)
-        # Only mark items degraded when the fallback actually ran. If a real
-        # federation dispatcher returned reachable-peer results, the helper
-        # returns them directly without setting LAST_SEMANTIC_DEGRADED, and
-        # stamping them here would trigger false "degraded" warnings in
-        # downstream envelopes (R3 review).
-        degraded = LAST_SEMANTIC_DEGRADED.get()
-        out: builtins.list[dict[str, Any]] = []
-        for r in stamped:
-            if isinstance(r, dict):
-                if degraded:
-                    r["semantic_degraded"] = True
-                    r.setdefault("keyword_score", r.get("score"))
-                    r.setdefault("vector_score", None)
-                out.append(r)
-            else:
-                # _bm25s_call emits dicts; non-dict can come from a real
-                # federation result (BaseSearchResult). Preserve path and
-                # only stamp when degraded.
-                entry: dict[str, Any] = {"path": getattr(r, "path", "")}
-                if degraded:
-                    entry["semantic_degraded"] = True
-                    entry["keyword_score"] = getattr(r, "score", None)
-                    entry["vector_score"] = None
-                out.append(entry)
-        return out
 
     @rpc_expose(description="Search documents using natural language queries")
     async def semantic_search(
@@ -4080,304 +3759,85 @@ class SearchService:
         Raises:
             ValueError: If semantic search is not initialized
         """
-        # Issue #3778: SANDBOX profile has no federated peers — any semantic
-        # request must degrade to local BM25S (via daemon keyword search)
-        # and stamp ``semantic_degraded=True`` on every result.  We delegate
-        # the "no-peers" detection + stamping to _semantic_with_sandbox_fallback
-        # so the fallback logic is shared with any future federation caller.
-        #
-        # SANDBOX profile routes semantic + hybrid to the shared
-        # federation/BM25S fallback chain.  The pre-#4761 hybrid-by-
-        # default upgrade (flip "semantic" → "hybrid" when a local vec
-        # backend is wired) was removed alongside the SqliteVec plane.
-        if self._deployment_profile == "sandbox" and search_mode in ("semantic", "hybrid"):
-            return await self._semantic_search_sandbox(
-                query=query,
-                path=path,
-                limit=limit,
-                context=context,
-                search_mode=search_mode,
-            )
+        # Search is a read regardless of the deployment profile.
+        if self._enforce_permissions and self._permission_enforcer and context is None:
+            return []
+        if context is not None and not (context.is_admin or context.is_system):
+            from nexus.bricks.search.search_auth import readable_zone_filter
 
-        # Delegate to SearchDaemon when wired (Issue #2965).
-        # Pre-#3699 the daemon owned a single ``_backend`` (TxtaiBackend);
-        # post-#3699 it owns ``_fts_backend`` + ``_vector_backend``. Accept
-        # either layout so the daemon path is taken on both sides of the
-        # txtai cutover. The legacy ``_backend`` check stayed wired into
-        # this dispatcher, so on the new stack it always evaluated False
-        # and every query silently fell through to ``_sql_chunk_search``
-        # (SQL LIKE), defeating the path filter and the dense leg.
-        daemon = getattr(self, "_search_daemon", None)
-        _has_legacy_backend = getattr(daemon, "_backend", None) is not None
-        _has_new_backends = (
-            getattr(daemon, "_fts_backend", None) is not None
-            or getattr(daemon, "_vector_backend", None) is not None
-        )
-        # Post-P12 (#4598) the wired daemon is the Rust-plugin gRPC shim,
-        # which has neither the legacy ``_backend`` nor the
-        # ``_fts_backend``/``_vector_backend`` pair — only a dial
-        # ``_target``.  Without this arm the gate silently dropped every
-        # gRPC ``semantic_search`` call to the ``_sql_chunk_search`` ILIKE
-        # fallback (wrong ranking, no hybrid fusion, no title_score) even
-        # though the plugin was up and serving the HTTP surface (#4628).
-        # Plugin-less deployments are unaffected: the boot probe leaves
-        # ``_search_daemon`` unset when the target is unreachable, so the
-        # fallback chain below still applies there.
-        _has_plugin_transport = getattr(daemon, "_target", None) is not None
-        if daemon is not None and (
-            _has_legacy_backend or _has_new_backends or _has_plugin_transport
-        ):
-            # Fail closed (#4628 review R2): the post-search ReBAC
-            # filter below only runs when a context is present, so an
-            # enforcing deployment serving a context-less call would
-            # return unfiltered paths + chunk text.  The SQL fallback
-            # already fails closed in this state
-            # (see ``_sql_chunk_search``); the daemon path must match.
-            if self._enforce_permissions and self._permission_enforcer and context is None:
-                return []
-            # Over-fetch to compensate for permission filtering
-            fetch_limit = (
-                limit * 3 if self._enforce_permissions and self._permission_enforcer else limit
-            )
-            zone_id = getattr(context, "zone_id", None) if context else None
-            # RPC may scope paths as /zone/{id}/...; daemon stores unscoped.
-            from nexus.server.path_utils import unscope_internal_path as _unscope
-
-            db_path = _unscope(path) if path != "/" else None
-            daemon_results = await daemon.search(
-                SearchRequest(
-                    query=query,
-                    search_type=search_mode,
-                    limit=fetch_limit,
-                    path_filter=db_path,
-                    zone_id=zone_id,
-                )
-            )
-            hits = []
-            for r in daemon_results:
-                entry: dict[str, Any] = {
-                    "path": r.path,
-                    "chunk_text": getattr(r, "chunk_text", ""),
-                    "score": round(r.score, 4),
-                    "chunk_index": getattr(r, "chunk_index", 0),
-                    "start_offset": getattr(r, "start_offset", 0) or 0,
-                    "end_offset": getattr(r, "end_offset", 0) or 0,
-                    "line_start": getattr(r, "line_start", 0) or 0,
-                    "line_end": getattr(r, "line_end", 0) or 0,
-                }
-                # Issue #3773 (Round-6 review): surface admin-configured path
-                # context when the daemon attached one. Omit the key when
-                # unset to match the HTTP router's shape contract.
-                ctx = getattr(r, "context", None)
-                if ctx is not None:
-                    entry["context"] = ctx
-                # Issue #4545: title-arm attribution rides every transport
-                # with the same omit-when-None + round-4 contract as the
-                # HTTP, batch, and federated surfaces.
-                title_score = getattr(r, "title_score", None)
-                if title_score is not None:
-                    entry["title_score"] = round(title_score, 4)
-                hits.append(entry)
-
-            # Filter by read permission — only return files the caller can access
+            readable_zones = readable_zone_filter(context.zone_set, context.zone_perms)
             if (
-                self._enforce_permissions
-                and self._permission_enforcer
-                and hits
-                and context is not None
+                readable_zones is not None
+                and context.zone_id not in readable_zones
+                and ROOT_ZONE_ID not in readable_zones
             ):
-                hits = self._filter_hit_dicts_by_read_permission(hits, context)
+                return []
 
-            return hits[:limit]
-
-        if self._record_store is not None:
-            return await self._sql_chunk_search(query, path, limit, context=context)
-
-        raise ValueError(
-            "Semantic search is not available. No query service or record store configured."
+        daemon = self._require_search_daemon()
+        # Over-fetch to compensate for permission filtering
+        fetch_limit = (
+            limit * 3 if self._enforce_permissions and self._permission_enforcer else limit
         )
+        zone_id = getattr(context, "zone_id", None) if context else None
+        # RPC may scope paths as /zone/{id}/...; daemon stores unscoped.
+        from nexus.server.path_utils import unscope_internal_path as _unscope
 
-    async def _sql_chunk_search(
-        self,
-        query: str,
-        path: str,
-        limit: int,
-        context: "OperationContext | None" = None,
-    ) -> builtins.list[dict[str, Any]]:
-        """Fallback search via SQL LIKE on document_chunks (Issue #2663).
-
-        Used when the Rust search-plugin daemon is unavailable.
-
-        The *path* may arrive zone-scoped (``/zone/<id>/…``) from the gRPC
-        dispatcher.  We strip the zone prefix and use the inner path for the
-        LIKE filter so it matches stored ``virtual_path`` values.
-
-        R5 review (Issue #3778): applies ReBAC permission filtering on the
-        returned rows when ``context`` is provided AND an enforcer is wired.
-        When permissions are enforced but context is missing, returns no
-        results — fail closed so the SANDBOX degraded path can't leak
-        chunks the caller shouldn't see.
-        """
-        if self._record_store is None:
-            return []
-
-        # Strip zone prefix injected by _scope_params_for_zone.
-        # E.g. "/zone/default/" → inner_path="/", "/zone/default/docs" → "/docs"
-        import re
-
-        from sqlalchemy import text as sa_text
-
-        zone_match = re.match(r"^/zone/[^/]+(/.*)?$", path)
-        if zone_match:
-            path = zone_match.group(1) or "/"
-
-        # Filter stopwords and short tokens for better recall
-        _STOPWORDS = frozenset(
-            {
-                "a",
-                "an",
-                "the",
-                "is",
-                "it",
-                "in",
-                "on",
-                "at",
-                "to",
-                "of",
-                "and",
-                "or",
-                "for",
-                "by",
-                "how",
-                "does",
-                "do",
-                "what",
-                "why",
-                "this",
-                "that",
-                "with",
-                "from",
-            }
-        )
-        keywords = [
-            w.strip().lower()
-            for w in query.split()
-            if len(w.strip()) >= 2 and w.strip().lower() not in _STOPWORDS
-        ]
-        if not keywords:
-            return []
-
-        # Build WHERE clause: chunk_text ILIKE any keyword (OR for recall)
-        conditions = []
-        bind_params: dict[str, Any] = {
-            "path_prefix": f"{path}%",
-            "lim": limit,
-        }
-        for i, kw in enumerate(keywords[:5]):  # max 5 keywords
-            key = f"kw{i}"
-            conditions.append(f"LOWER(dc.chunk_text) LIKE :{key}")
-            bind_params[key] = f"%{kw}%"
-
-        where_clause = "(" + " OR ".join(conditions) + ")"
-        sql = sa_text(f"""
-            SELECT dc.chunk_text, dc.chunk_index, dc.start_offset,
-                   dc.end_offset, dc.line_start, dc.line_end,
-                   fp.virtual_path
-            FROM document_chunks dc
-            JOIN file_paths fp ON dc.path_id = fp.path_id
-            WHERE fp.virtual_path LIKE :path_prefix
-              AND fp.deleted_at IS NULL
-              AND {where_clause}
-            LIMIT :lim
-        """)
-
-        def _run_query() -> list:
-            session = self._record_store.session_factory()
-            try:
-                result = session.execute(sql, bind_params)
-                return result.fetchall()
-            finally:
-                session.close()
-
-        try:
-            rows = await asyncio.to_thread(_run_query)
-        except Exception as e:
-            logger.warning("SQL chunk search failed: %s", e, exc_info=True)
-            return []
-
-        hits = []
-        for i, row in enumerate(rows):
-            score = round(1.0 - (i * 0.05), 4)
-            hits.append(
-                {
-                    "path": row.virtual_path if hasattr(row, "virtual_path") else row[6],
-                    "chunk_index": row.chunk_index if hasattr(row, "chunk_index") else row[1],
-                    "chunk_text": row.chunk_text if hasattr(row, "chunk_text") else row[0],
-                    "score": score,
-                    "keyword_score": score,
-                    "vector_score": None,
-                    "start_offset": row.start_offset if hasattr(row, "start_offset") else row[2],
-                    "end_offset": row.end_offset if hasattr(row, "end_offset") else row[3],
-                    "line_start": row.line_start if hasattr(row, "line_start") else row[4],
-                    "line_end": row.line_end if hasattr(row, "line_end") else row[5],
-                }
+        db_path = _unscope(path) if path != "/" else None
+        daemon_results, error = await daemon.search_with_error(
+            SearchRequest(
+                query=query,
+                search_type=search_mode,
+                limit=fetch_limit,
+                path_filter=db_path,
+                zone_id=zone_id,
             )
+        )
+        if error is not None:
+            raise RuntimeError(f"Search plugin query failed: {error}")
+        hits = []
+        for r in daemon_results:
+            entry: dict[str, Any] = {
+                "path": r.path,
+                "chunk_text": getattr(r, "chunk_text", ""),
+                "score": round(r.score, 4),
+                "chunk_index": getattr(r, "chunk_index", 0),
+                "start_offset": getattr(r, "start_offset", 0) or 0,
+                "end_offset": getattr(r, "end_offset", 0) or 0,
+                "line_start": getattr(r, "line_start", 0) or 0,
+                "line_end": getattr(r, "line_end", 0) or 0,
+            }
+            # Issue #3773 (Round-6 review): surface admin-configured path
+            # context when the daemon attached one. Omit the key when
+            # unset to match the HTTP router's shape contract.
+            ctx = getattr(r, "context", None)
+            if ctx is not None:
+                entry["context"] = ctx
+            # Issue #4545: title-arm attribution rides every transport
+            # with the same omit-when-None + round-4 contract as the
+            # HTTP, batch, and federated surfaces.
+            title_score = getattr(r, "title_score", None)
+            if title_score is not None:
+                entry["title_score"] = round(title_score, 4)
+            hits.append(entry)
 
-        # R5 review: ReBAC-filter the results when an enforcer is wired.
-        # Fail closed when permissions must be enforced but no valid context
-        # was supplied — callers that can legitimately bypass (admin/internal)
-        # use ``enforce_permissions=False`` at SearchService construction.
-        if self._enforce_permissions and self._permission_enforcer is not None and hits:
-            if context is None:
-                if self._enforce_permissions:
-                    logger.warning(
-                        "[SearchService] SQL chunk fallback called without OperationContext "
-                        "while permissions are enforced — returning empty result (fail-closed)."
-                    )
-                    return []
-            else:
-                hits = self._filter_hit_dicts_by_read_permission(hits, context)
-        return hits
+        # Filter by read permission — only return files the caller can access
+        if self._enforce_permissions and self._permission_enforcer and hits and context is not None:
+            hits = self._filter_hit_dicts_by_read_permission(hits, context)
+
+        return hits[:limit]
+
+    def _require_search_daemon(self) -> "SearchDaemon":
+        daemon = getattr(self, "_search_daemon", None)
+        if daemon is None:
+            raise ValueError(
+                "Semantic search is not available: configure the search-plugin daemon "
+                "with NEXUS_SEARCH_PLUGIN_TARGET."
+            )
+        return cast("SearchDaemon", daemon)
 
     @rpc_expose(description="Get semantic search indexing statistics")
     async def semantic_search_stats(self) -> dict[str, Any]:
         """Get semantic search indexing statistics."""
-        daemon = getattr(self, "_search_daemon", None)
-        if daemon is not None:
-            stats = dict(await daemon.get_stats())
-            stats.setdefault("engine", stats.get("backend", "txtai"))
-            return stats
-
-        # SQL fallback when the Rust search-plugin daemon is unavailable.
-        if self._record_store is not None:
-            return self._sql_chunk_stats()
-
-        raise ValueError("Semantic search is not available. No daemon or record store configured.")
-
-    def _sql_chunk_stats(self) -> dict[str, Any]:
-        """Basic stats from document_chunks table."""
-        from sqlalchemy import text as sa_text
-
-        assert self._record_store is not None  # caller checks
-        try:
-            session = self._record_store.session_factory()
-            try:
-                total_chunks = (
-                    session.execute(sa_text("SELECT count(*) FROM document_chunks")).scalar() or 0
-                )
-                total_files = (
-                    session.execute(
-                        sa_text("SELECT count(DISTINCT path_id) FROM document_chunks")
-                    ).scalar()
-                    or 0
-                )
-                return {
-                    "total_chunks": total_chunks,
-                    "total_files": total_files,
-                    "engine": "sql_fallback",
-                }
-            finally:
-                session.close()
-        except Exception as e:
-            logger.warning("SQL chunk stats failed: %s", e)
-            return {"total_chunks": 0, "total_files": 0, "engine": "sql_fallback"}
+        stats = dict(await self._require_search_daemon().get_stats())
+        stats.setdefault("engine", stats.get("backend", "rust-plugin"))
+        return stats

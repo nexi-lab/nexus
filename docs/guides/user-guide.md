@@ -425,24 +425,19 @@ are hot local edit paths. Guidance benchmarks live in
 `TestSandboxBootIndexerInitialWalk`. Rename/delete/mkdir/rmdir are tested
 behaviorally and treated as non-hot local edit mutations.
 
-### Sandbox search workflow (local context and degraded semantics)
+### Sandbox search workflow (workspace context and indexed retrieval)
 
-**Goal:** let an agent find local workspace context quickly in the sandbox
-profile and tell whether a semantic-looking answer came from local vectors,
-federated peers, or a keyword-only fallback.
-
-**Why this profile:** sandbox search is intentionally local-first. `glob` and
-`grep` run over the mounted workspace. Semantic search tries the local
-sqlite-vec vector lane when it is wired, fuses it with BM25S keyword results
-in hybrid mode, and reports `semantic_degraded=true` when the answer degraded
-to keyword-only BM25S because there were no peers or no usable vector lane.
+**Goal:** find workspace files, exact text matches, and ranked indexed chunks.
+`glob` and `grep` operate on the mounted workspace. Keyword, semantic, and
+hybrid queries use the Rust search plugin; the deployment profile does not
+change the requested retrieval mode. Configure the plugin as described in
+[Search plugin deployment](../deployment/search-plugin.md).
 
 CLI examples:
 
 ```bash
 nexus glob "**/*.py" /workspace --plain
 nexus grep "TODO" /workspace --search-mode raw --json
-nexus search init
 nexus search index /workspace
 nexus search stats
 nexus search query "auth flow" --mode hybrid --json
@@ -459,8 +454,6 @@ async def find_context(nx):
     grouped = search.glob_batch(["**/*.py", "**/*.md"], "/workspace")
     todos = await search.grep("TODO", path="/workspace", search_mode="raw")
 
-    await search.initialize_semantic_search(embedding_provider=None)
-    await search.semantic_search_index(path="/workspace", recursive=True)
     stats = await search.semantic_search_stats()
     hits = await search.semantic_search(
         query="auth flow",
@@ -481,35 +474,28 @@ nexus_semantic_search(query="auth flow", path="/workspace", search_mode="hybrid"
 
 **Success:** `glob` returns matching paths, `grep` returns file/line/content
 matches, `search stats` reports indexed chunks, and `semantic_search` returns
-ranked chunks. Real hybrid results include source score labels such as
-`keyword_score` and `vector_score` so callers can tell which lane contributed.
+ranked chunks with paths, text, and scores.
 
-**Degraded or unavailable:** when sqlite-vec is disabled, empty, or errors,
-or when the sandbox has no reachable semantic peers, semantic results are
-still allowed to fall back to BM25S keyword search. Those results carry
-`semantic_degraded=true` on each item and MCP also surfaces an envelope-level
-`semantic_degraded`. If the search brick is not loaded, MCP returns an
-`unavailable` tool error instead of pretending semantic search succeeded.
+**Unavailable:** query and stats require a reachable Rust search plugin configured
+with `NEXUS_SEARCH_PLUGIN_TARGET`. The requested keyword, semantic, or hybrid mode
+is passed to the plugin in every deployment profile. Missing plugins and failed
+queries report errors; a successful query with no matches returns an empty list.
+Cross-zone HTTP results include `zones_failed` when individual zones fail.
 
 **Denied:** file, grep, and semantic results are filtered by the caller's
-operation context and ReBAC path permissions. If the permission filter strips
-all vector-lane hits and only keyword hits remain, the surviving semantic
-response is marked degraded because the user did not receive a real semantic
-match.
+operation context and ReBAC path permissions.
 
 **Correctness assertion you can run:** compare CLI JSON with the SDK/RPC
 calls above for the same workspace. The path sets from `nexus glob` and
 `search.glob(...)` should match; `nexus grep --json` and `search.grep(...)`
-should agree on file/line/content tuples; degraded sandbox MCP semantic
-search should include `semantic_degraded=true`. Covered by
-`tests/e2e/self_contained/test_cli_output_e2e.py::TestGlobE2E`,
-`tests/e2e/self_contained/test_cli_output_e2e.py::TestGrepE2E`,
-`tests/integration/services/test_search_service.py::TestGlobBatch`,
-`tests/unit/bricks/search/test_sandbox_hybrid_rrf.py`, and
-`tests/e2e/self_contained/test_sandbox_mcp.py::test_sandbox_mcp_semantic_search_includes_degraded_flag`.
+should agree on file/line/content tuples. MCP reports failed queries as errors.
+The live plugin journey in `scripts/test_search_service_plugin.py` verifies
+index, query, stats, delete, and query again, and rejects SQL retrieval when the
+plugin is unavailable. `tests/e2e/self_contained/test_sandbox_mcp.py` covers
+MCP results and errors in sandbox and full profiles.
 
 **Performance classification:** `glob`, `grep`, semantic query latency,
-sqlite-vec insert/query, BM25S fallback, and indexing throughput are hot or
+and indexing throughput are hot or
 setup paths. Benchmarks live in
 `tests/benchmarks/test_search_benchmarks.py`,
 `tests/benchmarks/test_indexing_benchmarks.py`,
@@ -518,14 +504,10 @@ setup paths. Benchmarks live in
 reported sandbox hybrid retrieval tied gbrain baseline P@1 at 0.947 on the
 gbrain corpus and passed the HERB QA gate at 8/8 top-5 hits.
 
-**Missing-surface gate verdict:** no additional RPC is required for this
-story: `glob`, `glob_batch`, `grep`, `semantic_search`,
-`semantic_search_index`, `semantic_search_stats`, and
-`initialize_semantic_search` exist. The required CLI display path for degraded
-and source evidence is JSON output (`--json`), where `semantic_degraded`,
-`keyword_score`, and `vector_score` are visible when returned by the service.
-Human-mode source/degraded formatting is a UX enhancement, not a blocker for
-the documented agent workflow.
+**Search surfaces:** `glob`, `glob_batch`, `grep`, `semantic_search`, and
+`semantic_search_stats` are SearchService methods. Explicit indexing uses
+`nexus search index` or `POST /api/v2/search/index`; it is not a SearchService
+initialization step. CLI JSON (`--json`) exposes the returned result fields.
 
 ### Sandbox local + company hub federation workflow
 
@@ -601,8 +583,8 @@ async def use_local_and_hub_context(nx):
   `rw` hub zone go through the hub transport.
 - **Unavailable:** a bad token or unreachable hub does not prevent local work.
   The handshake is logged as failed, remote zones are not mounted, and the
-  sandbox continues in local-only mode. Search may return local BM25S fallback
-  hits with `semantic_degraded=true` when all semantic peers are unavailable.
+  sandbox continues in local-only mode. Indexed search requires a reachable
+  plugin; cross-zone HTTP queries report unavailable zones in `zones_failed`.
 
 **Correctness assertions:** `federation_client_whoami` must return exactly the
 remote zone IDs and `r` / `rw` grants used by the mount table; a write through
@@ -1107,7 +1089,7 @@ Search surface coverage matrix:
 | Find paths | `nexus glob "**/*.py" /workspace` | `POST /api/v2/search/glob`, RPC `SearchService.glob`, MCP `nexus_glob` | You need file names, not file contents. |
 | Find exact text | `nexus grep "TODO" /workspace` | `POST /api/v2/search/grep`, RPC `SearchService.grep`, MCP `nexus_grep` | You know the token or regex to match. |
 | Query retrieved chunks | `nexus search query "auth flow" --mode hybrid` | `GET /api/v2/search/query`, RPC `SearchService.semantic_search`, MCP `nexus_semantic_search` | You need ranked chunks, not only exact text. |
-| Build or refresh indexes | `nexus search init`, `nexus search index`, `nexus reindex` | `POST /api/v2/search/index`, `/refresh`, `/index-directory`, `/indexing-mode` | You are preparing a corpus or changing indexing scope. |
+| Build or refresh indexes | `nexus search index`, `nexus reindex` | `POST /api/v2/search/index`, `/refresh`, `/index-directory`, `/indexing-mode` | You are preparing a corpus or changing indexing scope. |
 | Make a written file searchable | `nexus search index <path>` | `POST /api/v2/files/write` with `"index": true`, `POST /api/v2/search/refresh?path=…`, `POST /api/v2/search/index` | A plain write is never indexed; index in the same call or right after, then compare the returned `index_seq` with `/search/stats` `last_index_seq` (see `docs/deployment/search-plugin.md`). |
 | Explain ranking context | `nexus path-context set src/nexus/bricks/search "Hybrid search brick"` | `PUT /api/v2/path-contexts/` | You want path-level descriptions attached to retrieval results. |
 
@@ -1142,26 +1124,12 @@ The parser introspection and direct run-parse commands are also not exposed yet.
 Track build issue #4187 for `nexus parsers list` and
 `nexus parsers run PATH --provider ...` surfaces.
 
-### 5.2 Initialize semantic search
+### 5.2 Configure indexed search
 
-Use keyword-only mode first if you just want index-backed retrieval without
-embedding keys:
-
-```bash
-nexus search init
-```
-
-For semantic or hybrid search, initialize with an embedding provider:
-
-```bash
-nexus search init --provider openai --api-key "$OPENAI_API_KEY"
-```
-
-Voyage is also supported:
-
-```bash
-nexus search init --provider voyage --api-key "$VOYAGE_API_KEY"
-```
+Run the Rust search plugin and point the server at it with
+`NEXUS_SEARCH_PLUGIN_TARGET`. Keyword queries work without an embedding
+provider. For semantic or hybrid queries, configure the plugin's embedding
+provider before indexing; see [Search plugin deployment](../deployment/search-plugin.md).
 
 ### 5.3 Build the index
 
@@ -2457,7 +2425,7 @@ Check:
 
 Check:
 
-- `nexus search init` has been run for semantic search
+- The Rust search plugin is configured and the target files are indexed
 - `NEXUS_SEARCH_DAEMON=true` for long-running server-side search
 - parser keys such as `UNSTRUCTURED_API_KEY` or `LLAMA_CLOUD_API_KEY` if you expect parsed search
 - `ZOEKT_ENABLED=true` only after a Zoekt server is actually running

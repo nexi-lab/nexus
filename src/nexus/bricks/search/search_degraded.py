@@ -1,17 +1,4 @@
-"""Response DTOs + helpers for the "search is degraded" signal path.
-
-The SANDBOX profile wraps the search plugin call in a guarded degrade
-path: when the plugin can't reach any peer (or the response envelope
-otherwise reports zero reachable peers), the server falls back to
-local BM25S and stamps the response with ``semantic_degraded=True`` so
-downstream consumers know they got a lossy answer (Issue #3778).
-
-These types previously lived in ``nexus.bricks.search.federated_search``,
-which was itself misnamed for the Rust-plugin era.  Isolating the
-degrade-guard surface here keeps the semantics explicit: this module
-carries the "search is degraded, degrade-guard fired" DTOs and the
-single helper the guard uses to inspect a response envelope.
-"""
+"""Cross-zone search results, failures, and retrieval diagnostics."""
 
 from dataclasses import dataclass, field
 from typing import Any
@@ -46,24 +33,3 @@ class FederatedSearchResponse:
     # the signal survives empty and fully-filtered responses (and cache hits,
     # since the cached object carries it).
     semantic_degraded: bool = False
-
-
-class FederationUnreachableError(Exception):
-    """Raised (or signaled) when federated search cannot reach any peer.
-
-    Issue #3778: SANDBOX profile treats this as a signal to fall back to
-    local BM25S and stamp results with ``semantic_degraded=True``.
-    """
-
-
-def is_all_peers_failed(response: FederatedSearchResponse) -> bool:
-    """Return True when the response reflects zero reachable peers.
-
-    Equivalent to: zero peers configured, or every configured peer
-    failed to respond.
-
-    Issue #3778.
-    """
-    if not response.zones_searched and not response.zones_failed:
-        return True
-    return bool(not response.results and len(response.zones_failed) >= len(response.zones_searched))

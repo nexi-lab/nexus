@@ -821,10 +821,10 @@ jobs:
           #
           # Still a leak-catcher. driver-s3 and the connectors are megabytes,
           # so the ~0.5 MiB of slack this leaves cannot hide one.
-          # 17.5 MiB — tracks the vfs-side raise for the typed ZoneRuntime
-          # plane (nexus-vfs 89508f5b3: ZoneRuntimeService gRPC receipts,
-          # blake3 idempotency journal, replicated op log).
-          MAX=18350080
+          # 17.75 MiB — tracks the vfs-side cap after the typed ZoneRuntime
+          # plane (89508f5b3) and the declared-mount subtree (one-zone-one-
+          # mount, #361/#368) stacked on the same binary.
+          MAX=18612288
           actual=$(stat -c%s "$BIN")
           echo "nexusd-cluster size: $actual bytes (max: $MAX)"
           if [ "$actual" -gt "$MAX" ]; then

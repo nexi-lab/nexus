@@ -79,13 +79,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --system -i "$(cat /tmp/pip_index)" ".[${NEXUS_PROFILE_EXTRAS}]"
 
 # ---------- Install nexusd-cluster from nexus-vfs (Issue #3125, #4259) ----------
-# The production daemon is `nexusd-cluster` — the `cluster` deployment
-# profile (KERNEL-ARCHITECTURE §7: slim ⊂ cluster ⊂ … ⊂ full).  It lives
-# in nexus-vfs's `rust/profiles/cluster/` and is published at the pin
-# below; the earlier nexus-local assembly (`rust/nexusd`) was retired
-# once the service crates it composed (http-api, federated-search,
-# search-common, rebac) relocated into nexus-vfs itself, so nexus-vfs's
-# own cluster binary is now the sole production build (2026-09-24).
+# Build nexus-vfs's cluster profile with HTTP and ReBAC available.
+# Operators enable enforcement with NEXUS_REBAC_ENABLED=true and the loopback
+# listener with NEXUS_HTTP_ADDR=127.0.0.1:2026.
 #
 # The pin below is the same rev the workspace's Cargo.toml git-deps
 # use and every other Dockerfile carries; the `test.yml` "Kernel pin

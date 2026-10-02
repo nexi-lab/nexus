@@ -22,14 +22,14 @@ class TestRecordStoreURLResolution:
         store.close()
 
     def test_creates_postgresql_engine_from_url(self):
-        """Explicit postgresql:// URL is used as-is."""
+        """Unqualified PostgreSQL URLs select the installed sync driver."""
         from nexus.storage.record_store import SQLAlchemyRecordStore
 
         url = "postgresql://user:pass@localhost/testdb"
         # Will fail to connect but the URL should be stored correctly
         store = SQLAlchemyRecordStore.__new__(SQLAlchemyRecordStore)
         resolved = store._resolve_db_url(url, None)
-        assert resolved == url
+        assert resolved == "postgresql+psycopg2://user:pass@localhost/testdb"
 
     def test_resolves_url_from_env_var_nexus_database_url(self, monkeypatch):
         """NEXUS_DATABASE_URL takes priority over POSTGRES_URL."""
@@ -40,7 +40,7 @@ class TestRecordStoreURLResolution:
 
         store = SQLAlchemyRecordStore.__new__(SQLAlchemyRecordStore)
         resolved = store._resolve_db_url(None, None)
-        assert resolved == "postgresql://env-nexus/db"
+        assert resolved == "postgresql+psycopg2://env-nexus/db"
 
     def test_resolves_url_from_env_var_postgres_url(self, monkeypatch):
         """Fallback to POSTGRES_URL when NEXUS_DATABASE_URL is not set."""
@@ -51,7 +51,7 @@ class TestRecordStoreURLResolution:
 
         store = SQLAlchemyRecordStore.__new__(SQLAlchemyRecordStore)
         resolved = store._resolve_db_url(None, None)
-        assert resolved == "postgresql://env-pg/db"
+        assert resolved == "postgresql+psycopg2://env-pg/db"
 
     def test_db_path_converts_to_sqlite_url(self):
         """db_path='/tmp/test.db' → 'sqlite:////tmp/test.db'."""
@@ -223,7 +223,8 @@ class TestRecordStoreReadReplicaURLNormalization:
         from nexus.core.db_utils import normalize_database_url
 
         assert (
-            normalize_database_url("postgres://replica:5432/db") == "postgresql://replica:5432/db"
+            normalize_database_url("postgres://replica:5432/db")
+            == "postgresql+psycopg2://replica:5432/db"
         )
 
         import nexus.storage.record_store as _rs

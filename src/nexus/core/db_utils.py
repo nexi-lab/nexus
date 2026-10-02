@@ -11,13 +11,15 @@ def normalize_database_url(url: str) -> str: ...
 @overload
 def normalize_database_url(url: None) -> None: ...
 def normalize_database_url(url: str | None) -> str | None:
-    """Normalize the canonical ``postgres://`` scheme to ``postgresql://``.
+    """Normalize PostgreSQL URLs for the project's synchronous SQLAlchemy driver.
 
-    SQLAlchemy dropped the ``postgres://`` dialect alias in 1.4 and only
-    accepts ``postgresql://``, but the canonical scheme is what
+    SQLAlchemy dropped the ``postgres://`` dialect alias in 1.4, but that is what
     ``pg_dump``/``pg_isready`` and most cloud providers (Railway, Render,
     Supabase, Heroku) still emit by default. Operators can rarely rewrite
-    the URL platforms inject for them, so we normalize at ingest.
+    the URL platforms inject for them, so we normalize at ingest. Select the
+    installed psycopg2 driver explicitly: SQLAlchemy 2.1 defaults unqualified
+    PostgreSQL URLs to psycopg (v3), which Nexus does not install. Explicit
+    driver choices and all connection parameters are preserved.
 
     Issue #4238: ``None`` and empty strings pass through unchanged so
     callers can pipe ``os.getenv(...)`` directly without a guard.
@@ -25,9 +27,9 @@ def normalize_database_url(url: str | None) -> str | None:
     Examples::
 
         >>> normalize_database_url("postgres://host/db")
-        'postgresql://host/db'
+        'postgresql+psycopg2://host/db'
         >>> normalize_database_url("postgresql://host/db")
-        'postgresql://host/db'
+        'postgresql+psycopg2://host/db'
         >>> normalize_database_url("sqlite:///x.db")
         'sqlite:///x.db'
         >>> normalize_database_url(None) is None
@@ -35,8 +37,9 @@ def normalize_database_url(url: str | None) -> str | None:
     """
     if not url:
         return url
-    if url.startswith("postgres://"):
-        return "postgresql://" + url[len("postgres://") :]
+    scheme, separator, rest = url.partition("://")
+    if separator and scheme in ("postgres", "postgresql"):
+        return f"postgresql+psycopg2://{rest}"
     return url
 
 

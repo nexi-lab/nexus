@@ -60,20 +60,14 @@ jobs:
         with:
           context: .
           load: true
-          tags: nexus-server:latest
+          tags: nexus-server:demo-memory-${{ github.sha }}
           build-args: |
             NEXUS_PROFILE_EXTRAS=all,performance,monitoring,docker,event-streaming,sentry,pay
           cache-from: type=gha
           cache-to: type=gha,mode=max,ignore-error=true
 
       - name: Run demo memory regression
+        env:
+          # Test this checkout's image; the stack otherwise pulls GHCR latest.
+          NEXUS_IMAGE_REF: nexus-server:demo-memory-${{ github.sha }}
         run: uv run pytest -m demo_memory tests/integration/test_demo_memory.py -v -s
-
-      - name: Dump container logs on failure
-        if: failure()
-        run: |
-          for c in $(docker ps -a --format '{{.Names}}' | grep '^nexus-demo-mem-'); do
-            echo "=== $c ==="
-            docker logs --tail 200 "$c" || true
-          done
-          docker ps -a | grep '^nexus-demo-mem-' || true

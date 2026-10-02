@@ -58,31 +58,25 @@ def test_demo_idle_rss_under_limit():
     project = f"{PROJECT_PREFIX}-{uuid.uuid4().hex[:8]}"
     container = f"{project}-{SERVICE}-1"
     env = os.environ.copy()
+    # Share the same project and profiles across startup, diagnostics and cleanup.
+    compose = [
+        "docker",
+        "compose",
+        "-p",
+        project,
+        "-f",
+        str(DEMO_COMPOSE),
+        "--profile",
+        "core",
+        "--profile",
+        "cache",
+        "--profile",
+        "search",
+    ]
 
     try:
         subprocess.check_call(
-            [
-                "docker",
-                "compose",
-                "-p",
-                project,
-                "-f",
-                str(DEMO_COMPOSE),
-                # #4005 review: nexus-stack.yml gates services behind compose
-                # profiles (core/cache/search/...). Without --profile flags
-                # ``up -d`` only starts services with no profile attribute,
-                # which excludes ``nexus`` itself — readiness poll then hangs
-                # until READINESS_TIMEOUT and the test reports a misleading
-                # "did not become ready" error instead of testing memory.
-                "--profile",
-                "core",
-                "--profile",
-                "cache",
-                "--profile",
-                "search",
-                "up",
-                "-d",
-            ],
+            [*compose, "up", "-d"],
             env=env,
             cwd=str(REPO_ROOT),
         )
@@ -149,26 +143,20 @@ def test_demo_idle_rss_under_limit():
         assert metrics["VmData_kB"] < VMDATA_LIMIT_KB, (
             f"VmData={metrics['VmData_kB']} kB exceeds {VMDATA_LIMIT_KB} kB" + _diag()
         )
+        print(f"Demo idle memory: {metrics}")
+    except Exception:
+        # Capture startup failures before `down -v` removes their containers.
+        # A later workflow step cannot recover those logs after cleanup.
+        subprocess.run(
+            [*compose, "logs", "--no-color", "--tail", "200"],
+            env=env,
+            cwd=str(REPO_ROOT),
+            check=False,
+        )
+        raise
     finally:
         subprocess.call(
-            [
-                "docker",
-                "compose",
-                "-p",
-                project,
-                "-f",
-                str(DEMO_COMPOSE),
-                # Match the profile set used at ``up`` so ``down -v`` can see
-                # and tear down every container/volume the test created.
-                "--profile",
-                "core",
-                "--profile",
-                "cache",
-                "--profile",
-                "search",
-                "down",
-                "-v",
-            ],
+            [*compose, "down", "-v"],
             env=env,
             cwd=str(REPO_ROOT),
         )

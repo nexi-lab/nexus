@@ -19,38 +19,22 @@ members = [
     # syscalls via the plugin-abi KernelHandle.  Loaded by
     # nexusd-cluster via --plugin-dir alongside nexus-vault.
     "rust/services/fuse-plugin",
-    # nexus-search-plugin — cdylib service plugin that hosts
-    # `nexus.search.v1.SearchService` (recursive glob + regex grep
-    # over the kernel VFS) via the Phase P plugin-as-gRPC-service
-    # path.  Rust replacement for the Python
-    # `nexus.bricks.search.search_service.SearchService`; sequential
-    # walk over `sys_readdir` + `sys_read` in v1, trigram / streaming
-    # / adaptive-strategy variants land in v2.
-    "rust/services/search-plugin",
-    # nexus-http-api — PoC axum HTTP router for the pure-Rust
-    # nexus-server replacement epic (#4674 R10).  v0 ships only
-    # `GET /v2/status` so the axum + JSON + test-harness pattern
-    # is proven before the search/documents/auth routes land.
-    "rust/services/http-api",
-    # nexus-search-common — reusable search primitives (Hit type,
-    # RRF fusion, federated response envelope, degrade-guard).
-    # Consumed by http-api and the upcoming federated-dispatcher
-    # crate — a pure-algorithm sibling keeps both callers thin.
-    "rust/services/search-common",
-    # nexus-rebac — Rust replacement for `src/nexus/bricks/rebac/`
-    # (Zanzibar-shaped relationship-based access control).  Part
-    # of R10 epic #4674.  PR-1 ships the ReBACTupleStore HAL trait
-    # + noop + in-memory impls; the raft-backed impl, graph cache,
-    # enforcer, HTTP router, and kernel `PermissionProvider` impl
-    # land in follow-up PRs.
-    "rust/services/rebac",
-    # nexusd — the nexus cluster-profile daemon assembly binary
-    # (`nexusd-cluster`). Composes the nexus-vfs cluster boot
-    # (`nexus_cluster::run_with_services`) with the managed_agent control
-    # plane via the ServiceRegistry bring-up seam. This IS the production
-    # `cluster` profile (KERNEL-ARCHITECTURE §7) plus the agent control
-    # plane; the full/S3 superset is the opt-in `driver-s3` feature.
-    "rust/nexusd",
+    # ── Formerly here, relocated to nexus-vfs ─────────────────────
+    #
+    # `nexus-http-api` / `nexus-federated-search` / `nexus-search-common`
+    # / `nexus-rebac` moved into nexus-vfs at commit 2467f358
+    # (nexus-vfs#319 / nexus#4825, 2026-09-24), then
+    # `nexus-search-plugin` + `rust/services/proto/nexus/search/`
+    # followed at commit eb77b66b (nexus-vfs#321, 2026-09-25).  All
+    # five crates SSOT from the same repo as the daemon binary
+    # (`nexusd-cluster` under `nexus-vfs/rust/profiles/cluster/`) that
+    # would host them, and the nexus-repo assembly binary that used
+    # to link the first four (`rust/nexusd/`) is gone too — one
+    # production build path, one binary name, one repo.
+    #
+    # `rust/services/proto/` still hosts the vault + secrets protos
+    # (used by `rust/services/vault`, which stays here); only the
+    # search proto tree relocated.
 ]
 # nexus-fuse excluded: standalone FUSE daemon with different dependency versions
 # from the workspace.  Distinct from nexus-fuse-plugin (the new
@@ -62,6 +46,8 @@ exclude = ["nexus-fuse"]
 [workspace.dependencies]
 # Kernel-tier crates from nexus-vfs (external git dependency).
 # SSOT: https://github.com/nexi-lab/nexus-vfs
+# PR #370: plugin gRPC preserves request metadata, verified peer provenance,
+# and status codes/messages. Vault exports the required gRPC dispatch symbol.
 #
 # Pinned at merged nexus-vfs main after PR #139 (dlc: idempotent DT_MOUNT
 # install — fixes the 2-voter cold-start `not leader` deadlock via
@@ -241,30 +227,35 @@ exclude = ["nexus-fuse"]
 #
 # Bump alongside the rest of nexus-vfs updates when a downstream
 # change needs newer kernel bits.
-contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "62a9bcd47d422145ee5c331a84e67c0975a1e995" }
-lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "62a9bcd47d422145ee5c331a84e67c0975a1e995" }
-transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "62a9bcd47d422145ee5c331a84e67c0975a1e995" }
-backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "62a9bcd47d422145ee5c331a84e67c0975a1e995", default-features = false }
-kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "62a9bcd47d422145ee5c331a84e67c0975a1e995", default-features = false }
-raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "62a9bcd47d422145ee5c331a84e67c0975a1e995", default-features = false, features = ["grpc"] }
-nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "62a9bcd47d422145ee5c331a84e67c0975a1e995" }
-# The cluster daemon library entry (`nexus_cluster::run_with_services`),
-# consumed by the nexus-side assembly binary (`rust/nexusd`) that composes
-# the kernel/federation boot with the nexus service set via the
-# ServiceRegistry bring-up seam.
-nexus-cluster = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "62a9bcd47d422145ee5c331a84e67c0975a1e995" }
+contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "f7ff51c8121452003d042acf3b17151b91407200" }
+lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "f7ff51c8121452003d042acf3b17151b91407200" }
+transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "f7ff51c8121452003d042acf3b17151b91407200" }
+backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "f7ff51c8121452003d042acf3b17151b91407200", default-features = false }
+kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "f7ff51c8121452003d042acf3b17151b91407200", default-features = false }
+raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "f7ff51c8121452003d042acf3b17151b91407200", default-features = false, features = ["grpc"] }
+nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "f7ff51c8121452003d042acf3b17151b91407200" }
+# Includes Search RPC authentication and live result permissions (nexus-vfs#375).
+# Includes production ReBAC and HTTP Search credential forwarding (nexus-vfs#376).
+# The cluster daemon library entry (`nexus_cluster::run_with_services`).
+# The `nexusd-cluster` binary that composes it now lives in nexus-vfs
+# (`rust/profiles/cluster/`); this workspace only pulls the library
+# through this dep to link against types (e.g. plugin ABI, service
+# decls) at compile time — the daemon itself is installed via
+# `cargo install --git nexus-vfs nexus-cluster --bin nexusd-cluster`
+# in the Dockerfiles.
+nexus-cluster = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "f7ff51c8121452003d042acf3b17151b91407200" }
 # a2a messaging substrate. `default-features = false` leaves the
 # `install` feature (which pulls raft to arm the stream-wakeup observer)
 # OFF, so nexus-side consumers link only the stamp hook and stay
 # raft-free — they reach raft through kernel.sys_* (§6.1). The substrate
 # is armed in production at cluster boot in nexus-vfs, not here.
-a2a = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "62a9bcd47d422145ee5c331a84e67c0975a1e995", default-features = false }
+a2a = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "f7ff51c8121452003d042acf3b17151b91407200", default-features = false }
 # managed-agent control plane + the shared subprocess host — RELOCATED into
 # nexus-vfs (kernel-tier) so the production nexusd-cluster carries the agent
 # control plane. `subprocess-host` enables the raw ACP-subprocess spawner (the
 # nexus-side acp path + managed-agent both use HostedSubprocess).
-managed-agent = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "62a9bcd47d422145ee5c331a84e67c0975a1e995", default-features = false }
-subprocess = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "62a9bcd47d422145ee5c331a84e67c0975a1e995" }
+managed-agent = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "f7ff51c8121452003d042acf3b17151b91407200", default-features = false }
+subprocess = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "f7ff51c8121452003d042acf3b17151b91407200" }
 # Local service crate (nexus-owned).
 services = { path = "rust/services" }
 serde = { version = "1.0", features = ["derive"] }

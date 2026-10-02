@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Session mailbox protocol</title>
+<style>body{max-width:960px;margin:3rem auto;padding:0 1rem;font:16px/1.55 system-ui}pre{overflow:auto;background:#f3f4f6;padding:1rem}code{font-family:ui-monospace,monospace}table{border-collapse:collapse}td,th{padding:.5rem;border:1px solid #ccc;text-align:left}</style>
+<h1>One session driver: acp-mailbox/1</h1>
+<p>Both managed subprocesses and co-hosted engines expose the same conversation transport. ACP supplies the complete turn vocabulary; the A2A envelope supplies authenticated addressing and a channel generation. Clients use the shared <code>NexusSessionTransport</code> from the Nexus VFS Node SDK. Subprocess stdio belongs to the host adapter. There are no public session fd streams and no separate text-only co-host turn loop.</p>
+<h2>Identities and startup</h2>
+<table><tr><th>Value</th><th>Lifetime and purpose</th></tr>
+<tr><td>Agent name</td><td>Persistent mailbox identity; conversations are addressed by participant names.</td></tr>
+<tr><td>Durable session ID</td><td>Transcript identity across runs. ACP returns it from session/new. Co-host start also returns durable_session_id; resume_session_id selects it on the next start.</td></tr>
+<tr><td>Process ID</td><td>One live run. The legacy managed_agent v1 field named session_id contains this ID. It is used only for get/cancel control calls, never to derive the conversation address.</td></tr>
+<tr><td>channel_id</td><td>One attachment generation. A new start allocates a new generation even when restoring the same durable session.</td></tr></table>
+<p><code>managed_agent.start_session_v1</code> accepts <code>{agent_id, model?, repos?, resume_session_id?, spawn_spec?}</code>. A spawn specification selects the subprocess host; omitting it selects the installed in-process provider. Both return <code>session_endpoint</code>:</p>
+<pre>{
+  "protocol": "acp-mailbox/1",
+  "channel_id": "fresh-generation",
+  "agent": "worker",
+  "controller": "authenticated-caller",
+  "transcript": "/conversations/&lt;pair-id&gt;/transcript"
+}</pre>
+<p>The caller uses the supplied address. It must continue using the same authenticated actor as the start call. The server chooses controller from the delegated agent identity, or the authenticated user identity when no agent delegation exists. The write hook stamps from; body-authored identities are not authority. Auth-off deployments offer no identity guarantee. A provider that cannot return this endpoint is rejected. Clients reject old daemons and reap the just-created process instead of switching transports.</p>
+<p>Open the mailbox, send ACP initialize (protocolVersion: 1), then session/new or session/load. In co-host mode the latter must name the session prepared by start_session. Peer messages remain queued until the controller opens the session. session/list lists live sessions. In-place co-host reset, cross-session load and fork are refused: a different durable identity needs its own start call and writer lease. sessionFork is advertised as false for this host.</p>
+<h2>Framing and ordering</h2>
+<p>Each authenticated StreamWrite appends exactly one JSON envelope to the framed conversation transcript. StreamReadAt returns one record and its next record offset. A regular byte file is not a session transport. Both directions share the transcript:</p>
+<pre>{
+  "from": "authenticated-caller", "to": "worker", "kind": "session",
+  "body": "{\"protocol\":\"acp-mailbox/1\",\"channel_id\":\"fresh-generation\",\"sequence\":1,\"type\":\"rpc\",\"message\":{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"initialize\",\"params\":{\"protocolVersion\":1,\"clientCapabilities\":{}}}}"
+}</pre>
+<p>The string body contains a structured object. Its payload is either <code>{type:"rpc", message:&lt;JSON-RPC object&gt;}</code> or <code>{type:"closed", reason:&lt;string&gt;}</code>. RPC IDs retain their JSON type; numeric zero is valid. Numbers must be safe integers (absolute value at most 2^53 - 1). Arbitrary ACP content blocks, tool inputs, results and extension metadata are preserved. The maximum encoded envelope is 4 MiB.</p>
+<p>Each direction starts sequence at 1. A receiver ignores its own writes, other generations and sequences already consumed. A sequence gap, wrong participant, malformed message or unknown protocol closes the channel. Reading can start at offset zero because generation and sequence checks suppress historical frames. The codec and cursor remain alive across transient read failures. A new codec cannot attach to an already-used generation and start sending from sequence 1.</p>
+<h2>Turns, approvals, questions and cancellation</h2>
+<table><tr><th>Operation</th><th>Message and behavior</th></tr>
+<tr><td>Start turn</td><td>Controller requests session/prompt with the durable sessionId and content blocks. One session serializes turns.</td></tr>
+<tr><td>Stream output</td><td>Agent emits session/update for text, reasoning, tool_call and tool_call_update, including failed tools. Updates are drained before the terminal prompt response.</td></tr>
+<tr><td>Approve a tool</td><td>Agent issues session/request_permission with its own request ID, toolCall and advertised options. Controller replies to that ID with outcome selected plus optionId, or outcome cancelled. A missing or failed approver denies execution.</td></tr>
+<tr><td>Ask a question</td><td>Agent issues _scode/ask_user_question; controller replies to the same ID with answers [{id,value,label}]. This does not grant tool permission.</td></tr>
+<tr><td>Cancel turn</td><td>Controller sends session/cancel as a notification. It bypasses the turn lane and wakes pending permission/question waits. The pending prompt ends with stopReason cancelled. The next turn remains usable.</td></tr>
+<tr><td>Close attachment</td><td>A closed frame ends this run; the host cancels pending work and releases its writer lease. managed_agent.cancel_v1 with mode session also terminates the run. Its old mode turn now returns an error directing callers to session/cancel.</td></tr>
+<tr><td>Diagnostics</td><td>The subprocess adapter carries stderr as _nexus/diagnostic notifications with {stream:"stderr",text}. It uses the same channel.</td></tr></table>
+<p>The reader runs independently of the turn worker and of UI approval callbacks. A pending approval must not prevent receiving its answer or cancellation. Co-host reports busy/awaiting_input/ready through the existing agent state stream. Prompt mode explicitly consults the approver for each tool level unless an explicit policy allow rule applies.</p>
+<p>For example, while prompt request "turn-1" is pending, the agent may request permission with ID 0. The controller replies with <code>{jsonrpc:"2.0",id:0,result:{outcome:{outcome:"selected",optionId:"allow-once"}}}</code>. This is the answer to the reverse request, not the answer to "turn-1". Cancellation clears pending UI approval IDs. A late response from a previous generation is ignored before reaching the engine.</p>
+<h2>Ordinary A2A messages</h2>
+<p>Scode normalizes peer text to a prompt in the same turn driver used by session/prompt. It marks the sender and neutralizes privileged prompt markup. The bound controller receives updates, tool approval requests and questions. The sending peer supplies input; it does not acquire authority to approve tools. kind=session is reserved for structured traffic and never becomes model text.</p>
+<p>The peer conversation's durable read position advances after the turn finishes. A prose response is delivered once as kind=auto_reply unless the turn already called send. An auto_reply does not generate another automatic reply. This text compatibility uses the existing conversation receiver and shared turn driver; there is no second ConversationRuntime loop.</p>
+<h2>Failure and recovery</h2>
+<ul><li>Transient read failures retry at the same record cursor with bounded backoff. They do not replay UI events.</li>
+<li>An append failure has an unknown delivery outcome. The transport closes and does not silently resubmit a prompt. Identical encoded frames can be deduplicated within a live generation, but allocating a new sequence is a new message.</li>
+<li>A host restart requires a fresh start call and channel generation. Resume the durable session ID, then load it through ACP. Old prompts and approval replies cannot drive that new run.</li>
+<li>Only a terminal prompt response establishes the observed turn outcome. A connection loss before it may leave persisted tool effects or a partial transcript. Recovery must inspect that transcript; this protocol does not promise exactly-once tool execution across crashes.</li>
+<li>Co-host holds one writer lease per durable session and rejects concurrent starts or a changed agent/owner/zone/repository identity. Close releases the lease after stopping the turn.</li></ul>
+<h2>Implementation and rollout</h2>
+<p>The wire codec, authenticated kernel transport and subprocess adapter live in nexus-vfs. Sudocode engine-acp hosts the shared ACP handlers and peer normalization; engine-host supplies SessionEngine and direct Kernel-backed storage. nexusd-cohost composes these with its websocket feature disabled. The kernel never depends on sudocode.</p>
+<h3>Review branches and delivery status</h3>
+<p>The implementation is committed on <code>codex/session-mailbox</code> in all five repositories. It has been verified with locally built dependencies. It has not been pushed, published or deployed. The consumer pins still need a coordinated release update; these commits are not independently releasable against the old SDK and daemon.</p>
+<table><tr><th>Repository</th><th>Review commit</th></tr>
+<tr><td>nexus-vfs</td><td>a1bee9ff7</td></tr>
+<tr><td>sudocode</td><td>ad78c1fe, based on merged prerequisite #849 (17533e02)</td></tr>
+<tr><td>moss</td><td>fb106db</td></tr>
+<tr><td>sudowork</td><td>1b51f5c4</td></tr>
+<tr><td>nexus</td><td>The commit containing this document, the preparation script and gRPC integration test.</td></tr></table>
+<p>The two owned Nexus worktrees remain. Temporary consumer worktrees can be recreated from their retained branches:</p>
+<pre>git -C ../sudocode worktree add ../sudocode-codex-session-mailbox codex/session-mailbox
+git -C ../moss worktree add ../moss-codex codex/session-mailbox
+git -C ../sudowork worktree add ../sudowork-codex-session-mailbox codex/session-mailbox</pre>
+<h3>Local verification before release</h3>
+<p>The committed consumer pins still name the currently published dependencies. Use the preparation script to verify this coordinated change before publishing new artifacts. It builds SDK 0.5.0, installs its tarball with Bun --no-save, and writes an external Cargo configuration covering all eight Nexus workspace dependencies. It leaves consumer manifests and their published lockfiles unchanged.</p>
+<pre>python scripts/prepare_session_mailbox_workspace.py \
+  --nexus-vfs ../nexus-vfs-codex \
+  --sudocode ../sudocode-codex-session-mailbox \
+  --moss ../moss-codex --sudowork ../sudowork-codex-session-mailbox \
+  --output ../.codex-targets/session-mailbox-package
+
+# From the sudocode rust/ directory (use the generated absolute config path):
+cargo test -p engine-acp -p engine-host --features engine-acp/mailbox \
+  --config /path/to/session-mailbox-package/nexus-vfs-patches.toml
+cargo check -p nexusd-cohost --features daemon,driver-ai \
+  --config /path/to/session-mailbox-package/nexus-vfs-patches.toml</pre>
+<p>The output contains the SDK tarball, its SHA-256, source commit IDs, dirty-tree indicators and Cargo patch file. Cargo may regenerate its lock for the local patch graph; that generated lock must not be committed as the published dependency graph. Install normal repository dependencies before running the preparation script.</p>
+<h3>Release order</h3>
+<p>Release nexus-vfs and Node SDK 0.5.0 first; pin every Nexus workspace crate in sudocode to the same revision; then build nexusd-cohost and update moss and sudowork together. Keep cloud co-host disabled until that compatible set is deployed. Remove fd clients and the Kubernetes direct-spawn bypass in the client update. Protocol mismatch is a visible setup failure.</p>
+<p>Regression coverage includes real subprocess framing; co-host streaming, tool approval, denial, cancellation and next-turn reuse; peer approval routing; durable resume under a new pid; stale frames and duplicate delivery; client approval ID zero; transient reads; and unknown append outcomes. The Python integration harness exercises the same frames through the daemon's gRPC surface.</p>
+<h2>Verification record</h2>
+<p>Validation ran on Windows with the real locally packed SDK, all eight Nexus workspace crates patched to the owned nexus-vfs checkout, and local mock model responses. No funded model API was needed.</p>
+<table><tr><th>Scope</th><th>Result</th></tr>
+<tr><td>nexus-vfs a2a and managed-agent, with subprocess-host</td><td>102 passed. Includes a real subprocess, approval ID zero, cancel and reuse, duplicate suppression, EOF cleanup and absence of public fd streams.</td></tr>
+<tr><td>Node SDK</td><td>25 passed; 2 environment-gated tests skipped. The production SDK also passed a real daemon mailbox smoke test.</td></tr>
+<tr><td>engine-acp and engine-host, with mailbox</td><td>47 passed; 2 funded/live tests ignored. Approval denial, questions, cancellation, peer routing, writer leases and durable resume covered. The final focused co-host run passed all 8 tests.</td></tr>
+<tr><td>Permission mode regression</td><td>11 passed. Prompt mode no longer inherits full access from enum ordering.</td></tr>
+<tr><td>Authenticated co-host end to end</td><td>Passed with TLS and authentication enabled: model mount, controller approval, peer reply, subagent VFS identity and durable resume under a different pid.</td></tr>
+<tr><td>Python gRPC integration</td><td>Passed against the real daemon with the subprocess host. Ruff and format checks passed on the four edited Python files.</td></tr>
+<tr><td>Moss</td><td>10 focused tests and edited-file ESLint passed. The typecheck ratchet passed at the existing baseline: 104 server errors and 1,337 errors elsewhere. This is not a clean full TypeScript check.</td></tr>
+<tr><td>Sudowork</td><td>31 focused tests, full TypeScript check and edited-file ESLint passed. Full suite: 2,800 passed, 16 failed, 31 skipped. Fifteen failures were reproduced on the base branch; one ontology UI test timed out in the full run. Its complete 53-test file passed separately on both branches. The full suite is not green.</td></tr></table>
+<p>Local logs and the SDK artifact are retained under <code>../.codex-targets/</code>. Reproduction requires restoring the temporary worktrees and preparing the matching dependencies above. Keep cloud co-host disabled until the published dependency pins and deployed artifacts all match this protocol.</p>
+</html>

@@ -96,7 +96,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # the Python runtime spawns it unchanged.
 ENV CARGO_NET_RETRY=10 \
     CARGO_HTTP_TIMEOUT=120
-ARG NEXUS_VFS_REV=74243e39fff658f562b553855edbed076b1f8530
+ARG NEXUS_VFS_REV=8c59f01a19d6ea636bfdc9bdc0356bae8c727a75
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
     cargo install --locked \

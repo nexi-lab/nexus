@@ -467,7 +467,8 @@ class NexusConfig(BaseModel):
         providers (Railway, Render, Supabase, Heroku) emit ``postgres://``
         by default and operators rarely control the URL platforms inject
         for them. Normalize at config-load so every downstream consumer
-        (record store, alembic, init script) sees ``postgresql://``.
+        (record store, alembic, init script) uses the installed psycopg2 driver
+        for unqualified PostgreSQL URLs.
         """
         from nexus.core.db_utils import normalize_database_url
 

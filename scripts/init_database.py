@@ -104,12 +104,10 @@ def main() -> None:
         print("ERROR: NEXUS_DATABASE_URL not set", file=sys.stderr)
         sys.exit(1)
 
-    # Issue #4238: Normalize the canonical ``postgres://`` scheme that
-    # cloud providers (Railway, Render, Supabase, Heroku) emit by default.
-    # SQLAlchemy only accepts ``postgresql://`` since 1.4.
+    # Accept cloud-provider schemes and select the installed SQLAlchemy driver.
     normalized = normalize_database_url(database_url)
     if normalized != database_url:
-        print("ℹ️  Normalized NEXUS_DATABASE_URL scheme: postgres:// → postgresql://")
+        print("ℹ️  Normalized NEXUS_DATABASE_URL to the installed PostgreSQL driver")
         database_url = normalized
 
     try:

@@ -81,7 +81,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # ---------- Install nexusd-cluster from nexus-vfs (Issue #3125, #4259) ----------
 # Build nexus-vfs's cluster profile with HTTP and ReBAC available.
 # Operators enable enforcement with NEXUS_REBAC_ENABLED=true and the loopback
-# listener with NEXUS_HTTP_ADDR=127.0.0.1:2026.
+# listener with NEXUS_HTTP_ADDR=127.0.0.1:2027. Python HTTP uses NEXUS_PORT=2026;
+# give the Rust listener its own port.
 #
 # The pin below is the same rev the workspace's Cargo.toml git-deps
 # use and every other Dockerfile carries; the `test.yml` "Kernel pin

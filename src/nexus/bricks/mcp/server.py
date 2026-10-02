@@ -7,7 +7,6 @@ Nexus functionality to AI agents and tools using the fastmcp framework.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import contextvars
 import inspect
 import json
@@ -21,6 +20,7 @@ from uuid import UUID
 
 from cachetools import LRUCache
 from fastmcp import Context, FastMCP
+from fastmcp.server.dependencies import get_http_request
 
 from nexus.bricks.mcp.auth_bridge import op_context_to_auth_dict as _op_context_to_auth_dict
 from nexus.bricks.mcp.auth_bridge import (
@@ -30,17 +30,14 @@ from nexus.bricks.mcp.formatters import format_response
 from nexus.bricks.mcp.tool_utils import handle_tool_errors, tool_error
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.lib.pagination import build_paginated_list_response
+from nexus.lib.request_credentials import api_key_from_authorization
+from nexus.lib.request_credentials import request_api_key as _request_api_key
 
 if TYPE_CHECKING:
     from nexus.bricks.approvals.policy_gate import PolicyGate
     from nexus.core.nexus_fs import NexusFS
 
 logger = logging.getLogger(__name__)
-
-# Context variable for per-request API key (set by infrastructure, not AI)
-_request_api_key: contextvars.ContextVar[str | None] = contextvars.ContextVar(
-    "request_api_key", default=None
-)
 
 
 def set_request_api_key(api_key: str) -> contextvars.Token[str | None]:
@@ -223,7 +220,7 @@ async def create_mcp_server(
         """Get Nexus instance for current request using context API key.
 
         This function checks if infrastructure has set a per-request API key
-        in the context variable or FastMCP's context state. If so, it creates/retrieves
+        in the request context variable. If so, it creates/retrieves
         a connection with that API key. Otherwise, it returns the default connection.
 
         Args:
@@ -365,46 +362,27 @@ async def create_mcp_server(
     from fastmcp.server.middleware import Middleware, MiddlewareContext
 
     class APIKeyExtractionMiddleware(Middleware):
-        """Extract API key from HTTP headers and store in FastMCP context state."""
+        """Bind the caller credential for one MCP message."""
 
         async def on_message(self, context: MiddlewareContext, call_next: Any) -> Any:
-            api_key = None
+            api_key = _request_api_key.get()
+            try:
+                http_request = get_http_request()
+            except RuntimeError:
+                pass  # In-process and stdio transports have no HTTP request.
+            else:
+                authorization = http_request.headers.getlist("Authorization")
+                api_key = http_request.headers.get("X-Nexus-API-Key") or api_key_from_authorization(
+                    authorization[0] if authorization else None
+                )
+                if len(authorization) > 1:
+                    api_key = ""
 
-            # Try to get API key from context variable (set by Starlette middleware)
-            # This bridges Starlette middleware (HTTP level) with FastMCP middleware (MCP message level)
-            with contextlib.suppress(LookupError):
-                api_key = _request_api_key.get()
-
-            # Also try to get from FastMCP context if available
-            # FastMCP's context might have access to HTTP request
-            if not api_key and context.fastmcp_context:
-                try:
-                    # Try to get HTTP request from FastMCP context
-                    # This might be available depending on FastMCP version
-                    if hasattr(context.fastmcp_context, "get_http_request"):
-                        http_request = context.fastmcp_context.get_http_request()
-                        if http_request:
-                            api_key = http_request.headers.get(
-                                "X-Nexus-API-Key"
-                            ) or http_request.headers.get("Authorization", "").replace(
-                                "Bearer ", ""
-                            )
-                except Exception as e:
-                    logger.debug("Failed to extract API key from request: %s", e)
-
-            # Store in FastMCP's context state so tools can access it via Context.get_state()
-            if api_key and context.fastmcp_context:
-                try:
-                    _result = cast(Any, context.fastmcp_context.set_state)("api_key", api_key)
-                    if inspect.isawaitable(_result):
-                        await _result
-                    # Also set in context variable (sync path for tool functions)
-                    _request_api_key.set(api_key)
-                except Exception:
-                    # If set_state fails, continue anyway
-                    pass
-
-            return await call_next(context)
+            scope_token = _request_api_key.set(api_key)
+            try:
+                return await call_next(context)
+            finally:
+                _request_api_key.reset(scope_token)
 
     # Add the middleware to FastMCP
     mcp.add_middleware(APIKeyExtractionMiddleware())
@@ -2084,16 +2062,15 @@ async def _async_main() -> None:
                 """Extract API key from HTTP headers and set in context."""
 
                 async def dispatch(self, request: Any, call_next: Any) -> Any:
-                    api_key = request.headers.get("X-Nexus-API-Key") or request.headers.get(
-                        "Authorization", ""
-                    ).replace("Bearer ", "")
-                    token = set_request_api_key(api_key) if api_key else None
+                    api_key = request.headers.get("X-Nexus-API-Key") or api_key_from_authorization(
+                        request.headers.get("Authorization")
+                    )
+                    token = _request_api_key.set(api_key)
                     try:
                         response = await call_next(request)
                         return response
                     finally:
-                        if token:
-                            reset_request_api_key(token)
+                        reset_request_api_key(token)
 
             if hasattr(mcp, "http_app"):
                 app = mcp.http_app()

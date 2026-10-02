@@ -159,9 +159,9 @@ def resolve_mcp_operation_context(
     3. Remote-connection whoami cache (``subject_id`` etc.).
     4. ``None`` — let SearchService use its own default.
     """
-    from nexus.bricks.mcp.server import _request_api_key
     from nexus.contracts.constants import ROOT_ZONE_ID
     from nexus.contracts.types import OperationContext
+    from nexus.lib.request_credentials import request_api_key
 
     # (0) Per-request API key — most authoritative when MCP is behind
     # HTTP middleware that sets _request_api_key (#3731).
@@ -173,7 +173,7 @@ def resolve_mcp_operation_context(
     # _get_nexus_instance already created a remote NexusFS scoped to
     # that key — its _init_cred IS the per-request identity (not
     # ambient). So we allow steps 1-3 to proceed.
-    request_key = _request_api_key.get()
+    request_key = request_api_key.get()
     if request_key and auth_provider is None:
         # Per-request key set but no auth_provider to verify it.
         # Fall through to NexusFS-based identity (steps 1-3).

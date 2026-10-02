@@ -617,6 +617,10 @@ def create_app(
     # Only compress responses > 1000 bytes, compression level 6 (good balance)
     app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=6)
 
+    from nexus.server.middleware.request_credentials import RequestCredentialsMiddleware
+
+    app.add_middleware(RequestCredentialsMiddleware)
+
     # Initialize rate limiter (Issue #780)
     # Rate limiting is DISABLED by default for better performance
     # Set NEXUS_RATE_LIMIT_ENABLED=true to enable rate limiting

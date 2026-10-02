@@ -20,6 +20,7 @@ import grpc
 from nexus.bricks.search.results import BaseSearchResult
 from nexus.contracts.search_types import BatchQueryFailure
 from nexus.grpc.search.v1 import search_pb2, search_pb2_grpc
+from nexus.lib.request_credentials import request_api_key
 
 if TYPE_CHECKING:
     from nexus.contracts.search_types import SearchRequest
@@ -76,6 +77,21 @@ def _read_env_file(env_name: str) -> bytes | None:
         return f.read()
 
 
+class _CallerCredentialsInterceptor(grpc.aio.UnaryUnaryClientInterceptor):
+    """Attach the current caller to every RPC on the shared search channel."""
+
+    async def intercept_unary_unary(
+        self, continuation: Any, client_call_details: Any, request: Any
+    ) -> Any:
+        credential = request_api_key.get()
+        if credential is not None:
+            metadata = tuple(client_call_details.metadata or ()) + (
+                ("authorization", f"Bearer {credential}"),
+            )
+            client_call_details = client_call_details._replace(metadata=metadata)
+        return await continuation(client_call_details, request)
+
+
 def _build_channel(target: str) -> "grpc.aio.Channel":
     """Construct the plugin channel per the transport-security env contract.
 
@@ -95,7 +111,9 @@ def _build_channel(target: str) -> "grpc.aio.Channel":
             private_key=key,
             certificate_chain=cert,
         )
-        return grpc.aio.secure_channel(target, creds)
+        return grpc.aio.secure_channel(
+            target, creds, interceptors=[_CallerCredentialsInterceptor()]
+        )
     if not _target_is_loopback(target) and os.environ.get(_ALLOW_INSECURE_ENV, "").lower() not in (
         "true",
         "1",
@@ -116,7 +134,7 @@ def _build_channel(target: str) -> "grpc.aio.Channel":
             _ALLOW_INSECURE_ENV,
             _TLS_ENV,
         )
-    return grpc.aio.insecure_channel(target)
+    return grpc.aio.insecure_channel(target, interceptors=[_CallerCredentialsInterceptor()])
 
 
 # Per-document pooling parity with the deleted Python daemon.  Its

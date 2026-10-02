@@ -841,6 +841,46 @@ jobs:
           docker cp scripts/test_search_service_plugin.py nexus-e2e:/tmp/test_search_service_plugin.py
           docker exec nexus-e2e python /tmp/test_search_service_plugin.py
 
+      - name: Verify caller credentials with production ReBAC and node mTLS
+        run: |
+          docker run -d --name nexus-search-credentials-node --network host \
+            -e NEXUS_BIND_ADDR=127.0.0.1:2326 \
+            -e NEXUS_ADVERTISE_ADDR=127.0.0.1:2326 \
+            -e NEXUS_HTTP_ADDR=127.0.0.1:2327 \
+            -e NEXUS_REBAC_ENABLED=true \
+            -e NEXUS_API_KEY_SECRET=search-credentials-ci-only \
+            -e NEXUS_CLUSTER_INIT=sharedzone \
+            -e NEXUS_CLUSTER_INIT_MOUNTS=/docs=sharedzone \
+            -e NEXUS_SEARCH_MODEL_DIR=/tmp/empty-models \
+            -e NEXUS_SEARCH_QUERY_EXPANSION=false \
+            -e NEXUS_SEARCH_CONTEXTUAL_CHUNKING=false \
+            -e NEXUS_SEARCH_EMBED_API_URL= \
+            "${{ env.REGISTRY }}/${{ env.CLUSTER_IMAGE_NAME }}:${{ needs.push-cluster-manifest.outputs.version }}" \
+            --data-dir /app/data --plugin-dir /plugins
+          deadline=$((SECONDS + 120))
+          until docker logs nexus-search-credentials-node 2>&1 | grep -q 'VFS data plane ready'; do
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              docker logs --tail=100 nexus-search-credentials-node
+              exit 1
+            fi
+            sleep 1
+          done
+          docker exec nexus-search-credentials-node sh -c \
+            'nexusd-cluster auth mint --subject-type user --subject-id operator --admin > /tmp/search-admin-key'
+          mkdir -p /tmp/search-credentials
+          docker cp nexus-search-credentials-node:/app/data/tls /tmp/search-credentials/
+          docker cp nexus-search-credentials-node:/tmp/search-admin-key /tmp/search-credentials/
+          docker cp /tmp/search-credentials nexus-e2e:/tmp/search-credentials
+          docker cp scripts/test_search_credentials_plugin.py nexus-e2e:/tmp/test_search_credentials_plugin.py
+          docker exec \
+            -e NEXUS_SEARCH_PLUGIN_TARGET=127.0.0.1:2326 \
+            -e NEXUS_SEARCH_PLUGIN_TLS=true \
+            -e NEXUS_SEARCH_PLUGIN_TLS_CA=/tmp/search-credentials/tls/ca.pem \
+            -e NEXUS_SEARCH_PLUGIN_TLS_CERT=/tmp/search-credentials/tls/node.pem \
+            -e NEXUS_SEARCH_PLUGIN_TLS_KEY=/tmp/search-credentials/tls/node-key.pem \
+            -e NEXUS_SEARCH_TEST_ADMIN_KEY=/tmp/search-credentials/search-admin-key \
+            nexus-e2e python /tmp/test_search_credentials_plugin.py
+
       - name: Run build perf e2e
         if: steps.vfs_grpc.outputs.available == 'true'
         run: |
@@ -866,12 +906,14 @@ jobs:
         run: |
           echo "Search-plugin sidecar (published image) last 200 log lines:"
           docker logs --tail=200 nexus-search-plugin-node 2>&1 || true
+          docker logs --tail=200 nexus-search-credentials-node 2>&1 || true
 
       - name: Cleanup
         if: always()
         run: |
           docker rm -f nexus-e2e 2>/dev/null || true
           docker rm -f nexus-search-plugin-node 2>/dev/null || true
+          docker rm -f nexus-search-credentials-node 2>/dev/null || true
           docker volume rm -f nexus-shared-workspace 2>/dev/null || true
 
   # ---------------------------------------------------------------------------

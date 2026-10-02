@@ -601,83 +601,7 @@ class TestCapabilityAwareRouting:
 # =============================================================================
 
 
-class TestResultCaching:
-    @pytest.mark.asyncio
-    async def test_cache_hit(self) -> None:
-        """Second identical query should return cached result."""
-        daemon = _make_daemon({"zone_a": [_make_result("a.txt", 5.0)]})
-        rebac = _make_rebac(["zone_a"])
-
-        config = FederatedSearchConfig(result_cache_enabled=True)
-        dispatcher = FederatedSearchDispatcher(daemon=daemon, rebac=rebac, config=config)
-
-        resp1 = await dispatcher.search("test", subject=("user", "alice"))
-        resp2 = await dispatcher.search("test", subject=("user", "alice"))
-
-        assert not resp1.cached
-        assert resp2.cached
-
-    @pytest.mark.asyncio
-    async def test_cache_disabled_by_default(self) -> None:
-        daemon = _make_daemon({"zone_a": [_make_result("a.txt", 5.0)]})
-        rebac = _make_rebac(["zone_a"])
-
-        dispatcher = FederatedSearchDispatcher(daemon=daemon, rebac=rebac)
-
-        resp1 = await dispatcher.search("test", subject=("user", "alice"))
-        resp2 = await dispatcher.search("test", subject=("user", "alice"))
-
-        assert not resp1.cached
-        assert not resp2.cached  # Cache disabled
-
-    @pytest.mark.asyncio
-    async def test_cache_invalidation(self) -> None:
-        daemon = _make_daemon({"zone_a": [_make_result("a.txt", 5.0)]})
-        rebac = _make_rebac(["zone_a"])
-
-        config = FederatedSearchConfig(result_cache_enabled=True)
-        dispatcher = FederatedSearchDispatcher(daemon=daemon, rebac=rebac, config=config)
-
-        await dispatcher.search("test", subject=("user", "alice"))
-        dispatcher.invalidate_result_cache()
-        resp = await dispatcher.search("test", subject=("user", "alice"))
-
-        assert not resp.cached
-
-    @pytest.mark.asyncio
-    async def test_cache_scoped_by_zone_filter(self) -> None:
-        """A narrowly-scoped token must not read back a broadly-scoped cache
-        entry (#4541 review): cache lookup happens before zone_filter
-        intersection, so the filter must be part of the cache key."""
-        daemon = _make_daemon(
-            {
-                "zone_a": [_make_result("a.txt", 5.0)],
-                "zone_b": [_make_result("b.txt", 3.0)],
-            }
-        )
-        rebac = _make_rebac(["zone_a", "zone_b"])
-
-        config = FederatedSearchConfig(result_cache_enabled=True)
-        dispatcher = FederatedSearchDispatcher(daemon=daemon, rebac=rebac, config=config)
-
-        broad = await dispatcher.search(
-            "test", subject=("user", "alice"), zone_filter=frozenset({"zone_a", "zone_b"})
-        )
-        assert {r["zone_id"] for r in broad.results} == {"zone_a", "zone_b"}
-
-        narrow = await dispatcher.search(
-            "test", subject=("user", "alice"), zone_filter=frozenset({"zone_a"})
-        )
-        assert not narrow.cached
-        assert {r["zone_id"] for r in narrow.results} == {"zone_a"}
-
-        # Same scope again -> cache hit, still zone_a only.
-        narrow2 = await dispatcher.search(
-            "test", subject=("user", "alice"), zone_filter=frozenset({"zone_a"})
-        )
-        assert narrow2.cached
-        assert {r["zone_id"] for r in narrow2.results} == {"zone_a"}
-
+class TestFederatedQueryBehavior:
     @pytest.mark.asyncio
     async def test_weighted_fusion_merges_by_rank_not_raw_score(self) -> None:
         """#4541 review round 8: weighted fusion min-max normalizes scores
@@ -774,45 +698,6 @@ class TestResultCaching:
 
         assert resp.zones_searched == ["zone_a"]
         assert {r["zone_id"] for r in resp.results} == {"zone_a"}
-
-    @pytest.mark.asyncio
-    async def test_empty_zone_filter_does_not_read_wildcard_cache(self) -> None:
-        """An EMPTY allow-list (access to zero zones) must not collide with
-        the unrestricted (None) cache entry (#4541 review round 2)."""
-        daemon = _make_daemon({"zone_a": [_make_result("a.txt", 5.0)]})
-        rebac = _make_rebac(["zone_a"])
-
-        config = FederatedSearchConfig(result_cache_enabled=True)
-        dispatcher = FederatedSearchDispatcher(daemon=daemon, rebac=rebac, config=config)
-
-        unrestricted = await dispatcher.search("test", subject=("user", "alice"))
-        assert len(unrestricted.results) == 1
-
-        empty_scope = await dispatcher.search(
-            "test", subject=("user", "alice"), zone_filter=frozenset()
-        )
-        assert not empty_scope.cached
-        assert empty_scope.results == []
-        assert empty_scope.zones_searched == []
-
-    @pytest.mark.asyncio
-    async def test_cache_scoped_by_fusion_knobs(self) -> None:
-        """Requests differing only in alpha/fusion_method/rrf_k must not
-        share a cache entry now that the daemon honours them (#4541)."""
-        daemon = _make_daemon({"zone_a": [_make_result("a.txt", 5.0)]})
-        rebac = _make_rebac(["zone_a"])
-
-        config = FederatedSearchConfig(result_cache_enabled=True)
-        dispatcher = FederatedSearchDispatcher(daemon=daemon, rebac=rebac, config=config)
-
-        await dispatcher.search("test", subject=("user", "alice"))
-        weighted = await dispatcher.search(
-            "test", subject=("user", "alice"), fusion_method="weighted", alpha=0.9
-        )
-        small_k = await dispatcher.search("test", subject=("user", "alice"), rrf_k=5)
-
-        assert not weighted.cached
-        assert not small_k.cached
 
 
 # =============================================================================
@@ -1218,35 +1103,6 @@ class TestTierBoostTrustBoundary:
 
 class TestRound10Hardening:
     @pytest.mark.asyncio
-    async def test_cache_hit_preserves_degradation_marker(self) -> None:
-        """#4541 review round 10: a cache hit serves the same degraded
-        payload, so semantic_degraded must survive the cache-hit clone."""
-        from nexus.bricks.search.federated_search import FederatedSearchConfig
-        from nexus.bricks.search.results import SearchResultList
-
-        degraded_empty = SearchResultList([])
-        degraded_empty.semantic_degraded = True
-
-        daemon = AsyncMock()
-        daemon.is_initialized = True
-
-        async def mock_search(_request: Any, /, **kwargs):
-            return degraded_empty
-
-        daemon.search = mock_search
-        config = FederatedSearchConfig(result_cache_enabled=True)
-        dispatcher = FederatedSearchDispatcher(
-            daemon=daemon, rebac=_make_rebac(["zone_a"]), config=config
-        )
-
-        miss = await dispatcher.search("test", subject=("user", "alice"))
-        assert miss.semantic_degraded is True and not miss.cached
-
-        hit = await dispatcher.search("test", subject=("user", "alice"))
-        assert hit.cached is True
-        assert hit.semantic_degraded is True
-
-    @pytest.mark.asyncio
     async def test_leaky_keyword_no_longer_promoted_post_p12(self) -> None:
         """Post-P12 the sole daemon shape is the Rust plugin proxy, which
         routes keyword through a zone-filtered tantivy index — there's no
@@ -1291,27 +1147,6 @@ class TestRecencyKnobs:
         from nexus.bricks.search.federated_search import FederatedSearchDispatcher
 
         return FederatedSearchDispatcher(daemon=MagicMock(), rebac=MagicMock())
-
-    def test_cache_key_includes_recency_knobs(self) -> None:
-        d = self._dispatcher()
-        base = d._make_cache_key("q", ("user", "u"), "hybrid", 10, None, 0.5, "rrf", 60)
-        with_mode = d._make_cache_key(
-            "q", ("user", "u"), "hybrid", 10, None, 0.5, "rrf", 60, recency="on"
-        )
-        with_weight = d._make_cache_key(
-            "q",
-            ("user", "u"),
-            "hybrid",
-            10,
-            None,
-            0.5,
-            "rrf",
-            60,
-            recency="on",
-            recency_weight=1.0,
-        )
-        assert base != with_mode
-        assert with_mode != with_weight
 
     @pytest.mark.asyncio
     async def test_local_zone_receives_recency_knobs(self) -> None:

@@ -405,20 +405,20 @@ def _start(
     session_id = body.session_id
     # The body model validated the client strings (M-17); the remaining
     # free-form fields are consumed below via the dict view.
-    body = body.model_dump()
+    payload = body.model_dump()
 
     try:
         session_view = svc.get_session(session_id)
         execution_zone = (
             svc.resume_zone_of(session_id)
             if resume
-            else str(body.get("execution_zone_id") or session_view.home_zone_id)
+            else str(payload.get("execution_zone_id") or session_view.home_zone_id)
         )
     except SessionRuntimeError as exc:
         raise _svc_error(exc) from exc
-    delegation_ref = _runtime_delegation_ref(request, body)
-    resource_refs = _resource_refs(body)
-    requested_execution_zone = body.get("execution_zone_id")
+    delegation_ref = _runtime_delegation_ref(request, payload)
+    resource_refs = _resource_refs(payload)
+    requested_execution_zone = payload.get("execution_zone_id")
     if resume and requested_execution_zone and str(requested_execution_zone) != execution_zone:
         raise HTTPException(
             status_code=409,
@@ -427,7 +427,7 @@ def _start(
     if (
         not resume
         and execution_zone != session_view.home_zone_id
-        and (not body.get("decision_reason") or not body.get("policy_version"))
+        and (not payload.get("decision_reason") or not payload.get("policy_version"))
     ):
         _minimum_task_write_gate(
             request,
@@ -447,7 +447,7 @@ def _start(
                 task_id=task.task_id,
                 reason_code="INVALID_TASK_SPEC",
                 reason="cross-zone execution requires decision_reason and policy_version",
-                policy_version=str(body.get("policy_version") or task.policy_version),
+                policy_version=str(payload.get("policy_version") or task.policy_version),
             )
         except SessionTaskError as exc:
             raise _task_svc_error(exc) from exc
@@ -464,7 +464,7 @@ def _start(
         capability="zone.runtime.execute",
         resource_path=f"/sessions/{session_id}",
     )
-    if body.get("grant_ref") not in (None, verified.grant_id) or body.get(
+    if payload.get("grant_ref") not in (None, verified.grant_id) or payload.get(
         "authorization_epoch"
     ) not in (None, verified.authorization_epoch):
         raise HTTPException(

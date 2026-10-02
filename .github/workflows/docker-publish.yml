@@ -867,10 +867,13 @@ jobs:
           done
           docker exec nexus-search-credentials-node sh -c \
             'nexusd-cluster auth mint --subject-type user --subject-id operator --admin > /tmp/search-admin-key'
-          mkdir -p /tmp/search-credentials
-          docker cp nexus-search-credentials-node:/app/data/tls /tmp/search-credentials/
+          mkdir -p /tmp/search-credentials/tls
+          for file in ca.pem node.pem node-key.pem; do
+            docker cp "nexus-search-credentials-node:/app/data/tls/$file" /tmp/search-credentials/tls/
+          done
           docker cp nexus-search-credentials-node:/tmp/search-admin-key /tmp/search-credentials/
           docker cp /tmp/search-credentials nexus-e2e:/tmp/search-credentials
+          docker exec -u 0 nexus-e2e chown -R nexus:nexus /tmp/search-credentials
           docker cp scripts/test_search_credentials_plugin.py nexus-e2e:/tmp/test_search_credentials_plugin.py
           docker exec \
             -e NEXUS_SEARCH_PLUGIN_TARGET=127.0.0.1:2326 \

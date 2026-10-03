@@ -804,24 +804,11 @@ jobs:
         # (slim) build — that leak is the #36 regression this gate catches.
         run: |
           BIN="$HOME/.cargo/bin/nexusd-cluster"
-          # 17.0 MiB = the nexus-vfs linux cluster budget (17563648 = 16.75
-          # MiB) plus 0.25 MiB for what this assembly adds on top: the nexus
-          # service crates, and the managed-agent `subprocess-host` feature
-          # that the vfs cluster build does not enable. It is DERIVED from the
-          # nexus-vfs number rather than measured here, so a pin bump that
-          # legitimately grows the kernel moves both budgets together instead
-          # of failing this gate for growth nexus-vfs already accepted.
-          #
-          # Raised from 16.5 MiB when the pin advanced to 191fa0efa: nexus-vfs
-          # raised its own budget from 16.25 to 16.75 MiB for the managed-agent
-          # control plane relocated INTO nexusd-cluster (nexus-vfs#241), while
-          # this cap still tracked the pre-relocation number. That relocation
-          # is also why managed_agent is no longer a nexus-local crate — it
-          # arrives inside the vfs dependency.
-          #
-          # Still a leak-catcher. driver-s3 and the connectors are megabytes,
-          # so the ~0.5 MiB of slack this leaves cannot hide one.
-          MAX=17825792
+          # This is the exact nexus-vfs cluster binary installed above, with
+          # no additional nexus-local assembly features. Match its Linux budget
+          # in .github/workflows/cluster-binary-build.yml at the pinned VFS rev:
+          # 17.25 MiB. The mailbox build measured 17,994,696 bytes in this job.
+          MAX=18087936
           actual=$(stat -c%s "$BIN")
           echo "nexusd-cluster size: $actual bytes (max: $MAX)"
           if [ "$actual" -gt "$MAX" ]; then
@@ -900,19 +887,15 @@ jobs:
           test -x "$NEXUS_KERNEL_BINARY" || { echo "::error::nexusd-cluster missing at $NEXUS_KERNEL_BINARY"; exit 1; }
           uv run --no-sync python -m pytest tests/integration/test_kernel_restart_survival.py -v -o "addopts="
 
-      - name: Managed-agent raw ACP tunnel E2E (#36)
+      - name: Managed-agent session mailbox E2E
         if: needs.detect-changes.outputs.code_changed == 'true'
         timeout-minutes: 10
-        # The raw ACP control-plane spawn + DT_STREAM stdio tunnel live in
-        # nexusd-cluster (it brings up the managed_agent service). Boot it via
-        # the KernelClient spawn harness and drive start_session(spawn_spec) +
-        # StreamWriteNowait/StreamReadAt end to end over gRPC — the exact wire
-        # path an embedder (sudowork grpc-js) uses. Guards the daemon-level
-        # tunnel the in-process raw_spawn unit tests can't reach.
+        # Boot a real daemon and exchange ACP envelopes through the session
+        # transcript. The subprocess adapter owns its stdio internally.
         run: |
           export NEXUS_KERNEL_BINARY="/home/runner/.cargo/bin/nexusd-cluster"
           test -x "$NEXUS_KERNEL_BINARY" || { echo "::error::nexusd-cluster missing at $NEXUS_KERNEL_BINARY"; exit 1; }
-          uv run --no-sync python -m pytest tests/integration/test_managed_agent_tunnel_e2e.py -v -o "addopts="
+          uv run --no-sync python -m pytest tests/integration/test_managed_agent_session_mailbox_e2e.py -v -o "addopts="
 
   migration-test:
     name: Migration Tests (SQLite)

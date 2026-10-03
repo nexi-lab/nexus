@@ -136,6 +136,18 @@ class KernelRpcZoneRuntimePort:
             code = exc.code()
             if code in _UNKNOWN_GRPC_STATUSES:
                 raise ZoneRuntimeUnavailable(f"{method} unreachable: {code}") from exc
+            if code == grpc.StatusCode.FAILED_PRECONDITION:
+                # The runtime's PENDING answer ("poll GetZoneOperation or
+                # retry with a fresh operation_id") is not a verdict on the
+                # operation — it means the operation is still in flight over
+                # there (e.g. a worker resubmitting after a crash landed
+                # while the journal entry had not settled). Route it into
+                # the unavailable family so the worker takes the
+                # get_operation reconciliation path instead of recording a
+                # terminal failure for an operation that is not failed.
+                raise ZoneRuntimeUnavailable(
+                    f"{method} in flight at the runtime: {code}: {exc}"
+                ) from exc
             raise ZoneRuntimeRejected(f"{method} rejected: {code}: {exc}") from exc
         except Exception as exc:  # transport-level failure: unknown, not failed
             raise ZoneRuntimeUnavailable(f"{method} unreachable: {exc}") from exc

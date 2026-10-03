@@ -545,13 +545,21 @@ def _sandbox_up_data_dir_lock(effective_data_dir: str) -> Iterator[None]:
     single-daemon / distinct-data-dir paths are NEVER blocked or broken.
     """
     try:
-        import fcntl
+        import importlib
+
+        fcntl = importlib.import_module("fcntl")
     except ImportError:
         # Non-POSIX: no advisory lock available. Degrade to a no-op rather
         # than block/break single-daemon or distinct-data-dir flows. The
         # ownership-aware rollback (layer 1) still prevents cross-clobber.
         yield
         return
+
+    fcntl_api: Any = fcntl
+    flock = fcntl_api.flock
+    lock_ex = fcntl_api.LOCK_EX
+    lock_nb = fcntl_api.LOCK_NB
+    lock_un = fcntl_api.LOCK_UN
 
     lock_dir = Path(effective_data_dir)
     with contextlib.suppress(OSError):
@@ -561,7 +569,7 @@ def _sandbox_up_data_dir_lock(effective_data_dir: str) -> Iterator[None]:
     fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
     try:
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            flock(fd, lock_ex | lock_nb)
         except OSError as exc:
             if exc.errno in (errno.EAGAIN, errno.EACCES, errno.EWOULDBLOCK):
                 raise SandboxUpInProgressError(
@@ -574,7 +582,7 @@ def _sandbox_up_data_dir_lock(effective_data_dir: str) -> Iterator[None]:
             yield
         finally:
             with contextlib.suppress(OSError):
-                fcntl.flock(fd, fcntl.LOCK_UN)
+                flock(fd, lock_un)
     finally:
         with contextlib.suppress(OSError):
             os.close(fd)

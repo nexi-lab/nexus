@@ -23,6 +23,7 @@ import re as _re
 from typing import TYPE_CHECKING, Any
 
 import grpc
+from google.protobuf.json_format import MessageToDict
 from tenacity import (
     retry,
     retry_if_exception_type,
@@ -36,7 +37,7 @@ from nexus.contracts.exceptions import (
     RemoteTimeoutError,
 )
 from nexus.grpc.defaults import build_channel_options
-from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
+from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc, zone_runtime_pb2, zone_runtime_pb2_grpc
 from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.lib.zone_revision import revision_fields as _revision_fields
 from nexus.remote.base_client import BaseRemoteNexusFS
@@ -210,6 +211,7 @@ class RPCTransport:
                 )
             self._channel = grpc.insecure_channel(server_address, options=_CHANNEL_OPTIONS)
         self._stub = vfs_pb2_grpc.NexusVFSServiceStub(self._channel)
+        self._zone_runtime_stub = zone_runtime_pb2_grpc.ZoneRuntimeServiceStub(self._channel)
 
         # Pre-warm: trigger eager TCP/TLS handshake so connection establishment
         # overlaps with NexusFS construction instead of blocking on first RPC.
@@ -221,6 +223,95 @@ class RPCTransport:
     # ------------------------------------------------------------------
     # RPC call
     # ------------------------------------------------------------------
+
+    def zone_runtime_call(
+        self,
+        method: str,
+        payload: dict[str, Any],
+        *,
+        timeout_s: float | None = None,
+    ) -> dict[str, Any]:
+        """Invoke the exact-pinned typed ``ZoneRuntimeService`` surface.
+
+        This is deliberately separate from the generic JSON ``Call`` RPC:
+        zone lifecycle mutations carry a typed mutation header and are
+        journaled by nexus-vfs under that operation id.
+        """
+        timeout = timeout_s if timeout_s is not None else self._timeout
+        mutation = None
+        if method not in ("ZoneStatus", "GetZoneOperation", "GetRuntimeCapabilities"):
+            mutation = zone_runtime_pb2.ZoneMutationHeader(
+                operation_id=str(payload.get("operation_id") or ""),
+                request_hash=int(payload.get("request_hash") or 0),
+            )
+
+        request_by_method: dict[str, Any] = {
+            "ZoneCreate": lambda: zone_runtime_pb2.ZoneCreateRequest(
+                auth_token=self._auth_token,
+                mutation=mutation,
+                zone_id=str(payload["zone_id"]),
+                peers=list(payload.get("peers") or ()),
+            ),
+            "ZoneJoin": lambda: zone_runtime_pb2.ZoneJoinRequest(
+                auth_token=self._auth_token,
+                mutation=mutation,
+                zone_id=str(payload["zone_id"]),
+                peers=list(payload.get("peers") or ()),
+                learner=bool(payload.get("learner", False)),
+            ),
+            "ZoneStatus": lambda: zone_runtime_pb2.ZoneStatusRequest(
+                auth_token=self._auth_token,
+                zone_id=str(payload["zone_id"]),
+            ),
+            "ZoneMount": lambda: zone_runtime_pb2.ZoneMountRequest(
+                auth_token=self._auth_token,
+                mutation=mutation,
+                parent_zone_id=str(payload["parent_zone_id"]),
+                mount_path=str(payload["mount_path"]),
+                target_zone_id=str(payload["target_zone_id"]),
+            ),
+            "ZoneUnmount": lambda: zone_runtime_pb2.ZoneUnmountRequest(
+                auth_token=self._auth_token,
+                mutation=mutation,
+                parent_zone_id=str(payload["parent_zone_id"]),
+                mount_path=str(payload["mount_path"]),
+            ),
+            "ZoneRemoveReplica": lambda: zone_runtime_pb2.ZoneRemoveReplicaRequest(
+                auth_token=self._auth_token,
+                mutation=mutation,
+                zone_id=str(payload["zone_id"]),
+                force=bool(payload.get("force", False)),
+            ),
+            "ZoneDeprovision": lambda: zone_runtime_pb2.ZoneDeprovisionRequest(
+                auth_token=self._auth_token,
+                mutation=mutation,
+                zone_id=str(payload["zone_id"]),
+            ),
+            "GetZoneOperation": lambda: zone_runtime_pb2.GetZoneOperationRequest(
+                auth_token=self._auth_token,
+                operation_id=str(payload["operation_id"]),
+            ),
+            "GetRuntimeCapabilities": lambda: zone_runtime_pb2.GetRuntimeCapabilitiesRequest(
+                auth_token=self._auth_token,
+            ),
+        }
+        try:
+            request_factory = request_by_method[method]
+        except KeyError as exc:
+            raise ValueError(f"unknown ZoneRuntime RPC method: {method}") from exc
+
+        rpc = getattr(self._zone_runtime_stub, method)
+        try:
+            response = rpc(request_factory(), timeout=timeout)
+        except grpc.RpcError as exc:
+            self._raise_transport_error(exc, timeout, method)
+            raise  # pragma: no cover - _raise_transport_error always raises
+        converted = MessageToDict(
+            response,
+            preserving_proto_field_name=True,
+            use_integers_for_enums=False,
+        )
+        return dict(converted)
 
     @retry(
         stop=stop_after_attempt(3),

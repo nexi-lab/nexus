@@ -764,6 +764,18 @@ class NexusFS(  # type: ignore[misc]
             self._hook_specs.clear()
         self.close()
 
+    def zone_runtime_call(
+        self,
+        method: str,
+        payload: dict[str, Any],
+        *,
+        timeout_s: float | None = None,
+    ) -> dict[str, Any]:
+        """Forward a typed zone-runtime call through the owned kernel client."""
+        if self._kernel is None:
+            raise RuntimeError("zone runtime is unavailable: kernel is not connected")
+        return self._kernel.zone_runtime_call(method, payload, timeout_s=timeout_s)
+
     # ── IPC primitives (inlined from IPCMixin) ─────────────────────────
 
     def _pipe_destroy(self, path: str) -> dict[str, Any]:

@@ -149,3 +149,36 @@ from nexus.storage.models.version_history import VersionHistoryModel as VersionH
 # Domain: Workflows
 from nexus.storage.models.workflows import WorkflowExecutionModel as WorkflowExecutionModel
 from nexus.storage.models.workflows import WorkflowModel as WorkflowModel
+
+# Domain: zone-v1 canonical storage (2B). alembic discovers these through
+# this re-export (env.py imports Base from this package); an unlisted model
+# is a table no migration will ever create.
+from nexus.storage.models.zone_v1 import (
+    RebacRelationSourceModel as RebacRelationSourceModel,
+)
+from nexus.storage.models.zone_v1 import ZoneAuthorizationEpochModel as ZoneAuthorizationEpochModel
+from nexus.storage.models.zone_v1 import ZoneDelegationModel as ZoneDelegationModel
+from nexus.storage.models.zone_v1 import ZoneGrantModel as ZoneGrantModel
+from nexus.storage.models.zone_v1 import (
+    ZoneGrantProjectionOutboxModel as ZoneGrantProjectionOutboxModel,
+)
+from nexus.storage.models.zone_v1 import ZoneMountModel as ZoneMountModel
+from nexus.storage.models.zone_v1 import ZoneOperationModel as ZoneOperationModel
+from nexus.storage.models.zone_v1 import ZoneRuntimeOutboxModel as ZoneRuntimeOutboxModel
+
+from .session_v1 import SESSION_RECORD_KINDS as SESSION_RECORD_KINDS
+
+# ── P1a session/runtime zone models (SW-20260915-002 §8.9) ─────────────────
+from .session_v1 import SessionDataRecordModel as SessionDataRecordModel
+from .session_v1 import SessionModel as SessionModel
+from .session_v1 import (
+    SessionRuntimeRunModel as SessionRuntimeRunModel,
+)
+from .session_v1 import (
+    SessionZoneDependencyModel as SessionZoneDependencyModel,
+)
+
+# ── P1b implicit Task/Resolution/Attempt models (SW-20260915-002 §8.9) ─────
+from .task_v1 import TaskAttemptModel as TaskAttemptModel
+from .task_v1 import TaskResolutionModel as TaskResolutionModel
+from .task_v1 import TaskSpecModel as TaskSpecModel

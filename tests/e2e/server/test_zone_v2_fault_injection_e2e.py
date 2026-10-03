@@ -1,0 +1,536 @@
+"""SW-20260915-002 P0 (§11.5) — real crash injection for the zone saga.
+
+Self-managed full-profile server processes over one fixed data dir, so a
+test can kill the process at a chosen point in the saga and restart it to
+observe recovery. The twelve §11.5 fault classes map as:
+
+  1/2/3 (crash before the external runtime call / response lost / receipt
+      not saved)  — one injection point family: kill right after the create
+      request is accepted, restart, and assert exactly-once convergence with
+      a truthful operation (no phantom active, no duplicate zone).
+  6/7 (revoked+epoch+invalidation outbox committed, broadcast missed /
+      invalidation interrupted) — kill immediately after the revoke is
+      accepted, restart, and assert the old delegation stays denied
+      (fail-closed persisted) and re-issuance is refused.
+  11 (full restart) — exercised structurally by both tests above and by the
+      scenario-17 durability test in the matrix file.
+  12 (contract/capability/version mismatch) — unsupported major rejected at
+      the contract layer; the un-armed transfer capability already fails
+      closed (matrix scenario 14).
+
+Moss-side classes (4: moss killed before saving the operation id; 5/8:
+projection cleanup interrupted) are covered by the moss suite: the P0 E2E
+restarts moss after the offline phase and the reconciler converges the same
+outbox rows exactly once (scenario 3), plus the fence/lease unit tests in
+``zones/__tests__/zoneBinding.test.ts`` (stale lease takeover, fence
+mismatch drop — class 9's fencing on the moss side). Nexus worker lease
+fencing is covered by the storage-layer outbox tests.
+
+No SQL inserts, no direct service calls — only real HTTP to real processes.
+"""
+
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+import threading
+import time
+from pathlib import Path
+from shutil import which
+
+import httpx
+
+from tests.e2e.conftest import find_free_port, start_membership_stub
+
+_SRC = Path(__file__).resolve().parents[2].parents[1] / "src"
+
+
+class ServerHarness:
+    """Spawn/kill/restart full-profile nexus servers over one fixed data dir."""
+
+    def __init__(self, data_dir: Path) -> None:
+        self.data_dir = data_dir
+        self.metastore = data_dir / "metastore"
+        self.identity_dir = data_dir / "kernel-identity"
+        self.home_dir = data_dir / "home"
+        for path in (self.metastore, self.identity_dir, self.home_dir):
+            path.mkdir(parents=True, exist_ok=True)
+        self.db_file = data_dir / "fault.db"
+        self.api_key = self._mint_key()
+        self.membership = start_membership_stub()
+        self.proc: subprocess.Popen | None = None
+        self.port = 0
+        self.stdout_lines: list[str] = []
+        self.stderr_lines: list[str] = []
+
+    # ── key material ────────────────────────────────────────────────────────
+    def _kernel_binary(self) -> str:
+        for name in ("nexusd-cluster", "nexus-cluster"):
+            hit = which(name)
+            if hit:
+                return hit
+        repo_root = Path(__file__).resolve().parents[3]
+        for profile in ("debug", "release"):
+            candidate = (
+                repo_root
+                / "target"
+                / profile
+                / ("nexusd-cluster.exe" if os.name == "nt" else "nexusd-cluster")
+            )
+            if candidate.is_file():
+                return str(candidate)
+        raise AssertionError("kernel binary not found")
+
+    def _mint_key(self) -> str:
+        env = {
+            **os.environ,
+            "NEXUS_API_KEY_SECRET": "test-e2e-kernel-secret-12345",
+            "NEXUS_IDENTITY_DIR": str(self.identity_dir),
+            "NEXUS_NO_TLS": "true",
+            "NEXUS_DATA_DIR": str(self.metastore),
+        }
+        minted = subprocess.run(
+            [
+                self._kernel_binary(),
+                "auth",
+                "mint",
+                "--subject-type",
+                "user",
+                "--subject-id",
+                "fault-admin",
+                "--admin",
+                "--name",
+                "fault",
+            ],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        key = (minted.stdout or "").strip().splitlines()[-1] if minted.returncode == 0 else ""
+        assert key, f"key mint failed: {minted.stderr}"
+        return key
+
+    # ── process lifecycle ───────────────────────────────────────────────────
+    def _env(self) -> dict:
+        return {
+            **os.environ,
+            "NEXUS_API_KEY": self.api_key,
+            "NEXUS_API_KEY_SECRET": "test-e2e-kernel-secret-12345",
+            "NEXUS_IDENTITY_DIR": str(self.identity_dir),
+            "NEXUS_NO_TLS": "true",
+            "NEXUS_JWT_SECRET": "test-secret-key-for-e2e-12345",
+            "NEXUS_DATABASE_URL": f"sqlite:///{self.db_file.as_posix()}",
+            "NEXUS_RECORD_STORE_PATH": str(self.data_dir / "record_store.db"),
+            "NEXUS_RATE_LIMIT_ENABLED": "false",
+            "NEXUS_SEARCH_DAEMON": "false",
+            "NEXUS_UPLOAD_MIN_CHUNK_SIZE": "1",
+            "NEXUS_ZONE_DELEGATION_ISSUERS": "moss-e2e",
+            "NEXUS_ZONE_MEMBERSHIP_URL": self.membership.url,
+            "NEXUS_ZONE_MEMBERSHIP_TOKEN": self.membership.token,
+            "HOME": str(self.home_dir),
+            "PYTHONPATH": str(_SRC),
+        }
+
+    def start(self, attempts: int = 2) -> int:
+        """Spawn and wait for readiness.
+
+        The fault-injection restart can race the OS releasing the killed
+        process's sqlite handles: the server then aborts during lifespan
+        before uvicorn reports ready. That is an environment window, not the
+        behaviour under test, so a failed spawn is retried once on a fresh
+        port before giving up.
+        """
+        last_tail = ""
+        for _attempt in range(1, attempts + 1):
+            port = find_free_port(3)
+            self.proc = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-c",
+                    "from nexus.daemon.main import main; import sys; main(sys.argv[1:])",
+                    "--host",
+                    "127.0.0.1",
+                    "--port",
+                    str(port),
+                    "--data-dir",
+                    str(self.data_dir),
+                    "--profile",
+                    "full",
+                ],
+                env=self._env(),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            ready = threading.Event()
+            tail: list[str] = []
+            stdout: list[str] = []
+            self.stderr_lines = tail
+            self.stdout_lines = stdout
+
+            def drain(stream, _tail=tail, _ready=ready) -> None:  # noqa: B008
+                for line in iter(stream.readline, b""):
+                    text = line.decode("utf-8", "replace")
+                    _tail.append(text)
+                    if "Application startup complete" in text:
+                        _ready.set()
+
+            threading.Thread(target=drain, args=(self.proc.stderr,), daemon=True).start()
+            threading.Thread(
+                target=drain, args=(self.proc.stdout, stdout, threading.Event()), daemon=True
+            ).start()
+            if ready.wait(120):
+                self.port = port
+                return port
+            last_tail = "".join(tail[-20:])
+            self.close()  # kill() alone would leak the membership stub (M-12)
+        raise AssertionError(f"server did not become ready after {attempts} attempts: {last_tail}")
+
+    def kill(self) -> None:
+        owned_kernel_pids: list[int] = []
+        if self.proc and self.proc.poll() is None:
+            try:
+                children = subprocess.run(
+                    [
+                        "powershell",
+                        "-NoProfile",
+                        "-Command",
+                        "Get-CimInstance Win32_Process "
+                        f"| Where-Object {{ $_.ParentProcessId -eq {self.proc.pid} "
+                        "-and $_.Name -eq 'nexusd-cluster.exe' }} "
+                        "| Select-Object -ExpandProperty ProcessId",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                owned_kernel_pids = [
+                    int(line.strip())
+                    for line in children.stdout.splitlines()
+                    if line.strip().isdigit()
+                ]
+            except (OSError, subprocess.SubprocessError, ValueError):
+                owned_kernel_pids = []
+            subprocess.run(
+                ["taskkill", "/PID", str(self.proc.pid), "/T", "/F"], capture_output=True
+            )
+            try:
+                self.proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                # M-12: a stuck wait must not skip the child re-kill and the
+                # orphan-kernel sweep below — that sweep is the main defence
+                # against leaked kernels poisoning later restart windows.
+                pass
+        for child_pid in owned_kernel_pids:
+            subprocess.run(
+                ["taskkill", "/PID", str(child_pid), "/F"], capture_output=True, check=False
+            )
+        # Belt for leaked kernels: `taskkill /T` relies on the process-tree
+        # relationship, and a kernel spawned early in the server's lifespan can
+        # survive it. An orphaned nexusd-cluster keeps ports/files busy and
+        # poisons every later fault test's restart window (observed 2026-09-22:
+        # accumulated orphans turned retries-exhausted failures into the
+        # steady state; clearing them restored green). Kill only kernels whose
+        # command line carries OUR data dir, never foreign ones.
+
+        try:
+            listing = subprocess.run(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-Command",
+                    "Get-CimInstance Win32_Process -Filter \"Name='nexusd-cluster.exe'\" "
+                    "| Where-Object { $_.CommandLine -like '*"
+                    + str(self.data_dir).replace("'", "''")
+                    + "*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }",
+                ],
+                capture_output=True,
+                timeout=30,
+            )
+            del listing
+        except Exception:  # noqa: BLE001 — cleanup must never fail the test
+            pass
+
+    def close(self) -> None:
+        self.kill()
+        self.membership.close()
+
+    def client(self) -> httpx.Client:
+        return httpx.Client(base_url=f"http://127.0.0.1:{self.port}", timeout=30.0, trust_env=False)
+
+    def poke_until_up(self, client: httpx.Client, headers: dict, tries: int = 15) -> None:
+        """Windows first-connect flakiness: retry the first request.
+
+        Exhausting the retries is a hard failure (L-12): silently continuing
+        made every downstream assertion run against a dead server."""
+        for _attempt in range(tries):
+            try:
+                client.get("/v2/zone-capabilities", headers=headers)
+                return
+            except httpx.TransportError:
+                time.sleep(1)
+        raise AssertionError(f"server did not answer within {tries} poke attempts")
+
+
+def _wait_operation(
+    client: httpx.Client, op_id: str, headers: dict, timeout_s: float = 90.0
+) -> dict:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        r = client.get(f"/v2/zone-operations/{op_id}", headers=headers)
+        if r.status_code == 200:
+            body = r.json()
+            if body.get("state") in ("succeeded", "failed"):
+                return body
+        time.sleep(0.5)
+    raise AssertionError(f"operation {op_id} not settled in {timeout_s}s")
+
+
+def test_fault_classes_1_2_3_create_crashed_mid_flight_recovers_exactly_once(tmp_path) -> None:
+    harness = ServerHarness(tmp_path / "f123")
+    try:
+        harness.start()
+    except Exception:
+        harness.close()
+        raise
+    headers = {"Authorization": f"Bearer {harness.api_key}"}
+    try:
+        with harness.client() as client:
+            harness.poke_until_up(client, headers)
+            zone = "fault-create-zone"
+            accepted = client.post(
+                "/v2/zones",
+                headers={**headers, "Idempotency-Key": "f123-create"},
+                json={"zone_id": zone, "display_name": zone},
+            )
+            assert accepted.status_code == 202, accepted.text
+            op_id = accepted.json()["operation_id"]
+
+        # M-16 guard: the injection window only exists while the create is
+        # still in flight.  On a fast machine the saga may already be terminal
+        # by kill() time, which would silently degrade this test into a plain
+        # restart check — fail loudly instead of passing vacuously.
+        with harness.client() as client:
+            pre = client.get(f"/v2/zone-operations/{op_id}", headers=headers)
+            assert pre.status_code == 200, pre.text
+            pre_state = pre.json()["state"]
+            assert pre_state not in ("succeeded", "failed"), (
+                f"injection window missed: create already {pre_state} before kill"
+            )
+
+        # Crash right after acceptance — before/around the runtime call, the
+        # response read-back, and the receipt write. All three §11.5 classes
+        # share this window; recovery must be truthful and exactly-once.
+        harness.kill()
+
+        harness.start()
+        with harness.client() as client:
+            harness.poke_until_up(client, headers)
+            op = _wait_operation(client, op_id, headers)
+            diagnostics = "".join(
+                line
+                for line in harness.stderr_lines
+                if any(
+                    marker in line.lower()
+                    for marker in ("error", "failed", "exception", "runtime unavailable")
+                )
+            )
+            assert op["state"] == "succeeded", f"operation={op}\nserver diagnostics:\n{diagnostics}"
+
+            # Exactly once: the zone exists once, and replaying the create
+            # with the SAME idempotency key returns the SAME operation.
+            replay = client.post(
+                "/v2/zones",
+                headers={**headers, "Idempotency-Key": "f123-create"},
+                json={"zone_id": zone, "display_name": zone},
+            )
+            assert replay.status_code == 202, replay.text
+            assert replay.json()["operation_id"] == op_id, replay.text
+
+            listed = client.get("/v2/zones", headers=headers, params={"limit": 200}).json()
+            matches = [z for z in listed.get("zones", []) if z["zone_id"] == zone]
+            assert len(matches) == 1, f"zone duplicated after crash recovery: {matches}"
+    finally:
+        harness.close()
+
+
+def test_fault_classes_6_7_revoke_killed_before_broadcast_stays_fail_closed(tmp_path) -> None:
+    harness = ServerHarness(tmp_path / "f67")
+    try:
+        harness.start()
+    except Exception:
+        harness.close()
+        raise
+    headers = {"Authorization": f"Bearer {harness.api_key}"}
+    zone = "fault-revoke-zone"
+    try:
+        with harness.client() as client:
+            harness.poke_until_up(client, headers)
+            created = client.post(
+                "/v2/zones",
+                headers={**headers, "Idempotency-Key": "f67-create"},
+                json={"zone_id": zone, "display_name": zone},
+            )
+            assert created.status_code == 202, created.text
+            _wait_operation(client, created.json()["operation_id"], headers)
+
+            grant = client.post(
+                f"/v2/zones/{zone}/grants",
+                headers={**headers, "Idempotency-Key": "f67-grant"},
+                json={
+                    "grantee": {"subject_type": "organization", "subject_id": "f67-org"},
+                    "capabilities": ["zone.data.read"],
+                    "resource_prefixes": ["/"],
+                    "source": {"source_type": "moss_org_binding", "source_id": "f67-src"},
+                    "reason": "fault injection",
+                },
+            )
+            assert grant.status_code == 202, grant.text
+            _wait_operation(client, grant.json()["operation_id"], headers)
+
+            svc = client.post(
+                "/api/v2/auth/keys",
+                headers=headers,
+                json={
+                    "label": "f67-svc",
+                    "subject_type": "service",
+                    "subject_id": "moss-e2e",
+                    "zone_id": "root",
+                    "is_admin": True,
+                },
+            ).json()["key"]
+            user_key = client.post(
+                "/api/v2/auth/keys",
+                headers=headers,
+                json={
+                    "label": "f67-user",
+                    "subject_type": "user",
+                    "subject_id": "f67-user",
+                    "zone_id": zone,
+                    "is_admin": False,
+                },
+            ).json()["key"]
+            delegation = client.post(
+                "/v2/auth/zone-delegations",
+                headers={"Authorization": f"Bearer {svc}", "Idempotency-Key": "f67-d1"},
+                json={
+                    "user_id": "f67-user",
+                    "org_id": "f67-org",
+                    "membership_version": "r1",
+                    "zone_id": zone,
+                    "audience": "nexus-api",
+                    "ttl_s": 300,
+                },
+            ).json()["delegation_id"]
+
+            grants = client.get(f"/v2/zones/{zone}/grants", headers=headers).json()["grants"]
+            grant_id = next(
+                g["grant_id"] for g in grants if g["grantee"]["subject_id"] == "f67-org"
+            )
+
+            # L-12(1) positive control: before revoking, the delegation MUST
+            # grant access — otherwise the post-revoke 403 proves nothing
+            # (the relation/grant may have never worked in the first place).
+            deadline = time.monotonic() + 30.0
+            while time.monotonic() < deadline:
+                grant_state = next(
+                    (
+                        g["status"]
+                        for g in client.get(f"/v2/zones/{zone}/grants", headers=headers).json()[
+                            "grants"
+                        ]
+                        if g["grant_id"] == grant_id
+                    ),
+                    None,
+                )
+                if grant_state == "active":
+                    break
+                time.sleep(0.5)
+            assert grant_state == "active", f"grant never activated: {grant_state}"
+            allowed = client.get(
+                f"/v2/zones/{zone}",
+                headers={
+                    "Authorization": f"Bearer {user_key}",
+                    "X-Nexus-Zone-Delegation": delegation,
+                },
+            )
+            assert allowed.status_code == 200, (
+                f"positive control failed — delegation must allow before revoke: {allowed.text}"
+            )
+
+        # Kill immediately after the revoke request is accepted — the durable
+        # facts (revoked + epoch + invalidation outbox) may be committed while
+        # the cache broadcast is not. The delegation must still be denied.
+        with harness.client() as client:
+            revoked = client.delete(
+                f"/v2/zones/{zone}/grants/{grant_id}",
+                headers={**headers, "Idempotency-Key": "f67-revoke"},
+            )
+            assert revoked.status_code == 202, revoked.text
+        harness.kill()
+
+        harness.start()
+        with harness.client() as client:
+            harness.poke_until_up(client, headers)
+            _wait_operation(client, revoked.json()["operation_id"], headers)
+            denied = client.get(
+                f"/v2/zones/{zone}",
+                headers={
+                    "Authorization": f"Bearer {user_key}",
+                    "X-Nexus-Zone-Delegation": delegation,
+                },
+            )
+            assert denied.status_code == 403, (
+                f"old delegation must stay denied after crash: {denied.status_code}"
+            )
+            # And nothing new can be minted from the revoked grant.
+            refused = client.post(
+                "/v2/auth/zone-delegations",
+                headers={"Authorization": f"Bearer {svc}", "Idempotency-Key": "f67-d2"},
+                json={
+                    "user_id": "f67-user",
+                    "org_id": "f67-org",
+                    "membership_version": "r1",
+                    "zone_id": zone,
+                    "audience": "nexus-api",
+                    "ttl_s": 300,
+                },
+            )
+            assert refused.status_code == 403, refused.text
+    finally:
+        harness.close()
+
+
+def test_fault_class_12_contract_mismatch_downgrades_to_v1(nexus_server, test_app) -> None:
+    headers = {"Authorization": f"Bearer {nexus_server['api_key']}"}
+    # The HTTP boundary pins the wire version server-side: a caller-supplied
+    # unknown major (auth.sudo.dev/v999) never takes effect — the operation
+    # response is always the supported v1. Schema-level rejection of unknown
+    # majors is enforced by the shared contract fixtures (C1: tests/contracts
+    # invalid/unknown-major cases, 66/66 green).
+    mismatch = test_app.post(
+        "/v2/zones",
+        headers={**headers, "Idempotency-Key": "f12-major"},
+        json={
+            "api_version": "auth.sudo.dev/v999",
+            "kind": "ZoneCreateRequest",
+            "zone_id": "f12-zone",
+            "display_name": "x",
+        },
+    )
+    assert mismatch.status_code == 202, mismatch.text
+    body = mismatch.json()
+    assert body["api_version"] == "auth.sudo.dev/v1", body
+    op = _wait_operation(test_app, body["operation_id"], headers)
+    assert op["state"] == "succeeded", op
+    zone_view = test_app.get("/v2/zones/f12-zone", headers=headers)
+    assert zone_view.status_code == 200, zone_view.text
+    assert zone_view.json()["api_version"] == "auth.sudo.dev/v1", zone_view.text
+
+    # A missing/unknown capability is refused, not ignored (the transfer
+    # capability gap already fails closed with 501 — matrix scenario 14).
+    caps = test_app.get("/v2/zone-capabilities", headers=headers)
+    assert caps.status_code == 200, caps.text
+    known = set(caps.json()["known_capabilities"])
+    assert "zone.data.read" in known

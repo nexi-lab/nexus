@@ -11,11 +11,16 @@ not silently abandoned to a sidecar directory.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
 
-from nexus.remote.kernel_client import _apply_storage_env, _resolve_kernel_spawn_paths
+from nexus.remote.kernel_client import (
+    _apply_storage_env,
+    _resolve_kernel_binary,
+    _resolve_kernel_spawn_paths,
+)
 
 
 def test_none_passes_through() -> None:
@@ -195,6 +200,41 @@ def test_memory_kernel_client_gets_ephemeral_tempdir(monkeypatch: pytest.MonkeyP
     client = KernelClient(ephemeral=True)
     assert client._ephemeral is True
     assert client._metadata_path is None
+
+
+def test_kernel_binary_falls_back_to_repo_cargo_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import nexus.remote.kernel_client as kernel_client
+
+    executable = (
+        tmp_path
+        / "target"
+        / "debug"
+        / ("nexusd-cluster.exe" if os.name == "nt" else "nexusd-cluster")
+    )
+    executable.parent.mkdir(parents=True)
+    executable.write_bytes(b"")
+    monkeypatch.delenv("NEXUS_KERNEL_BINARY", raising=False)
+    monkeypatch.setattr(kernel_client, "_REPO_ROOT", tmp_path)
+    monkeypatch.setattr(kernel_client.shutil, "which", lambda _name: None)
+    assert _resolve_kernel_binary() == str(executable)
+
+
+def test_kernel_client_uses_operator_api_key_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    from nexus.remote.kernel_client import KernelClient
+
+    monkeypatch.setenv("NEXUS_API_KEY", "sk-e2e-admin")
+    client = KernelClient(server_address="127.0.0.1:1")
+    assert client._auth_token == "sk-e2e-admin"
+
+
+def test_kernel_client_explicit_auth_token_wins(monkeypatch: pytest.MonkeyPatch) -> None:
+    from nexus.remote.kernel_client import KernelClient
+
+    monkeypatch.setenv("NEXUS_API_KEY", "sk-ambient")
+    client = KernelClient(server_address="127.0.0.1:1", auth_token="")
+    assert client._auth_token == ""
 
 
 def test_set_metastore_path_suffixless_is_explicit_file_intent(tmp_path: Path) -> None:

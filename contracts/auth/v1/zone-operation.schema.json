@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.sudo.dev/schemas/auth/v1/zone-operation.schema.json",
+  "title": "ZoneOperation",
+  "description": "Async operation tracking create/patch/suspend/resume/grant/revoke/mount/unmount/transfer/deprovision. A network timeout moves the caller to unknown-and-poll-operation; it never justifies a new idempotency key to rebuild the resource.",
+  "type": "object",
+  "properties": {
+    "api_version": {
+      "const": "auth.sudo.dev/v1"
+    },
+    "kind": {
+      "const": "ZoneOperation"
+    },
+    "operation_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "action": {
+      "enum": ["create", "patch", "suspend", "resume", "grant", "revoke", "mount", "unmount", "transfer", "deprovision"]
+    },
+    "zone_id": {
+      "$ref": "https://nexus-vfs.dev/contracts/zone-id/existing-zone-id-ref.schema.gen.json"
+    },
+    "grant_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "state": {
+      "enum": ["queued", "running", "waiting_dependency", "succeeded", "failed"]
+    },
+    "step": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Accurate current step; failures record the exact step, error and retryability here."
+    },
+    "retryable": {
+      "type": "boolean"
+    },
+    "revision": {
+      "type": "string",
+      "minLength": 1
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "error": {
+      "type": "object",
+      "description": "Inline ErrorInfo (§4.10): clients judge by code/retryable only, never parse message.",
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[A-Z][A-Z0-9_]*$",
+          "description": "Open registry; known codes listed in error-codes.json."
+        },
+        "message": {
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "details": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "cause_ref": {
+          "$ref": "https://contracts.sudo.dev/schemas/common/v1/resource-ref.schema.json"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": ["code", "message", "retryable"],
+      "additionalProperties": true
+    },
+    "created_at": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
+    },
+    "updated_at": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
+    },
+    "completed_at": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
+    }
+  },
+  "required": [
+    "api_version",
+    "kind",
+    "operation_id",
+    "action",
+    "state",
+    "step",
+    "retryable",
+    "created_at",
+    "updated_at"
+  ],
+  "additionalProperties": true
+}

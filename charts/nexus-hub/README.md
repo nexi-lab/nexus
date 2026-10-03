@@ -63,6 +63,9 @@ ingress:
 | `image.repository` | `ghcr.io/nexi-lab/nexus` | Nexus image repository |
 | `image.tag` | `latest` | Nexus image tag |
 | `nexus.profile` | `full` | Runtime profile passed to `nexusd` |
+| `nexus.zoneDelegationIssuers` | `""` | Comma-separated trusted Moss service identities. Empty keeps full profile standalone. |
+| `nexus.zoneMembership.url` | `""` | Complete Moss `/api/v1/internal/zone-membership` endpoint URL. Required when issuers are enabled. |
+| `nexus.zoneMembership.tokenSecretRef` | empty | Kubernetes Secret name/key containing `MOSS_INTERNAL_API_TOKEN`. Required when issuers are enabled. |
 | `nexus.replicaCount` | `1` | Nexus RPC replicas. Must stay `1` when `nexus.persistence.enabled=true` because persistent Nexus pods share one data PVC. |
 | `nexus.probes.*` | Kubernetes `/healthz/*` probes | Startup, readiness, liveness paths and timings. Defaults allow slow cold-start health responses observed in local Kubernetes. |
 | `mcpFrontend.replicaCount` | `1` | MCP frontend replicas |
@@ -70,3 +73,12 @@ ingress:
 | `redis.internal.enabled` | `true` | Deploy in-cluster Redis |
 | `ingress.enabled` | `false` | Create Ingress for MCP frontend |
 | `podMonitor.enabled` | `false` | Create a Prometheus Operator PodMonitor |
+
+## Enabling Moss delegation
+
+Upgrade Moss first and verify its membership endpoint and Secret. Upgrade
+Nexus next with `nexus.zoneDelegationIssuers` still empty, then enable the
+issuer, membership URL, and token Secret reference together. Enabling an
+issuer without both membership settings is rejected at render/startup time;
+the default empty values keep a full-profile Nexus deployment independent of
+Moss.

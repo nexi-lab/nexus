@@ -309,6 +309,7 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
     from nexus.server.lifespan.services import shutdown_services, startup_services
     from nexus.server.lifespan.uploads import startup_uploads
     from nexus.server.lifespan.vfs_grpc import shutdown_vfs_grpc, startup_vfs_grpc
+    from nexus.server.lifespan.zone_control import shutdown_zone_control, startup_zone_control
 
     # Collect all background tasks for clean shutdown
     bg_tasks: list[asyncio.Task] = []
@@ -364,6 +365,11 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
     _wire_auth_cache(app)
     _done(StartupPhase.PERMISSIONS)
 
+    # Zone-v1 is opt-in during the compatibility window. When enabled it is
+    # fail-closed: startup refuses unless storage, typed runtime and ReBAC are
+    # all proven live by their own capability surfaces.
+    bg_tasks.extend(await startup_zone_control(app))
+
     bg_tasks.extend(await startup_realtime(app, svc))
     _done(StartupPhase.REALTIME)
 
@@ -403,6 +409,11 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
 
     # --- Shutdown (reverse order) ---
     logger.info("Shutting down FastAPI Nexus server...")
+
+    # Graceful zone-worker stop BEFORE the blanket cancel pass and before the
+    # vfs gRPC channel closes: the bounded join lets an in-flight pump finish
+    # its transaction against a still-open channel.
+    await shutdown_zone_control(app)
 
     # Cancel all background tasks first
     for task in bg_tasks:

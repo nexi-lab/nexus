@@ -52,11 +52,11 @@
 <h3>Review branches and delivery status</h3>
 <p>The implementation is committed on <code>codex/session-mailbox</code> in all five repositories. It has been verified with locally built dependencies. Draft review is in progress. Nexus now pins the mailbox implementation in Cargo.toml, Cargo.lock and every Dockerfile. Sudocode still requires a published daemon tag; Moss and Sudowork still require the published SDK and matching runtime pins. Nothing has been merged, published or deployed; the consumer changes must remain in draft until those dependencies are available.</p>
 <table><tr><th>Repository</th><th>Review commit</th></tr>
-<tr><td>nexus-vfs</td><td>8518a80bb; <a href="https://github.com/nexi-lab/nexus-vfs/pull/380">PR #380</a></td></tr>
-<tr><td>sudocode</td><td>ad78c1fe, based on merged prerequisite #849 (17533e02)</td></tr>
-<tr><td>moss</td><td>fb106db</td></tr>
-<tr><td>sudowork</td><td>1b51f5c4</td></tr>
-<tr><td>nexus</td><td>The commit containing this document, the preparation script and gRPC integration test.</td></tr></table>
+<tr><td>nexus-vfs</td><td>e8454b5bd; <a href="https://github.com/nexi-lab/nexus-vfs/pull/380">PR #380</a></td></tr>
+<tr><td>sudocode</td><td>193ed780; <a href="https://github.com/sudoprivacy/sudocode/pull/854">PR #854</a></td></tr>
+<tr><td>moss</td><td>500199a; <a href="https://github.com/sudoprivacy/moss/pull/321">PR #321</a></td></tr>
+<tr><td>sudowork</td><td>df481df0; <a href="https://github.com/sudoprivacy/sudowork/pull/1190">PR #1190</a></td></tr>
+<tr><td>nexus</td><td><a href="https://github.com/nexi-lab/nexus/pull/4857">PR #4857</a>; includes the protocol, preparation script, daemon pins and gRPC integration test.</td></tr></table>
 <p>The two owned Nexus worktrees remain. Temporary consumer worktrees can be recreated from their retained branches:</p>
 <pre>git -C ../sudocode worktree add ../sudocode-codex-session-mailbox codex/session-mailbox
 git -C ../moss worktree add ../moss-codex codex/session-mailbox
@@ -74,7 +74,7 @@ cargo test -p engine-acp -p engine-host --features engine-acp/mailbox \
   --config /path/to/session-mailbox-package/nexus-vfs-patches.toml
 cargo check -p nexusd-cohost --features daemon,driver-ai \
   --config /path/to/session-mailbox-package/nexus-vfs-patches.toml</pre>
-<p>The output contains the SDK tarball, its SHA-256, source commit IDs, dirty-tree indicators and Cargo patch file. Cargo may regenerate its lock for the local patch graph; that generated lock must not be committed as the published dependency graph. Install normal repository dependencies before running the preparation script.</p>
+<p>The output contains the SDK tarball, its SHA-256, source commit IDs, dirty-tree indicators and Cargo patch file. Cargo may regenerate its lock for the local patch graph; that generated lock must not be committed as the published dependency graph. Install normal repository dependencies before running the preparation script. In a fresh Sudowork checkout run <code>bun run build:packages</code> from its root to generate the shared packages before type checks and tests.</p>
 <h3>Release order</h3>
 <p>Removing the fd interface is a breaking daemon change: target the next minor daemon release, <code>v0.8.0</code>, and Node SDK <code>0.5.0</code>. These are proposed release versions, not published artifacts. A release tag must identify the reviewed source; retain cloud co-host as disabled throughout preparation.</p>
 <ol><li>Review and merge nexus-vfs, then publish the daemon and SDK. Verify the actual release artifacts and checksums before changing consumer locks.</li>
@@ -84,6 +84,8 @@ cargo check -p nexusd-cohost --features daemon,driver-ai \
 <p>Release nexus-vfs and Node SDK 0.5.0 first; pin every Nexus workspace crate in sudocode to the same revision; then build nexusd-cohost and update moss and sudowork together. Keep cloud co-host disabled until that compatible set is deployed. Remove fd clients and the Kubernetes direct-spawn bypass in the client update. Protocol mismatch is a visible setup failure.</p>
 <p>Regression coverage includes real subprocess framing; co-host streaming, tool approval, denial, cancellation and next-turn reuse; peer approval routing; durable resume under a new pid; stale frames and duplicate delivery; client approval ID zero; transient reads; and unknown append outcomes. The Python integration harness exercises the same frames through the daemon's gRPC surface.</p>
 <h2>Verification record</h2>
+<p>Review CI: nexus-vfs PR #380 passed all 14 checks at e8454b5bd, including complete workspace tests, strict Clippy, SDK tests and four platform binary builds. The macOS Intel budget is 16 MiB for a measured 16,541,736-byte binary. Nexus installs the same upstream binary and now matches the upstream Linux cap of 17.25 MiB; its measured size was 17,994,696 bytes.</p>
+<p>After rebasing the consumers, all 47 engine tests and 10 Moss transport tests passed again. Each co-host transport now uses two I/O workers instead of allocating a CPU-sized pool for every agent. For a fresh Sudowork checkout, build its shared workspace packages before running TypeScript checks; the full TypeScript check passed with the matching local SDK.</p>
 <p>Validation ran on Windows with the real locally packed SDK, all eight Nexus workspace crates patched to the owned nexus-vfs checkout, and local mock model responses. No funded model API was needed.</p>
 <table><tr><th>Scope</th><th>Result</th></tr>
 <tr><td>nexus-vfs a2a and managed-agent, with subprocess-host</td><td>102 passed. Includes a real subprocess, approval ID zero, cancel and reuse, duplicate suppression, EOF cleanup and absence of public fd streams.</td></tr>

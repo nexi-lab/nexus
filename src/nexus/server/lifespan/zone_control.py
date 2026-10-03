@@ -427,7 +427,13 @@ async def startup_zone_control(app: FastAPI) -> list[asyncio.Task[Any]]:
         transfer_executor=getattr(app.state, "zone_transfer_executor", None),
     )
     report["enabled"] = True
-    required = explicitly_enabled or getattr(app.state, "deployment_profile", None) == "full"
+    # Fail-closed on missing providers ONLY for deployments that explicitly
+    # declare zone control (NEXUS_ZONE_CONTROL_ENABLED). A bare
+    # deployment_profile == "full" must not make the whole app unbootable:
+    # "full" is also the default profile of deployments that never opted
+    # into the zone surface (the self-contained watch/e2e stack), and those
+    # must keep booting with the zone endpoints answering 503 instead.
+    required = explicitly_enabled
     if required and not report["composite_armed"]:
         raise ZoneControlNotArmed(f"mandatory zone providers missing: {report}")
 

@@ -18,13 +18,9 @@ on:
       - ".github/workflows/plugin-signing-compliance.yml"
       - "scripts/check_plugin_signing_compliance.py"
       - "scripts/sign_plugin.py"
+  # Required checks must run on every PR; skipped workflows leave the required
+  # status pending and block changes outside the signing-related paths above.
   pull_request:
-    paths:
-      - "rust/**/Cargo.toml"
-      - ".github/workflows/release-*.yml"
-      - ".github/workflows/plugin-signing-compliance.yml"
-      - "scripts/check_plugin_signing_compliance.py"
-      - "scripts/sign_plugin.py"
 
 jobs:
   check:

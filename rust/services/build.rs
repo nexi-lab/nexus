@@ -26,6 +26,9 @@ fn compile_password_vault_proto() -> Result<(), Box<dyn std::error::Error>> {
 
     tonic_prost_build::configure()
         .build_server(true)
+        // async_trait adds #[must_use] to methods that already return a
+        // must-use Future. Clippy 1.99 reports this in the generated trait.
+        .trait_attribute("PasswordVaultService", "#[allow(clippy::double_must_use)]")
         // Rust clients are required by `vault`'s gRPC E2E test
         // (`rust/services/vault/tests/grpc_e2e.rs`). Production
         // callers remain TS / Python in sudowork + password-agent;
@@ -47,6 +50,8 @@ fn compile_secrets_proto() -> Result<(), Box<dyn std::error::Error>> {
 
     tonic_prost_build::configure()
         .build_server(true)
+        // Keep the async_trait compatibility allowance on generated code.
+        .trait_attribute("GenericSecretsService", "#[allow(clippy::double_must_use)]")
         .build_client(true)
         .compile_protos(&[proto], &["proto"])?;
 

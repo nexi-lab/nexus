@@ -35,6 +35,7 @@ import blake3
 import pytest
 
 from tests.e2e.docker import runbook_helpers as rh
+from tests.helpers.session_mailbox import SessionMailboxCodec
 
 # The compose's `test` service (CI) sets COHOST_DUET_E2E=1; local runs export it.
 _STACK_UP = os.environ.get("COHOST_DUET_E2E") == "1"
@@ -164,7 +165,7 @@ def _decode(read_result: object) -> str:
     return out if isinstance(out, str) else str(out)
 
 
-def test_cohost_agent_replies_over_a2a_mailbox() -> None:
+def test_cohost_agent_replies_over_a2a_mailbox(request: pytest.FixtureRequest) -> None:
     """A daemon-hosted co-host agent LLM-replies to a peer over the A2A mailbox."""
     a, b, expected = _CID_PIN
     assert _conversation_id(a, b) == expected, (
@@ -185,6 +186,62 @@ def test_cohost_agent_replies_over_a2a_mailbox() -> None:
     )
     assert "error" not in started, f"start_session failed: {started}"
     assert started.get("result", {}).get("session_id"), f"no session_id: {started}"
+
+    session = started["result"]
+    request.addfinalizer(
+        lambda: rh.grpc_call(
+            GRPC,
+            "managed_agent.cancel_v1",
+            {"session_id": session["session_id"], "mode": "session"},
+            api_key=API_KEY,
+        )
+    )
+    control = SessionMailboxCodec(session["session_endpoint"])
+    control_path = control.endpoint["transcript"]
+
+    def send(message):
+        result = rh.vfs_stream_write(GRPC, control_path, control.encode(message), api_key=API_KEY)
+        assert "error" not in result, result
+
+    def poll_control():
+        collected = rh.stream_collect_all(GRPC, control_path, api_key=API_KEY)
+        assert "error" not in collected, collected
+        messages = []
+        for envelope in _frames(collected["result"]["data"]):
+            frame = control.decode(envelope)
+            if frame and frame["type"] == "closed":
+                pytest.fail(frame["reason"])
+            if frame and frame["type"] == "rpc":
+                message = frame["message"]
+                if message.get("method") == "session/request_permission":
+                    option = next(
+                        o for o in message["params"]["options"] if o["kind"] == "allow_once"
+                    )
+                    send(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": message["id"],
+                            "result": {
+                                "outcome": {"outcome": "selected", "optionId": option["optionId"]}
+                            },
+                        }
+                    )
+                messages.append(message)
+        return messages
+
+    for ident, method, params in [
+        ("initialize", "initialize", {"protocolVersion": 1, "clientCapabilities": {}}),
+        ("open", "session/new", {"cwd": "/", "mcpServers": []}),
+    ]:
+        send({"jsonrpc": "2.0", "id": ident, "method": method, "params": params})
+        deadline = time.monotonic() + 30
+        while True:
+            response = next((m for m in poll_control() if m.get("id") == ident), None)
+            if response:
+                assert "error" not in response, response
+                break
+            assert time.monotonic() < deadline, f"controller handshake timed out: {ident}"
+            time.sleep(0.1)
 
     # 2. Provision the conversation BEFORE the poller's first discovery pass,
     #    so there is a peer to find. Creating it later is not wrong — the poller
@@ -213,6 +270,7 @@ def test_cohost_agent_replies_over_a2a_mailbox() -> None:
     deadline = time.time() + REPLY_TIMEOUT_S
     reply = None
     while time.time() < deadline and reply is None:
+        poll_control()
         collected = rh.stream_collect_all(GRPC, transcript, api_key=API_KEY)
         if "error" not in collected:
             for frame in _frames(collected["result"]["data"]):

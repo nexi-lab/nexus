@@ -21,6 +21,7 @@ on:
   # Required checks must run on every PR; skipped workflows leave the required
   # status pending and block changes outside the signing-related paths above.
   pull_request:
+  workflow_dispatch:
 
 jobs:
   check:

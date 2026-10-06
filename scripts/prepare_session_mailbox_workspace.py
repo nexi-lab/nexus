@@ -89,6 +89,10 @@ def main() -> None:
         subprocess.run(
             [bun, "add", "--no-save", "--ignore-scripts", dependency], cwd=consumer, check=True
         )
+    if args.moss:
+        # Bun removes unlisted vendor packages when changing the SDK. Restore
+        # the repository's normal postinstall before building real server tests.
+        subprocess.run([bun, "run", "scripts/copy-vendor.js"], cwd=args.moss.resolve(), check=True)
     report = {
         "protocol": "acp-mailbox/1",
         "sdk": str(tarball),

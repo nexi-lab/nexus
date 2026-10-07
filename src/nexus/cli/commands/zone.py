@@ -40,18 +40,27 @@ from nexus.cli.utils import (
 from nexus.contracts.constants import DEFAULT_GRPC_BIND_ADDR
 
 
-def _refuse_dropped_local_options(*, hostname: str | None, data_dir: str, bind: str) -> None:
+def _refuse_dropped_local_options(
+    ctx: click.Context, *, hostname: str | None, data_dir: str, bind: str
+) -> None:
     """M-13: legacy local-ZoneManager flags have no /v2 remote equivalent —
     refuse loudly instead of silently dropping them (a silent drop produced
-    exit-0 fake successes for documented flags)."""
+    exit-0 fake successes for documented flags).
+
+    Only a value the user typed on the COMMAND LINE is refused: env-injected
+    values (NEXUS_DATA_DIR and friends) are ambient configuration common in
+    docker exec / CI shells, not an explicit request for local behaviour."""
+    explicit = lambda name: (  # noqa: E731 - local readability
+        ctx.get_parameter_source(name) == click.core.ParameterSource.COMMANDLINE
+    )
     unsupported = [
         name
-        for name, value in (
-            ("--hostname", hostname),
-            ("--data-dir", data_dir if data_dir != "./nexus-data/zones" else None),
-            ("--bind", bind if bind != DEFAULT_GRPC_BIND_ADDR else None),
+        for name, value, typed in (
+            ("--hostname", hostname, explicit("hostname")),
+            ("--data-dir", data_dir, explicit("data_dir")),
+            ("--bind", bind, explicit("bind")),
         )
-        if value
+        if typed and value
     ]
     if unsupported:
         raise click.UsageError(
@@ -178,7 +187,12 @@ def create_zone_cmd(
             "--peers is not supported via the remote zone API "
             "(participants join via `nexus zone join`)"
         )
-    _refuse_dropped_local_options(hostname=None, data_dir=data_dir, bind=bind)
+    _refuse_dropped_local_options(
+        click.get_current_context(),
+        hostname=hostname,
+        data_dir=data_dir,
+        bind=bind,
+    )
 
     try:
         if dry_run:
@@ -260,7 +274,12 @@ def join_zone_cmd(
     Examples:
         nexus zone join shared-zone --peers leader:2126,peer2:2126
     """
-    _refuse_dropped_local_options(hostname=hostname, data_dir=data_dir, bind=bind)
+    _refuse_dropped_local_options(
+        click.get_current_context(),
+        hostname=hostname,
+        data_dir=data_dir,
+        bind=bind,
+    )
 
     try:
         peer_list = [p.strip() for p in peers.split(",")]
@@ -337,8 +356,19 @@ def list_zones_cmd(
         # for maintenance scenarios (no server running).
         if remote_url:
             with timing.phase("server"):
-                rpc_data = api_call(remote_url, remote_api_key, "GET", "/v2/zones")
-            zones = [z.get("zone_id", "") for z in rpc_data.get("zones", [])]
+                # the server pages zones (default limit 50) — follow
+                # next_cursor so listings beyond the first page survive
+                zones: list[str] = []
+                cursor: str | None = None
+                while True:
+                    query = "/v2/zones"
+                    if cursor:
+                        query += f"?cursor={cursor}"
+                    rpc_data = api_call(remote_url, remote_api_key, "GET", query)
+                    zones.extend(z.get("zone_id", "") for z in rpc_data.get("zones", []))
+                    cursor = rpc_data.get("next_cursor")
+                    if not cursor:
+                        break
         else:
             with timing.phase("server"):
                 mgr = _get_zone_manager(hostname, data_dir, bind)
@@ -433,7 +463,12 @@ def mount_zone_cmd(
 
         nexus zone mount /shared team-zone --dry-run
     """
-    _refuse_dropped_local_options(hostname=hostname, data_dir=data_dir, bind=bind)
+    _refuse_dropped_local_options(
+        click.get_current_context(),
+        hostname=hostname,
+        data_dir=data_dir,
+        bind=bind,
+    )
 
     try:
         if dry_run:
@@ -523,7 +558,12 @@ def unmount_zone_cmd(
 
         nexus zone unmount /shared --dry-run
     """
-    _refuse_dropped_local_options(hostname=hostname, data_dir=data_dir, bind=bind)
+    _refuse_dropped_local_options(
+        click.get_current_context(),
+        hostname=hostname,
+        data_dir=data_dir,
+        bind=bind,
+    )
 
     try:
         if dry_run:

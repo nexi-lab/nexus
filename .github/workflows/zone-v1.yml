@@ -16,8 +16,6 @@ on:
       - "src/nexus/server/api/v2/**zone*"
       - "src/nexus/server/api/v2/routers/sessions.py"
       - "src/nexus/server/lifespan/zone_control.py"
-      - "rust/services/rebac/**"
-      - "rust/nexusd/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "packages/nexus-api-client/**"
@@ -38,8 +36,6 @@ on:
       - "src/nexus/server/api/v2/**zone*"
       - "src/nexus/server/api/v2/routers/sessions.py"
       - "src/nexus/server/lifespan/zone_control.py"
-      - "rust/services/rebac/**"
-      - "rust/nexusd/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "packages/nexus-api-client/**"
@@ -84,7 +80,7 @@ jobs:
       - name: Build kernel from the pinned nexus-vfs rev
         shell: bash
         run: |
-          REV=$(grep -m1 -o 'rev = "[0-9a-f]\{40\}"' Cargo.toml | grep -o '[0-9a-f]\{40\}')
+          REV=$(grep 'nexus-vfs' Cargo.toml | grep -m1 -o 'rev = "[0-9a-f]\{40\}"' | grep -o '[0-9a-f]\{40\}')
           git clone --quiet https://github.com/nexi-lab/nexus-vfs "${RUNNER_TEMP}/nexus-vfs"
           git -C "${RUNNER_TEMP}/nexus-vfs" checkout --quiet "${REV}"
           cargo build --manifest-path "${RUNNER_TEMP}/nexus-vfs/rust/profiles/cluster/Cargo.toml"
@@ -113,7 +109,7 @@ jobs:
       - name: Build kernel from the pinned nexus-vfs rev
         shell: bash
         run: |
-          REV=$(grep -m1 -o 'rev = "[0-9a-f]\{40\}"' Cargo.toml | grep -o '[0-9a-f]\{40\}')
+          REV=$(grep 'nexus-vfs' Cargo.toml | grep -m1 -o 'rev = "[0-9a-f]\{40\}"' | grep -o '[0-9a-f]\{40\}')
           git clone --quiet https://github.com/nexi-lab/nexus-vfs "${RUNNER_TEMP}/nexus-vfs"
           git -C "${RUNNER_TEMP}/nexus-vfs" checkout --quiet "${REV}"
           cargo build --manifest-path "${RUNNER_TEMP}/nexus-vfs/rust/profiles/cluster/Cargo.toml"
@@ -150,10 +146,15 @@ jobs:
         with:
           components: rustfmt, clippy
       - run: cargo fmt --all --check
+      - name: Clippy the workspace members this repo owns
+        # The kernel build below covers the pinned external nexus-vfs repo;
+        # this step covers THIS repository's own Rust members, which had no
+        # compile verification at all (the installed clippy was never run).
+        run: cargo clippy --all-targets
       - name: Build kernel from the pinned nexus-vfs rev
         shell: bash
         run: |
-          REV=$(grep -m1 -o 'rev = "[0-9a-f]\{40\}"' Cargo.toml | grep -o '[0-9a-f]\{40\}')
+          REV=$(grep 'nexus-vfs' Cargo.toml | grep -m1 -o 'rev = "[0-9a-f]\{40\}"' | grep -o '[0-9a-f]\{40\}')
           git clone --quiet https://github.com/nexi-lab/nexus-vfs "${RUNNER_TEMP}/nexus-vfs"
           git -C "${RUNNER_TEMP}/nexus-vfs" checkout --quiet "${REV}"
           cargo build --manifest-path "${RUNNER_TEMP}/nexus-vfs/rust/profiles/cluster/Cargo.toml"

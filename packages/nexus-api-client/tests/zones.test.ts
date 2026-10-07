@@ -104,7 +104,7 @@ describe("ZoneClient", () => {
 
   it.each([
     ["capabilities", (c: ZoneClient) => c.capabilities(), "GET", "/v2/zone-capabilities", null],
-    ["list", (c: ZoneClient) => c.list("cursor=x"), "GET", "/v2/zones?cursor=x", null],
+    ["list", (c: ZoneClient) => c.list(new URLSearchParams("cursor=x")), "GET", "/v2/zones?cursor=x", null],
     ["list (no query)", (c: ZoneClient) => c.list(), "GET", "/v2/zones", null],
     ["get", (c: ZoneClient) => c.get("team-alpha"), "GET", "/v2/zones/team-alpha", null],
     [
@@ -152,7 +152,7 @@ describe("ZoneClient", () => {
       "/v2/zones/team-alpha/grants",
       "k5",
     ],
-    ["listGrants", (c: ZoneClient) => c.listGrants("team-alpha", "cursor=g"), "GET", "/v2/zones/team-alpha/grants?cursor=g", null],
+    ["listGrants", (c: ZoneClient) => c.listGrants("team-alpha", new URLSearchParams("cursor=g")), "GET", "/v2/zones/team-alpha/grants?cursor=g", null],
     ["listGrants (no query)", (c: ZoneClient) => c.listGrants("team-alpha"), "GET", "/v2/zones/team-alpha/grants", null],
     ["getGrant", (c: ZoneClient) => c.getGrant("team-alpha", "g1"), "GET", "/v2/zones/team-alpha/grants/g1", null],
     [
@@ -186,6 +186,7 @@ describe("ZoneClient", () => {
       "k8",
     ],
     ["listMounts", (c: ZoneClient) => c.listMounts("team-alpha"), "GET", "/v2/zone-mounts?zone_id=team-alpha", null],
+    ["listMounts (cursor)", (c: ZoneClient) => c.listMounts("team-alpha", "mt_2"), "GET", "/v2/zone-mounts?zone_id=team-alpha&cursor=mt_2", null],
     [
       "unmount",
       (c: ZoneClient) => c.unmount("m1", "k9"),

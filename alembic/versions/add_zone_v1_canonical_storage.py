@@ -88,7 +88,7 @@ def upgrade() -> None:
         sa.Column("revoked_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("revoked_by", sa.JSON(), nullable=True),
         sa.Column("revoke_reason", sa.Text(), nullable=True),
-        sa.UniqueConstraint("source_type", "source_id", name="uq_zone_grant_source"),
+        sa.UniqueConstraint("source_type", "source_id", "zone_id", name="uq_zone_grant_source"),
     )
     op.create_index("ix_zone_grants_zone_status", "zone_grants", ["zone_id", "status"])
     if op.get_bind().dialect.name == "postgresql":

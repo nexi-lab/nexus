@@ -35,6 +35,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import delete, inspect, or_, select, text, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nexus.bricks.auth.constants import RESERVED_ZONE_IDS
@@ -344,6 +345,18 @@ class ZoneApplicationService:
             fence=0,
         )
         session.add(op)
+        try:
+            session.flush()
+        except IntegrityError as exc:
+            # A concurrent request with the same (scope, key) committed
+            # first — the claim check could not see it. Surface the race as
+            # the idempotency conflict the client resolves by retrying (the
+            # retry replays the stored operation), never an unhandled 500.
+            raise ServiceError(
+                "IDEMPOTENCY_CONFLICT",
+                "a concurrent request holds this idempotency key",
+                http_status=409,
+            ) from exc
         return op
 
     # ── create saga (§5.2) ───────────────────────────────────────────────────
@@ -742,8 +755,13 @@ class ZoneApplicationService:
             if request.source is not None:
                 dupe = session.execute(
                     select(ZoneGrantModel).where(
+                        # same-zone only: a source (e.g. an org binding)
+                        # legitimately grants on multiple zones; the replay
+                        # must answer with THIS zone's operation, never a
+                        # foreign zone's
                         ZoneGrantModel.source_type == request.source.source_type,
                         ZoneGrantModel.source_id == request.source.source_id,
+                        ZoneGrantModel.zone_id == zone_id,
                     )
                 ).scalar_one_or_none()
                 if dupe is not None:

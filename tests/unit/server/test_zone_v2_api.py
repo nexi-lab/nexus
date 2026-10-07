@@ -136,6 +136,18 @@ def test_openapi_fixture_matches_registered_zone_surface() -> None:
     }
     assert actual == expected
 
+    # every fixture operation must declare its status codes (incl. the
+    # contract error response) — an empty {} locks only the route set
+    for fixture_path, operations in fixture["paths"].items():
+        for method, op in operations.items():
+            if method == "parameters":
+                continue
+            assert isinstance(op.get("responses"), dict) and op["responses"], (
+                fixture_path,
+                method,
+            )
+            assert "default" in op["responses"], (fixture_path, method)
+
 
 def test_get_transfer_serializes_operation_datetimes_as_iso() -> None:
     """M-2: the service returns raw ORM datetimes; pydantic v2 does not coerce

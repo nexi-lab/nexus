@@ -440,7 +440,7 @@ class ZoneApplicationService:
                 display_name=request.display_name,
                 description=request.description,
                 phase="Creating",
-                canonical_status=None,  # not active — only a receipt makes it so
+                canonical_status="creating",  # not active — only a receipt makes it so
                 canonical_revision=_new_id("rev"),
                 created_by=principal,
                 placement_location=request.deployment.location if request.deployment else "cloud",

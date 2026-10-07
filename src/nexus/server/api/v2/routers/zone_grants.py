@@ -125,13 +125,9 @@ def create_grant(
     except ServiceError as exc:
         raise _svc_error(exc) from exc
     response.headers["Location"] = f"/v2/zone-operations/{result.operation_id}"
-    return OperationView(
-        operation_id=result.operation_id,
-        action="grant",
-        state=result.state,
-        step=result.step,
-        retryable=result.retryable,
-    )
+    # M-2: the contract requires created_at/updated_at on every 202 —
+    # from_operation fills them from the persisted operation row
+    return OperationView.from_operation(svc.get_operation(result.operation_id))
 
 
 @router.get("/zones/{zone_id}/grants")
@@ -246,19 +242,9 @@ def get_operation(
         raise HTTPException(
             status_code=404, detail={"code": "ZONE_OPERATION_NOT_FOUND", "retryable": False}
         )
-    return OperationView(
-        operation_id=op["operation_id"],
-        action=op["action"],
-        zone_id=op.get("zone_id"),
-        grant_id=op.get("grant_id"),
-        state=op["state"],
-        step=op["step"],
-        retryable=op["retryable"],
-        error=op.get("error"),
-        created_at=_optional_iso(op.get("created_at")),
-        updated_at=_optional_iso(op.get("updated_at")),
-        completed_at=_optional_iso(op.get("completed_at")),
-    )
+    # M-2: the contract requires created_at/updated_at on every 202 —
+    # from_operation fills them from the persisted operation row
+    return OperationView.from_operation(op)
 
 
 @router.get("/zone-capabilities")

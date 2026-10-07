@@ -82,7 +82,7 @@
       "kind": "ZoneDelegation",
       "schema_id": "https://contracts.sudo.dev/schemas/auth/v1/zone-delegation.schema.json",
       "schema_path": "contracts/auth/v1/zone-delegation.schema.json",
-      "schema_digest": "sha256:365d6124066cd8ce496a755d0759b53955bf5a49813db009c89ebcb1e0ff3fcb",
+      "schema_digest": "sha256:a1aa01128d91a19238cb93388d6ff49b22e18d19f75107b753af0083749728d4",
       "semantic_adr_refs": [
         "sudostack/docs/adr/ADR-002-zone-and-tenancy-model.md"
       ],
@@ -105,7 +105,7 @@
       "kind": "ZoneGrantCreateRequest",
       "schema_id": "https://contracts.sudo.dev/schemas/auth/v1/zone-grant-create-request.schema.json",
       "schema_path": "contracts/auth/v1/zone-grant-create-request.schema.json",
-      "schema_digest": "sha256:6710bcdc70f29d52a07f08c1ab0bb1dc1e780c402413499b957ba04ed0ca0c65",
+      "schema_digest": "sha256:afe4b2add6651356831ac492b5e979f2ba9eff712640d3481e741dad63e87d33",
       "semantic_adr_refs": [
         "sudostack/docs/adr/ADR-002-zone-and-tenancy-model.md"
       ],
@@ -128,7 +128,7 @@
       "kind": "ZoneGrant",
       "schema_id": "https://contracts.sudo.dev/schemas/auth/v1/zone-grant.schema.json",
       "schema_path": "contracts/auth/v1/zone-grant.schema.json",
-      "schema_digest": "sha256:ef13c0c03984f52f63b0e95a92b6c25dce90cd515466cea11888e48f7a223a23",
+      "schema_digest": "sha256:9d06c4f033df862b360d5c2a5467bf599d0e6050410bc940b9a8868ee13829d8",
       "semantic_adr_refs": [
         "sudostack/docs/adr/ADR-002-zone-and-tenancy-model.md"
       ],
@@ -151,7 +151,7 @@
       "kind": "ZoneOperation",
       "schema_id": "https://contracts.sudo.dev/schemas/auth/v1/zone-operation.schema.json",
       "schema_path": "contracts/auth/v1/zone-operation.schema.json",
-      "schema_digest": "sha256:d66b64ce2e6873661a7e320c54e0e5df5067d68a21a60866a81fe170c3f226ec",
+      "schema_digest": "sha256:ed7dd7852e3b70ee80e99bce2a09b96ec047d99b880f063f5fcb40f8fc9f53f9",
       "semantic_adr_refs": [
         "sudostack/docs/adr/ADR-002-zone-and-tenancy-model.md"
       ],
@@ -197,7 +197,7 @@
       "kind": "Zone",
       "schema_id": "https://contracts.sudo.dev/schemas/auth/v1/zone.schema.json",
       "schema_path": "contracts/auth/v1/zone.schema.json",
-      "schema_digest": "sha256:d4d7a35795e179073a65df9b7ca3674cb9cf2111214f3f34d344d1be6b918ca9",
+      "schema_digest": "sha256:b7551d924d9696a64a3c87bdf9b15d08a28b16b512fc82b07058b4b404fdc3bb",
       "semantic_adr_refs": [
         "sudostack/docs/adr/ADR-002-zone-and-tenancy-model.md"
       ],
@@ -296,12 +296,122 @@
       "owner": "nexus",
       "security_owner": "nexus",
       "producers": [
-        "moss runtime host"
+        "nexus session runtime service"
       ],
       "consumers": [
-        "sudocode runtime"
+        "sudocode (P1a, via sudo-contracts crate)"
       ],
-      "data_classification": "runtime authorization scope metadata; no credentials or secrets",
+      "data_classification": "session runtime metadata; no user content, no secrets",
+      "secrets_allowed": false,
+      "compatibility": "experimental"
+    },
+    {
+      "family": "runtime",
+      "api_version": "runtime.sudo.dev/v2",
+      "kind": "RuntimeRun",
+      "schema_id": "https://contracts.sudo.dev/schemas/runtime/v2/runtime-run.schema.json",
+      "schema_path": "contracts/runtime/v2/runtime-run.schema.json",
+      "schema_digest": "sha256:2f9f8065f4cc09bf974035656ed2569d7014d8544e94206d42d4981a171b3dfe",
+      "semantic_adr_refs": [
+        "sudostack/docs/adr/ADR-002-zone-and-tenancy-model.md"
+      ],
+      "owner": "nexus",
+      "security_owner": "nexus",
+      "producers": [
+        "nexus session runtime service"
+      ],
+      "consumers": [
+        "sudocode (P1a, via sudo-contracts crate)"
+      ],
+      "data_classification": "session runtime metadata; no user content, no secrets",
+      "secrets_allowed": false,
+      "compatibility": "experimental"
+    },
+    {
+      "family": "runtime",
+      "api_version": "runtime.sudo.dev/v2",
+      "kind": "SessionMetadata",
+      "schema_id": "https://contracts.sudo.dev/schemas/runtime/v2/session-metadata.schema.json",
+      "schema_path": "contracts/runtime/v2/session-metadata.schema.json",
+      "schema_digest": "sha256:ad8d032bd11a52245527eb3bdef6e53802a8db0a25b6ea350bf7ec17f9346000",
+      "semantic_adr_refs": [
+        "sudostack/docs/adr/ADR-002-zone-and-tenancy-model.md"
+      ],
+      "owner": "nexus",
+      "security_owner": "nexus",
+      "producers": [
+        "nexus session runtime service"
+      ],
+      "consumers": [
+        "sudocode (P1a, via sudo-contracts crate)"
+      ],
+      "data_classification": "session runtime metadata; no user content, no secrets",
+      "secrets_allowed": false,
+      "compatibility": "experimental"
+    },
+    {
+      "family": "task",
+      "api_version": "task.sudo.dev/v1",
+      "kind": "TaskAttempt",
+      "schema_id": "https://contracts.sudo.dev/schemas/task/v1/task-attempt.schema.json",
+      "schema_path": "contracts/task/v1/task-attempt.schema.json",
+      "schema_digest": "sha256:e0f1344c4162ee67b1e2cf85a7501b8ea9516acd39183085fa2789e75c5758ec",
+      "semantic_adr_refs": [
+        "sudostack/docs/adr/ADR-002-zone-and-tenancy-model.md"
+      ],
+      "owner": "nexus",
+      "security_owner": "nexus",
+      "producers": [
+        "nexus session task service"
+      ],
+      "consumers": [
+        "sudocode (P1b, via sudo-contracts crate)"
+      ],
+      "data_classification": "task scheduling metadata and execution facts; no user content, no secrets",
+      "secrets_allowed": false,
+      "compatibility": "experimental"
+    },
+    {
+      "family": "task",
+      "api_version": "task.sudo.dev/v1",
+      "kind": "TaskExecutionResolution",
+      "schema_id": "https://contracts.sudo.dev/schemas/task/v1/task-execution-resolution.schema.json",
+      "schema_path": "contracts/task/v1/task-execution-resolution.schema.json",
+      "schema_digest": "sha256:720c0ed3b027a038a4e1fb1d4f5fe3d75a52bb13d9c894902104c10d09b01c15",
+      "semantic_adr_refs": [
+        "sudostack/docs/adr/ADR-002-zone-and-tenancy-model.md"
+      ],
+      "owner": "nexus",
+      "security_owner": "nexus",
+      "producers": [
+        "nexus session task service"
+      ],
+      "consumers": [
+        "sudocode (P1b, via sudo-contracts crate)"
+      ],
+      "data_classification": "task scheduling metadata and execution facts; no user content, no secrets",
+      "secrets_allowed": false,
+      "compatibility": "experimental"
+    },
+    {
+      "family": "task",
+      "api_version": "task.sudo.dev/v1",
+      "kind": "TaskSpec",
+      "schema_id": "https://contracts.sudo.dev/schemas/task/v1/task-spec.schema.json",
+      "schema_path": "contracts/task/v1/task-spec.schema.json",
+      "schema_digest": "sha256:e8e40e48c9f45873001a391fe0b76c72ebac69c8d11aa6d7166a1908ab94cf1c",
+      "semantic_adr_refs": [
+        "sudostack/docs/adr/ADR-002-zone-and-tenancy-model.md"
+      ],
+      "owner": "nexus",
+      "security_owner": "nexus",
+      "producers": [
+        "nexus session task service"
+      ],
+      "consumers": [
+        "sudocode (P1b, via sudo-contracts crate)"
+      ],
+      "data_classification": "task scheduling metadata and execution facts; no user content, no secrets",
       "secrets_allowed": false,
       "compatibility": "experimental"
     }

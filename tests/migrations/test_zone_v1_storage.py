@@ -89,6 +89,16 @@ def _columns(engine, table: str) -> set[str]:
     return {c["name"] for c in insp.get_columns(table)}
 
 
+def _column_types(engine, table: str) -> dict[str, str]:
+    """Name -> compiled type (length included): column-name equality alone
+    once hid a 64-vs-255 varchar drift between migration and model."""
+    insp = sa.inspect(engine)
+    return {
+        c["name"]: str(c["type"]).upper()
+        for c in insp.get_columns(table)
+    }
+
+
 def test_upgrade_and_fresh_agree_on_zone_v1_tables(upgraded_sqlite, fresh_sqlite):
     # Domain-scoped double equality: every domain model table must exist in
     # BOTH the upgraded chain and the ORM metadata (a `>=` here previously
@@ -105,6 +115,13 @@ def test_upgrade_and_fresh_agree_on_zone_v1_tables(upgraded_sqlite, fresh_sqlite
     )
     for table in sorted(ZONE_DOMAIN_TABLES - ZONE_V1_TABLES):
         assert _columns(upgraded_sqlite, table) == _columns(fresh_sqlite, table), table
+    # M-19: type/length equality too — names alone passed a 64/255 drift.
+    # (SQLite reports VARCHAR without length, so the fresh/upgrade pair pins
+    # model-vs-migration DDL parity; the PG variant below pins real lengths.)
+    for table in sorted(ZONE_DOMAIN_TABLES):
+        assert _column_types(upgraded_sqlite, table) == _column_types(
+            fresh_sqlite, table
+        ), table
 
 
 @pytest.mark.postgres

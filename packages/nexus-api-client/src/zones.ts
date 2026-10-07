@@ -4,7 +4,7 @@ import type { NexusClientOptions, RequestOptions } from "./types.js";
 export interface ZoneRef {
   zoneId: string;
   displayName: string;
-  status: "active" | "suspended" | "deleting" | "deleted" | string;
+  status: "creating" | "active" | "suspended" | "deleting" | "deleted" | string;
   revision: string;
   [key: string]: unknown;
 }

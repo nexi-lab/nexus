@@ -122,6 +122,17 @@ def test_secret_negative_two_layer_semantics(schemas: dict, registry: Registry) 
     # (b) secret-styled unknown optionals are accepted at the wire layer and
     #     dropped by the object model.
     for case in doc["cases"]:
+        if case.get("expect") == "accepted-model-carries-it-until-service-layer-strips":
+            # documented boundary: a free-form details object cannot have its
+            # inner keys enumerated by the schema; the object model keeps it
+            # verbatim and stripping belongs to the serialization/service
+            # boundary (§4.1) — assert exactly that claim instead of
+            # silently skipping the case
+            assert _schema_jsonschema_ok(case["schema"], case["payload"], registry, schemas)
+            model = _model_for(case["schema"]).model_validate(case["payload"])
+            dumped = model.model_dump(mode="json")
+            assert dumped.get("details") == case["payload"].get("details")
+            continue
         if case.get("expect") != "accepted-and-dropped":
             continue
         assert _schema_jsonschema_ok(case["schema"], case["payload"], registry, schemas)

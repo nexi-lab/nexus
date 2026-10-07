@@ -14,20 +14,33 @@ these definitions and derives its own adapter locally.
 from __future__ import annotations
 
 import json
+import re
 from functools import cache
-from pathlib import Path
-from typing import Annotated, Literal
+from importlib import resources
+from typing import Annotated, Any, Literal
 
 from jsonschema import Draft202012Validator
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
-RFC3339_PATTERN = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$"
+RFC3339_PATTERN = r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$"
 DECIMAL_STRING_PATTERN = r"^[0-9]+$"
 DIGEST_PATTERN = r"^[a-z0-9-]+:[A-Za-z0-9+/=._-]+$"
 CAPABILITY_PATTERN = r"^zone\.[a-z-]+\.[a-z-]+$"
 
-_VENDOR_DIR = Path(__file__).resolve().parents[3] / "contracts" / "vendor" / "nexus-vfs.gen"
-_OWNED_CONTRACTS_DIR = Path(__file__).resolve().parents[3] / "contracts"
+#: Schema resources ride inside the package (mirrored from the repo-root
+#: contracts/ SSOT — tests/contracts/test_schema_lint.py locks the mirror to
+#: the originals), so a wheel install resolves them via importlib.resources
+#: instead of a repo-layout relative path that only exists in a checkout.
+_SCHEMA_RESOURCE_ROOT = "schemas"
+
+
+def _resource_text(relative_path: str) -> str:
+    return (
+        resources.files("nexus.contracts")
+        .joinpath(_SCHEMA_RESOURCE_ROOT)
+        .joinpath(relative_path)
+        .read_text(encoding="utf-8")
+    )
 
 
 @cache
@@ -38,14 +51,25 @@ def _projection_validator(filename: str) -> Draft202012Validator:
     adapter delegates to them instead of restating the regexes, so schema and
     model can never disagree about what a zone id or path is.
     """
-    doc = json.loads((_VENDOR_DIR / filename).read_text(encoding="utf-8"))
+    doc = json.loads(_resource_text(f"vendor/nexus-vfs.gen/{filename}"))
     return Draft202012Validator(doc)
 
 
 def _via_projection(filename: str, value: str) -> str:
     if not _projection_validator(filename).is_valid(value):
         raise ValueError(f"{value!r} fails the {filename} projection")
+    # The vendored schemas are upstream-generated and use `$` anchors, which
+    # Python's re (and jsonschema on top of it) matches BEFORE a trailing
+    # newline — 'abc\n' would pass. The second line of defence: an explicit
+    # \Z re-check so a newline-terminated id/path can never reach the store.
+    if isinstance(value, str) and not _ANCHORED_STRING.fullmatch(value):
+        raise ValueError(f"{value!r} fails the {filename} projection (trailing newline?)")
     return value
+
+
+#: ids/paths are single-line ASCII by construction; `\Z` (unlike `$`) refuses
+#: any trailing newline that a `$`-anchored jsonschema pattern would accept.
+_ANCHORED_STRING = re.compile(r"[^\n\r]*\Z", re.DOTALL)
 
 
 @cache
@@ -59,7 +83,7 @@ def _owned_validator(rel_path: str) -> Draft202012Validator:
     portable-primitive spec whose semantics differ); the frozen rules this
     product depends on live here now.
     """
-    doc = json.loads((_OWNED_CONTRACTS_DIR / rel_path).read_text(encoding="utf-8"))
+    doc = json.loads(_resource_text(rel_path))
     return Draft202012Validator(doc)
 
 
@@ -199,6 +223,19 @@ class Zone(BaseModel):
     deleted_at: str | None = Field(default=None, pattern=RFC3339_PATTERN)
 
 
+def _reject_explicit_null(value: Any) -> Any:
+    """Optional means omittable, not nullable (schema/pydantic parity).
+
+    The owned schemas type these fields string/object with no null arm, so
+    an explicit ``null`` must fail validation instead of silently clearing
+    (design intent: fixtures/invalid/null-known-optional rejects it)."""
+    if isinstance(value, dict):
+        for key in ("description", "labels", "deployment"):
+            if key in value and value[key] is None:
+                raise ValueError(f"{key}: explicit null is not allowed — omit the field")
+    return value
+
+
 class ZoneCreateRequest(BaseModel):
     """Admission request (§4.2): zone_id is a strict tenant-create candidate."""
 
@@ -211,6 +248,9 @@ class ZoneCreateRequest(BaseModel):
     description: str | None = None
     deployment: ZoneDeployment | None = None
     labels: dict[str, str] | None = None
+
+    # pydantic v2: model-level before-validator (schema/pydantic parity)
+    _null_guard = model_validator(mode="before")(_reject_explicit_null)
 
 
 class ZonePatchPlacement(BaseModel):
@@ -245,6 +285,9 @@ class ZonePatchRequest(BaseModel):
     description: str | None = None
     labels: dict[str, str] | None = None
     deployment: ZonePatchPlacement | None = None
+
+    # pydantic v2: model-level before-validator (schema/pydantic parity)
+    _null_guard = model_validator(mode="before")(_reject_explicit_null)
 
 
 class ZoneGrantSource(BaseModel):

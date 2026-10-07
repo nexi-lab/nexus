@@ -445,6 +445,7 @@ where = ["src"]
     "schemas/common/v1/fixtures/valid/*.json",
     "schemas/common/v1/fixtures/invalid/*.json",
     "schemas/common/v1/vendor/nexus-vfs/*.json",
+    "schemas/vendor/nexus-vfs.gen/*.json",
 ]
 "nexus.extensions._index" = ["extensions.json"]
 

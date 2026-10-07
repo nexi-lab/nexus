@@ -250,7 +250,10 @@ class TestZonePermissions:
     def test_unauthenticated_delete_returns_error(self, app_with_auth):
         """DELETE without token → 401 from the unified auth dependency."""
         client = app_with_auth["client"]
-        resp = client.delete("/api/zones/perm-test-zone")
+        resp = client.delete(
+            "/api/zones/perm-test-zone",
+            headers={"X-Nexus-Confirm-Zone": "perm-test-zone"},
+        )
         assert resp.status_code == 401
 
     def test_outsider_cannot_get_zone(self, app_with_auth, outsider_token, zone_id):
@@ -474,7 +477,10 @@ class TestDeprovisionLifecycle:
                 )
             session.commit()
 
-        delete_response = client.delete(f"/api/zones/{target_zone}", headers=headers)
+        delete_response = client.delete(
+            f"/api/zones/{target_zone}",
+            headers={**headers, "X-Nexus-Confirm-Zone": target_zone},
+        )
         assert delete_response.status_code == 202, delete_response.text
         app_with_auth["worker"].pump_once()
 

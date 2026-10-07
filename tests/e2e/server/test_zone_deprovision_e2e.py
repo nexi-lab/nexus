@@ -26,7 +26,9 @@ class TestZoneDeprovisionAuthentication:
 
     def test_delete_zone_requires_auth(self, test_app):
         """DELETE without auth returns 401."""
-        response = test_app.delete("/api/zones/some-zone")
+        response = test_app.delete(
+            "/api/zones/some-zone", headers={"X-Nexus-Confirm-Zone": "some-zone"}
+        )
         assert response.status_code == 401, f"Got {response.status_code}: {response.text}"
 
 

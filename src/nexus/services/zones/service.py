@@ -821,11 +821,7 @@ class ZoneApplicationService:
                 else:
                     existing.reference_state = "active"
                     existing.updated_at = _now()
-            epoch_row = session.get(ZoneAuthorizationEpochModel, grant.zone_id)
-            assert epoch_row is not None
-            epoch_row.epoch += 1
-            epoch_row.advanced_at = _now()
-            epoch_row.reason = f"grant {grant_id} activated"
+            _advance_epoch(session, grant.zone_id, f"grant {grant_id} activated")
             grant.status = "active"
             operation = session.execute(
                 select(ZoneOperationModel).where(ZoneOperationModel.grant_id == grant_id)
@@ -896,12 +892,8 @@ class ZoneApplicationService:
             grant.revoked_at = _now()
             grant.revoked_by = principal
             grant.revoke_reason = reason
-            epoch_row = session.get(ZoneAuthorizationEpochModel, zone_id)
-            assert epoch_row is not None
             authorization_revision = _new_id("rev")
-            epoch_row.epoch += 1
-            epoch_row.advanced_at = _now()
-            epoch_row.reason = f"grant {grant_id} revoked"
+            new_epoch = _advance_epoch(session, zone_id, f"grant {grant_id} revoked")
             session.add(
                 ZoneGrantProjectionOutboxModel(
                     grant_id=grant_id,
@@ -910,7 +902,7 @@ class ZoneApplicationService:
                         "grant_id": grant_id,
                         "zone_id": zone_id,
                         "authorization_revision": authorization_revision,
-                        "authorization_epoch": epoch_row.epoch,
+                        "authorization_epoch": new_epoch,
                     },
                 )
             )
@@ -1496,12 +1488,7 @@ class ZoneApplicationService:
             # Advance the epoch BEFORE revoking so the cleanup events carry the
             # post-invalidation epoch (park_runs_for_revocation compares
             # against it); same transaction, no concurrency window.
-            epoch_row = session.get(ZoneAuthorizationEpochModel, zone_id)
-            assert epoch_row is not None
-            epoch_row.epoch += 1
-            epoch_row.advanced_at = _now()
-            epoch_row.reason = "zone deprovision requested"
-            deletion_epoch = int(epoch_row.epoch)
+            deletion_epoch = _advance_epoch(session, zone_id, "zone deprovision requested")
             # §5.6: revoke the zone's own grants as part of the flow.
             for g in (
                 session.execute(
@@ -1796,6 +1783,31 @@ class ZoneApplicationService:
                 "completed_at": op.completed_at,
                 "principal_id": principal_id,
             }
+
+
+def _advance_epoch(session: Session, zone_id: str, reason: str) -> int:
+    """Atomically advance a zone's authorization epoch.
+
+    ``UPDATE ... SET epoch = epoch + 1`` instead of an ORM read-modify-write:
+    concurrent activation/revocation/deprovision transactions must never
+    merge two advances into one — each advance invalidates every outstanding
+    delegation bound to the previous epoch, so a lost increment would let a
+    revoked grant keep passing ``epoch_is_current`` until its delegation TTL
+    expires. The UPDATE's row lock holds until commit, keeping dependent
+    writes in the same transaction safe.
+    """
+    new_epoch = session.execute(
+        update(ZoneAuthorizationEpochModel)
+        .where(ZoneAuthorizationEpochModel.zone_id == zone_id)
+        .values(
+            epoch=ZoneAuthorizationEpochModel.epoch + 1,
+            advanced_at=_now(),
+            reason=reason,
+        )
+        .returning(ZoneAuthorizationEpochModel.epoch)
+    ).scalar_one_or_none()
+    assert new_epoch is not None, f"zone_authorization_epochs row missing for {zone_id}"
+    return int(new_epoch)
 
 
 def _fenced_update(

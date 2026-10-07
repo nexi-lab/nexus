@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import delete, inspect, select, text, update
+from sqlalchemy import delete, inspect, or_, select, text, update
 from sqlalchemy.orm import Session
 
 from nexus.bricks.auth.constants import RESERVED_ZONE_IDS
@@ -48,6 +48,7 @@ from nexus.remote.zone_runtime_client import (
     NullZoneRuntimePort,
     RuntimeReceipt,
     ZoneRuntimePort,
+    ZoneRuntimeRejected,
     ZoneRuntimeUnavailable,
 )
 from nexus.storage.models import (
@@ -366,6 +367,33 @@ class ZoneApplicationService:
 
             exists = session.get(ZoneModel, request.zone_id)
             if exists is not None:
+                if exists.phase == "Creating":
+                    # A create saga still owns the row: a client retrying
+                    # with a fresh idempotency key gets the in-flight (or
+                    # retryable-failed) operation replayed instead of a 409
+                    # it cannot resolve.
+                    pending = (
+                        session.execute(
+                            select(ZoneOperationModel).where(
+                                ZoneOperationModel.zone_id == request.zone_id,
+                                ZoneOperationModel.action == "create",
+                                or_(
+                                    ZoneOperationModel.state.in_(("queued", "running")),
+                                    (ZoneOperationModel.state == "failed")
+                                    & ZoneOperationModel.retryable.is_(True),
+                                ),
+                            )
+                        )
+                        .scalars()
+                        .first()
+                    )
+                    if pending is not None:
+                        return OperationResult(
+                            pending.operation_id,
+                            pending.state,
+                            pending.step,
+                            pending.retryable,
+                        )
                 raise ServiceError(
                     "ZONE_ALREADY_EXISTS",
                     f"zone {request.zone_id} already exists",
@@ -459,7 +487,13 @@ class ZoneApplicationService:
         """
         with self._session_factory() as session, session.begin():
             op = session.get(ZoneOperationModel, operation_id)
-            if op is None or op.state in ("succeeded", "failed"):
+            # Terminal means terminal; a failed-but-retryable create is NOT
+            # terminal — the worker's stop criterion is exactly
+            # ``failed and not retryable``, and outbox retries must be able
+            # to re-drive it instead of spinning on a dead operation.
+            if op is None or op.state == "succeeded" or (
+                op.state == "failed" and not op.retryable
+            ):
                 return OperationResult(
                     op.operation_id if op else operation_id,
                     op.state if op else "unknown",
@@ -475,6 +509,20 @@ class ZoneApplicationService:
                 )
             zone_id = op.zone_id
             assert zone_id is not None
+            zone_row = session.get(ZoneModel, zone_id)
+            if zone_row is not None and zone_row.canonical_status in ("deleting", "deleted"):
+                # The zone was deprovisioned while this create was in flight
+                # (or waits for replay): re-creating the physical zone would
+                # resurrect a deleted resource as an unreclaimable orphan.
+                op.state = "failed"
+                op.step = "zone-deleted"
+                op.retryable = False
+                op.error = {
+                    "code": "ZONE_DELETED",
+                    "message": f"zone {zone_id} was deprovisioned before the create replayed",
+                    "retryable": False,
+                }
+                return OperationResult(operation_id, "failed", "zone-deleted", False)
             op.state = "running"
             op.step = "runtime-create"
             op.lease_owner = f"inline-{secrets.token_hex(4)}"
@@ -484,6 +532,7 @@ class ZoneApplicationService:
         # Runtime effect outside the transaction: SQL rollback never pretends
         # the physical zone came back (§5.2 failure rules).
         receipt: RuntimeReceipt
+        rejected_verdict: RuntimeReceipt | None = None
         try:
             try:
                 create_receipt = self._runtime.create_zone(
@@ -499,7 +548,18 @@ class ZoneApplicationService:
                 create_receipt = recover(
                     operation_id=operation_id, ctx={"operation_id": operation_id}
                 )
-            if not create_receipt.ok:
+            except ZoneRuntimeRejected as exc:
+                # The reconciliation poll answered with a deterministic
+                # refusal — that IS a verdict on the operation. Surface it as
+                # a rejected receipt so the failure branch below records a
+                # terminal, non-retryable result instead of letting the
+                # exception escape and be misfiled as unavailability.
+                rejected_verdict = RuntimeReceipt(
+                    ok=False, rejected=True, error=str(exc), raw={"rejected": str(exc)}
+                )
+            if rejected_verdict is not None:
+                receipt = rejected_verdict
+            elif not create_receipt.ok:
                 receipt = create_receipt
             else:
                 observed = self._runtime.zone_status(
@@ -543,14 +603,31 @@ class ZoneApplicationService:
         with self._session_factory() as session, session.begin():
             zone = session.get(ZoneModel, zone_id)
             assert zone is not None
-            _fenced_update(
+            updated = _fenced_update(
                 session,
                 ZoneOperationModel,
                 operation_id,
                 fence=fence,
                 values={"state": "running", "step": "read-back"},
             )
+            if not updated:
+                # A takeover bumped the fence between our runtime call and
+                # this write-back: this worker is stale. Write nothing else
+                # in this transaction (the genesis grant and projection
+                # outbox included) — the fence-owning worker owns the saga
+                # now, and the UPDATE's row lock holds to commit, so later
+                # fenced writes cannot race past this check.
+                return OperationResult(
+                    operation_id, "failed", "stale-worker-fenced", False
+                )
             if not receipt.ok or not receipt.physical_identity:
+                # A deterministic runtime refusal is terminal and must not be
+                # retried (the receipt says so); only unknown-family failures
+                # stay retryable.
+                retryable = not receipt.rejected
+                code = (
+                    "ZONE_RUNTIME_REJECTED" if receipt.rejected else "ZONE_RUNTIME_UNAVAILABLE"
+                )
                 _fenced_update(
                     session,
                     ZoneOperationModel,
@@ -559,15 +636,15 @@ class ZoneApplicationService:
                     values={
                         "state": "failed",
                         "step": "runtime-create",
-                        "retryable": True,
+                        "retryable": retryable,
                         "error": {
-                            "code": "ZONE_RUNTIME_UNAVAILABLE",
+                            "code": code,
                             "message": receipt.error or "runtime refused create",
-                            "retryable": True,
+                            "retryable": retryable,
                         },
                     },
                 )
-                return OperationResult(operation_id, "failed", "runtime-create", True)
+                return OperationResult(operation_id, "failed", "runtime-create", retryable)
 
             # §5.2.5-7: read back identity/membership/revision, then the
             # mandatory initial grant, then active-with-receipt — one commit.
@@ -1321,13 +1398,18 @@ class ZoneApplicationService:
                 assert failed_operation is not None
                 failed_operation.state = "failed"
                 failed_operation.step = "transfer"
-                failed_operation.retryable = True
+                # Transfers are driven inline only — no outbox row is ever
+                # queued for one, so no system path retries this operation.
+                # Marking it retryable would advertise a retry that never
+                # comes; the caller retries by re-issuing with its own
+                # idempotency key.
+                failed_operation.retryable = False
                 failed_operation.error = {
                     "code": "ZONE_RUNTIME_UNAVAILABLE",
                     "message": str(exc),
-                    "retryable": True,
+                    "retryable": False,
                 }
-            return OperationResult(operation_id, "failed", "transfer", True)
+            return OperationResult(operation_id, "failed", "transfer", False)
         with self._session_factory() as session, session.begin():
             completed_operation = session.get(ZoneOperationModel, operation_id)
             assert completed_operation is not None

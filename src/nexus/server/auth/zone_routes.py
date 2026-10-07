@@ -15,7 +15,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any, cast
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import func, select
 
@@ -259,9 +259,10 @@ async def get_zone(
 
     Raises:
         401: Not authenticated
-        403: User does not have access to this zone (after operator deny
-            via PolicyGate, or when no gate is configured)
+        403: User does not have access to this zone
         404: Zone not found
+        503: Zone control surface not armed (fail-closed: the composite
+            service must be assembled before any zone read)
     """
     is_admin = auth_result.get("is_admin", False)
 
@@ -428,6 +429,7 @@ async def delete_zone_endpoint(
     zone_id: str,
     request: Request,
     response: Response,
+    confirmation: str = Header(alias="X-Nexus-Confirm-Zone"),
     auth_result: dict[str, Any] = Depends(require_auth),
 ) -> ZoneDeprovisionResponse:
     """Delete (deprovision) a zone.
@@ -467,6 +469,27 @@ async def delete_zone_endpoint(
     if svc is not None:
         from nexus.services.zones.service import ServiceError
 
+        # existence first: a missing zone answers 404 for every role (the
+        # docstring promises it; capability-then-existence used to answer
+        # 403 for non-admins and 404 for admins)
+        session_factory = _get_session_factory(request)
+        with session_factory() as session:
+            if session.get(ZoneModel, zone_id) is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Zone '{zone_id}' not found",
+                )
+        # mis-delete guard parity with v2: the confirmation header must
+        # repeat the zone id
+        if confirmation != zone_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "code": "ZONE_DELETE_BLOCKED",
+                    "message": "X-Nexus-Confirm-Zone must exactly match zone_id",
+                    "retryable": False,
+                },
+            )
         require_zone_capability(
             request,
             auth_result,

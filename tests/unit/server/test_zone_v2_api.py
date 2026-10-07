@@ -344,7 +344,9 @@ def test_legacy_mutations_delegate_and_advertise_sunset() -> None:
         assert created.headers["deprecation"] == "true"
         assert created.headers["link"] == '</v2/zones>; rel="successor-version"'
 
-        deleted = client.delete("/api/zones/legacy-zone")
+        deleted = client.delete(
+            "/api/zones/legacy-zone", headers={"X-Nexus-Confirm-Zone": "legacy-zone"}
+        )
         assert deleted.status_code == 202
         assert deleted.json()["phase"] == "Terminating"
         assert deleted.headers["location"].startswith("/v2/zone-operations/")

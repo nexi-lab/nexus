@@ -298,7 +298,12 @@ def create_session(
                 resource_path=f"/sessions/{session_id}",
             )
             return True
-        except HTTPException:
+        except HTTPException as exc:
+            # A permission verdict is the answer; a dependency failure (503)
+            # must propagate so callers retry instead of reading it as a
+            # permanent denial.
+            if exc.status_code >= 500:
+                raise
             return False
 
     try:
@@ -346,9 +351,12 @@ def write_record(
     try:
         view = svc.get_session(session_id)
         _require_zone_alive(request, view.home_zone_id)
-        _require_runtime_access(
+        # Anti-enumeration parity with the read surface (L-8③): a denial
+        # answers with the same 404 shape as the session not existing.
+        _require_runtime_access_or_not_found(
             request,
             auth_result,
+            not_found_code="SESSION_NOT_FOUND",
             zone_id=view.home_zone_id,
             capability="zone.data.write",
             resource_path=f"/sessions/{session_id}",
@@ -479,10 +487,18 @@ def _start(
     def zone_active_check(zone_id: str) -> bool:
         try:
             require_zone_capability(
-                request, auth_result, zone_id=zone_id, capability="zone.runtime.execute"
+                request,
+                auth_result,
+                zone_id=zone_id,
+                capability="zone.runtime.execute",
+                # body-carried delegation refs are as valid as header ones
+                # (_runtime_delegation_ref resolved both at ingress)
+                delegation_ref=delegation_ref,
             )
             return True
-        except HTTPException:
+        except HTTPException as exc:
+            if exc.status_code >= 500:
+                raise
             return False
 
     attempt: Any = None  # bound only after create_attempt commits (M-11)

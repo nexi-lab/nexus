@@ -61,6 +61,7 @@ from nexus.storage.models import (
     TaskResolutionModel,
     TaskSpecModel,
     ZoneAuthorizationEpochModel,
+    ZoneDelegationModel,
     ZoneGrantModel,
     ZoneGrantProjectionOutboxModel,
     ZoneMountModel,
@@ -209,6 +210,13 @@ def _purge_zone_session_data(session: Session, zone_id: str) -> None:
     session.execute(delete(TaskSpecModel).where(TaskSpecModel.zone_id == zone_id))
     session.execute(delete(SessionDataRecordModel).where(SessionDataRecordModel.zone_id == zone_id))
     session.execute(delete(SessionModel).where(SessionModel.home_zone_id == zone_id))
+    # authorization-domain rows that must not outlive the zone either: the
+    # projection provenance ledger and the delegation projections (a stale
+    # active ledger row would also poison later cleanup's remaining-check)
+    session.execute(
+        delete(RebacRelationSourceModel).where(RebacRelationSourceModel.zone_id == zone_id)
+    )
+    session.execute(delete(ZoneDelegationModel).where(ZoneDelegationModel.zone_id == zone_id))
 
 
 def _projection_edges(grant: ZoneGrantModel) -> list[tuple[dict[str, Any], str, str]]:
@@ -851,6 +859,24 @@ class ZoneApplicationService:
         with self._session_factory() as session, session.begin():
             grant = session.get(ZoneGrantModel, grant_id)
             if grant is None or grant.status != "pending":
+                # The grant stopped being pending while our external writes
+                # were in flight (a concurrent revoke). Those edges may
+                # already live in the external store with no accounting rows
+                # for the revoker's cleanup to find — enqueue a cleanup event
+                # of our own so the deleter recomputes from the grant itself
+                # and no edge survives the revoke.
+                if grant is not None:
+                    session.add(
+                        ZoneGrantProjectionOutboxModel(
+                            grant_id=grant_id,
+                            event_type="grant.cleanup_projections",
+                            payload={
+                                "grant_id": grant_id,
+                                "zone_id": grant.zone_id,
+                                "reason": "activation lost the race to a terminal state",
+                            },
+                        )
+                    )
                 return grant is not None
             # Final adjudication inside the SAME transaction as the activation
             # write: if the zone entered or completed deprovision while this
@@ -888,6 +914,7 @@ class ZoneApplicationService:
                 if existing is None:
                     session.add(
                         RebacRelationSourceModel(
+                            zone_id=grant.zone_id,
                             subject=_subject_key(subject),
                             relation=relation,
                             object=resource_path,
@@ -1026,6 +1053,16 @@ class ZoneApplicationService:
             for edge in rows:
                 edge.reference_state = "removed"
                 edge.updated_at = _now()
+            if not rows:
+                # Racing activation path: the grant's edges may already be in
+                # the external store while no accounting row was written (the
+                # activation's final transaction lost the race to the revoke).
+                # Recompute the edge set from the grant itself so the external
+                # delete below still covers every edge this grant produced.
+                edges = [
+                    (_subject_key(subject), relation, resource_path)
+                    for subject, relation, resource_path in _projection_edges(grant)
+                ]
 
         # The external ReBAC adapter can use the same SQLite database.  Never
         # call it while the provenance transaction owns a write lock.  Include
@@ -1035,6 +1072,10 @@ class ZoneApplicationService:
             with self._session_factory() as session:
                 remaining = session.execute(
                     select(RebacRelationSourceModel.id).where(
+                        # same-zone only: a foreign zone's projection of the
+                        # same (subject, relation, object) must never keep
+                        # this zone's edge alive (and vice versa)
+                        RebacRelationSourceModel.zone_id == zone_id,
                         RebacRelationSourceModel.subject == subject,
                         RebacRelationSourceModel.relation == relation,
                         RebacRelationSourceModel.object == resource_path,

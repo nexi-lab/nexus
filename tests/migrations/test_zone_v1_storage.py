@@ -248,16 +248,16 @@ def test_overlapping_grant_edges_survive_one_revoke(upgraded_sqlite):
         for gid in ("g1", "g2"):
             conn.execute(
                 sa.text(
-                    "INSERT INTO rebac_relation_sources (subject, relation, object, source_grant_id, reference_state, created_at, updated_at)"
-                    " VALUES ('user:u1', 'zone.data.read', 'zone:z-alpha-1', :g, 'active', :t, :t)"
+                    "INSERT INTO rebac_relation_sources (zone_id, subject, relation, object, source_grant_id, reference_state, created_at, updated_at)"
+                    " VALUES ('z-alpha-1', 'user:u1', 'zone.data.read', 'zone:z-alpha-1', :g, 'active', :t, :t)"
                 ),
                 {"g": gid, "t": now},
             )
         # independent authoritative relation on the same tuple
         conn.execute(
             sa.text(
-                "INSERT INTO rebac_relation_sources (subject, relation, object, source_grant_id, reference_state, created_at, updated_at)"
-                " VALUES ('user:u1', 'zone.data.read', 'zone:z-alpha-1', NULL, 'active', :t, :t)"
+                "INSERT INTO rebac_relation_sources (zone_id, subject, relation, object, source_grant_id, reference_state, created_at, updated_at)"
+                " VALUES ('z-alpha-1', 'user:u1', 'zone.data.read', 'zone:z-alpha-1', NULL, 'active', :t, :t)"
             ),
             {"t": now},
         )

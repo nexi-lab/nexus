@@ -266,13 +266,26 @@ class RebacRelationSourceModel(Base):
     __tablename__ = "rebac_relation_sources"
     __table_args__ = (
         UniqueConstraint(
-            "subject", "relation", "object", "source_grant_id", name="uq_rebac_rel_src"
+            "subject",
+            "relation",
+            "object",
+            "source_grant_id",
+            name="uq_rebac_rel_src",
+            # authoritative rows (source_grant_id IS NULL) must dedupe too —
+            # PostgreSQL's default NULLS DISTINCT would let duplicates through
+            nulls_not_distinct=True,
         ),
         Index("ix_rebac_rel_src_grant", "source_grant_id"),
         Index("ix_rebac_rel_src_tuple", "subject", "relation", "object"),
+        Index("ix_rebac_rel_src_zone", "zone_id"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # the zone domain the tuple was written into: external tuples are scoped
+    # per zone, and cleanup's "any other active reference?" check must not be
+    # answered by a foreign zone's projection of the same (subject, relation,
+    # object)
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False)
     subject: Mapped[str] = mapped_column(String(255), nullable=False)
     relation: Mapped[str] = mapped_column(String(128), nullable=False)
     object: Mapped[str] = mapped_column(String(255), nullable=False)

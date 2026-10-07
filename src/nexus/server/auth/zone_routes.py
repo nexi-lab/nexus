@@ -4,6 +4,11 @@ Provides endpoints for creating, updating, and managing zones.
 
 Auth: Uses the unified ``require_auth`` dependency (supports JWT + API key +
 static admin key) instead of the legacy JWT-only ``get_authenticated_user``.
+
+Temporary zone access for a user without a standing grant is expressed as a
+short-TTL grant (``POST /v2/zones/{zone_id}/grants`` with ``expires_at``) —
+auditable, revocable, and identical on both doors. The one-shot PolicyGate
+bypass (Issue #3790 Task 19) was removed with the v2 authorization model.
 """
 
 import logging
@@ -280,82 +285,6 @@ async def get_zone(
             )
 
         return _zone_to_response(zone)
-
-
-async def _zone_access_approved_via_gate(
-    request: Request,
-    zone_id: str,
-    user_id: str,
-    auth_result: dict[str, Any],
-) -> bool:
-    """Consult the PolicyGate when a token misses zone scope.
-
-    Issue #3790, Task 19: route zone-scope misses through the approval
-    queue. Returns True iff an operator approved the zone access within
-    the gate's timeout, in which case the caller may proceed as if the
-    membership check had passed. Returns False on missing gate, denial,
-    timeout, or any unexpected gate error (graceful degradation — the
-    caller then re-raises the original 403).
-    """
-    gate = getattr(request.app.state, "policy_gate", None)
-    if gate is None:
-        return False
-
-    # Lazy import keeps this module free of an eager top-level cross-package
-    # import (the call site is in nexus.server, not under nexus.bricks/, so
-    # the brick boundary checker does not apply — but lazy is still cheaper
-    # for the common case where the gate is unset).
-    try:
-        from nexus.bricks.approvals.models import ApprovalKind, Decision
-    except ImportError:
-        logger.warning(
-            "approvals brick unavailable while resolving zone access for %r; falling back to deny",
-            zone_id,
-        )
-        return False
-
-    # Synthesize stable identifiers from the request's auth_result. The
-    # hub's auth_result dict does not currently expose a per-token id, so
-    # use subject_id (user_id) as the token identifier and the request's
-    # auth source as the session identifier — operators can correlate
-    # repeated attempts for the same user/zone in the queue UI.
-    #
-    # F2 (#3790): the synthesized session_id is deliberately stable across
-    # requests (no HTTP-session lifecycle to bind it to). The approvals
-    # service guards against this turning a SESSION-scope grant into a
-    # durable persist by refusing the SESSION-scope cache fast-path for
-    # any session_id starting with ``hub:`` (see
-    # ``_is_fabricated_session_id`` in nexus.bricks.approvals.service).
-    # Operators that want durable zone access must write a ReBAC tuple
-    # via the admin tuples endpoint; an approval here is good for one
-    # zone-access attempt only.
-    subject_type = auth_result.get("subject_type") or "user"
-    token_id = f"hub:{subject_type}:{user_id}"
-    session_id = f"{token_id}:zone:{zone_id}"
-    try:
-        decision = await gate.check(
-            kind=ApprovalKind.ZONE_ACCESS,
-            subject=zone_id,
-            zone_id=zone_id,
-            token_id=token_id,
-            session_id=session_id,
-            agent_id=None,
-            reason="zone_access",
-            metadata={
-                "requested_zone": zone_id,
-                "user_id": user_id,
-                "subject_type": subject_type,
-            },
-        )
-    except Exception:
-        logger.warning(
-            "approvals gate raised for zone-access user=%r zone=%r; falling back to deny",
-            user_id,
-            zone_id,
-            exc_info=True,
-        )
-        return False
-    return decision is Decision.APPROVED
 
 
 def _get_session_factory(request: Request) -> Any:

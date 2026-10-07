@@ -35,8 +35,10 @@ class TaskSpecModel(Base):
 
     __tablename__ = "task_specs"
     __table_args__ = (
+        # one implicit task per session; the unique index already covers
+        # lookups by session_id — a plain index on the same column only adds
+        # write amplification
         UniqueConstraint("session_id", name="uq_task_specs_session"),
-        Index("ix_task_specs_session", "session_id"),
     )
 
     task_id: Mapped[str] = mapped_column(String(64), primary_key=True)

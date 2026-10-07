@@ -62,6 +62,11 @@ OWNED_SCHEMAS = [
     "auth/v1/zone-delegation-issue-request.schema.json",
     "auth/v1/zone-delegation.schema.json",
     "runtime/v2/runtime-resource-scope.schema.json",
+    "runtime/v2/runtime-run.schema.json",
+    "runtime/v2/session-metadata.schema.json",
+    "task/v1/task-attempt.schema.json",
+    "task/v1/task-execution-resolution.schema.json",
+    "task/v1/task-spec.schema.json",
 ]
 
 CHECK = "--check" in sys.argv

@@ -950,7 +950,9 @@ def test_delegation_verify_fails_closed_when_membership_is_not_armed(session_fac
     with session_factory() as s:
         decision = unarmed.verify_delegation(s, delegation_id=delegation_id, audience="runtime")
     assert not decision
-    assert decision.code == "GRANT_REVOKED"
+    # an unarmed verifier is a configuration gap, not a permission verdict —
+    # unavailable (retryable 503 family), never a permanent-looking revoke
+    assert decision.code == "MEMBERSHIP_UNAVAILABLE"
 
 
 def test_membership_outage_is_retryable_for_issue_and_verify(session_factory):
@@ -1018,8 +1020,26 @@ def test_suspended_zone_denies_writes_but_keeps_read_policy(session_factory):
             capability="zone.data.read",
             resource_path="/sessions/x",
         )
+        # suspend blocks execution and export as well (mutating/leaving
+        # surfaces); only pure read stays for audit
+        denied_execute = authz.allow(
+            s,
+            principal=principal,
+            zone_id="team-test-zone",
+            capability="zone.runtime.execute",
+            resource_path="/sessions/x",
+        )
+        denied_export = authz.allow(
+            s,
+            principal=principal,
+            zone_id="team-test-zone",
+            capability="zone.data.export",
+            resource_path="/sessions/x",
+        )
     assert not denied and denied.code == "ZONE_NOT_ACTIVE"
     assert allowed_read
+    assert not denied_execute and denied_execute.code == "ZONE_NOT_ACTIVE"
+    assert not denied_export and denied_export.code == "ZONE_NOT_ACTIVE"
 
 
 def test_data_access_scope_derives_read_only_and_narrow_prefix(session_factory):
@@ -1181,6 +1201,9 @@ def test_runtime_scope_requires_one_session_root(session_factory, rules):
 
 
 def test_legacy_scope_compatibility_is_bounded(session_factory):
+    """The NULL-scope escape hatch is gone: purpose/scope_rules-less rows
+    (which no writer produces since every issuance writes both) deny with
+    SCOPE_REQUIRED instead of allowing arbitrary capabilities."""
     authz, _grant_id = _scoped_authz(session_factory, capabilities=["zone.data.read"])
     delegation_id = _issue_scoped(authz, session_factory)
     with session_factory() as session, session.begin():
@@ -1190,7 +1213,8 @@ def test_legacy_scope_compatibility_is_bounded(session_factory):
         row.purpose = None
         row.scope_rules = None
     with session_factory() as session:
-        assert authz.verify_delegation(session, delegation_id=delegation_id, audience="runtime")
+        unscoped = authz.verify_delegation(session, delegation_id=delegation_id, audience="runtime")
+        assert not unscoped and unscoped.code == "SCOPE_REQUIRED"
         runtime_denied = authz.verify_delegation(
             session,
             delegation_id=delegation_id,

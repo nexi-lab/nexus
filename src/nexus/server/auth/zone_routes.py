@@ -373,9 +373,21 @@ async def list_zones(
                 or 0
             )
         else:
+            # Same grant prefilter as the v2 list (M-18 pattern): a non-admin
+            # row without an active grant can never pass the two-layer
+            # decision, so drop it in SQL before the per-row fan-out.
+            from nexus.storage.models import ZoneGrantModel
+
+            granted = set(
+                session.execute(
+                    select(ZoneGrantModel.zone_id).where(ZoneGrantModel.status == "active")
+                )
+                .scalars()
+                .all()
+            )
             candidates = session.scalars(
                 select(ZoneModel)
-                .where(ZoneModel.phase != ZonePhase.TERMINATED)
+                .where(ZoneModel.phase != ZonePhase.TERMINATED, ZoneModel.zone_id.in_(granted))
                 .order_by(ZoneModel.created_at.desc())
             ).all()
             visible = [

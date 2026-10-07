@@ -132,6 +132,11 @@ KNOWN_ERROR_CODES: frozenset[str] = frozenset(
         "CROSS_ZONE_DECISION_REQUIRED",
         "INVALID_REQUEST",
         "ZONE_RUNTIME_REJECTED",
+        "ZONE_OUT_OF_TOKEN_SCOPE",
+        "ZONE_OPERATION_NOT_FOUND",
+        "ZONE_TRANSFER_NOT_FOUND",
+        "RUN_ALREADY_TERMINAL",
+        "REVOCATION_PENDING",
     }
 )
 

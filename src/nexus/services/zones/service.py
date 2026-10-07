@@ -132,6 +132,13 @@ def _subject_key(principal: dict[str, Any]) -> str:
     return f"{principal.get('subject_type', 'user')}:{principal.get('subject_id', '')}"
 
 
+def _scope_subject(principal: dict[str, Any]) -> str:
+    """Idempotency-scope subject: type-qualified so a user and an agent or
+    service sharing a subject_id never collide in one (scope, key) domain.
+    Mirrors _subject_key's encoding for the is_owner_or_admin comparison."""
+    return f"{principal.get('subject_type') or 'user'}:{principal.get('subject_id')}"
+
+
 def _cleanup_zone_projections(session: Session, zone_id: str) -> None:
     """Remove zone-owned graph/ReBAC projections after runtime deletion.
 
@@ -375,7 +382,7 @@ class ZoneApplicationService:
                 f"zone id {request.zone_id!r} is reserved",
                 http_status=400,
             )
-        scope = json.dumps([principal.get("subject_id"), "zone.create", request.zone_id])
+        scope = json.dumps([_scope_subject(principal), "zone.create", request.zone_id])
         req_hash = _request_hash(request.model_dump(mode="json"))
         with self._session_factory() as session, session.begin():
             replay = self._claim_idempotency(
@@ -733,7 +740,7 @@ class ZoneApplicationService:
                 f"unsupported capabilities: {', '.join(unsupported)}",
                 http_status=422,
             )
-        scope = json.dumps([principal.get("subject_id"), "zone.grant", zone_id])
+        scope = json.dumps([_scope_subject(principal), "zone.grant", zone_id])
         req_hash = _request_hash(request.model_dump(mode="json"))
         with self._session_factory() as session, session.begin():
             replay = self._claim_idempotency(
@@ -993,7 +1000,7 @@ class ZoneApplicationService:
         idempotency_key: str | None = None,
     ) -> OperationResult:
         self._require_principal(principal)
-        scope = json.dumps([principal.get("subject_id"), "zone.grant.revoke", grant_id])
+        scope = json.dumps([_scope_subject(principal), "zone.grant.revoke", grant_id])
         key = idempotency_key or grant_id
         req_hash = _request_hash({"grant_id": grant_id, "reason": reason})
         with self._session_factory() as session, session.begin():
@@ -1015,6 +1022,10 @@ class ZoneApplicationService:
             grant.revoked_by = principal
             grant.revoke_reason = reason
             authorization_revision = _new_id("rev")
+            # The new revision is a fact of this revoke (§6.3 promises it in
+            # the response): persist it on the grant row itself, not only in
+            # the outbox payload, so readers observe what they were told.
+            grant.revision = authorization_revision
             new_epoch = _advance_epoch(session, zone_id, f"grant {grant_id} revoked")
             session.add(
                 ZoneGrantProjectionOutboxModel(
@@ -1154,7 +1165,7 @@ class ZoneApplicationService:
         idempotency_key: str | None,
     ) -> OperationResult:
         self._require_principal(principal)
-        scope = json.dumps([principal.get("subject_id"), f"zone.{action}", zone_id])
+        scope = json.dumps([_scope_subject(principal), f"zone.{action}", zone_id])
         key = idempotency_key or f"{action}:{zone_id}"
         req_hash = _request_hash({"action": action, "zone_id": zone_id})
         with self._session_factory() as session, session.begin():
@@ -1206,7 +1217,7 @@ class ZoneApplicationService:
         """Whitelist patch; returns the new revision (§6.2)."""
         principal = principal or {"subject_type": "service", "subject_id": "internal"}
         self._require_principal(principal)
-        scope = json.dumps([principal.get("subject_id"), "zone.patch", zone_id])
+        scope = json.dumps([_scope_subject(principal), "zone.patch", zone_id])
         key = idempotency_key or f"patch:{zone_id}:{revision_if_match or 'unconditional'}"
         req_hash = _request_hash(request.model_dump(mode="json"))
         with self._session_factory() as session, session.begin():
@@ -1374,7 +1385,7 @@ class ZoneApplicationService:
             mount = session.get(ZoneMountModel, mount_id)
             if mount is None:
                 raise ServiceError("ZONE_NOT_FOUND", f"mount {mount_id} not found", http_status=404)
-            scope = json.dumps([principal.get("subject_id"), "zone.unmount", mount_id])
+            scope = json.dumps([_scope_subject(principal), "zone.unmount", mount_id])
             payload = {
                 "mount_id": mount.mount_id,
                 "parent_zone_id": mount.parent_zone_id,
@@ -1521,7 +1532,7 @@ class ZoneApplicationService:
                 raise ServiceError(
                     "ZONE_NOT_ACTIVE", f"zone {zone_id} is not usable", http_status=409
                 )
-            scope = json.dumps([principal.get("subject_id"), event_type, zone_id])
+            scope = json.dumps([_scope_subject(principal), event_type, zone_id])
             req_hash = _request_hash(payload)
             replay = self._claim_idempotency(
                 session, scope=scope, key=idempotency_key, req_hash=req_hash
@@ -1560,7 +1571,7 @@ class ZoneApplicationService:
         idempotency_key: str | None = None,
     ) -> OperationResult:
         self._require_principal(principal)
-        scope = json.dumps([principal.get("subject_id"), "zone.deprovision", zone_id])
+        scope = json.dumps([_scope_subject(principal), "zone.deprovision", zone_id])
         key = idempotency_key or f"deprovision:{zone_id}"
         req_hash = _request_hash({"zone_id": zone_id})
         with self._session_factory() as session, session.begin():

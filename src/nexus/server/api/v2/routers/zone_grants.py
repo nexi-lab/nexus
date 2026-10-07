@@ -21,6 +21,7 @@ from nexus.server.api.v2.models.zones import (
 from nexus.server.api.v2.zone_security import (
     has_global_capability,
     is_owner_or_admin,
+    owns_operation_or_admin,
     principal_dict,
     principal_from_auth,
     require_zone_capability,
@@ -147,6 +148,7 @@ def list_grants(
     """Requires zone.grants.manage or an audit capability (§6.3)."""
     from sqlalchemy import select
 
+    _service(request)  # arming gate, consistent with every other zone read
     require_zone_capability(request, auth_result, zone_id=zone_id, capability="zone.grants.manage")
 
     with _session(request) as s:
@@ -157,9 +159,15 @@ def list_grants(
             stmt = stmt.where(ZoneGrantModel.source_type == source)
         if cursor:
             stmt = stmt.where(ZoneGrantModel.grant_id > cursor)
-        rows = s.execute(stmt.order_by(ZoneGrantModel.grant_id)).scalars().all()
+        ordered = stmt.order_by(ZoneGrantModel.grant_id)
         if grantee:
+            # JSON-field audit filter: cross-dialect shape, so it stays in
+            # Python — only this explicitly-filtered path materializes all
+            # rows (the default path is SQL-paged).
+            rows = s.execute(ordered).scalars().all()
             rows = [row for row in rows if row.grantee.get("subject_id") == grantee]
+        else:
+            rows = s.execute(ordered.limit(limit + 1)).scalars().all()
     has_more = len(rows) > limit
     rows = rows[:limit]
     return GrantListResponse(
@@ -175,6 +183,7 @@ def get_grant(
     request: Request,
     auth_result: dict[str, Any] = Depends(require_auth),
 ) -> GrantView:
+    _service(request)  # arming gate, consistent with every other zone read
     require_zone_capability(request, auth_result, zone_id=zone_id, capability="zone.grants.manage")
 
     with _session(request) as s:
@@ -230,9 +239,13 @@ def get_operation(
     svc = _service(request)
     op = svc.get_operation(operation_id)
     if op is None:
-        raise HTTPException(status_code=404, detail={"code": "ZONE_NOT_FOUND", "retryable": False})
-    if not is_owner_or_admin(auth_result, op.get("principal_id")):
-        raise HTTPException(status_code=404, detail={"code": "ZONE_NOT_FOUND", "retryable": False})
+        raise HTTPException(
+            status_code=404, detail={"code": "ZONE_OPERATION_NOT_FOUND", "retryable": False}
+        )
+    if not owns_operation_or_admin(auth_result, op.get("principal_id")):
+        raise HTTPException(
+            status_code=404, detail={"code": "ZONE_OPERATION_NOT_FOUND", "retryable": False}
+        )
     return OperationView(
         operation_id=op["operation_id"],
         action=op["action"],
@@ -255,12 +268,18 @@ def zone_capabilities(
 ) -> dict[str, Any]:
     from nexus.contracts.zone_v1 import KNOWN_CAPABILITIES, KNOWN_ERROR_CODES
 
-    return {
+    payload: dict[str, Any] = {
         "api_version": "auth.sudo.dev/v1",
         "known_capabilities": sorted(KNOWN_CAPABILITIES),
         "known_error_codes": sorted(KNOWN_ERROR_CODES),
-        "providers": dict(getattr(request.app.state, "zone_control_readiness", {})),
     }
+    if auth_result.get("is_admin", False):
+        # internal arming detail is an operator's view; a regular caller
+        # gets the contract surface only
+        payload["providers"] = dict(
+            getattr(request.app.state, "zone_control_readiness", {})
+        )
+    return payload
 
 
 @router.post("/auth/zone-delegations", status_code=201)

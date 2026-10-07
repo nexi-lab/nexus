@@ -49,6 +49,19 @@ _CAPABILITY_PERMISSIONS = {
     "zone.lifecycle.delete": "write",
 }
 
+#: Capabilities a suspended zone blocks: no mutations, no task execution,
+#: no data export — reading stays available for audit (decision: suspend
+#: blocks write + execute + export, keeps read).
+_SUSPEND_BLOCKED_CAPABILITIES = frozenset(
+    {"zone.data.write", "zone.runtime.execute", "zone.data.export"}
+)
+
+#: The grant-minting and zone-destruction surface a data-access delegation
+#: must never carry.
+_MANAGING_CAPABILITIES = frozenset(
+    {"zone.grants.manage", "zone.lifecycle.delete", "zone.metadata.manage"}
+)
+
 
 def _path_is_within(path: str, prefix: str) -> bool:
     return prefix == "/" or path == prefix or path.startswith(f"{prefix}/")
@@ -99,6 +112,19 @@ def _normalize_scope_rules(
         raise ServiceError(
             "SCOPE_REQUIRED", "runtime execution scope requires purpose=runtime", http_status=422
         )
+    if purpose == "data-access":
+        managing = sorted(
+            {str(rule["capability"]) for rule in normalized} & _MANAGING_CAPABILITIES
+        )
+        if managing:
+            # A short-TTL data-access delegation must never be able to mint
+            # a permanent grant that outlives it: managing capabilities are
+            # the minting and destruction surface.
+            raise ServiceError(
+                "SCOPE_REQUIRED",
+                f"data-access delegations may not carry managing capabilities: {managing}",
+                http_status=422,
+            )
     if purpose == "runtime":
         execute = [rule for rule in normalized if rule["capability"] == "zone.runtime.execute"]
         prefixes = execute[0]["resource_prefixes"] if len(execute) == 1 else []
@@ -187,7 +213,11 @@ class AuthorizationService:
         if permission is None:
             return Decision(False, code="UNSUPPORTED_CAPABILITY", reason="capability not enabled")
         zone = session.get(ZoneModel, zone_id)
-        if zone is not None and zone.canonical_status != "active" and permission == "write":
+        if (
+            zone is not None
+            and zone.canonical_status != "active"
+            and capability in _SUSPEND_BLOCKED_CAPABILITIES
+        ):
             return Decision(False, code="ZONE_NOT_ACTIVE", reason="zone is not active")
         grants = (
             session.execute(
@@ -474,8 +504,13 @@ class AuthorizationService:
         if _aware(d.expires_at) <= datetime.now(UTC):
             return Decision(False, code="GRANT_EXPIRED", reason="delegation expired")
         if self._membership_check is None:
+            # An unarmed membership verifier is a configuration gap, not an
+            # authorization verdict — answer unavailable (503-retryable),
+            # never a permanent-looking permission denial.
             return Decision(
-                False, code="GRANT_REVOKED", reason="membership verification is not armed"
+                False,
+                code="MEMBERSHIP_UNAVAILABLE",
+                reason="membership verification is not armed",
             )
         try:
             membership_active = self._membership_check(d.user_id, d.org_id, d.membership_version)
@@ -492,11 +527,15 @@ class AuthorizationService:
         grant = session.get(ZoneGrantModel, d.grant_id)
         if grant is None or grant.status != "active":
             return Decision(False, code="GRANT_REVOKED", reason="issuing grant no longer active")
+        # The issuing grant's validity window matters exactly like the
+        # delegation's own TTL (allow() judges the same columns).
+        now = datetime.now(UTC)
+        if grant.not_before is not None and _aware(grant.not_before) > now:
+            return Decision(False, code="GRANT_NOT_ACTIVE", reason="issuing grant not yet valid")
+        if grant.expires_at is not None and _aware(grant.expires_at) <= now:
+            return Decision(False, code="GRANT_EXPIRED", reason="issuing grant expired")
         if not self.epoch_is_current(session, d.zone_id, d.epoch):
             return Decision(False, code="GRANT_REVOKED", reason="epoch moved past delegation")
-        legacy = d.purpose is None and d.scope_rules is None
-        if legacy and resource_path is None and capability != "zone.runtime.execute":
-            return Decision(True)
         if d.purpose is None or not isinstance(d.scope_rules, list) or not d.scope_rules:
             return Decision(False, code="SCOPE_REQUIRED", reason="delegation scope is required")
         if capability is None:

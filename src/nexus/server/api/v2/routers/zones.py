@@ -251,6 +251,7 @@ def zone_status(
     request: Request,
     auth_result: dict[str, Any] = Depends(require_auth),
 ) -> dict[str, Any]:
+    _service(request)  # arming gate, consistent with every other zone read
     require_zone_capability(request, auth_result, zone_id=zone_id, capability="zone.data.read")
     with _zone_session(request) as s:
         zone = s.get(ZoneModel, zone_id)

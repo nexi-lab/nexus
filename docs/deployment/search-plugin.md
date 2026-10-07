@@ -279,3 +279,28 @@ indexed through `POST /api/v2/search/index` need `nexus reindex
 --target search` (or a replay of their index calls) before semantic
 results return. The old `ann-mE5-small-v1-*` directory can be deleted
 once the new one is populated.
+
+## CLI on a Rust cluster
+
+`nexus search query`, `index`, and `stats` use the cluster HTTP listener.
+Set `NEXUS_URL` to that listener, or select a named CLI profile containing
+its URL and API key. `--zone-id` (or `NEXUS_ZONE_ID`) overrides the profile's
+zone; query results always remain subject to the key's zone and file permissions.
+
+```bash
+export NEXUS_URL=http://localhost:2027
+export NEXUS_API_KEY=<cluster-api-key>
+nexus search index /docs --zone-id sharedzone
+nexus search query constellation --mode keyword --path /docs --zone-id sharedzone --json
+nexus search stats --zone-id sharedzone
+```
+
+These commands call `POST /v2/documents/index`, `POST /v2/search/query`,
+and `GET /v2/documents/stats`. Query `--json` emits an array of results.
+Index and stats require an administrative key. A query key needs read access
+to its zone and the matching files. Backend errors and rejected credentials
+produce a nonzero exit code.
+
+Stats show the Rust counters separately: indexed files (`fts_path_count`),
+keyword chunks (`fts_doc_count`), vector chunks (`ann_chunk_count`), and
+pending documents (`pending`).

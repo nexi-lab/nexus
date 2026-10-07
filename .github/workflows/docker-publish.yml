@@ -650,80 +650,24 @@ jobs:
 
       - name: Seed search index
         run: |
-          # Docker Publish uses `nexus demo init --skip-semantic` above to keep
-          # demo data seeding fast. Seed search here in one place:
-          #   1. nexus reindex --target search  — rebuilds BM25 keyword index from MCL
-          #   2. nexus search index /workspace/demo — generates vector embeddings
-          # Both are required for HERB hybrid retrieval.
+          # Replay the mixed deployment's VFS writes through its HTTP indexing
+          # pipeline. The plugin builds keyword and vector indices in one batch.
+          docker exec -i -e NEXUS_API_KEY="${NEXUS_API_KEY}" nexus-e2e python - <<'PY'
+          import os
+          import httpx
 
-          # Step 1: Rebuild BM25 keyword index from MCL
-          echo "Step 1: Rebuilding BM25 keyword index..."
-          docker exec \
-            -e NEXUS_URL=http://127.0.0.1:2026 \
-            -e NEXUS_API_KEY="${NEXUS_API_KEY}" \
-            -e NEXUS_PROFILE=remote \
-            nexus-e2e nexus reindex --target search || true
-
-          # Step 2: Diagnostics — verify files are in file_paths after demo init.
-          # nexus search index queries file_paths WHERE virtual_path LIKE '/workspace/demo/%';
-          # if this table is empty the index step returns "Files indexed: 0".
-          echo "Step 2: Checking file_paths table after demo init..."
-          docker exec -i nexus-e2e python3 - <<'PY' || echo "  (SQL diagnostic unavailable — skipping)"
-          from sqlalchemy import create_engine, text
-          eng = create_engine("postgresql+psycopg2://postgres:nexus@localhost/nexus")
-          with eng.connect() as conn:
-              row = conn.execute(text(
-                  "SELECT count(*) AS demo_files, min(zone_id) AS min_zone, max(zone_id) AS max_zone "
-                  "FROM file_paths WHERE virtual_path LIKE '/workspace/demo%' AND deleted_at IS NULL"
-              )).mappings().one()
-              op_rows = conn.execute(text(
-                  "SELECT count(*) FROM operation_log WHERE path LIKE '/workspace/demo%'"
-              )).scalar()
-          print(f"  demo_files={row['demo_files']} zones={row['min_zone']}..{row['max_zone']} op_log_rows={op_rows}")
+          with httpx.Client(base_url="http://127.0.0.1:2026", timeout=300) as client:
+              response = client.post(
+                  "/api/v2/admin/reindex",
+                  headers={"Authorization": f"Bearer {os.environ['NEXUS_API_KEY']}"},
+                  json={"target": "search"},
+              )
+              response.raise_for_status()
+              result = response.json()
+              assert result["search_index_errors"] == 0, result
+              assert result["search_paths_indexed"] > 0, result
+              print(f"Search paths indexed: {result['search_paths_indexed']}")
           PY
-
-          # Step 3: Show search daemon stats for diagnostics
-          echo "Step 3: Search daemon stats..."
-          curl --max-time 5 -sf \
-            -H "Authorization: Bearer ${NEXUS_API_KEY}" \
-            http://127.0.0.1:2026/api/v2/search/stats 2>/dev/null \
-            | python3 -c "import sys,json; d=json.load(sys.stdin); print(f\"  backend={d.get('backend')} bm25_docs={d.get('bm25_documents')} txtai_model={d.get('txtai_model')} last_refresh={d.get('last_index_refresh')}\")" 2>/dev/null || true
-
-          # Step 4: Explicit search index (retry up to 3×).
-          # Do this before readiness queries: on cold runners, querying hybrid
-          # search while txtai is still warming can block long enough to burn
-          # the workflow timeout before explicit indexing ever runs.
-          echo "Step 4: Explicit search index (with 3-attempt retry)..."
-          for i in $(seq 1 3); do
-            idx_out=$(timeout 300s docker exec \
-              -e NEXUS_URL=http://127.0.0.1:2026 \
-              -e NEXUS_API_KEY="${NEXUS_API_KEY}" \
-              -e NEXUS_PROFILE=remote \
-              -e NEXUS_GRPC_PORT=2028 \
-              -e NEXUS_GRPC_TLS=false \
-              nexus-e2e nexus search index /workspace/demo 2>&1 || true)
-            files_indexed=$(echo "$idx_out" | grep -oP "Files indexed:\s*\K[0-9]+" || echo "0")
-            echo "  attempt ${i}: Files indexed=${files_indexed}"
-            if [ "${files_indexed:-0}" -gt 0 ] 2>/dev/null; then
-              echo "  Indexing succeeded on attempt ${i}"
-              break
-            fi
-            echo "  0 files — waiting 30s before retry (model may still be loading)..."
-            sleep 30
-          done
-
-          # Step 5: Final diagnostics and readiness check
-          echo "Step 5: Final search daemon stats..."
-          curl --max-time 5 -sf \
-            -H "Authorization: Bearer ${NEXUS_API_KEY}" \
-            http://127.0.0.1:2026/api/v2/search/stats 2>/dev/null \
-            | python3 -c "import sys,json; d=json.load(sys.stdin); print(f\"  backend={d.get('backend')} bm25={d.get('bm25_documents')} refresh={d.get('last_index_refresh')}\")" 2>/dev/null || true
-          # Final status (non-fatal — test script enforces the HERB gate)
-          timeout 30s docker exec \
-            -e NEXUS_URL=http://127.0.0.1:2026 \
-            -e NEXUS_API_KEY="${NEXUS_API_KEY}" \
-            -e NEXUS_PROFILE=remote \
-            nexus-e2e nexus search query "Nexus Core" --path /workspace/demo/herb --mode hybrid --limit 1 || true
 
       # ---------------------------------------------------------------
       # Search HTTP contract smoke (#4616/#4617) — UNCONDITIONAL.
@@ -883,6 +827,17 @@ jobs:
             -e NEXUS_SEARCH_PLUGIN_TLS_KEY=/tmp/search-credentials/tls/node-key.pem \
             -e NEXUS_SEARCH_TEST_ADMIN_KEY=/tmp/search-credentials/search-admin-key \
             nexus-e2e python /tmp/test_search_credentials_plugin.py
+
+      - name: Verify Search CLI against Rust HTTP
+        run: |
+          docker cp scripts/test_rust_http_search_cli.py nexus-e2e:/tmp/test_rust_http_search_cli.py
+          docker exec \
+            -e NEXUS_SEARCH_PLUGIN_TARGET=127.0.0.1:2326 \
+            -e NEXUS_SEARCH_PLUGIN_TLS_CA=/tmp/search-credentials/tls/ca.pem \
+            -e NEXUS_SEARCH_PLUGIN_TLS_CERT=/tmp/search-credentials/tls/node.pem \
+            -e NEXUS_SEARCH_PLUGIN_TLS_KEY=/tmp/search-credentials/tls/node-key.pem \
+            -e NEXUS_SEARCH_TEST_ADMIN_KEY=/tmp/search-credentials/search-admin-key \
+            nexus-e2e python /tmp/test_rust_http_search_cli.py
 
       - name: Run build perf e2e
         if: steps.vfs_grpc.outputs.available == 'true'

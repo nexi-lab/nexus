@@ -1894,8 +1894,6 @@ async def _async_demo_init(reset: bool, skip_semantic: bool) -> None:
     console.print("  nexus cat /workspace/demo/README.md")
     console.print("  nexus versions history /workspace/demo/plan.md")
     console.print('  nexus grep "vector index" /workspace/demo')
-    if semantic_ready:
-        console.print('  nexus search query "How does the demo authentication flow work?"')
     console.print()
     console.print("[bold]Data catalog:[/bold]")
     console.print("  nexus catalog schema /workspace/demo/data/sales.csv")

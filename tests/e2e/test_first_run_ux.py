@@ -503,26 +503,20 @@ class TestFullWorkflow:
                 "semantic_search_index via the Rust search-plugin daemon"
             )
 
-            # Step 2e: Verify semantic search query works against the live stack
-            search_result = subprocess.run(
-                [
-                    "nexus",
-                    "search",
-                    "query",
-                    "How does the demo authentication flow work?",
-                    "--path",
-                    "/workspace/demo",
-                ],
-                capture_output=True,
-                text=True,
+            # Step 2e: Query the mixed deployment's HTTP search endpoint.
+            import httpx
+
+            search_response = httpx.get(
+                f"http://localhost:{http_port}/api/v2/search/query",
+                headers={"Authorization": f"Bearer {api_key}"},
+                params={"q": "authentication", "type": "keyword", "path": "/workspace/demo"},
                 timeout=60,
-                cwd=str(initialized_project),
-                env=stack_env,
             )
-            assert search_result.returncode == 0, (
-                f"nexus search query failed against live stack:\n"
-                f"stdout: {search_result.stdout}\nstderr: {search_result.stderr}"
-            )
+            assert search_response.is_success, search_response.text
+            search_body = search_response.json()
+            assert not search_body.get("error"), search_body
+            assert search_body["results"], search_body
+            assert all(hit["path"].startswith("/workspace/demo/") for hit in search_body["results"])
 
             # ----------------------------------------------------------
             # Step 2f: Knowledge platform — catalog schemas (Issue #2930)

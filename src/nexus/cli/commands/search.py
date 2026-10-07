@@ -9,12 +9,15 @@ from typing import Any, cast
 
 import click
 
+from nexus.cli.clients.search import SearchClient
+from nexus.cli.config import resolve_connection
+from nexus.cli.exit_codes import ExitCode
 from nexus.cli.output import OutputOptions, add_output_options, render_error, render_output
 from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import (
+    ZONE_ID_OPTION,
     add_backend_options,
     console,
-    get_filesystem,
     handle_error,
     open_filesystem,
 )
@@ -544,88 +547,78 @@ def grep(
 # Semantic Search Commands (v0.4.0)
 
 
+def _search_client(
+    remote_url: str | None, remote_api_key: str | None, zone_id: str | None
+) -> SearchClient:
+    ctx = click.get_current_context(silent=True)
+    profile_name = ctx.obj.get("profile") if ctx and ctx.obj else None
+    connection = resolve_connection(remote_url, remote_api_key, profile_name, zone_id)
+    if not connection.url:
+        raise click.ClickException(
+            "Server URL required. Set NEXUS_URL, use --remote-url, or select a Nexus profile."
+        )
+    return SearchClient(connection.url, connection.api_key, zone_id=connection.zone_id)
+
+
+def _print_search_stats(stats: dict[str, Any]) -> None:
+    console.print("\n[bold nexus.value]Search Statistics[/bold nexus.value]")
+    for label, field in (
+        ("Engine", "backend"),
+        ("Indexed files", "fts_path_count"),
+        ("Keyword chunks", "fts_doc_count"),
+        ("Vector chunks", "ann_chunk_count"),
+        ("Pending documents", "pending"),
+    ):
+        console.print(f"  {label}: [nexus.value]{stats[field]}[/nexus.value]")
+    if stats.get("embedding_model"):
+        console.print(f"  Embedding model: [nexus.value]{stats['embedding_model']}[/nexus.value]")
+
+
 @click.group(name="search")
 def semantic_search_group() -> None:
-    """Semantic search commands using natural language queries."""
-    pass
+    """Search and index documents through the cluster HTTP API."""
 
 
 @semantic_search_group.command(name="index")
 @click.argument("path", default="/")
 @click.option("--recursive/--no-recursive", default=True, help="Index directory recursively")
+@ZONE_ID_OPTION
 @add_backend_options
 def search_index(
     path: str,
     recursive: bool,
+    zone_id: str | None,
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
-    """Index documents for semantic search.
-
-    This command chunks documents and generates embeddings for semantic search.
+    """Index documents from the cluster's VFS.
 
     Examples:
-        # Index all documents
-        nexus search index
-
-        # Index specific directory
-        nexus search index /docs
-
-        # Index single file
-        nexus search index /docs/README.md
+        nexus search index /docs --remote-url http://localhost:2027
+        nexus search index /docs --zone-id sharedzone
     """
-
-    async def _impl() -> None:
-        try:
-            nx = await get_filesystem(remote_url, remote_api_key)
-
+    try:
+        with _search_client(remote_url, remote_api_key, zone_id) as client:
             with console.status(
                 f"[nexus.warning]Indexing {path}...[/nexus.warning]", spinner="dots"
             ):
-                search_svc = nx.service("search")
-                raw_results = await _await_service_result(
-                    search_svc.semantic_search_index(path, recursive=recursive)
-                )
-
-            # RPC handler wraps results as {"indexed": {path: count, ...}, ...}
-            if isinstance(raw_results, dict) and "indexed" in raw_results:
-                results = raw_results["indexed"]
-                total_chunks = raw_results.get("total_chunks", 0)
-            else:
-                results = raw_results
-                total_chunks = sum(v for v in results.values() if isinstance(v, int) and v > 0)
-
-            # Display results
-            successful = sum(1 for v in results.values() if isinstance(v, int) and v > 0)
-            failed = sum(1 for v in results.values() if isinstance(v, int) and v < 0)
-
-            console.print("\n[nexus.success]✓ Indexing complete![/nexus.success]")
-            console.print(f"  Files indexed: [nexus.value]{successful}[/nexus.value]")
-            console.print(f"  Total chunks: [nexus.value]{total_chunks}[/nexus.value]")
-            if failed > 0:
-                console.print(f"  Failed: [nexus.warning]{failed}[/nexus.warning]")
-
-            # Show stats
-            stats: dict[str, Any] = await _await_service_result(search_svc.semantic_search_stats())
-            console.print("\n[bold nexus.value]Index Statistics:[/bold nexus.value]")
-            console.print(
-                f"  Total indexed files: [nexus.success]{stats.get('total_files', stats.get('indexed_files', 0))}[/nexus.success]"
-            )
-            console.print(
-                f"  Total chunks: [nexus.success]{stats.get('total_chunks', 0)}[/nexus.success]"
-            )
-
-            nx.close()
-        except Exception as e:
-            handle_error(e)
-
-    asyncio.run(_impl())
+                result = client.index(path, recursive=recursive)
+            console.print("\n[nexus.success]? Indexing complete![/nexus.success]")
+            console.print(f"  Files indexed: [nexus.value]{result['indexed_count']}[/nexus.value]")
+            console.print(f"  Files skipped: [nexus.value]{result['skipped_count']}[/nexus.value]")
+            _print_search_stats(client.stats())
+    except click.ClickException as exc:
+        render_error(error=exc, exit_code=ExitCode.CONFIG_ERROR)
+    except Exception as exc:
+        render_error(error=exc)
 
 
 @semantic_search_group.command(name="query")
 @click.argument("query", type=str)
 @click.option("-p", "--path", default="/", help="Root path to search")
-@click.option("-n", "--limit", default=10, help="Maximum number of results")
+@click.option(
+    "-n", "--limit", type=click.IntRange(min=1), default=10, help="Maximum number of results"
+)
 @click.option(
     "-m",
     "--mode",
@@ -633,7 +626,8 @@ def search_index(
     default="semantic",
     help="Search mode (default: semantic)",
 )
-@click.option("--json", "json_output", is_flag=True, help="Output as JSON")
+@click.option("--json", "json_output", is_flag=True, help="Output results as a JSON array")
+@ZONE_ID_OPTION
 @add_backend_options
 def search_query(
     query: str,
@@ -641,125 +635,58 @@ def search_query(
     limit: int,
     mode: str,
     json_output: bool,
+    zone_id: str | None,
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
-    """Search documents using natural language queries.
+    """Search indexed documents through the cluster HTTP API.
 
     Examples:
-        # Search for authentication information
-        nexus search query "How does authentication work?"
-
-        # Search in specific directory
-        nexus search query "database migration" --path /docs
-
-        # Get more results
-        nexus search query "error handling" --limit 20
-
-        # JSON output
-        nexus search query "API endpoints" --json
+        nexus search query "authentication" --mode keyword --json
+        nexus search query "database migration" --path /docs --zone-id sharedzone
     """
-
-    async def _impl() -> None:
-        try:
-            nx = await get_filesystem(remote_url, remote_api_key)
-
-            with console.status(
+    try:
+        with (
+            _search_client(remote_url, remote_api_key, zone_id) as client,
+            console.status(
                 f"[nexus.warning]Searching for: {query}[/nexus.warning]", spinner="dots"
-            ):
-                search_svc = nx.service("search")
-                # ``RemoteServiceProxy.__getattr__`` cannot infer parameter names
-                # for ``semantic_search`` (no NexusFS method, no METHOD_PARAMS entry),
-                # so it would silently drop the positional ``query`` argument and
-                # the server-side handler would error with
-                # ``'SimpleNamespace' object has no attribute 'query'``.
-                raw = await _await_service_result(
-                    search_svc.semantic_search(
-                        query=query, path=path, limit=limit, search_mode=mode
-                    )
-                )
-                # RPC handler wraps as {"results": [...]}, unwrap if needed
-                results: list[dict[str, Any]] = (
-                    raw["results"] if isinstance(raw, dict) and "results" in raw else raw
-                )
+            ),
+        ):
+            results = client.query(query, path_filter=path, limit=limit, query_type=mode)["results"]
+        if json_output:
+            import json
 
-            if json_output:
-                import json
-
-                click.echo(json.dumps(results, indent=2, default=str))
-            else:
-                if not results:
-                    console.print(f"[nexus.warning]No results found for:[/nexus.warning] {query}")
-                    nx.close()
-                    return
-
-                console.print(
-                    f"\n[nexus.success]Found {len(results)} results for:[/nexus.success] [nexus.value]{query}[/nexus.value]\n"
-                )
-
-                for i, result in enumerate(results, 1):
-                    score = result["score"]
-                    file_path = result["path"]
-                    chunk_text = result["chunk_text"]
-
-                    # Truncate long text
-                    if len(chunk_text) > 200:
-                        chunk_text = chunk_text[:200] + "..."
-
-                    console.print(f"[bold]{i}. {file_path}[/bold]")
-                    console.print(f"   Score: [nexus.success]{score:.3f}[/nexus.success]")
-                    console.print(f"   [nexus.muted]{chunk_text}[/nexus.muted]")
-                    console.print()
-
-            nx.close()
-        except Exception as e:
-            handle_error(e)
-
-    asyncio.run(_impl())
+            click.echo(json.dumps(results, indent=2, default=str))
+        elif not results:
+            console.print(f"[nexus.warning]No results found for:[/nexus.warning] {query}")
+        else:
+            console.print(
+                f"\n[nexus.success]Found {len(results)} results for:[/nexus.success] "
+                f"[nexus.value]{query}[/nexus.value]\n"
+            )
+            for i, result in enumerate(results, 1):
+                chunk_text = result["chunk_text"]
+                if len(chunk_text) > 200:
+                    chunk_text = chunk_text[:200] + "..."
+                console.print(f"[bold]{i}. {result['path']}[/bold]")
+                console.print(f"   Score: [nexus.success]{result['score']:.3f}[/nexus.success]")
+                console.print(f"   [nexus.muted]{chunk_text}[/nexus.muted]")
+                console.print()
+    except click.ClickException as exc:
+        render_error(error=exc, exit_code=ExitCode.CONFIG_ERROR)
+    except Exception as exc:
+        render_error(error=exc)
 
 
 @semantic_search_group.command(name="stats")
+@ZONE_ID_OPTION
 @add_backend_options
-def search_stats(remote_url: str | None, remote_api_key: str | None) -> None:
-    """Show semantic search statistics.
-
-    Examples:
-        nexus search stats
-    """
-
-    async def _impl() -> None:
-        try:
-            nx = await get_filesystem(remote_url, remote_api_key)
-
-            stats: dict[str, Any] = await _await_service_result(
-                nx.service("search").semantic_search_stats()
-            )
-
-            console.print("\n[bold nexus.value]Semantic Search Statistics[/bold nexus.value]")
-            console.print(
-                f"  Engine: [nexus.success]{stats.get('engine', stats.get('database_type', 'unknown'))}[/nexus.success]"
-            )
-            console.print(
-                f"  Indexed files: [nexus.success]{stats.get('total_files', stats.get('indexed_files', 0))}[/nexus.success]"
-            )
-            console.print(
-                f"  Total chunks: [nexus.success]{stats.get('total_chunks', 0)}[/nexus.success]"
-            )
-            if stats.get("embedding_model"):
-                console.print(
-                    f"  Embedding model: [nexus.value]{stats['embedding_model']}[/nexus.value]"
-                )
-            if stats.get("chunk_size"):
-                console.print(
-                    f"  Chunk size: [nexus.value]{stats['chunk_size']}[/nexus.value] tokens"
-                )
-            if stats.get("chunk_strategy"):
-                console.print(
-                    f"  Chunk strategy: [nexus.value]{stats['chunk_strategy']}[/nexus.value]"
-                )
-
-            nx.close()
-        except Exception as e:
-            handle_error(e)
-
-    asyncio.run(_impl())
+def search_stats(zone_id: str | None, remote_url: str | None, remote_api_key: str | None) -> None:
+    """Show the cluster's search index statistics."""
+    try:
+        with _search_client(remote_url, remote_api_key, zone_id) as client:
+            _print_search_stats(client.stats())
+    except click.ClickException as exc:
+        render_error(error=exc, exit_code=ExitCode.CONFIG_ERROR)
+    except Exception as exc:
+        render_error(error=exc)

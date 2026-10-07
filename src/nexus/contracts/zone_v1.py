@@ -17,7 +17,7 @@ import json
 import re
 from functools import cache
 from importlib import resources
-from typing import Annotated, Any, Literal
+from typing import Annotated, Literal
 
 from jsonschema import Draft202012Validator
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
@@ -223,19 +223,6 @@ class Zone(BaseModel):
     deleted_at: str | None = Field(default=None, pattern=RFC3339_PATTERN)
 
 
-def _reject_explicit_null(value: Any) -> Any:
-    """Optional means omittable, not nullable (schema/pydantic parity).
-
-    The owned schemas type these fields string/object with no null arm, so
-    an explicit ``null`` must fail validation instead of silently clearing
-    (design intent: fixtures/invalid/null-known-optional rejects it)."""
-    if isinstance(value, dict):
-        for key in ("description", "labels", "deployment"):
-            if key in value and value[key] is None:
-                raise ValueError(f"{key}: explicit null is not allowed — omit the field")
-    return value
-
-
 class ZoneCreateRequest(BaseModel):
     """Admission request (§4.2): zone_id is a strict tenant-create candidate."""
 
@@ -248,9 +235,6 @@ class ZoneCreateRequest(BaseModel):
     description: str | None = None
     deployment: ZoneDeployment | None = None
     labels: dict[str, str] | None = None
-
-    # pydantic v2: model-level before-validator (schema/pydantic parity)
-    _null_guard = model_validator(mode="before")(_reject_explicit_null)
 
 
 class ZonePatchPlacement(BaseModel):
@@ -285,9 +269,6 @@ class ZonePatchRequest(BaseModel):
     description: str | None = None
     labels: dict[str, str] | None = None
     deployment: ZonePatchPlacement | None = None
-
-    # pydantic v2: model-level before-validator (schema/pydantic parity)
-    _null_guard = model_validator(mode="before")(_reject_explicit_null)
 
 
 class ZoneGrantSource(BaseModel):

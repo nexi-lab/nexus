@@ -1309,15 +1309,33 @@ class ZoneApplicationService:
                 return OperationResult(
                     replay.operation_id, replay.state, replay.step, replay.retryable
                 )
-            mount = ZoneMountModel(
-                mount_id=_new_id("mount"),
-                parent_zone_id=parent_zone_id,
-                target_zone_id=target_zone_id,
-                path=path,
-                desired_state="mounted",
-                observed_state=None,
+            mount = (
+                session.execute(
+                    select(ZoneMountModel).where(
+                        ZoneMountModel.parent_zone_id == parent_zone_id,
+                        ZoneMountModel.target_zone_id == target_zone_id,
+                        ZoneMountModel.path == path,
+                    )
+                )
+                .scalars()
+                .one_or_none()
             )
-            session.add(mount)
+            if mount is None:
+                mount = ZoneMountModel(
+                    mount_id=_new_id("mount"),
+                    parent_zone_id=parent_zone_id,
+                    target_zone_id=target_zone_id,
+                    path=path,
+                    desired_state="mounted",
+                    observed_state=None,
+                )
+                session.add(mount)
+            else:
+                # mount → unmount → remount of the same triple is a legal
+                # operations cycle: revive the unmounted row instead of
+                # tripping uq_zone_mount with an unconditional INSERT
+                mount.desired_state = "mounted"
+                mount.observed_state = None
             op = self._new_operation(
                 session,
                 action="mount",

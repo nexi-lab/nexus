@@ -312,7 +312,7 @@ nexus llm read /workspace/doc.pdf "Question"
 ## Next Steps
 
 - **Search indexed cluster data:** configure the Rust HTTP listener and caller
-  key using the [Search CLI guide](../docs/deployment/search-plugin.md#search-cli).
+  key using the [Search CLI guide](../docs/deployment/search-plugin.md#cli-on-a-rust-cluster).
 
 - **Try different models:**
   - Claude: `claude-sonnet-4`, `claude-opus-4`

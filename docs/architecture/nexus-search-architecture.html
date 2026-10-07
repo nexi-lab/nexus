@@ -164,7 +164,7 @@ cross-zone federation, DT_STREAM search coverage, pure-Rust migration arc.</p>
     <li><a href="#layers">Layer overview</a></li>
     <li><a href="#core">Rust core plugin (SSOT for search logic)</a></li>
     <li><a href="#grpc">gRPC surface — <code>nexus.search.v1.SearchService</code></a></li>
-    <li><a href="#http">HTTP surface — today Python, tomorrow Rust axum</a></li>
+    <li><a href="#http">HTTP surface &mdash; Rust cluster and Python server</a></li>
     <li><a href="#federation">Cross-zone federation dispatcher</a></li>
     <li><a href="#dt-stream">Search over DT_STREAM (audit / mailbox / transcripts)</a></li>
     <li><a href="#r10">R10 pure-Rust migration arc</a></li>
@@ -181,26 +181,31 @@ cross-zone federation, DT_STREAM search coverage, pure-Rust migration arc.</p>
 <pre class="mermaid">
 flowchart TB
     subgraph API["1. API layer &mdash; HTTP"]
-        A1["<b>Python FastAPI</b> (today, production)<br/>src/nexus/server/api/v2/routers/search.py<br/>~1800 LoC &mdash; /v2/search/{query,glob,grep,batch}"]
-        A2["<b>Rust axum</b> (R10 arc, in-progress)<br/>nexus-vfs/rust/http-api/<br/>GET /v2/status &check; GET /v2/search/glob &check;<br/>grep / query / auth-mw / nexusd-wiring pending"]
+        A1["<b>Python FastAPI</b><br/>src/nexus/server/api/v2/routers/search.py<br/>/api/v2/search/* &mdash; mixed deployments"]
+        A2["<b>Rust axum</b><br/>nexus-vfs/rust/http-api/<br/>/v2/search/*, /v2/documents/*,<br/>/v2/auth/keys, /v2/rebac/tuples"]
     end
     subgraph ORCH["2. Orchestration / Auth / ReBAC layer"]
-        O1["<b>SearchService</b> (Python)<br/>search_service.py &mdash; ~5000 LoC<br/>profile gate, auth+ReBAC filter, grep orchestration,<br/>SANDBOX fallback, activity events"]
-        O2["<b>FederatedSearchDispatcher</b> (Python)<br/>federated_search.py &mdash; ~1200 LoC<br/>cross-zone ReBAC-aware fan-out,<br/>SearchDelegation short-lived credentials"]
-        O3["<b>SearchDaemon proxy</b> (Python)<br/>daemon.py &mdash; ~500 LoC<br/>thin gRPC client to the Rust plugin"]
+        O1["<b>SearchService</b> (Python)<br/>workspace list/glob/grep,<br/>indexed-query adapter and permission checks"]
+        O2["<b>FederatedSearchDispatcher</b> (Rust)<br/>nexus-vfs/rust/federated-search/<br/>cross-zone fan-out, delegation, RRF"]
+        O3["<b>SearchDaemon proxy</b> (Python)<br/>daemon.py &mdash; gRPC client"]
+        O4["<b>FederatedSearchDispatcher</b> (Python)<br/>remaining Python HTTP caller"]
+        H["<b>Rust gRPC host</b><br/>caller authentication, zone and file access<br/>shared Raft API-key and ReBAC facts"]
     end
-    subgraph CORE["3. Rust core plugin &mdash; SSOT for search logic"]
-        C1["<b>nexus-search-plugin</b> cdylib (Rust)<br/>nexus/rust/services/search-plugin/ &mdash; ~16k LoC<br/>17 gRPC RPCs on nexus.search.v1.SearchService<br/>(pending Stage γ relocation to nexus-vfs)"]
+    subgraph CORE["3. Rust core plugin &mdash; SSOT for indexed search"]
+        C1["<b>nexus-search-plugin</b> cdylib<br/>nexus-vfs/rust/search-plugin/<br/>nexus.search.v1.SearchService"]
     end
     subgraph KERN["4. Kernel VFS &mdash; nexus-vfs"]
-        K1["<b>KernelHandle</b> C-ABI &mdash; 11 Tier 1 syscalls<br/>sys_read / sys_readdir / sys_stat / sys_write / ...<br/>plugin never modifies this ABI"]
+        K1["<b>KernelHandle</b> C-ABI<br/>sys_read / sys_readdir / sys_stat / sys_write / ..."]
     end
     A1 --&gt; O1
-    A2 --&gt; C1
+    A1 --&gt; O4
+    A2 --&gt; H
+    A2 --&gt; O2
     O1 --&gt; O3
-    O1 --&gt; O2
-    O2 --&gt; O3
-    O3 --&gt; C1
+    O4 --&gt; O3
+    O3 --&gt; H
+    O2 --&gt; H
+    H --&gt; C1
     C1 --&gt; K1
     K1 --&gt; STORAGE["path-local FS / peer-federated / DT_STREAM log"]
 </pre>
@@ -215,13 +220,13 @@ flowchart TB
       <td>1. API (HTTP)</td>
       <td>Request parsing, response serialisation, HTTP-level auth, rate limiting</td>
       <td>Search algorithms, indexing, ReBAC filtering, cross-zone routing</td>
-      <td><span class="layer-tag layer-python">Python</span> today; <span class="layer-tag layer-rust">Rust</span> R10 target</td>
+      <td><span class="layer-tag layer-rust">Rust</span> cluster; <span class="layer-tag layer-python">Python</span> mixed deployments</td>
     </tr>
     <tr>
       <td>2. Orchestration</td>
       <td>Auth resolution → OperationContext, ReBAC post-filter, cross-zone dispatch, profile gate, activity events</td>
       <td>Chunking, embedding, FTS/vector primitives, kernel-tier state</td>
-      <td><span class="layer-tag layer-python">Python</span> today; <span class="layer-tag layer-rust">Rust</span> R10 target</td>
+      <td><span class="layer-tag layer-rust">Rust</span> cluster; <span class="layer-tag layer-python">Python</span> mixed deployments</td>
     </tr>
     <tr>
       <td>3. Core plugin</td>
@@ -243,7 +248,7 @@ flowchart TB
 <p><code>nexus-search-plugin</code> is a cdylib loaded by <code>nexusd-cluster</code> at boot via <code>--plugin-dir</code>. It exposes <code>nexus.search.v1.SearchService</code> through the Phase P plugin-as-gRPC-service routing path (plugin declares its service list via <code>nexus_plugin_grpc_services</code>; the cluster's <code>PluginProxyService</code> routes external tonic traffic at <code>/nexus.search.v1.SearchService/&lt;Method&gt;</code> into <code>nexus_service_dispatch</code>).</p>
 
 <div class="callout callout-ok">
-  <strong>SSOT status:</strong> in the <code>cluster</code> deployment profile (production), the Rust plugin is the <strong>sole</strong> search backend. Every algorithm below runs here, not in Python. Python SANDBOX backends (§8) are a legacy dev-only path.
+  <strong>SSOT status:</strong> in the <code>cluster</code> deployment profile (production), the Rust plugin is the <strong>sole</strong> search backend. Every algorithm below runs here, not in Python. The in-process SANDBOX indexing chain has been removed; workspace discovery remains in Python (&sect;8).
 </div>
 
 <h3>2.1 Module map</h3>
@@ -348,57 +353,30 @@ flowchart TB
 
 <h2 id="http">4. HTTP surface</h2>
 
-<h3>4.1 Today: Python FastAPI</h3>
-<p>Router: <code>src/nexus/server/api/v2/routers/search.py</code> (~1800 LoC). Routes:</p>
-<ul>
-  <li><code>GET/POST /v2/search/query</code> &mdash; semantic / hybrid / keyword</li>
-  <li><code>GET/POST /v2/search/glob</code> &mdash; pattern → paths</li>
-  <li><code>GET/POST /v2/search/grep</code> &mdash; regex → matches</li>
-  <li><code>POST /v2/search/query/batch</code> &mdash; batched queries</li>
-  <li><code>GET /v2/search/health</code>, <code>GET /v2/search/stats</code></li>
-  <li>Plus indexed-dir management, locate, batch helpers</li>
-</ul>
+<h3>4.1 Python FastAPI in mixed deployments</h3>
+<p>Router: <code>src/nexus/server/api/v2/routers/search.py</code>. The Python server still serves <code>/api/v2/search/query</code>, query batching, glob/grep, health/stats, and indexed-directory management. Indexed queries use the Rust plugin; Python still adapts results and handles its own callers.</p>
 
-<h3>4.2 Tomorrow: Rust axum (R10 arc)</h3>
-<p>Crate: <code>nexus-vfs/rust/http-api/</code> (relocated from <code>nexus/rust/services/http-api/</code> in nexus-vfs#319 + nexus#4825, 2026-09-24; see §7). Landed:</p>
+<h3>4.2 Rust axum in the cluster</h3>
+<p>Crate: <code>nexus-vfs/rust/http-api/</code>. The cluster installs this listener through <a href="https://github.com/nexi-lab/nexus-vfs/blob/main/rust/profiles/cluster/src/authorization.rs"><code>rust/profiles/cluster/src/authorization.rs</code></a>. Current routes:</p>
 <ul>
-  <li><code>GET /v2/status</code> <span class="status-done">&check;</span> (PR #4675)</li>
-  <li><code>GET /v2/search/glob</code> <span class="status-done">&check;</span> (PR #4678, with cached tonic backend + typed error → HTTP status mapping)</li>
-  <li><code>serve()</code> / <code>bind_and_serve()</code> helpers <span class="status-done">&check;</span> (PR #4680) &mdash; the same call <code>nexusd-cluster</code> now uses</li>
-  <li><code>GET /v2/search/grep</code> <span class="status-done">&check;</span> (PR #4693, same shape as glob)</li>
-  <li><code>POST /v2/search/query</code> <span class="status-done">&check;</span> (PR #4693, JSON body via <code>axum::extract::Json</code>)</li>
-  <li><code>POST /v2/documents/{index,refresh,batch}</code> + <code>GET /v2/documents/stats</code> <span class="status-done">&check;</span> (write / meta RPCs sibling to search)</li>
-  <li>Auth middleware <span class="status-done">&check;</span> (PR #4700, tower <code>.layer()</code> populating <code>OperationContext</code> extension; PR #4713 fail-loud on bind failure)</li>
-  <li>Wiring into <code>nexusd-cluster</code> boot <span class="status-done">&check;</span> (PR #4713 with <code>--features http-api</code>; PR #4735 for <code>--features rebac</code>/<code>full</code>)</li>
-  <li><code>POST /v2/rebac/tuples</code> grant/list/revoke <span class="status-done">&check;</span> (Rust ReBAC engine + HTTP router; PRs #4721-#4735)</li>
-  <li><code>POST /v2/auth/keys</code> mint/rotate/list/revoke <span class="status-done">&check;</span> (PR #4756)</li>
+  <li><code>GET /v2/status</code></li>
+  <li><code>GET /v2/search/glob</code> and <code>GET /v2/search/grep</code></li>
+  <li><code>POST /v2/search/query</code>, including Rust cross-zone dispatch</li>
+  <li><code>POST /v2/documents/{index,refresh,batch}</code> and <code>GET /v2/documents/stats</code></li>
+  <li><code>GET/POST /v2/auth/keys</code> and <code>DELETE /v2/auth/keys/{key_hash}</code></li>
+  <li><code>GET/POST/DELETE /v2/rebac/tuples</code></li>
 </ul>
-<p>Still open (§7 arc):</p>
-<ul>
-  <li>ReBAC post-filter integrated into <code>/v2/search/query</code> <span class="status-open">·</span> Rust engine landed but the axum handler still relies on the plugin's own scope filter</li>
-  <li>Federated dispatcher port to axum <span class="status-open">·</span> multi-zone dispatch still lives in Python (<code>src/nexus/server/api/v2/routers/search.py::_handle_federated_search</code>); unblocked by ReBAC</li>
-</ul>
+<p>The HTTP listener requires <code>--enable-rebac</code> and binds to loopback for use behind a TLS reverse proxy. It shares the daemon's auth provider, Raft API-key and tuple stores, readiness gate, and TLS identity. HTTP search preserves the incoming bearer credential when calling the gRPC host. That host enforces zone and file access, including on cached search results.</p>
+<p><strong>HTTP and gRPC coexist:</strong> the remote filesystem transport migrated from HTTP/JSON-RPC to gRPC; R10 retains an HTTP entry point and moves its implementation into Rust. HTTP adds request/response translation rather than another search backend or credential store.</p>
+<p><code>nexus search query</code>, <code>index</code>, and <code>stats</code> call the Rust HTTP listener. CLI <code>glob</code>/<code>grep</code> still use Python <code>SearchService</code>. See <a href="../deployment/search-plugin.md#cli-on-a-rust-cluster">deployment and CLI setup</a>.</p>
 
 <h2 id="federation">5. Cross-zone federation dispatcher</h2>
 
-<p><code>federated_search.py</code> (Python, ~1200 LoC) fans out queries across zones the subject can access, mints short-lived <code>SearchDelegation</code> credentials for remote-zone RPCs, and merges results via RRF. It is <strong>kept in Python</strong> today because moving it requires solving a three-way tie:</p>
-<ol>
-  <li><strong>ReBAC engine</strong> lives in Python (<code>nexus.bricks.permissions.rebac</code>). <code>_get_accessible_zones(subject)</code> queries it directly.</li>
-  <li><strong><code>SearchDelegation</code> credential</strong> minting + verification is Python-side today.</li>
-  <li><strong><code>ZoneSearchRegistry</code></strong> (zone → daemon endpoint map) is Python-side, populated at boot from federation topology.</li>
-</ol>
-<p>Independently moving <code>federated_search</code> without touching the other two loses meaning.</p>
-
-<h3>Long-term placement: Rust <code>http-api</code>, NOT the plugin</h3>
+<p>The Rust dispatcher is implemented in <code>nexus-vfs/rust/federated-search/</code>, with shared delegation and routing types in <code>rust/search-common/</code>. The axum query handler uses the caller's readable zones and dispatches through local or remote backends before fusing results with RRF. Remote legs use <code>SearchDelegation</code>; the receiving host enforces the delegated scope.</p>
+<p>The Python <code>federated_search.py</code> remains reachable from the Python HTTP router. Its continued existence is caller-migration work, not a missing Rust dispatcher. See <a href="federated-search-rust-port.md">the completed port and its design history</a>.</p>
 <div class="callout">
-  <strong>Decision:</strong> federated dispatch belongs in the <em>API layer</em>, not the core plugin. The plugin stays a single-zone primitive (SRP). Cross-zone orchestration + auth + ReBAC + delegation minting are all API-tier concerns.
+  <strong>Layer contract:</strong> cross-zone orchestration, zone discovery, and delegation belong in services outside the core plugin. The plugin owns search primitives and same-zone peer fan-out. The gRPC host owns caller authentication and permission enforcement.
 </div>
-<p>Why the alternative (absorbing into the plugin) is wrong:</p>
-<ul>
-  <li>Plugin would grow from &ldquo;single-zone primitive&rdquo; to &ldquo;zone-aware orchestrator&rdquo; &mdash; violates SRP.</li>
-  <li>Would drag ReBAC into the plugin, coupling the search cdylib to the auth engine.</li>
-  <li>Delegation minting is server-side authority &mdash; naturally the API tier's job.</li>
-</ul>
 
 <h2 id="dt-stream">6. Search over DT_STREAM (audit / mailbox / transcripts)</h2>
 
@@ -468,47 +446,47 @@ flowchart TB
 
 <p>Epic issue <a href="https://github.com/nexi-lab/nexus/issues/4674">#4674</a>. Goal: production nexus-server runs on the <code>cluster</code> Rust binary alone &mdash; HTTP + auth + ReBAC + orchestration all move from Python to Rust, keeping the plugin unchanged as the SSOT for search primitives.</p>
 
-<h3>Landed steps</h3>
-<ol>
-  <li>PR #4675 &mdash; <code>rust/services/http-api/</code> crate skeleton (later relocated to <code>nexus-vfs/rust/http-api/</code> in #4825), axum + <code>/v2/status</code>, 2 unit tests + 2 real-TCP integration tests.</li>
-  <li>PR #4678 &mdash; <code>GET /v2/search/glob</code> handler, <code>SearchBackend</code> Channel cache (DashMap per address, <code>connect_lazy</code>), handlers/ module layout, error-mapping (gRPC <code>Code</code> → HTTP status).</li>
-  <li>PR #4680 &mdash; <code>serve()</code> / <code>bind_and_serve()</code> public helpers (dedup for the future <code>nexusd</code> wiring), 3 edge-case E2E (upstream-down → 503, sort_recency=false propagation, max_results=0 sentinel).</li>
-</ol>
+<h3>Landed capabilities</h3>
+<ul>
+  <li>Rust HTTP search/document routes, bearer middleware, API-key management, and ReBAC tuple management.</li>
+  <li>Rust ReBAC and Raft tuple storage; Rust cross-zone dispatcher and delegation.</li>
+  <li>Production cluster composition sharing auth, ReBAC, TLS channels, and readiness across HTTP and gRPC.</li>
+  <li>SANDBOX in-process indexing-chain removal; the Rust plugin owns indexed query and stats.</li>
+  <li>Indexed Search CLI on Rust HTTP, verified with the published signed-plugin image, real credentials, isolation, and revocation.</li>
+</ul>
 
-<h3>Remaining steps</h3>
-<ol start="4">
-  <li><code>GET /v2/search/grep</code> &mdash; same pattern as glob, one handler-file addition.</li>
-  <li><code>POST /v2/search/query</code> &mdash; JSON body via <code>axum::extract::Json</code>; typed request shape mirrors <code>QueryRequest</code>.</li>
-  <li>Auth middleware &mdash; tower <code>.layer()</code> outside the router; parses bearer / cookie into <code>AuthContext</code>, drops into <code>Request::extensions</code>.</li>
-  <li>Rust ReBAC engine <strong>or</strong> gRPC facade over the Python engine &mdash; unblocks moving <code>federated_search</code> off Python.</li>
-  <li>Federated dispatcher port &mdash; new axum handler group; consumes ReBAC + delegation-mint from steps 6-7.</li>
-  <li><code>nexusd-cluster</code> boot wiring &mdash; assembly binary calls <code>nexus_http_api::serve(bind_addr, state)</code> alongside the gRPC listener.</li>
-  <li>Deprecate Python <code>search_service.py</code> once feature parity holds under HERB gate for a soak period.</li>
-</ol>
+<h3>Remaining work</h3>
+<ul>
+  <li>Migrate and verify remaining Python callers, including CLI glob/grep and the Python HTTP query/federation paths, before deleting <code>SearchService</code> and its adapters.</li>
+  <li>Resolve Graph and Zoekt feature coverage before removing their Python integrations.</li>
+  <li>Resolve the epic's session-cookie requirement before retiring Python auth routes; the Rust HTTP middleware currently accepts bearer credentials.</li>
+  <li>Prove the Rust deployment in a real production tenant before retiring <code>nexus-server</code>, as required by the epic.</li>
+</ul>
+<p>Passing the current CLI and published-image gates completes those increments; it does not close the whole migration epic.</p>
 
 <h2 id="profiles">8. Deployment profiles</h2>
 
 <table>
-  <thead><tr><th>Profile</th><th>Search backend</th><th>What runs</th></tr></thead>
+  <thead><tr><th>Deployment</th><th>Indexed search</th><th>What runs</th></tr></thead>
   <tbody>
     <tr>
-      <td><code>cluster</code> (production)</td>
+      <td>Rust <code>cluster</code> (production target)</td>
       <td>Rust plugin only</td>
-      <td>plugin cdylib loaded by <code>nexusd-cluster</code>; SANDBOX chain never wired.</td>
+      <td><code>nexusd-cluster</code> loads the signed plugin and serves gRPC, with optional Rust HTTP and ReBAC enabled.</td>
     </tr>
     <tr>
-      <td><code>sandbox</code> (dev / local)</td>
-      <td>Python SANDBOX chain</td>
-      <td>Python <code>sqlite_fts_backend</code>, <code>sqlite_vec_backend</code>, <code>pg_fts_backend</code>, <code>pg_vector_backend</code>, <code>chunking.py</code>, <code>zoekt_client</code>, <code>graph_search_service</code>. ~4400 LoC of legacy dev-only code.</td>
+      <td>Python server with plugin host</td>
+      <td>Rust plugin over gRPC</td>
+      <td>Python <code>/api/v2/*</code> and Python service callers remain supported while they migrate.</td>
     </tr>
     <tr>
-      <td><code>full</code> (superset)</td>
-      <td>Rust plugin + everything</td>
-      <td>All drivers + all connectors + plugin.</td>
+      <td>Python local/workspace callers</td>
+      <td>Plugin required for indexed query and stats</td>
+      <td>Python <code>SearchService</code> still serves list/glob/grep. The former in-process indexing chain is removed.</td>
     </tr>
   </tbody>
 </table>
-<p>The <code>sandbox</code> path is a legacy fallback for topologies without a plugin sidecar. Once the R10 arc closes and the Python HTTP layer retires, SANDBOX can retire alongside (nothing routes to it in production).</p>
+<p>Build features and Python profiles configure different processes. A local Python profile does not create a Rust indexed-search backend; the CLI must connect to the configured cluster HTTP listener.</p>
 
 <h2 id="decisions">9. Decision log</h2>
 
@@ -604,34 +582,34 @@ flowchart TB
       <td><span class="status-done">&check; Done</span> &mdash; PR #4700 (<code>middleware/auth.rs</code>) + PR #4713 (fail-loud bind)</td>
     </tr>
     <tr>
-      <td>Rust ReBAC engine (or gRPC facade)</td>
+      <td>Rust ReBAC engine</td>
       <td>New Rust crate</td>
       <td><span class="status-done">&check; Done</span> &mdash; PRs #4721-#4735 (5-part arc); <code>nexus-rebac</code> crate + Raft tuple store + graph cache + in-crate enforcer + <code>--features rebac</code> wiring + HTTP <code>/v2/rebac/tuples</code></td>
     </tr>
     <tr>
       <td>Federated dispatcher port to axum handler group</td>
       <td>Rust http-api (R10)</td>
-      <td><span class="status-open">Next</span> &mdash; ReBAC now landed, this is the last major R10 chunk; still lives in Python <code>src/nexus/server/api/v2/routers/search.py::_handle_federated_search</code></td>
+      <td><span class="status-done">&check; Done</span> &mdash; Rust dispatcher and axum wiring landed across PRs #4790-#4818. The Python HTTP caller remains until its migration completes.</td>
     </tr>
     <tr>
       <td><code>nexusd-cluster</code> wiring of the axum listener</td>
-      <td>nexus-vfs/rust/profiles/cluster (was: nexus/rust/nexusd, retired #4825)</td>
-      <td><span class="status-done">&check; Done</span> &mdash; PR #4713 (<code>--features http-api</code>), PR #4735 (<code>--features full</code> composition); the assembly binary that carried the wiring retired 2026-09-24 once the service crates relocated into nexus-vfs, so wiring now sits in nexus-vfs's cluster profile directly</td>
+      <td>nexus-vfs/rust/profiles/cluster</td>
+      <td><span class="status-done">&check; Done</span> &mdash; Cluster <code>authorization.rs</code> composes HTTP and ReBAC with the daemon's shared credentials, TLS transport, and readiness gate.</td>
     </tr>
     <tr>
       <td>Deprecate Python SANDBOX chain</td>
       <td>Python cleanup</td>
-      <td><span class="status-done">&check; Done</span> &mdash; PRs #4760-#4764 (~11.6k LoC removed; well past ~4400 estimate); SearchService now daemon-shim only, all in-process pipeline + factory + chunk store + indexing pipeline deleted</td>
+      <td><span class="status-done">&check; Done</span> &mdash; PRs #4760-#4764 removed the in-process indexing pipeline. <code>SearchService</code> still handles workspace discovery and adapts indexed plugin results for Python callers.</td>
     </tr>
     <tr>
       <td>Full <code>SearchService</code> Python delete</td>
       <td>Python cleanup (post-R10)</td>
-      <td><span class="status-open">Open</span> &mdash; <code>src/nexus/bricks/search/search_service.py</code> (~4400 LoC) still owns the query dispatcher, daemon shim, SQL fallback and ReBAC post-filter.  Blocks the final <code>nexus-server</code> retirement</td>
+      <td><span class="status-open">Open</span> &mdash; <code>src/nexus/bricks/search/search_service.py</code> still serves list/glob/grep and indexed-query adapters. Migrate its CLI, Python HTTP, and other service callers, with permission and feature coverage, before deletion.</td>
     </tr>
     <tr>
       <td>Refresh this doc when statuses drift</td>
       <td>docs</td>
-      <td><span class="status-done">&check; Done</span> &mdash; this refresh (2026-09-13)</td>
+      <td><span class="status-done">&check; Done</span> &mdash; Current transport boundaries and migration status checked against the pinned nexus-vfs source (2026-10-07).</td>
     </tr>
   </tbody>
 </table>

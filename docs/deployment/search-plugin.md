@@ -11,7 +11,25 @@ This page is the deployment contract: which processes you run, how
 they are wired, and what changed for corpora indexed under the
 pre-P12 stack.
 
-## Required processes
+## HTTP and gRPC boundaries
+
+The cluster serves typed VFS and `nexus.search.v1.SearchService` RPCs over
+gRPC. Its optional Rust HTTP listener serves `/v2/search/*`,
+`/v2/documents/*`, `/v2/auth/keys`, and `/v2/rebac/tuples`. HTTP search
+forwards the caller's bearer credential through the daemon's gRPC listener;
+both transports share the daemon's API-key and ReBAC stores.
+
+The remote filesystem client's migration from HTTP/JSON-RPC to gRPC did
+not remove these HTTP routes. R10 ([#4674](https://github.com/nexi-lab/nexus/issues/4674))
+moves the server implementation into Rust while retaining an HTTP entry point.
+The Python server still serves `/api/v2/*` for mixed deployments. Its
+remaining callers must migrate before that server can be removed.
+
+Indexed CLI commands (`query`, `index`, `stats`) use the Rust HTTP listener;
+see [CLI setup](#cli-on-a-rust-cluster). CLI `glob` and `grep` still use
+`SearchService`. These commands currently have different connection paths.
+
+## Required processes for the Python server
 
 | Process | Image | Role |
 |---|---|---|

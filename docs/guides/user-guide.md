@@ -1144,7 +1144,7 @@ For CLI `search index/query/stats`, create a connection profile named `cluster`
 with the Rust HTTP listener URL (for example `http://localhost:2027`), its
 caller API key, and an optional zone. The commands below select this profile.
 `NEXUS_URL` / `NEXUS_API_KEY` or explicit remote flags can supply the connection
-instead; see [Search CLI setup](../deployment/search-plugin.md#search-cli).
+instead; see [Search CLI setup](../deployment/search-plugin.md#cli-on-a-rust-cluster).
 
 For the Python SDK/HTTP integration, run the Rust search plugin and point
 the Python server at it with `NEXUS_SEARCH_PLUGIN_TARGET`. Keyword queries

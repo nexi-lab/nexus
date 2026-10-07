@@ -68,7 +68,7 @@ def upgrade() -> None:
         sa.Column("grant_id", sa.String(length=64), primary_key=True),
         sa.Column(
             "zone_id",
-            sa.String(length=64),
+            sa.String(length=255),
             sa.ForeignKey("zones.zone_id", ondelete="RESTRICT"),
             nullable=False,
         ),
@@ -105,7 +105,7 @@ def upgrade() -> None:
         sa.Column("action", sa.String(length=16), nullable=False),
         sa.Column(
             "zone_id",
-            sa.String(length=64),
+            sa.String(length=255),
             sa.ForeignKey("zones.zone_id", ondelete="RESTRICT"),
             nullable=True,
         ),
@@ -131,19 +131,20 @@ def upgrade() -> None:
     )
     op.create_index("ix_zone_operations_zone_state", "zone_operations", ["zone_id", "state"])
     op.create_index("ix_zone_operations_lease", "zone_operations", ["lease_expires_at"])
+    op.create_index("ix_zone_operations_grant", "zone_operations", ["grant_id"])
 
     op.create_table(
         "zone_mounts",
         sa.Column("mount_id", sa.String(length=64), primary_key=True),
         sa.Column(
             "parent_zone_id",
-            sa.String(length=64),
+            sa.String(length=255),
             sa.ForeignKey("zones.zone_id", ondelete="RESTRICT"),
             nullable=False,
         ),
         sa.Column(
             "target_zone_id",
-            sa.String(length=64),
+            sa.String(length=255),
             sa.ForeignKey("zones.zone_id", ondelete="RESTRICT"),
             nullable=False,
         ),
@@ -200,7 +201,7 @@ def upgrade() -> None:
         "zone_authorization_epochs",
         sa.Column(
             "zone_id",
-            sa.String(length=64),
+            sa.String(length=255),
             sa.ForeignKey("zones.zone_id", ondelete="RESTRICT"),
             primary_key=True,
         ),
@@ -217,7 +218,7 @@ def upgrade() -> None:
         sa.Column("membership_version", sa.String(length=64), nullable=False),
         sa.Column(
             "zone_id",
-            sa.String(length=64),
+            sa.String(length=255),
             sa.ForeignKey("zones.zone_id", ondelete="RESTRICT"),
             nullable=False,
         ),

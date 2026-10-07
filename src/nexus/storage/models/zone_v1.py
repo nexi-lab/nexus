@@ -100,6 +100,7 @@ class ZoneOperationModel(Base):
         UniqueConstraint("idempotency_scope", "idempotency_key", name="uq_zone_operation_idem"),
         Index("ix_zone_operations_zone_state", "zone_id", "state"),
         Index("ix_zone_operations_lease", "lease_expires_at"),
+        Index("ix_zone_operations_grant", "grant_id"),
     )
 
     operation_id: Mapped[str] = mapped_column(String(64), primary_key=True)

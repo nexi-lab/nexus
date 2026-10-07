@@ -209,7 +209,7 @@ def test_create_runtime_refusal_never_marks_active(session_factory):
         from nexus.storage.models.auth import ZoneModel
 
         zone = s.get(ZoneModel, "team-test-zone")
-        assert zone.canonical_status is None
+        assert zone.canonical_status == "creating"
 
 
 def test_create_timeout_is_unknown_not_failed(session_factory):
@@ -299,7 +299,7 @@ def test_failed_mandatory_projection_never_activates_grant(session_factory):
 
         zone = session.get(ZoneModel, "team-test-zone")
         grant = session.execute(sa.select(ZoneGrantModel)).scalar_one()
-        assert zone.canonical_status is None
+        assert zone.canonical_status == "creating"
         assert grant.status == "pending"
 
 
@@ -1268,7 +1268,7 @@ def test_worker_resumes_create_and_activates_only_after_projection(session_facto
     with session_factory() as session:
         from nexus.storage.models.auth import ZoneModel
 
-        assert session.get(ZoneModel, "team-test-zone").canonical_status is None
+        assert session.get(ZoneModel, "team-test-zone").canonical_status == "creating"
 
     worker = ZoneOperationWorker(session_factory, runtime, svc)
     assert worker.pump_once() >= 2

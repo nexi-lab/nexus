@@ -254,23 +254,27 @@ def zone_inventory(
 
     attributions = api_key_zone_attributions or {}
 
-    sql_zones: list[tuple[str, str | None]] = [
-        (row.zone_id, row.canonical_status) for row in session.execute(select(ZoneModel)).scalars()
+    sql_zones: list[tuple[str, str | None, str]] = [
+        (row.zone_id, row.canonical_status, row.phase)
+        for row in session.execute(select(ZoneModel)).scalars()
     ]
-    sql_ids = {zone_id for zone_id, _ in sql_zones}
+    sql_ids = {zone_id for zone_id, _, _ in sql_zones}
 
     items: dict[str, tuple[str, ...]] = dict.fromkeys(INVENTORY_CLASSES, ())
 
-    for zone_id, status in sql_zones:
+    for zone_id, status, phase in sql_zones:
         in_runtime = zone_id in runtime_zone_ids
-        if status == "deleted":
+        if status == "deleted" or phase == "Terminated":
+            # canonical_status alone misses legacy Terminated rows (their
+            # canonical_status is NULL): a terminated zone with a live
+            # runtime is drift, not consistency
             if in_runtime:
                 items["zone_terminated_sql_live_runtime"] = (
                     *items["zone_terminated_sql_live_runtime"],
                     zone_id,
                 )
-            # deleted + runtime gone is the consistent terminal state; it is
-            # not one of the nine report classes (tombstone is queryable).
+            # terminated + runtime gone is the consistent terminal state; it
+            # is not one of the nine report classes (tombstone is queryable).
             continue
         if zone_id_validator is not None:
             try:
@@ -302,7 +306,12 @@ def zone_inventory(
             source_determinable=facts.get("source", False),
         )
         if not decision.importable:
-            items["api_key_zone_unattributable"] = (*items["api_key_zone_unattributable"], key_id)
+            # key:zone pair — a key blocked on several zones reports one
+            # entry per (key, zone), not one inflated count per key
+            items["api_key_zone_unattributable"] = (
+                *items["api_key_zone_unattributable"],
+                f"{key_id}:{zone_id}",
+            )
 
     # rebac_membership_without_grant is declared to mirror the §10.2 nine
     # bucket taxonomy, but this tool does NOT detect ReBAC-only memberships:

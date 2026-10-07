@@ -9,6 +9,7 @@ cross-checked, never trusted (§6.7). Store errors fail closed.
 from __future__ import annotations
 
 import logging
+from datetime import UTC
 from typing import Any, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
@@ -57,7 +58,15 @@ def _svc_error(exc: ServiceError) -> HTTPException:
 
 
 def _iso(value: Any) -> str:
-    return value.isoformat() if value is not None else ""
+    """RFC3339 with an explicit offset: the legacy zones columns are naive
+    (develop-era schema), and the contract pattern requires Z/±hh:mm."""
+    if value is None:
+        return ""
+    as_utc = value.replace(tzinfo=UTC) if value.tzinfo is None else value
+    return as_utc.isoformat()
+
+
+_PHASE_FALLBACK = {"Creating": "creating", "Active": "active", "Terminated": "deleted"}
 
 
 def _view(zone: ZoneModel) -> ZoneView:
@@ -65,7 +74,7 @@ def _view(zone: ZoneModel) -> ZoneView:
         zone_id=zone.zone_id,
         display_name=zone.display_name or zone.name,
         description=zone.description,
-        status=zone.canonical_status or "unknown",
+        status=zone.canonical_status or _PHASE_FALLBACK.get(zone.phase, "creating"),
         deployment=(
             {
                 k: v
@@ -80,7 +89,7 @@ def _view(zone: ZoneModel) -> ZoneView:
             or {"location": "cloud", "trust_domain": "local"}
         ),
         labels=zone.labels,
-        revision=zone.canonical_revision or "",
+        revision=zone.canonical_revision or "rev-unset",
         created_by={
             key: value
             for key, value in (
@@ -125,13 +134,9 @@ def create_zone(
     except ServiceError as exc:
         raise _svc_error(exc) from exc
     response.headers["Location"] = f"/v2/zone-operations/{result.operation_id}"
-    return OperationView(
-        operation_id=result.operation_id,
-        action="create",
-        state=result.state,
-        step=result.step,
-        retryable=result.retryable,
-    )
+    # M-2: the contract requires created_at/updated_at on every 202 —
+    # from_operation fills them from the persisted operation row
+    return OperationView.from_operation(svc.get_operation(result.operation_id))
 
 
 @router.get("")
@@ -273,10 +278,10 @@ def zone_status(
             )
         return {
             "zone_id": zone.zone_id,
-            "status": zone.canonical_status or "unknown",
+            "status": zone.canonical_status or _PHASE_FALLBACK.get(zone.phase, "creating"),
             "runtime_health": zone.runtime_health or "unknown",
             "runtime_observed_at": _iso(zone.runtime_observed_at) or None,
-            "revision": zone.canonical_revision or "",
+            "revision": zone.canonical_revision or "rev-unset",
         }
 
 
@@ -356,13 +361,9 @@ def _lifecycle(
         )
     except ServiceError as exc:
         raise _svc_error(exc) from exc
-    return OperationView(
-        operation_id=result.operation_id,
-        action=action,
-        state=result.state,
-        step=result.step,
-        retryable=result.retryable,
-    )
+    # M-2: the contract requires created_at/updated_at on every 202 —
+    # from_operation fills them from the persisted operation row
+    return OperationView.from_operation(svc.get_operation(result.operation_id))
 
 
 @router.delete("/{zone_id}", status_code=202)
@@ -400,13 +401,9 @@ def request_deprovision(
     except ServiceError as exc:
         raise _svc_error(exc) from exc
     response.headers["Location"] = f"/v2/zone-operations/{result.operation_id}"
-    return OperationView(
-        operation_id=result.operation_id,
-        action="deprovision",
-        state=result.state,
-        step=result.step,
-        retryable=result.retryable,
-    )
+    # M-2: the contract requires created_at/updated_at on every 202 —
+    # from_operation fills them from the persisted operation row
+    return OperationView.from_operation(svc.get_operation(result.operation_id))
 
 
 def _zone_session(request: Request) -> Session:

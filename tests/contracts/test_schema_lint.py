@@ -106,3 +106,34 @@ def test_wire_rules_on_top_level_objects(rel: str, owned_schemas: dict[str, dict
         assert doc.get("additionalProperties", True) is True, (
             f"{rel} must keep unknown optionals open"
         )
+
+
+#: In-package runtime mirrors (zone_v1.py reads schemas via
+#: importlib.resources; the repo-root contracts/ tree stays the SSOT).
+_RUNTIME_MIRRORS = {
+    "common/v1/zone-path.schema.json": "schemas/common/v1/zone-path.schema.json",
+}
+for _gen in (
+    "existing-zone-id-ref.schema.gen.json",
+    "remote-learned-zone-id.schema.gen.json",
+    "system-zone-id.schema.gen.json",
+    "tenant-zone-id-create.schema.gen.json",
+):
+    _RUNTIME_MIRRORS[f"vendor/nexus-vfs.gen/{_gen}"] = f"schemas/vendor/nexus-vfs.gen/{_gen}"
+
+
+@pytest.mark.parametrize("sorted_pair", sorted(_RUNTIME_MIRRORS.items()))
+def test_runtime_schema_mirrors_match_the_repo_root_ssot(sorted_pair: tuple[str, str]) -> None:
+    """The wheel-shipped copy must be byte-identical to contracts/ — a
+    drifted mirror would make checkout and wheel installs disagree about
+    what a zone id/path is."""
+    rel, mirror = sorted_pair
+    import hashlib
+
+    import nexus.contracts as contracts_pkg
+
+    ssot = hashlib.sha256((CONTRACTS_DIR / rel).read_bytes()).hexdigest()
+    shipped = hashlib.sha256(
+        (Path(contracts_pkg.__file__).parent / mirror).read_bytes()
+    ).hexdigest()
+    assert ssot == shipped, f"runtime mirror {mirror} drifted from {rel}"

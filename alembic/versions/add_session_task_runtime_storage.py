@@ -76,7 +76,8 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.UniqueConstraint("session_id", name="uq_task_specs_session"),
     )
-    op.create_index("ix_task_specs_session", "task_specs", ["session_id"])
+    # ix_task_specs_session intentionally NOT created: the unique
+    # constraint uq_task_specs_session covers the same column
 
     op.create_table(
         "task_resolutions",
@@ -232,7 +233,7 @@ def downgrade() -> None:
     op.drop_table("task_attempts")
     op.drop_index("ix_task_resolutions_task", table_name="task_resolutions")
     op.drop_table("task_resolutions")
-    op.drop_index("ix_task_specs_session", table_name="task_specs")
+    # (no ix_task_specs_session to drop — see upgrade note)
     op.drop_table("task_specs")
     op.drop_index("ix_sessions_home_zone", table_name="sessions")
     op.drop_table("sessions")

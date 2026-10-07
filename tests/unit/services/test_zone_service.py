@@ -170,6 +170,20 @@ def grant_request() -> ZoneGrantCreateRequest:
 # ── create saga ───────────────────────────────────────────────────────────────
 
 
+def test_create_rejects_reserved_zone_id(session_factory):
+    """RESERVED_ZONE_IDS is enforced at the single service entry so both the
+    v2 and legacy doors refuse the same ids (the suggest path included)."""
+    svc = make_service(session_factory, FakeRuntime(ok=True))
+    with pytest.raises(ServiceError) as exc_info:
+        svc.create_zone(create_request("admin"), idempotency_key="k1", principal=PRINCIPAL)
+    assert exc_info.value.code == "RESERVED_ZONE_ID"
+    assert exc_info.value.http_status == 400
+    with session_factory() as s:
+        from nexus.storage.models.auth import ZoneModel
+
+        assert s.get(ZoneModel, "admin") is None
+
+
 def test_create_saga_success_marks_active_only_with_receipt(session_factory):
     runtime = FakeRuntime(ok=True)
     svc = make_service(session_factory, runtime)

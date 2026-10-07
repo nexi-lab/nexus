@@ -59,6 +59,7 @@ class ZoneOperationWorker:
         processed = 0
         processed += self._pump_outbox(ZoneRuntimeOutboxModel, self._do_runtime_event)
         processed += self._pump_outbox(ZoneGrantProjectionOutboxModel, self._do_projection_event)
+        processed += self.reconcile_stale_operations()
         if self._session_runtime is not None and self._runtime_dependency_validator is not None:
             self._session_runtime.revalidate_runtime_dependencies(
                 self._runtime_dependency_validator
@@ -220,29 +221,18 @@ class ZoneOperationWorker:
     # ── reconciliation (crash recovery) ──────────────────────────────────────
 
     def reconcile_stale_operations(self) -> int:
-        now = datetime.now(UTC)
-        recovered = 0
-        with self._session_factory() as session, session.begin():
-            stale = (
-                session.execute(
-                    select(ZoneOperationModel).where(
-                        ZoneOperationModel.state.in_(("queued", "running")),
-                        (ZoneOperationModel.lease_expires_at.is_(None))
-                        | (ZoneOperationModel.lease_expires_at <= now),
-                    )
-                )
-                .scalars()
-                .all()
-            )
-            for op in stale:
-                if op.action == "create" and op.zone_id:
-                    recovered += 1
-                    # resume via saga continuation, not assumption
-                    op.lease_owner = WORKER_ID
-                    op.lease_expires_at = now + timedelta(seconds=LEASE_S)
-        for op_id in self._collect_pending_creates():
+        """Crash-recovery pass: re-drive create sagas left mid-flight.
+
+        The claim-and-collect in ``_collect_pending_creates`` mirrors the
+        outbox due-query's lease conditions (HA multi-replica safety), so a
+        replica holding a live lease on an operation is never re-pumped
+        here. Reconciliation happens purely through that collector — an
+        eager pre-lease here would exclude exactly the rows it just claimed.
+        """
+        recovered = self._collect_pending_creates()
+        for op_id in recovered:
             self._service._pump_create(operation_id=op_id)
-        return recovered
+        return len(recovered)
 
     def _collect_pending_creates(self) -> list[str]:
         """Claim-and-collect: mirror the outbox due-query's lease conditions so

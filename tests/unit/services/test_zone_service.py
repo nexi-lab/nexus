@@ -1255,6 +1255,81 @@ def test_worker_resumes_create_and_activates_only_after_projection(session_facto
     assert runtime.calls == ["create", "status"]
 
 
+def test_reconcile_pumps_stale_create_via_saga_continuation(session_factory):
+    """M-7 regression: reconciliation must actually re-drive a stale create
+    (the crash-recovery promise), not pre-lease the row and then exclude it
+    from the collector — a pump that never runs and a count that lies."""
+    from datetime import UTC, datetime, timedelta
+
+    runtime = FakeRuntime()
+    svc = make_service(session_factory, runtime, worker=False)
+    accepted = svc.create_zone(
+        create_request(), idempotency_key="crash-1", principal=PRINCIPAL
+    )
+    assert accepted.state == "queued"
+    # a worker claimed the op and died; its lease has expired
+    with session_factory() as s:
+        from nexus.storage.models import ZoneOperationModel
+
+        op = s.execute(sa.select(ZoneOperationModel)).scalar_one()
+        op.lease_owner = "dead-worker"
+        op.lease_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    worker = ZoneOperationWorker(session_factory, runtime, svc)
+    recovered = worker.reconcile_stale_operations()
+    assert recovered == 1
+    # the saga was genuinely re-driven against the runtime
+    assert runtime.calls == ["create", "status"]
+    worker.pump_once()  # drain the projection outbox
+    with session_factory() as s:
+        from nexus.storage.models.auth import ZoneModel
+
+        assert s.get(ZoneModel, "team-test-zone").canonical_status == "active"
+
+
+def test_pump_create_fenced_takeover_writes_nothing(session_factory):
+    """M-3 regression: when a takeover bumps the fence during our runtime
+    call, the stale worker's transaction must write nothing — no genesis
+    grant, no projection outbox row, no state overwrite."""
+    runtime = FakeRuntime()
+    svc = make_service(session_factory, runtime, worker=False)
+    accepted = svc.create_zone(
+        create_request(), idempotency_key="fence-1", principal=PRINCIPAL
+    )
+    original_create = runtime.create_zone
+
+    def create_and_takeover(*, zone_id, ctx):
+        receipt = original_create(zone_id=zone_id, ctx=ctx)
+        with session_factory() as s:
+            from nexus.storage.models import ZoneOperationModel
+
+            s.execute(
+                sa.update(ZoneOperationModel)
+                .where(ZoneOperationModel.zone_id == zone_id)
+                .values(fence=ZoneOperationModel.fence + 1)
+            )
+            s.commit()
+        return receipt
+
+    runtime.create_zone = create_and_takeover
+    result = svc._pump_create(operation_id=accepted.operation_id)
+    assert result.step == "stale-worker-fenced"
+    with session_factory() as s:
+        from nexus.storage.models import (
+            ZoneGrantModel,
+            ZoneGrantProjectionOutboxModel,
+            ZoneOperationModel,
+        )
+
+        op = s.get(ZoneOperationModel, accepted.operation_id)
+        assert op.grant_id is None
+        assert (
+            s.execute(sa.select(ZoneGrantModel)).scalars().all() == []
+        ), "stale worker must not INSERT a genesis grant"
+        assert (
+            s.execute(sa.select(ZoneGrantProjectionOutboxModel)).scalars().all() == []
+        ), "stale worker must not enqueue a projection event"
+
+
 def test_projection_cleanup_preserves_an_overlapping_grant(session_factory):
     deleted: list[tuple[str, str]] = []
     svc = ZoneApplicationService(

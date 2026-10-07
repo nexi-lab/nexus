@@ -306,8 +306,14 @@ class RPCTransport:
             raise ValueError(f"unknown ZoneRuntime RPC method: {method}") from exc
 
         rpc = getattr(self._zone_runtime_stub, method)
+        # Build the request OUTSIDE the rpc try-block: a KeyError/ValueError
+        # from request_factory() is a client-side programming error (missing
+        # payload key, unknown shape), not a transport failure — letting it
+        # escape prevents callers from misclassifying it as retryable
+        # unavailability and blind-retrying a deterministic bug.
+        request = request_factory()
         try:
-            response = rpc(request_factory(), timeout=timeout)
+            response = rpc(request, timeout=timeout)
         except grpc.RpcError as exc:
             self._raise_transport_error(exc, timeout, method)
             raise  # pragma: no cover - _raise_transport_error always raises

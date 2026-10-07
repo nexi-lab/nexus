@@ -1330,6 +1330,100 @@ def test_pump_create_fenced_takeover_writes_nothing(session_factory):
         ), "stale worker must not enqueue a projection event"
 
 
+def test_projection_race_with_revoke_enqueues_cleanup(session_factory):
+    """M-8 regression: a revoke landing between the external projection
+    writes and the activation transaction must not strand the already-
+    written edges — the loser enqueues a cleanup event whose deleter
+    recomputes the edge set from the grant itself."""
+    written: list[str] = []
+    deleted: list[str] = []
+    inner = ZoneApplicationService(session_factory, FakeRuntime(), worker_enabled=True)
+
+    def projection_write(zone_id, subject, relation, path):
+        written.append(relation)
+        # the concurrent revoke lands mid-projection (grant still pending)
+        inner.revoke_grant(
+            "team-test-zone",
+            _pending_grant_id(session_factory),
+            principal=PRINCIPAL,
+            reason="race",
+        )
+
+    svc = ZoneApplicationService(
+        session_factory,
+        FakeRuntime(),
+        worker_enabled=False,
+        projection_write=projection_write,
+        projection_delete=lambda zone_id, subject, relation, path: deleted.append(relation),
+    )
+    _active_zone(inner, session_factory)
+    svc.issue_grant("team-test-zone", grant_request(), idempotency_key="gk1", principal=PRINCIPAL)
+    done = svc.complete_grant_projection(grant_id=_pending_grant_id(session_factory))
+    assert done is True  # the outbox event is settled, not retried forever
+    with session_factory() as s:
+        from nexus.storage.models import ZoneGrantProjectionOutboxModel
+
+        events = s.execute(sa.select(ZoneGrantProjectionOutboxModel)).scalars().all()
+        assert any(
+            e.event_type == "grant.cleanup_projections" and not e.processed_at
+            for e in events
+        ), "the racing activation must enqueue its own cleanup event"
+    # drain the cleanup event: the fallback recomputes edges from the grant
+    # and deletes every edge that was externally written
+    ZoneOperationWorker(session_factory, FakeRuntime(), svc).pump_once()
+    assert written and set(deleted) >= {r for r in written}
+
+
+def _pending_grant_id(session_factory) -> str:
+    with session_factory() as s:
+        from nexus.storage.models import ZoneGrantModel
+
+        return (
+            s.execute(
+                sa.select(ZoneGrantModel).where(ZoneGrantModel.status == "pending")
+            )
+            .scalars()
+            .first()
+            .grant_id
+        )
+
+
+def test_cleanup_remaining_check_is_scoped_to_the_same_zone(session_factory):
+    """M-9 regression: two zones projecting the same (subject, relation,
+    object) must not pin each other's edges — revoking zone A's grant
+    deletes zone A's edge while zone B's projection stays active."""
+    deleted: list[str] = []
+    svc = ZoneApplicationService(
+        session_factory,
+        FakeRuntime(),
+        worker_enabled=True,
+        projection_delete=lambda zone_id, subject, relation, path: deleted.append(
+            f"{zone_id}:{relation}"
+        ),
+    )
+    _active_zone(svc, session_factory, zone_id="zone-alpha")
+    _active_zone(svc, session_factory, zone_id="zone-beta")
+    for zone in ("zone-alpha", "zone-beta"):
+        svc.issue_grant(zone, grant_request(), idempotency_key=f"gk-{zone}", principal=PRINCIPAL)
+    with session_factory() as s:
+        from nexus.storage.models import ZoneGrantModel
+
+        alpha = (
+            s.execute(
+                sa.select(ZoneGrantModel).where(ZoneGrantModel.source_id == "gk-zone-alpha")
+            )
+            .scalars()
+            .one()
+        )
+        svc.complete_grant_projection(grant_id=alpha.grant_id)
+        aid = alpha.grant_id
+    svc.revoke_grant("zone-alpha", aid, principal=PRINCIPAL, reason="done")
+    ZoneOperationWorker(session_factory, FakeRuntime(), svc).pump_once()
+    # zone-alpha's edge is gone even though zone-beta holds the same tuple
+    assert any(d.startswith("zone-alpha:") for d in deleted)
+    assert not any(d.startswith("zone-beta:") for d in deleted)
+
+
 def test_projection_cleanup_preserves_an_overlapping_grant(session_factory):
     deleted: list[tuple[str, str]] = []
     svc = ZoneApplicationService(

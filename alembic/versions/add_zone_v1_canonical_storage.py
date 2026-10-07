@@ -236,6 +236,7 @@ def upgrade() -> None:
     op.create_table(
         "rebac_relation_sources",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
+        sa.Column("zone_id", sa.String(length=255), nullable=False),
         sa.Column("subject", sa.String(length=255), nullable=False),
         sa.Column("relation", sa.String(length=128), nullable=False),
         sa.Column("object", sa.String(length=255), nullable=False),
@@ -244,13 +245,19 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         sa.UniqueConstraint(
-            "subject", "relation", "object", "source_grant_id", name="uq_rebac_rel_src"
+            "subject",
+            "relation",
+            "object",
+            "source_grant_id",
+            name="uq_rebac_rel_src",
+            nulls_not_distinct=True,
         ),
     )
     op.create_index("ix_rebac_rel_src_grant", "rebac_relation_sources", ["source_grant_id"])
     op.create_index(
         "ix_rebac_rel_src_tuple", "rebac_relation_sources", ["subject", "relation", "object"]
     )
+    op.create_index("ix_rebac_rel_src_zone", "rebac_relation_sources", ["zone_id"])
 
 
 def downgrade() -> None:

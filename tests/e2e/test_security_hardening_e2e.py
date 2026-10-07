@@ -12,11 +12,17 @@ import time
 import httpx
 import pytest
 
+def _e2e_api_key() -> str:
+    """Minted kernel admin key (conftest publishes it as NEXUS_E2E_API_KEY);
+    read at call time because module import happens before any fixture."""
+    import os
+    return os.environ.get("NEXUS_E2E_API_KEY", "test-e2e-api-key-12345")
+
 
 @pytest.fixture(scope="function")
 def api_key():
     """API key matching the server's NEXUS_API_KEY."""
-    return "test-e2e-api-key-12345"
+    return _e2e_api_key()
 
 
 class TestCORSHeadersE2E:

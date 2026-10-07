@@ -22,8 +22,14 @@ The server runs in open-access mode with X-Nexus-Subject identity.
 
 import base64
 
+def _e2e_api_key() -> str:
+    """Minted kernel admin key (conftest publishes it as NEXUS_E2E_API_KEY);
+    read at call time because module import happens before any fixture."""
+    import os
+    return os.environ.get("NEXUS_E2E_API_KEY", "test-e2e-api-key-12345")
+
 HEADERS = {
-    "Authorization": "Bearer test-e2e-api-key-12345",
+    "Authorization": f"Bearer {_e2e_api_key()}",
     "X-Nexus-Subject": "user:admin",
     "X-Nexus-Zone-Id": "root",
 }
@@ -188,7 +194,7 @@ class TestMCPServiceE2E:
 # ─── ShareLinkService ────────────────────────────────────────────────
 
 ALICE_HEADERS = {
-    "Authorization": "Bearer test-e2e-api-key-12345",
+    "Authorization": f"Bearer {_e2e_api_key()}",
     "X-Nexus-Subject": "user:alice",
     "X-Nexus-Zone-Id": "root",
 }

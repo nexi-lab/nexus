@@ -250,7 +250,6 @@ def upgrade() -> None:
             "object",
             "source_grant_id",
             name="uq_rebac_rel_src",
-            nulls_not_distinct=True,
         ),
     )
     op.create_index("ix_rebac_rel_src_grant", "rebac_relation_sources", ["source_grant_id"])
@@ -258,6 +257,20 @@ def upgrade() -> None:
         "ix_rebac_rel_src_tuple", "rebac_relation_sources", ["subject", "relation", "object"]
     )
     op.create_index("ix_rebac_rel_src_zone", "rebac_relation_sources", ["zone_id"])
+    # NULLS NOT DISTINCT (PostgreSQL 15+) so authoritative rows (NULL grant)
+    # dedupe as well — SQLAlchemy's constraint DSL cannot express it on every
+    # 2.0.x this project supports, so the DDL lives here. SQLite has no such
+    # syntax (and no NULL-grant writer exists today).
+    if op.get_bind().dialect.name == "postgresql":
+        op.execute(
+            "ALTER TABLE rebac_relation_sources "
+            "DROP CONSTRAINT IF EXISTS uq_rebac_rel_src"
+        )
+        op.execute(
+            "ALTER TABLE rebac_relation_sources "
+            "ADD CONSTRAINT uq_rebac_rel_src "
+            "UNIQUE (subject, relation, object, source_grant_id) NULLS NOT DISTINCT"
+        )
 
 
 def downgrade() -> None:

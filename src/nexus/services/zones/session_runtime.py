@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from pydantic import TypeAdapter
@@ -56,6 +56,11 @@ RECORD_VFS_SUBPATHS: dict[str, str] = {
     "artifact": "artifacts",
     "verify": "verify.json",
 }
+
+#: Convergence horizon for parked/orphaned runs (engineering default — no
+#: spec pins it): a run may not park, nor sit registered without progress,
+#: longer than this before the reaper terminates it.
+PARK_STALE_AFTER_S: float = 24 * 3600.0
 
 
 class SessionRuntimeError(Exception):
@@ -131,6 +136,28 @@ class RunView:
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+def require_no_pending_runs(session: Session, session_id: str) -> None:
+    """Contract guard: a run parked in revocation_pending may not obtain new
+    resources — record writes AND run/attempt/task creation all refuse while
+    any run of the session is pending (runtime-v2-p1a amendment)."""
+    pending = (
+        session.execute(
+            select(SessionRuntimeRunModel.pid).where(
+                SessionRuntimeRunModel.session_id == session_id,
+                SessionRuntimeRunModel.state == "revocation_pending",
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if pending is not None:
+        raise SessionRuntimeError(
+            "REVOCATION_PENDING",
+            f"session {session_id} has run {pending} in revocation_pending; no new resources",
+            409,
+        )
 
 
 class SessionRuntimeService:
@@ -269,15 +296,20 @@ class SessionRuntimeService:
                     "a client-supplied zone hint may not override the session home zone",
                     403,
                 )
-            self._require_no_pending_runs(session, session_id)
+            require_no_pending_runs(session, session_id)
 
             subpath = RECORD_VFS_SUBPATHS[record_kind]
-            name_part = record_name if record_kind == "artifact" else ""
-            vfs_path = (
-                f"/sessions/{session_id}/{subpath}/{record_name}"
-                if name_part
-                else f"/sessions/{session_id}/{subpath}"
-            )
+            # Default names keep the canonical paths (zero change for every
+            # existing reader). A non-artifact record carrying an explicit
+            # name MUST get its own file: the ledger keys rows by name, so a
+            # shared path would silently overwrite the previous record's
+            # bytes while presenting two independent rows.
+            if record_kind == "artifact":
+                vfs_path = f"/sessions/{session_id}/{subpath}/{record_name}"
+            elif record_name != "default":
+                vfs_path = f"/sessions/{session_id}/{subpath}.{record_name}"
+            else:
+                vfs_path = f"/sessions/{session_id}/{subpath}"
             # Second line of defence (L-2): the input layer validates the
             # parts, but the kernel's path semantics live outside this repo —
             # the composed path itself must satisfy the vendored zone-path
@@ -376,25 +408,6 @@ class SessionRuntimeService:
                 for r in rows
             ]
 
-    @staticmethod
-    def _require_no_pending_runs(session: Session, session_id: str) -> None:
-        pending = (
-            session.execute(
-                select(SessionRuntimeRunModel.pid).where(
-                    SessionRuntimeRunModel.session_id == session_id,
-                    SessionRuntimeRunModel.state == "revocation_pending",
-                )
-            )
-            .scalars()
-            .first()
-        )
-        if pending is not None:
-            raise SessionRuntimeError(
-                "REVOCATION_PENDING",
-                f"session {session_id} has run {pending} in revocation_pending; no new resources",
-                409,
-            )
-
     # ── runtime runs (§8.9 items 3/4) ──────────────────────────────────────
     def start_run(
         self,
@@ -428,6 +441,9 @@ class SessionRuntimeService:
                 raise SessionRuntimeError(
                     "SESSION_NOT_ACTIVE", f"session {session_id} is {record.state}", 409
                 )
+            # contract: a parked run "may not obtain new resources" — the
+            # guard covers records AND run/attempt creation (this entry)
+            require_no_pending_runs(session, session_id)
             home_zone = record.home_zone_id
             if execution_zone_hint is None or execution_zone_hint == home_zone:
                 execution_zone = home_zone
@@ -581,8 +597,21 @@ class SessionRuntimeService:
             run = session.get(SessionRuntimeRunModel, pid)
             if run is None:
                 raise SessionRuntimeError("RUN_NOT_FOUND", f"run {pid} not found", 404)
+            if run.state in ("terminated", "failed"):
+                # terminal stays terminal: a pending-cancel must not
+                # resurrect a dead run (which would re-block the session's
+                # record writes) nor rewrite a settled lifecycle
+                raise SessionRuntimeError(
+                    "RUN_ALREADY_TERMINAL",
+                    f"run {pid} is already {run.state}",
+                    409,
+                )
             run.state = "revocation_pending" if mode == "pending" else "terminated"
             if mode == "terminate":
+                # the attempt itself stays resumable on purpose: resume
+                # re-attaches a new pid to the SAME attempt (pid_history
+                # accumulates). Attempt convergence is the reaper's call
+                # (a terminated run past the horizon closes its attempt).
                 run.ended_at = _utcnow()
             session.commit()
             return self._run_view(session, run)
@@ -669,13 +698,20 @@ class SessionRuntimeService:
         return parked
 
     def revalidate_runtime_dependencies(self, validator: Any) -> int:
-        """Park active runtimes whose delegation/grant/epoch is no longer current."""
+        """Park active runtimes whose delegation/grant/epoch is no longer current.
+
+        Convergence (M-5/M-6): a parked run whose dependency has settled as
+        invalid terminates here — the park is a waiting room for graceful
+        shutdown, never a permanent state; runs parked or registered past
+        PARK_STALE_AFTER_S converge regardless, so a dead client can never
+        block a session's record writes (or a zone's deprovision) for good."""
         active_states = ("registered", "warming_up", "ready", "busy", "awaiting_input")
         with self._session_factory() as session:
             snapshots = [
                 (
                     run.pid,
                     run.session_id,
+                    run.state,
                     run.delegation_ref,
                     run.execution_zone_id,
                     run.grant_ref,
@@ -684,7 +720,9 @@ class SessionRuntimeService:
                 for run in (
                     session.execute(
                         select(SessionRuntimeRunModel).where(
-                            SessionRuntimeRunModel.state.in_(active_states)
+                            SessionRuntimeRunModel.state.in_(
+                                active_states + ("revocation_pending",)
+                            )
                         )
                     )
                     .scalars()
@@ -692,32 +730,60 @@ class SessionRuntimeService:
                 )
             ]
 
-        invalid: list[str] = []
+        invalid: list[str] = []  # active + dependency gone → park
+        dead_pending: list[str] = []  # parked + dependency gone → terminate
         unreachable = 0
-        for pid, session_id, delegation_ref, zone_id, grant_ref, epoch in snapshots:
-            if not delegation_ref or grant_ref is None or epoch is None:
-                invalid.append(pid)
+        for pid, session_id, state, delegation_ref, zone_id, grant_ref, epoch in snapshots:
+            gone = not delegation_ref or grant_ref is None or epoch is None
+            if not gone:
+                current = validator(delegation_ref, zone_id, grant_ref, int(epoch), session_id)
+                if current is None:
+                    unreachable += 1
+                    continue
+                gone = not current
+            if not gone:
                 continue
-            current = validator(delegation_ref, zone_id, grant_ref, int(epoch), session_id)
-            if current is None:
-                unreachable += 1
-            elif not current:
-                invalid.append(pid)
+            (dead_pending if state == "revocation_pending" else invalid).append(pid)
         if unreachable:
             logger.warning(
                 "skipped dependency revalidation for %d runtime(s): membership unavailable",
                 unreachable,
             )
-        if not invalid:
-            return 0
+        now = _utcnow()
+        stale_cutoff = now - timedelta(seconds=PARK_STALE_AFTER_S)
         with self._session_factory() as session, session.begin():
-            parked = 0
+            moved = 0
             for pid in invalid:
                 run = session.get(SessionRuntimeRunModel, pid)
                 if run is not None and run.state in active_states:
                     run.state = "revocation_pending"
-                    parked += 1
-            return parked
+                    moved += 1
+            for pid in dead_pending:
+                run = session.get(SessionRuntimeRunModel, pid)
+                if run is not None and run.state == "revocation_pending":
+                    self._terminate_with_attempt(session, run, now)
+                    moved += 1
+            stale = session.execute(
+                select(SessionRuntimeRunModel).where(
+                    SessionRuntimeRunModel.state.in_(("revocation_pending", "registered")),
+                    SessionRuntimeRunModel.started_at.is_not(None),
+                    SessionRuntimeRunModel.started_at < stale_cutoff,
+                )
+            ).scalars().all()
+            for run in stale:
+                self._terminate_with_attempt(session, run, now)
+                moved += 1
+            return moved
+
+    @staticmethod
+    def _terminate_with_attempt(session: Session, run: SessionRuntimeRunModel, now: datetime) -> None:
+        """Terminate a run and end its still-running attempt with it."""
+        run.state = "terminated"
+        run.ended_at = now
+        attempt = session.get(TaskAttemptModel, run.attempt_id) if run.attempt_id else None
+        if attempt is not None and attempt.state == "running":
+            attempt.state = "cancelled"
+            attempt.ended_at = now
 
     @staticmethod
     def _run_view(session: Session, run: SessionRuntimeRunModel) -> RunView:

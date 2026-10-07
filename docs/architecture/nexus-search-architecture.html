@@ -154,7 +154,7 @@ cross-zone federation, DT_STREAM search coverage, pure-Rust migration arc.</p>
     <li><a href="https://s.shareone.vip/s/kernel-architecture">Nexus Kernel Architecture</a> (peer doc): kernel-tier SSOT — syscall surface (Tier 1 = 11 POSIX-aligned <code>sys_*</code>), plugin ABI, DT_REG / DT_STREAM / DT_PIPE inode types, VFS dispatch. Search consumes this from outside; never modifies it.</li>
     <li><a href="https://s.shareone.vip/s/nexus-integration-architecture">Nexus Integration Architecture</a> (peer doc): sudowork ↔ nexus ↔ sudo-code surface, agent identity, A2A messaging, transport. Search-over-DT_STREAM (§6 here) is a consumer of the DT_STREAM primitive defined there.</li>
     <li><a href="https://s.shareone.vip/s/federation-cross-machine-runbook">Cross-Machine Federation Runbook</a> (peer doc): overlay / bootstrap / enrollment. Search's cross-plugin peer fan-out (§2.4) runs over the same overlay.</li>
-    <li><a href="https://github.com/nexi-lab/nexus/blob/develop/rust/services/proto/nexus/search/v1/search.proto">nexus.search.v1 proto</a>: wire SSOT for every RPC in this doc.</li>
+    <li><a href="https://github.com/nexi-lab/nexus-vfs/blob/main/rust/proto/nexus/search/v1/search.proto">nexus.search.v1 proto</a>: wire SSOT for every RPC in this doc.</li>
   </ul>
 </div>
 
@@ -368,12 +368,12 @@ flowchart TB
 </ul>
 <p>The HTTP listener requires <code>--enable-rebac</code> and binds to loopback for use behind a TLS reverse proxy. It shares the daemon's auth provider, Raft API-key and tuple stores, readiness gate, and TLS identity. HTTP search preserves the incoming bearer credential when calling the gRPC host. That host enforces zone and file access, including on cached search results.</p>
 <p><strong>HTTP and gRPC coexist:</strong> the remote filesystem transport migrated from HTTP/JSON-RPC to gRPC; R10 retains an HTTP entry point and moves its implementation into Rust. HTTP adds request/response translation rather than another search backend or credential store.</p>
-<p><code>nexus search query</code>, <code>index</code>, and <code>stats</code> call the Rust HTTP listener. CLI <code>glob</code>/<code>grep</code> still use Python <code>SearchService</code>. See <a href="../deployment/search-plugin.md#cli-on-a-rust-cluster">deployment and CLI setup</a>.</p>
+<p><code>nexus search query</code>, <code>index</code>, and <code>stats</code> call the Rust HTTP listener. CLI <code>glob</code>/<code>grep</code> still use Python <code>SearchService</code>. See <a href="https://github.com/nexi-lab/nexus/blob/develop/docs/deployment/search-plugin.md#cli-on-a-rust-cluster">deployment and CLI setup</a>.</p>
 
 <h2 id="federation">5. Cross-zone federation dispatcher</h2>
 
 <p>The Rust dispatcher is implemented in <code>nexus-vfs/rust/federated-search/</code>, with shared delegation and routing types in <code>rust/search-common/</code>. The axum query handler uses the caller's readable zones and dispatches through local or remote backends before fusing results with RRF. Remote legs use <code>SearchDelegation</code>; the receiving host enforces the delegated scope.</p>
-<p>The Python <code>federated_search.py</code> remains reachable from the Python HTTP router. Its continued existence is caller-migration work, not a missing Rust dispatcher. See <a href="federated-search-rust-port.md">the completed port and its design history</a>.</p>
+<p>The Python <code>federated_search.py</code> remains reachable from the Python HTTP router. Its continued existence is caller-migration work, not a missing Rust dispatcher. See <a href="https://github.com/nexi-lab/nexus/blob/develop/docs/architecture/federated-search-rust-port.md">the completed port and its design history</a>.</p>
 <div class="callout">
   <strong>Layer contract:</strong> cross-zone orchestration, zone discovery, and delegation belong in services outside the core plugin. The plugin owns search primitives and same-zone peer fan-out. The gRPC host owns caller authentication and permission enforcement.
 </div>

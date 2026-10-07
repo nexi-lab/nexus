@@ -194,8 +194,11 @@ nexus write /hello.txt "hello world"
 nexus cat /hello.txt
 nexus ls /
 nexus grep "TODO" -f "**/*.py"
-nexus search query "hello" --mode hybrid
 ```
+
+Indexed search CLI commands connect to the Rust cluster HTTP listener.
+See [Search CLI setup](docs/deployment/search-plugin.md#cli-on-a-rust-cluster)
+for the endpoint, credentials, and indexing workflow.
 
 ```bash
 # TUI

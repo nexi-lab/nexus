@@ -296,8 +296,7 @@ def _reindex_via_rest(
     if skipped:
         console.print(
             f"\n[nexus.muted]{skipped} path(s) skipped (empty, non-text or over 2 MiB) — "
-            "index binaries with /search/index and extracted text, oversize files with "
-            "`nexus search index <dir>`.[/nexus.muted]"
+            "index these paths with /api/v2/search/index and extracted text.[/nexus.muted]"
         )
     if index_errors:
         console.print(

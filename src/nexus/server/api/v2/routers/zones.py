@@ -235,7 +235,19 @@ def get_zone(
     auth_result: dict[str, Any] = Depends(require_auth),
 ) -> ZoneView:
     _service(request)  # arming check — read paths still require the service
-    require_zone_capability(request, auth_result, zone_id=zone_id, capability="zone.data.read")
+    try:
+        require_zone_capability(
+            request, auth_result, zone_id=zone_id, capability="zone.data.read"
+        )
+    except HTTPException as exc:
+        if exc.status_code == 403:
+            # anti-enumeration parity with the sessions read surface: a
+            # denial answers with the same 404 shape as the zone not
+            # existing (both surfaces folded, no cross-face oracle)
+            raise HTTPException(
+                status_code=404, detail={"code": "ZONE_NOT_FOUND", "retryable": False}
+            ) from exc
+        raise
     with _zone_session(request) as s:
         zone = s.get(ZoneModel, zone_id)
         if zone is None:
@@ -364,7 +376,13 @@ def request_deprovision(
 ) -> OperationView:
     """DELETE requests deprovision; it never wipes rows inline (§6.2)."""
     svc = _service(request)
-    require_global_capability(auth_result, "zone.lifecycle.delete")
+    # zone-level capability (the genesis grant carries zone.lifecycle.delete
+    # and _CAPABILITY_RELATIONS maps it to direct_owner): the creator may
+    # deprovision their own zone; admins short-circuit inside the check, the
+    # confirmation header stays as the mis-delete guard
+    require_zone_capability(
+        request, auth_result, zone_id=zone_id, capability="zone.lifecycle.delete"
+    )
     if confirmation != zone_id:
         raise HTTPException(
             status_code=400,

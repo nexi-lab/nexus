@@ -198,7 +198,10 @@ def test_api_key_providers_support_full_zone_lifecycle_without_local_auth(
     assert list_response.status_code == 200, list_response.text
     assert zone_id in {zone["zone_id"] for zone in list_response.json()["zones"]}
 
-    delete_response = client.delete(f"/api/zones/{zone_id}", headers=headers)
+    delete_response = client.delete(
+            f"/api/zones/{zone_id}",
+            headers={**headers, "X-Nexus-Confirm-Zone": zone_id},
+        )
     assert delete_response.status_code == 202, delete_response.text
     assert delete_response.json()["zone_id"] == zone_id
 

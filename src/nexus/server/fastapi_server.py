@@ -47,6 +47,28 @@ from nexus.contracts.exceptions import (
 )
 
 
+#: The zone/sessions surface this handler owns (contract-typed bodies answer
+#: in the contract error shape). Listed by actual route prefix; a plain
+#: ``/v2/`` match would silently rewrite the 422 shape of every pre-zone
+#: /v2 router (files, search, mcp, ...) whose contract is not ours to change.
+#: Each entry also carries the /api/v2 fronted form (deployments may front
+#: the zone surface through the unified base URL).
+_ZONE_V2_SURFACE_PREFIXES = tuple(
+    f"{base}{suffix}"
+    for suffix in (
+        "/v2/zones",
+        "/v2/auth/zone-delegations",
+        "/v2/zone-capabilities",
+        "/v2/zone-mounts",
+        "/v2/zone-operations",
+        "/v2/zone-transfers",
+        "/v2/sessions",
+        "/v2/runtime",
+    )
+    for base in ("", "/api")
+)
+
+
 async def zone_v2_validation_error_handler(
     request: Request, exc: RequestValidationError
 ) -> JSONResponse:
@@ -54,14 +76,14 @@ async def zone_v2_validation_error_handler(
     answer in the contract error shape (code/message/retryable) instead of
     FastAPI's default ``{"detail": [...]}`` — consumers branch on code/retryable.
 
-    Non-/v2 paths keep the default shape: their 422 contract is not ours to
-    change.  A bare pydantic.ValidationError handler is deliberately NOT
+    Every other path keeps the default shape: its 422 contract is not ours
+    to change.  A bare pydantic.ValidationError handler is deliberately NOT
     registered alongside this: after the body layer was contract-typed, the
     only remaining ValidationError sources are server-side bugs, which must
     stay visible as 500s rather than being mislabeled as client errors."""
     from fastapi.exception_handlers import request_validation_exception_handler
 
-    if not request.url.path.startswith("/v2/"):
+    if not request.url.path.startswith(_ZONE_V2_SURFACE_PREFIXES):
         return await request_validation_exception_handler(request, exc)
     errors = exc.errors()
     first = errors[0] if errors else {}

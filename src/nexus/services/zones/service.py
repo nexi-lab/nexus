@@ -174,6 +174,18 @@ def _cleanup_zone_projections(session: Session, zone_id: str) -> None:
             ),
             {"zone_id": zone_id},
         )
+        if "rebac_version_sequences" in tables:
+            # Same-store revision bump: raw-SQL deletions bypass the tuple
+            # writer, so without this other replicas keep serving cached
+            # decisions for the deleted tuples until their TTL expires.
+            session.execute(
+                text(
+                    "UPDATE rebac_version_sequences "
+                    "SET current_version = current_version + 1, updated_at = :now "
+                    "WHERE zone_id = :zone_id"
+                ),
+                {"zone_id": zone_id, "now": _now()},
+            )
 
 
 def _purge_zone_session_data(session: Session, zone_id: str) -> None:
@@ -394,47 +406,75 @@ class ZoneApplicationService:
                 )
 
             exists = session.get(ZoneModel, request.zone_id)
-            if exists is not None:
-                if exists.phase == "Creating":
-                    # A create saga still owns the row: a client retrying
-                    # with a fresh idempotency key gets the in-flight (or
-                    # retryable-failed) operation replayed instead of a 409
-                    # it cannot resolve.
-                    pending = (
-                        session.execute(
-                            select(ZoneOperationModel).where(
-                                ZoneOperationModel.zone_id == request.zone_id,
-                                ZoneOperationModel.action == "create",
-                                or_(
-                                    ZoneOperationModel.state.in_(("queued", "running")),
-                                    (ZoneOperationModel.state == "failed")
-                                    & ZoneOperationModel.retryable.is_(True),
-                                ),
-                            )
-                        )
-                        .scalars()
-                        .first()
-                    )
-                    if pending is not None:
-                        return OperationResult(
-                            pending.operation_id,
-                            pending.state,
-                            pending.step,
-                            pending.retryable,
-                        )
-                raise ServiceError(
-                    "ZONE_ALREADY_EXISTS",
-                    f"zone {request.zone_id} already exists",
-                    http_status=409,
-                    details={
-                        "hint": (
-                            "a create that exhausted its outbox retries leaves the zone row "
-                            "behind; deprovision it before recreating the id"
-                        )
-                    },
+            if exists is not None and exists.canonical_status == "deleted":
+                # A deprovisioned tombstone keeps the row for history, but the
+                # id is reusable: rebuild in place instead of the 409 whose
+                # hint says "deprovision it first" — following that hint used
+                # to dead-end right back here.
+                exists.name = request.display_name
+                exists.display_name = request.display_name
+                exists.description = request.description
+                exists.phase = "Creating"
+                exists.canonical_status = "creating"
+                exists.canonical_revision = _new_id("rev")
+                exists.created_by = principal
+                exists.placement_location = (
+                    request.deployment.location if request.deployment else "cloud"
                 )
+                exists.placement_data_domain = (
+                    request.deployment.data_domain if request.deployment else None
+                )
+                exists.trust_domain = (
+                    request.deployment.trust_domain
+                    if request.deployment
+                    else str(principal.get("trust_domain") or "local")
+                )
+                exists.placement_region = request.deployment.region if request.deployment else None
+                exists.labels = request.labels
+                exists.deleted_at = None
+                zone = exists
+            else:
+                if exists is not None:
+                    if exists.phase == "Creating":
+                        # A create saga still owns the row: a client retrying
+                        # with a fresh idempotency key gets the in-flight (or
+                        # retryable-failed) operation replayed instead of a 409
+                        # it cannot resolve.
+                        pending = (
+                            session.execute(
+                                select(ZoneOperationModel).where(
+                                    ZoneOperationModel.zone_id == request.zone_id,
+                                    ZoneOperationModel.action == "create",
+                                    or_(
+                                        ZoneOperationModel.state.in_(("queued", "running")),
+                                        (ZoneOperationModel.state == "failed")
+                                        & ZoneOperationModel.retryable.is_(True),
+                                    ),
+                                )
+                            )
+                            .scalars()
+                            .first()
+                        )
+                        if pending is not None:
+                            return OperationResult(
+                                pending.operation_id,
+                                pending.state,
+                                pending.step,
+                                pending.retryable,
+                            )
+                    raise ServiceError(
+                        "ZONE_ALREADY_EXISTS",
+                        f"zone {request.zone_id} already exists",
+                        http_status=409,
+                        details={
+                            "hint": (
+                                "a create that exhausted its outbox retries leaves the zone row "
+                                "behind; deprovision it before recreating the id"
+                            )
+                        },
+                    )
 
-            zone = ZoneModel(
+                zone = ZoneModel(
                 zone_id=request.zone_id,
                 name=request.display_name,  # legacy mirror column, mapper owns history
                 display_name=request.display_name,
@@ -456,9 +496,14 @@ class ZoneApplicationService:
                 labels=request.labels,
             )
             session.add(zone)
-            session.add(
-                ZoneAuthorizationEpochModel(zone_id=request.zone_id, epoch=0, reason="zone created")
-            )
+            if exists is None:
+                # a tombstone rebuild reuses the surviving epoch row —
+                # re-inserting it would trip the primary key
+                session.add(
+                    ZoneAuthorizationEpochModel(
+                        zone_id=request.zone_id, epoch=0, reason="zone created"
+                    )
+                )
             op = self._new_operation(
                 session,
                 action="create",
@@ -1227,6 +1272,14 @@ class ZoneApplicationService:
             zone = session.get(ZoneModel, zone_id)
             if zone is None:
                 raise ServiceError("ZONE_NOT_FOUND", f"zone {zone_id} not found", http_status=404)
+            if zone.canonical_status in ("deleting", "deleted"):
+                # a zone past its delete decision no longer takes metadata
+                # edits — the audit trail must not wobble after the fact
+                raise ServiceError(
+                    "ZONE_NOT_ACTIVE",
+                    f"zone {zone_id} is {zone.canonical_status}; patching is closed",
+                    http_status=409,
+                )
             current = zone.canonical_revision or ""
             if revision_if_match is not None and revision_if_match != current:
                 raise ServiceError(

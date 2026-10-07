@@ -11,6 +11,10 @@ import httpx
 
 MembershipState = Literal["ok", "inactive", "unreachable"]
 
+#: Bounded cache: membership pairs are (user, org) — a fleet of users across
+#: many orgs would otherwise grow the dict for the process lifetime.
+_CACHE_MAX_ENTRIES = 10_000
+
 
 class MembershipUnreachable(RuntimeError):
     """The authoritative Moss membership endpoint could not be consulted."""
@@ -35,6 +39,7 @@ class MossMembershipVerifier:
         self._url = url
         self._token = token
         self._cache_ttl_s = max(0.0, cache_ttl_s)
+        self._owns_client = client is None
         self._client = client or httpx.Client(trust_env=False)
         self._cache: dict[tuple[str, str], _CachedMembership] = {}
 
@@ -68,6 +73,12 @@ class MossMembershipVerifier:
         except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
             raise MembershipUnreachable("Moss membership lookup unavailable") from exc
         if self._cache_ttl_s > 0:
+            if len(self._cache) >= _CACHE_MAX_ENTRIES:
+                # lazy sweep: expired entries go first; a fully-live cache at
+                # the cap drops the oldest entries rather than growing on
+                self._cache = {
+                    k: v for k, v in self._cache.items() if v.expires_at > now
+                } or dict(list(self._cache.items())[: _CACHE_MAX_ENTRIES // 2])
             self._cache[key] = _CachedMembership(
                 status=result[0], revision=result[1], expires_at=now + self._cache_ttl_s
             )
@@ -82,3 +93,8 @@ class MossMembershipVerifier:
             return "ok" if self.check(user_id, org_id, membership_version) else "inactive"
         except MembershipUnreachable:
             return "unreachable"
+
+    def close(self) -> None:
+        """Release the HTTP client this verifier owns (shutdown path)."""
+        if self._owns_client:
+            self._client.close()

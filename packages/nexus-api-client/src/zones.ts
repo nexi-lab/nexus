@@ -92,8 +92,15 @@ export class ZoneClient {
     return this.http.get("/v2/zone-capabilities");
   }
 
-  list(query = ""): Promise<{ zones: ZoneRef[]; nextCursor?: string }> {
-    return this.http.get(`/v2/zones${query ? `?${query}` : ""}`);
+  /**
+   * List zones. `query` is a URLSearchParams (or [k, v] entries) so values
+   * are properly encoded — a raw string here used to bypass encoding.
+   */
+  list(
+    query: URLSearchParams | [string, string][] = [],
+  ): Promise<{ zones: ZoneRef[]; nextCursor?: string }> {
+    const qs = new URLSearchParams(query).toString();
+    return this.http.get(`/v2/zones${qs ? `?${qs}` : ""}`);
   }
 
   get(zoneId: string): Promise<ZoneRef> {
@@ -158,9 +165,13 @@ export class ZoneClient {
     });
   }
 
-  listGrants(zoneId: string, query = ""): Promise<{ grants: unknown[]; nextCursor?: string }> {
+  listGrants(
+    zoneId: string,
+    query: URLSearchParams | [string, string][] = [],
+  ): Promise<{ grants: unknown[]; nextCursor?: string }> {
+    const qs = new URLSearchParams(query).toString();
     return this.http.get(
-      `/v2/zones/${encodeURIComponent(zoneId)}/grants${query ? `?${query}` : ""}`,
+      `/v2/zones/${encodeURIComponent(zoneId)}/grants${qs ? `?${qs}` : ""}`,
     );
   }
 
@@ -202,8 +213,15 @@ export class ZoneClient {
     return this.http.post("/v2/zone-mounts", body, { idempotencyKey });
   }
 
-  listMounts(zoneId: string): Promise<{ mounts: ZoneMount[]; nextCursor?: string }> {
-    return this.http.get(`/v2/zone-mounts?zone_id=${encodeURIComponent(zoneId)}`);
+  listMounts(
+    zoneId: string,
+    cursor?: string,
+  ): Promise<{ mounts: ZoneMount[]; nextCursor?: string }> {
+    const params = new URLSearchParams({ zone_id: zoneId });
+    if (cursor) {
+      params.set("cursor", cursor);
+    }
+    return this.http.get(`/v2/zone-mounts?${params.toString()}`);
   }
 
   unmount(mountId: string, idempotencyKey: string): Promise<ZoneOperation> {

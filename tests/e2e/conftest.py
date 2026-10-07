@@ -282,6 +282,11 @@ def nexus_server(isolated_db, tmp_path):
         # into the same Rust data directory the local KernelClient will open, then
         # use that key for both the Python HTTP auth adapter and internal gRPC.
         env["NEXUS_API_KEY"] = _mint_kernel_admin_key(env, tmp_path)
+        # Also expose the minted key to THIS pytest process: legacy e2e
+        # modules read it at request time (module-level constants would
+        # evaluate at import, before any fixture mints — so they call
+        # os.environ inside request helpers instead).
+        os.environ["NEXUS_E2E_API_KEY"] = env["NEXUS_API_KEY"]
         env["NEXUS_ZONE_DELEGATION_ISSUERS"] = "moss-e2e"
         env["NEXUS_ZONE_MEMBERSHIP_URL"] = membership.url
         env["NEXUS_ZONE_MEMBERSHIP_TOKEN"] = membership.token

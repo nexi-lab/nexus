@@ -13,7 +13,13 @@ import base64
 
 import httpx
 
-AUTH_HEADERS = {"Authorization": "Bearer test-e2e-api-key-12345"}
+def _e2e_api_key() -> str:
+    """Minted kernel admin key (conftest publishes it as NEXUS_E2E_API_KEY);
+    read at call time because module import happens before any fixture."""
+    import os
+    return os.environ.get("NEXUS_E2E_API_KEY", "test-e2e-api-key-12345")
+
+AUTH_HEADERS = {"Authorization": f"Bearer {_e2e_api_key()}"}
 
 # 10KB test content with a repeating pattern for easy verification
 TEST_CONTENT = bytes(range(256)) * 40  # 10240 bytes

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from nexus.contracts.zone_v1 import (
     CAPABILITY_PATTERN,
@@ -47,6 +47,14 @@ class ZoneView(BaseModel):
     deleted_at: str | None = None
 
 
+def _no_explicit_null(value: object) -> object:
+    """Optional means omittable, not nullable (wire parity with the owned
+    schemas, which type these fields string/object with no null arm)."""
+    if value is None:
+        raise ValueError("explicit null is not allowed — omit the field")
+    return value
+
+
 class ZoneCreateBody(BaseModel):
     """Contract-typed body (H-2): admission-shape violations are rejected at
     the request-validation layer (422) instead of blowing up as a 500 inside
@@ -60,6 +68,10 @@ class ZoneCreateBody(BaseModel):
     deployment: ZoneDeployment | None = None
     labels: dict[str, str] | None = None
 
+    _description_not_null = field_validator("description", mode="before")(_no_explicit_null)
+    _deployment_not_null = field_validator("deployment", mode="before")(_no_explicit_null)
+    _labels_not_null = field_validator("labels", mode="before")(_no_explicit_null)
+
 
 class ZonePatchBody(BaseModel):
     """Whitelist patch — unknown keys rejected at the contract layer."""
@@ -70,6 +82,10 @@ class ZonePatchBody(BaseModel):
     description: str | None = None
     labels: dict[str, str] | None = None
     deployment: ZonePatchPlacement | None = None
+
+    _description_not_null = field_validator("description", mode="before")(_no_explicit_null)
+    _labels_not_null = field_validator("labels", mode="before")(_no_explicit_null)
+    _deployment_not_null = field_validator("deployment", mode="before")(_no_explicit_null)
 
 
 class GrantView(BaseModel):

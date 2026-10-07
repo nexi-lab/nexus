@@ -27,6 +27,10 @@ logger = logging.getLogger(__name__)
 
 #: Worker loop cadence (seconds). Small for responsive outbox pickup.
 WORKER_TICK_S = 0.25
+
+#: Late-kernel-readiness retry cadence (engineering default): how often the
+#: background re-arm loop re-probes a runtime that was not ready at startup.
+REARM_TICK_S = 10.0
 #: Grace window for the worker loop to finish an in-flight pump at shutdown
 #: before the lifespan's blanket task-cancel pass takes over.
 WORKER_GRACE_S = 5.0
@@ -255,7 +259,12 @@ def zone_worker(app: FastAPI) -> Any:
             logger.exception("dependency revalidation hit a store error")
             return None
         except Exception:
-            return False
+            # A validator bug is NOT a dependency verdict: batch-parking
+            # active runs on a code defect is fail-closed on the wrong axis.
+            # Unknown (None) keeps the dependency retrying; the stack stays
+            # in the log for the fix.
+            logger.exception("dependency revalidation raised unexpectedly")
+            return None
 
     return ZoneOperationWorker(
         app.state.zone_session_factory,
@@ -396,6 +405,8 @@ async def startup_zone_control(app: FastAPI) -> list[asyncio.Task[Any]]:
     app.state.moss_membership_verifier = (
         access_membership.check if access_membership is not None else None
     )
+    # kept for shutdown: the verifiers own httpx clients that must close
+    app.state.zone_membership_verifiers = (access_membership, worker_membership)
 
     def worker_membership_check(user_id: str, org_id: str, version: str) -> bool:
         if worker_membership is None:
@@ -405,28 +416,35 @@ async def startup_zone_control(app: FastAPI) -> list[asyncio.Task[Any]]:
             raise MembershipUnreachable("Moss membership lookup unavailable")
         return state == "ok"
 
-    report = arm_zone_services(
-        app,
-        session_factory=session_factory,
-        runtime=runtime,
-        rebac_check=rebac_check,
-        rebac_invalidate=rebac_invalidate,
-        projection_write=projection_write,
-        projection_delete=projection_delete,
-        membership_check=app.state.moss_membership_verifier,
-        worker_membership_check=(worker_membership_check if worker_membership else None),
-        trusted_issuers=issuers,
-        worker_enabled=True,
-        # The background worker owns the operation lease in deployed apps.
-        # Executing the same mutation inline would race that worker.
-        inline_execution=False,
-        auth_armed=bool(
-            getattr(app.state, "api_key", None) or getattr(app.state, "auth_provider", None)
-        ),
-        transfer_policy=getattr(app.state, "zone_transfer_policy", None),
-        transfer_executor=getattr(app.state, "zone_transfer_executor", None),
-    )
-    report["enabled"] = True
+    async def arm_once() -> dict[str, Any]:
+        # The capability probe is a synchronous gRPC call (up to 30s): run
+        # the whole assembly off the event loop so startup stays responsive.
+        report = await asyncio.to_thread(
+            arm_zone_services,
+            app,
+            session_factory=session_factory,
+            runtime=runtime,
+            rebac_check=rebac_check,
+            rebac_invalidate=rebac_invalidate,
+            projection_write=projection_write,
+            projection_delete=projection_delete,
+            membership_check=app.state.moss_membership_verifier,
+            worker_membership_check=(worker_membership_check if worker_membership else None),
+            trusted_issuers=issuers,
+            worker_enabled=True,
+            # The background worker owns the operation lease in deployed apps.
+            # Executing the same mutation inline would race that worker.
+            inline_execution=False,
+            auth_armed=bool(
+                getattr(app.state, "api_key", None) or getattr(app.state, "auth_provider", None)
+            ),
+            transfer_policy=getattr(app.state, "zone_transfer_policy", None),
+            transfer_executor=getattr(app.state, "zone_transfer_executor", None),
+        )
+        report["enabled"] = True
+        return report
+
+    report = await arm_once()
     # Fail-closed on missing providers ONLY for deployments that explicitly
     # declare zone control (NEXUS_ZONE_CONTROL_ENABLED). A bare
     # deployment_profile == "full" must not make the whole app unbootable:
@@ -437,23 +455,48 @@ async def startup_zone_control(app: FastAPI) -> list[asyncio.Task[Any]]:
     if required and not report["composite_armed"]:
         raise ZoneControlNotArmed(f"mandatory zone providers missing: {report}")
 
-    worker = zone_worker(app)
-    stop = asyncio.Event()
-    app.state.zone_worker_stop = stop
+    def start_worker() -> asyncio.Task[Any]:
+        worker = zone_worker(app)
+        stop = asyncio.Event()
+        app.state.zone_worker_stop = stop
 
-    async def run() -> None:
-        while not stop.is_set():
-            try:
-                await asyncio.to_thread(worker.pump_once)
-                await asyncio.to_thread(worker.reconcile_stale_operations)
-            except Exception:
-                logger.exception("zone operation worker iteration failed")
-            try:
-                await asyncio.wait_for(stop.wait(), timeout=WORKER_TICK_S)
-            except TimeoutError:
-                continue
+        async def run() -> None:
+            while not stop.is_set():
+                try:
+                    await asyncio.to_thread(worker.pump_once)
+                    await asyncio.to_thread(worker.reconcile_stale_operations)
+                except Exception:
+                    logger.exception("zone operation worker iteration failed")
+                try:
+                    await asyncio.wait_for(stop.wait(), timeout=WORKER_TICK_S)
+                except TimeoutError:
+                    continue
 
-    tasks = [asyncio.create_task(run(), name="zone-operation-worker")]
+        return asyncio.create_task(run(), name="zone-operation-worker")
+
+    tasks: list[asyncio.Task[Any]] = []
+    if report["composite_armed"]:
+        tasks.append(start_worker())
+    else:
+        # The kernel may legitimately still be warming when the Python
+        # lifespan starts (its zone-runtime service registers late): retry
+        # the probe in the background instead of pinning the zone surface
+        # at 503 for the whole process lifetime. Only the runtime leg can
+        # heal this way — the store/rebac/auth legs are decided here.
+        async def rearm_until_ready() -> None:
+            while True:
+                await asyncio.sleep(REARM_TICK_S)
+                try:
+                    retry = await arm_once()
+                except Exception:
+                    logger.exception("zone control re-arm attempt failed")
+                    continue
+                if retry["composite_armed"]:
+                    logger.info("zone control armed after late runtime readiness")
+                    tasks.append(start_worker())
+                    return
+
+        tasks.append(asyncio.create_task(rearm_until_ready(), name="zone-control-rearm"))
     app.state.zone_worker_tasks = tasks
     return tasks
 
@@ -476,3 +519,6 @@ async def shutdown_zone_control(app: FastAPI) -> None:
                 "zone worker did not stop within %.0fs; leaving it to the cancel pass",
                 WORKER_GRACE_S,
             )
+    for verifier in getattr(app.state, "zone_membership_verifiers", ()) or ():
+        if verifier is not None:
+            verifier.close()

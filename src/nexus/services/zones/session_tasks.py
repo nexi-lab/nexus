@@ -19,6 +19,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from nexus.services.zones.session_runtime import require_no_pending_runs
 from nexus.storage.models import (
     SessionModel,
     SessionRuntimeRunModel,
@@ -117,6 +118,9 @@ class SessionTaskService:
                 raise SessionTaskError(
                     "SESSION_NOT_ACTIVE", f"session {session_id} is {parent.state}", 409
                 )
+            # contract parity: a parked run may not obtain new resources —
+            # implicit task creation is resource acquisition too
+            require_no_pending_runs(session, session_id)
 
             task_id = _implicit_task_id(session_id)
             created_at = _utcnow()
@@ -232,6 +236,9 @@ class SessionTaskService:
         """Atomically persist an accepted Resolution and queued Attempt."""
         with self._session_factory() as session:
             task, parent = self._load_task_and_session(session, task_id)
+            # contract parity: a parked run may not obtain new resources —
+            # attempt creation is resource acquisition too
+            require_no_pending_runs(session, task.session_id)
             zone = session.get(ZoneModel, execution_zone_id)
             if zone is None or (zone.canonical_status or "unknown") != "active":
                 raise SessionTaskError(
@@ -318,9 +325,19 @@ class SessionTaskService:
 
     def attach_pid(self, *, attempt_id: str, pid: str) -> AttemptRef:
         with self._session_factory() as session:
-            attempt = session.get(TaskAttemptModel, attempt_id)
+            # row lock (PG; SQLite is single-writer) so the read-modify-write
+            # of pid_history and the state transition commit atomically
+            attempt = session.get(TaskAttemptModel, attempt_id, with_for_update=True)
             if attempt is None:
                 raise SessionTaskError("ATTEMPT_NOT_FOUND", f"attempt {attempt_id} not found", 404)
+            if attempt.state in ("cancelled", "failed", "completed"):
+                # a terminal attempt never takes a new pid back (the run's
+                # cancel may have settled while this resume raced in)
+                raise SessionTaskError(
+                    "ATTEMPT_ALREADY_TERMINAL",
+                    f"attempt {attempt_id} is already {attempt.state}",
+                    409,
+                )
             history = list(attempt.pid_history or [])
             if pid not in history:
                 history.append(pid)
@@ -338,8 +355,12 @@ class SessionTaskService:
                 raise SessionTaskError("ATTEMPT_NOT_FOUND", f"attempt {attempt_id} not found", 404)
             code = getattr(error, "code", type(error).__name__)
             message = getattr(error, "message", str(error))
+            # the error's own retryability is the honest answer (5xx family
+            # failures ARE retryable); hardcoding False misled clients into
+            # giving up on transient faults
+            retryable = bool(getattr(error, "retryable", False))
             attempt.state = "failed"
-            attempt.failure = {"code": str(code), "message": str(message), "retryable": False}
+            attempt.failure = {"code": str(code), "message": str(message), "retryable": retryable}
             attempt.ended_at = _utcnow()
             session.commit()
             return self._attempt_ref(attempt)
@@ -435,12 +456,14 @@ class SessionTaskService:
             return len(orphans)
 
     def reap_terminal_rows(self, *, older_than_s: float = REAP_TERMINAL_AFTER_S) -> int:
-        """Delete terminal runs/attempts past the horizon (L-7③).
+        """Delete terminal runs/attempts/resolutions past the horizon (L-7③).
 
         §5.6 already treats these tables as purgeable business data; this is
         the steady-state counterpart so long-lived deployments do not
         accumulate terminal rows unboundedly.  Runs go first — attempts with
-        a live run reference are left alone (FK RESTRICT)."""
+        a live run reference are left alone (FK RESTRICT); resolutions whose
+        attempt is gone follow, so every start leaves at most one
+        resolution+attempt pair behind per surviving run."""
         cutoff = _utcnow() - timedelta(seconds=older_than_s)
         with self._session_factory() as session, session.begin():
             runs = session.execute(
@@ -458,8 +481,18 @@ class SessionTaskService:
                     .exists(),
                 )
             )
-            return int(getattr(runs, "rowcount", 0) or 0) + int(
-                getattr(attempts, "rowcount", 0) or 0
+            resolutions = session.execute(
+                delete(TaskResolutionModel).where(
+                    TaskResolutionModel.decided_at < cutoff,
+                    ~select(TaskAttemptModel.attempt_id)
+                    .where(TaskAttemptModel.resolution_id == TaskResolutionModel.resolution_id)
+                    .exists(),
+                )
+            )
+            return (
+                int(getattr(runs, "rowcount", 0) or 0)
+                + int(getattr(attempts, "rowcount", 0) or 0)
+                + int(getattr(resolutions, "rowcount", 0) or 0)
             )
 
     def get_task(self, *, session_id: str, task_id: str) -> dict[str, Any]:

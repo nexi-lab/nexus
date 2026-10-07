@@ -66,15 +66,39 @@ def require_global_capability(auth_result: dict[str, Any], capability: str) -> N
 def is_owner_or_admin(auth_result: dict[str, Any], owner_subject_id: str | None) -> bool:
     """Strict owner match (L-1): compares subject_type as well as subject_id.
 
-    An agent/service principal whose subject_id collides with a victim
-    user's id must not read or revoke that user's delegations/operations —
-    only a real user principal (or an admin) matches."""
+    Delegation owners are stored as plain user ids and delegations are
+    user-scoped by design, so only a real user principal (or an admin)
+    matches."""
     if auth_result.get("is_admin", False):
         return True
     return (
         auth_result.get("subject_type") == "user"
         and auth_result.get("subject_id") == owner_subject_id
     )
+
+
+def owns_operation_or_admin(auth_result: dict[str, Any], principal_id: str | None) -> bool:
+    """Operation owners are stored type-qualified ({subject_type}:{subject_id}
+    in the idempotency scope), so an agent/service principal whose subject_id
+    collides with a victim user's id never matches the user's operations."""
+    if auth_result.get("is_admin", False):
+        return True
+    own = f"{auth_result.get('subject_type') or 'user'}:{auth_result.get('subject_id')}"
+    return own == principal_id
+
+
+def _token_zone_binding(auth_result: dict[str, Any]) -> frozenset[str] | None:
+    """The token's zone binding (zone_id / zone_set), if any.
+
+    None means the token carries no binding (users, unscoped admin keys) and
+    authorization proceeds on grants alone."""
+    zone_set = auth_result.get("zone_set")
+    if isinstance(zone_set, (list, tuple, set)) and zone_set:
+        return frozenset(str(z) for z in zone_set)
+    zone_id = auth_result.get("zone_id")
+    if zone_id:
+        return frozenset({str(zone_id)})
+    return None
 
 
 def require_zone_capability(
@@ -211,7 +235,20 @@ def zone_capability_decision(
     zone_id: str,
     capability: str,
     resource_path: str | None = None,
+    delegation_ref: str | None = None,
 ) -> Any:
+    # The API key's zone binding is a hard token boundary (legacy auth_zone):
+    # a key minted for zone A never widens to zone B through this surface,
+    # whatever grants its subject holds elsewhere.
+    bound = _token_zone_binding(auth_result)
+    if bound is not None and zone_id not in bound:
+        from nexus.services.zones.authz import Decision
+
+        return Decision(
+            False,
+            code="ZONE_OUT_OF_TOKEN_SCOPE",
+            reason="token is bound to other zones",
+        )
     if auth_result.get("is_admin", False):
         from nexus.services.zones.authz import Decision
 
@@ -229,7 +266,11 @@ def zone_capability_decision(
                 capability=capability,
                 resource_path=resource_path or "/",
             )
-            delegation_id = request.headers.get("X-Nexus-Zone-Delegation")
+            # The runtime sessions surface accepts the delegation reference
+            # from body OR header (_runtime_delegation_ref); callers that
+            # already resolved it pass it through, the header stays the
+            # zero-dependency fallback.
+            delegation_id = delegation_ref or request.headers.get("X-Nexus-Zone-Delegation")
             if not decision and delegation_id:
                 delegated = authz.verify_delegation(
                     session,

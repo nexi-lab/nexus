@@ -16,7 +16,7 @@ from nexus.server.api.v2.models.zones import (
     ZoneTransferBody,
 )
 from nexus.server.api.v2.zone_security import (
-    is_owner_or_admin,
+    owns_operation_or_admin,
     principal_dict,
     require_global_capability,
     require_zone_capability,
@@ -158,6 +158,7 @@ def list_mounts(
     limit: int = Query(default=50, ge=1, le=200),
     auth_result: dict[str, Any] = Depends(require_auth),
 ) -> ZoneMountListResponse:
+    _service(request)  # arming gate, consistent with every other zone read
     require_zone_capability(request, auth_result, zone_id=zone_id, capability="zone.data.read")
     factory = getattr(request.app.state, "zone_session_factory", None)
     if factory is None:
@@ -201,6 +202,13 @@ def create_transfer(
     idempotency_key: str = Header(alias="Idempotency-Key"),
     auth_result: dict[str, Any] = Depends(require_auth),
 ) -> OperationView:
+    """Create a cross-zone transfer request.
+
+    Planned surface, not armed in this release: no production lifespan
+    assembles a transfer policy/executor yet, so the service deliberately
+    answers 501 UNSUPPORTED_CAPABILITY until the executor lands (the
+    authz/schema/SDK halves are in place on purpose).
+    """
     source = body.source.model_dump(mode="json")
     target = body.target.model_dump(mode="json")
     require_zone_capability(
@@ -238,7 +246,11 @@ def get_transfer(
 ) -> OperationView:
     op = _service(request).get_operation(operation_id)
     if op is None or op["action"] != "transfer":
-        raise HTTPException(status_code=404, detail={"code": "ZONE_NOT_FOUND", "retryable": False})
-    if not is_owner_or_admin(auth_result, op.get("principal_id")):
-        raise HTTPException(status_code=404, detail={"code": "ZONE_NOT_FOUND", "retryable": False})
+        raise HTTPException(
+            status_code=404, detail={"code": "ZONE_TRANSFER_NOT_FOUND", "retryable": False}
+        )
+    if not owns_operation_or_admin(auth_result, op.get("principal_id")):
+        raise HTTPException(
+            status_code=404, detail={"code": "ZONE_TRANSFER_NOT_FOUND", "retryable": False}
+        )
     return OperationView.from_operation(op)

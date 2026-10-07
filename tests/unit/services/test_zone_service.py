@@ -1374,6 +1374,41 @@ def test_projection_race_with_revoke_enqueues_cleanup(session_factory):
     assert written and set(deleted) >= {r for r in written}
 
 
+def test_mount_unmount_remount_same_triple_does_not_500(session_factory):
+    """M-4 regression: mount → unmount → remount of the same (parent,
+    target, path) revives the unmounted row instead of tripping the unique
+    constraint."""
+    svc = make_service(session_factory, FakeRuntime())
+    _active_zone(svc, session_factory, zone_id="zone-parent")
+    _active_zone(svc, session_factory, zone_id="zone-child")
+
+    def mount(key: str):
+        return svc.request_mount(
+            parent_zone_id="zone-parent",
+            target_zone_id="zone-child",
+            path="/shared",
+            idempotency_key=key,
+            principal=PRINCIPAL,
+        )
+
+    assert mount("mk-1").state == "succeeded"
+    with session_factory() as s:
+        from nexus.storage.models import ZoneMountModel
+
+        mount_id = s.execute(sa.select(ZoneMountModel)).scalars().one().mount_id
+    assert (
+        svc.request_unmount(mount_id, idempotency_key="uk-1", principal=PRINCIPAL).state
+        == "succeeded"
+    )
+    remount = mount("mk-2")
+    assert remount.state == "succeeded"  # no IntegrityError, no 500
+    with session_factory() as s:
+        from nexus.storage.models import ZoneMountModel
+
+        rows = s.execute(sa.select(ZoneMountModel)).scalars().all()
+        assert len(rows) == 1 and rows[0].desired_state == "mounted"
+
+
 def test_issue_grant_same_source_across_zones_is_not_a_replay(session_factory):
     """M-12 regression: one org binding granting on two zones is legitimate;
     each zone must answer with its OWN operation, and neither may 500 on the

@@ -26,6 +26,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 import yaml
 
@@ -333,30 +334,42 @@ class TestCanonicalSmoke:
 
         print(f"\n[SMOKE_TIMING] grep: {json.dumps(timings)}")
 
-    def test_semantic_search(self, stack_env: tuple[dict[str, str], Path]) -> None:
-        """Verify semantic search works against the demo corpus."""
-        env, cwd = stack_env
+    @pytest.fixture()
+    def search_http(
+        self, stack_env: tuple[dict[str, str], Path]
+    ) -> Generator[httpx.Client, None, None]:
+        env, _cwd = stack_env
+        with httpx.Client(
+            base_url=env["NEXUS_URL"],
+            headers={"Authorization": f"Bearer {env['NEXUS_API_KEY']}"},
+            timeout=60,
+        ) as client:
+            yield client
+
+    def test_semantic_search(self, search_http: httpx.Client) -> None:
+        """Verify the demo server's indexed corpus through its HTTP API."""
         timings: list[dict[str, Any]] = []
 
         with timed("semantic_query", timings):
-            r = _run(
-                [
-                    "nexus",
-                    "search",
-                    "query",
-                    "How does authentication work?",
-                    "--path",
-                    "/workspace/demo",
-                ],
-                env=env,
-                cwd=cwd,
-                timeout=60,
+            response = search_http.get(
+                "/api/v2/search/query",
+                params={
+                    "q": "How does authentication work?",
+                    "path": "/workspace/demo",
+                    "type": "semantic",
+                },
             )
-            assert r.returncode == 0, f"semantic search failed: {r.stderr}"
+            response.raise_for_status()
+            payload = response.json()
+            assert not payload.get("error"), payload
+            assert payload["results"], "semantic search returned no results"
+            assert all(hit["path"].startswith("/workspace/demo/") for hit in payload["results"])
 
         print(f"\n[SMOKE_TIMING] semantic_search: {json.dumps(timings)}")
 
-    def test_herb_semantic_quality_gate(self, stack_env: tuple[dict[str, str], Path]) -> None:
+    def test_herb_semantic_quality_gate(
+        self, stack_env: tuple[dict[str, str], Path], search_http: httpx.Client
+    ) -> None:
         """HERB semantic search quality gate (Issue #2961, Section G.8).
 
         For each curated QA question, assert the answer-bearing file
@@ -365,7 +378,7 @@ class TestCanonicalSmoke:
         """
         from nexus.cli.commands.demo_data import HERB_QA_SET
 
-        env, cwd = stack_env
+        _env, cwd = stack_env
         timings: list[dict[str, Any]] = []
         hits = 0
         reciprocal_ranks: list[float] = []
@@ -385,50 +398,24 @@ class TestCanonicalSmoke:
             expected_file = qa["expected_file"]
 
             with timed(f"qa_{expected_sub}", timings):
-                r = _run(
-                    [
-                        "nexus",
-                        "search",
-                        "query",
-                        question,
-                        "--path",
-                        "/workspace/demo/herb",
-                        "--limit",
-                        "5",
-                    ],
-                    env=env,
-                    cwd=cwd,
-                    timeout=30,
+                response = search_http.get(
+                    "/api/v2/search/query",
+                    params={
+                        "q": question,
+                        "path": "/workspace/demo/herb",
+                        "type": "semantic",
+                        "limit": 5,
+                    },
                 )
+                response.raise_for_status()
+                payload = response.json()
+                assert not payload.get("error"), payload
 
-            if r.returncode != 0:
-                reciprocal_ranks.append(0.0)
-                continue
-
-            output = r.stdout
-            # Parse results: try JSON first, fall back to line scanning.
-            # The search output may be JSON ({"data": [...]}) or plain text.
-            result_paths: list[str] = []
-            try:
-                parsed = json.loads(output)
-                results_list = parsed.get("data", parsed.get("results", []))
-                if isinstance(results_list, list):
-                    for item in results_list[:5]:
-                        if isinstance(item, dict):
-                            p = item.get("path", item.get("file", ""))
-                            if p:
-                                result_paths.append(p)
-            except (json.JSONDecodeError, TypeError):
-                # Plain text: each line may contain a file path
-                for line in output.strip().split("\n")[:5]:
-                    result_paths.append(line)
-
-            # Check if expected file appears in top-5 results by path
-            found_rank = 0
-            for rank, path in enumerate(result_paths, 1):
-                if expected_file in path:
-                    found_rank = rank
-                    break
+            result_paths = [hit["path"] for hit in payload["results"][:5]]
+            found_rank = next(
+                (rank for rank, path in enumerate(result_paths, 1) if path == expected_file),
+                0,
+            )
 
             if found_rank > 0:
                 hits += 1
@@ -445,14 +432,6 @@ class TestCanonicalSmoke:
         print(f"[SMOKE_QUALITY] herb_hit_rate: {hit_rate:.2f} ({hits}/{total})")
         print(f"[SMOKE_QUALITY] herb_mrr: {mrr:.3f}")
         print(f"[SMOKE_TIMING] herb_qa: {json.dumps(timings)}")
-
-        # Report engine type — vector is the acceptance target, sql_fallback
-        # is degraded but functional
-        if semantic_engine == "sql_fallback":
-            print(
-                "[SMOKE_QUALITY] WARNING: Running on SQL fallback, not real "
-                "vector search. Quality results are indicative only."
-            )
 
         # Blocking gate: majority of questions should hit (>= 50%)
         assert hit_rate >= 0.5, (

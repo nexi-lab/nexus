@@ -433,17 +433,24 @@ hybrid queries use the Rust search plugin; the deployment profile does not
 change the requested retrieval mode. Configure the plugin as described in
 [Search plugin deployment](../deployment/search-plugin.md).
 
-CLI examples:
+Workspace CLI examples:
 
 ```bash
 nexus glob "**/*.py" /workspace --plain
 nexus grep "TODO" /workspace --search-mode raw --json
-nexus search index /workspace
-nexus search stats
-nexus search query "auth flow" --mode hybrid --json
 ```
 
-The equivalent SDK/RPC shape is the `SearchService` RPC surface. A direct
+Indexed CLI commands use the Rust cluster HTTP listener and its native VFS.
+Use the cluster caller key as `CLUSTER_API_KEY`; index a path in that VFS:
+
+```bash
+nexus search index /workspace --remote-url http://localhost:2027 --remote-api-key "$CLUSTER_API_KEY"
+nexus search stats --remote-url http://localhost:2027 --remote-api-key "$CLUSTER_API_KEY"
+nexus search query "auth flow" --mode hybrid --json \
+  --remote-url http://localhost:2027 --remote-api-key "$CLUSTER_API_KEY"
+```
+
+The SDK/RPC workspace integration uses the `SearchService` RPC surface. A direct
 semantic call is `nx.service("search").semantic_search(...)`:
 
 ```python
@@ -473,11 +480,14 @@ nexus_semantic_search(query="auth flow", path="/workspace", search_mode="hybrid"
 ```
 
 **Success:** `glob` returns matching paths, `grep` returns file/line/content
-matches, `search stats` reports indexed chunks, and `semantic_search` returns
+matches, CLI `search stats` reports indexed files and keyword/vector chunk
+counts separately, and `semantic_search` returns
 ranked chunks with paths, text, and scores.
 
-**Unavailable:** query and stats require a reachable Rust search plugin configured
-with `NEXUS_SEARCH_PLUGIN_TARGET`. The requested keyword, semantic, or hybrid mode
+**Unavailable:** SDK/RPC query and stats require a reachable Rust search plugin
+configured with `NEXUS_SEARCH_PLUGIN_TARGET`. Indexed CLI commands require the
+cluster HTTP URL and its caller key; a named CLI profile can supply both.
+The requested keyword, semantic, or hybrid mode
 is passed to the plugin in every deployment profile. Missing plugins and failed
 queries report errors; a successful query with no matches returns an empty list.
 Cross-zone HTTP results include `zones_failed` when individual zones fail.
@@ -493,6 +503,8 @@ The live plugin journey in `scripts/test_search_service_plugin.py` verifies
 index, query, stats, delete, and query again, and rejects SQL retrieval when the
 plugin is unavailable. `tests/e2e/self_contained/test_sandbox_mcp.py` covers
 MCP results and errors in sandbox and full profiles.
+`scripts/test_rust_http_search_cli.py` verifies the native CLI index/query/stats
+journey, credential isolation, zone/path limits, and permission revocation.
 
 **Performance classification:** `glob`, `grep`, semantic query latency,
 and indexing throughput are hot or
@@ -506,8 +518,10 @@ gbrain corpus and passed the HERB QA gate at 8/8 top-5 hits.
 
 **Search surfaces:** `glob`, `glob_batch`, `grep`, `semantic_search`, and
 `semantic_search_stats` are SearchService methods. Explicit indexing uses
-`nexus search index` or `POST /api/v2/search/index`; it is not a SearchService
-initialization step. CLI JSON (`--json`) exposes the returned result fields.
+`nexus search index` for the cluster native VFS, or `POST /api/v2/search/index`
+with extracted text for the Python server integration. It is not a
+SearchService initialization step. CLI JSON (`--json`) exposes the returned
+result fields.
 
 ### Sandbox local + company hub federation workflow
 
@@ -1088,14 +1102,14 @@ Search surface coverage matrix:
 |------|-----|------------------|----------|
 | Find paths | `nexus glob "**/*.py" /workspace` | `POST /api/v2/search/glob`, RPC `SearchService.glob`, MCP `nexus_glob` | You need file names, not file contents. |
 | Find exact text | `nexus grep "TODO" /workspace` | `POST /api/v2/search/grep`, RPC `SearchService.grep`, MCP `nexus_grep` | You know the token or regex to match. |
-| Query retrieved chunks | `nexus search query "auth flow" --mode hybrid` | `GET /api/v2/search/query`, RPC `SearchService.semantic_search`, MCP `nexus_semantic_search` | You need ranked chunks, not only exact text. |
-| Build or refresh indexes | `nexus search index`, `nexus reindex` | `POST /api/v2/search/index`, `/refresh`, `/index-directory`, `/indexing-mode` | You are preparing a corpus or changing indexing scope. |
-| Make a written file searchable | `nexus search index <path>` | `POST /api/v2/files/write` with `"index": true`, `POST /api/v2/search/refresh?path=…`, `POST /api/v2/search/index` | A plain write is never indexed; index in the same call or right after, then compare the returned `index_seq` with `/search/stats` `last_index_seq` (see `docs/deployment/search-plugin.md`). |
+| Query retrieved chunks | `nexus --profile cluster search query "auth flow" --mode hybrid` | Rust HTTP: `POST /v2/search/query`; Python integration: `GET /api/v2/search/query`, RPC `SearchService.semantic_search`, MCP `nexus_semantic_search` | You need ranked chunks. |
+| Build or refresh indexes | `nexus --profile cluster search index`; `nexus reindex` for Python MCL replay | Rust HTTP: `POST /v2/documents/index`; Python integration: `POST /api/v2/admin/reindex`, `POST /api/v2/search/index`, `/refresh`, `/index-directory`, `/indexing-mode` | You are preparing a corpus or changing indexing scope. |
+| Make a written file searchable | `nexus --profile cluster search index <path>` for the native VFS | Rust HTTP: `POST /v2/documents/index`; Python integration: `POST /api/v2/files/write` with `"index": true`, `POST /api/v2/search/index` | Index the VFS that owns the written file. Python write+index returns an `index_seq` for confirmation through `/api/v2/search/stats`. |
 | Explain ranking context | `nexus path-context set src/nexus/bricks/search "Hybrid search brick"` | `PUT /api/v2/path-contexts/` | You want path-level descriptions attached to retrieval results. |
 
 Expected outcomes are deliberately boring:
 
-- success returns paths, grep items, or ranked chunks inside the normal response envelope
+- success returns paths, grep items, or ranked chunks; CLI query JSON is an array
 - permission denial filters paths or candidates and reports truncation/denial metadata where the endpoint supports it
 - unavailable providers return a clear unavailable/configuration error instead of pretending semantic or parsed search ran
 
@@ -1126,23 +1140,35 @@ Track build issue #4187 for `nexus parsers list` and
 
 ### 5.2 Configure indexed search
 
-Run the Rust search plugin and point the server at it with
-`NEXUS_SEARCH_PLUGIN_TARGET`. Keyword queries work without an embedding
-provider. For semantic or hybrid queries, configure the plugin's embedding
+For CLI `search index/query/stats`, create a connection profile named `cluster`
+with the Rust HTTP listener URL (for example `http://localhost:2027`), its
+caller API key, and an optional zone. The commands below select this profile.
+`NEXUS_URL` / `NEXUS_API_KEY` or explicit remote flags can supply the connection
+instead; see [Search CLI setup](../deployment/search-plugin.md#search-cli).
+
+For the Python SDK/HTTP integration, run the Rust search plugin and point
+the Python server at it with `NEXUS_SEARCH_PLUGIN_TARGET`. Keyword queries
+work without an embedding provider. For semantic or hybrid queries, configure the plugin's embedding
 provider before indexing; see [Search plugin deployment](../deployment/search-plugin.md).
 
 ### 5.3 Build the index
 
 ```bash
-nexus search index /workspace
-nexus search stats
+nexus --profile cluster search index /workspace
+nexus --profile cluster search stats
 ```
 
 ### 5.4 Query the index
 
 ```bash
-nexus search query "How does authentication work?" --path /workspace
-nexus search query "database migration" --mode hybrid --limit 5
+nexus --profile cluster search query "How does authentication work?" --path /workspace
+nexus --profile cluster search query "database migration" --mode hybrid --limit 5
+```
+
+For the Python HTTP integration, set `NEXUS_URL` and `NEXUS_API_KEY` to that
+server and its caller key. These requests query its VFS/index:
+
+```bash
 curl -H "Authorization: Bearer $NEXUS_API_KEY" \
   "$NEXUS_URL/api/v2/search/query?q=database%20migration&type=hybrid&limit=5"
 ```
@@ -1152,8 +1178,8 @@ multiple ranked lists are available. RRF makes the final order depend on rank
 agreement instead of raw score scale, which is why exact text hits and semantic
 neighbors can both appear near the top.
 
-To search several subtrees at once, repeat `path` (or pass a list as `path`
-in a `/api/v2/search/query/batch` entry). The result is one fused ranking over
+The Python HTTP API can search several subtrees at once: repeat `path`
+(or pass a list as `path` in a `/api/v2/search/query/batch` entry). The result is one fused ranking over
 the union. Don't run one query per subtree and merge the lists by `score`:
 fused scores are normalised per result list, so the top hit of every list
 scores about the same.

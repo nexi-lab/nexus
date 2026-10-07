@@ -6,9 +6,9 @@ Pass NEXUS_URL, NEXUS_API_KEY, NEXUS_GRPC_PORT, and NEXUS_DEMO_USER_KEY as env v
 
 Usage:
     # After starting the stack:
-    export NEXUS_URL=http://localhost:2027
+    export NEXUS_URL=http://localhost:2026
     export NEXUS_API_KEY=nx_admin_...
-    export NEXUS_GRPC_PORT=2029
+    export NEXUS_GRPC_PORT=2028
     export NEXUS_DEMO_USER_KEY=sk-root_demo_use_...
     python scripts/test_build_perf_e2e.py
 """
@@ -21,14 +21,15 @@ import subprocess
 import sys
 import time
 import urllib.request
+from urllib.parse import urlencode
 
 from nexus.cli.commands.demo_data import HERB_QA_SET
 
 NEXUS_CLI = os.environ.get("NEXUS_CLI", "nexus")
-NEXUS_URL = os.environ.get("NEXUS_URL", "http://localhost:2027")
+NEXUS_URL = os.environ.get("NEXUS_URL", "http://localhost:2026")
 ADMIN_KEY = os.environ.get("NEXUS_API_KEY", "")
 USER_KEY = os.environ.get("NEXUS_DEMO_USER_KEY", "")
-GRPC_PORT = os.environ.get("NEXUS_GRPC_PORT", "2029")
+GRPC_PORT = os.environ.get("NEXUS_GRPC_PORT", "2028")
 HERB_SEARCH_PATH = "/workspace/demo/herb"
 PLAN_AUTH_ORIGINAL = "- Configure authentication"
 PLAN_AUTH_EDITED = "- Configure auth (test-edit)"
@@ -94,6 +95,34 @@ def _status_json_reachable(stdout: str) -> tuple[bool, str]:
         return True, ""
 
     return False, (f"server_reachable={data.get('server_reachable')!r}, server_health={health!r}")
+
+
+def _http(
+    method: str,
+    url: str,
+    body: dict | None = None,
+    *,
+    api_key: str | None = None,
+) -> tuple[int, dict]:
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(body).encode() if body is not None else None,
+        headers={
+            "Authorization": f"Bearer {ADMIN_KEY if api_key is None else api_key}",
+            "Content-Type": "application/json",
+        },
+        method=method,
+    )
+    with urllib.request.urlopen(req, timeout=60) as response:
+        return response.status, json.loads(response.read().decode())
+
+
+def _search_results(query: str, *, limit: int = 5, api_key: str | None = None) -> list[dict]:
+    params = urlencode({"q": query, "path": HERB_SEARCH_PATH, "type": "hybrid", "limit": limit})
+    status, body = _http("GET", f"{NEXUS_URL}/api/v2/search/query?{params}", api_key=api_key)
+    if status != 200 or body.get("error"):
+        raise RuntimeError(f"Search failed (HTTP {status}): {body.get('error')}")
+    return body["results"]
 
 
 def cli(
@@ -383,60 +412,24 @@ def main() -> None:
     section("6. HERB QUALITY GATE (hybrid retrieval)")
     # =========================================================================
 
-    step("waiting for search index to process demo files (up to 120s)")
-    print("    Waiting for search index to process demo files...", flush=True)
-    for _wait in range(24):  # 24×5s = 120s — semantic embedding pipeline is async
-        r = cli(
-            "search",
-            "query",
-            "Nexus Core",
-            "--path",
-            HERB_SEARCH_PATH,
-            "--mode",
-            "hybrid",
-            "--limit",
-            "1",
-        )
-        if "/workspace/demo/herb/products/prod-001.md" in r.stdout:
-            print(f"    Search index ready after {(_wait + 1) * 5}s", flush=True)
-            break
-        print(f"    not ready yet (attempt {_wait + 1}/24), waiting 5s...", flush=True)
-        time.sleep(5)
-    else:
-        print("    Warning: search index may not be fully populated after 120s", flush=True)
-
     qa_set = [(qa["question"], qa["expected_file"]) for qa in HERB_QA_SET]
     hits = 0
     search_latencies: list[float] = []
     for i, (q, expected) in enumerate(qa_set, 1):
         step(f"HERB QA {i}/{len(qa_set)}: expected={expected.rsplit('/', 1)[-1]!r}")
         start = time.perf_counter()
-        r = cli(
-            "search",
-            "query",
-            q,
-            "--path",
-            HERB_SEARCH_PATH,
-            "--mode",
-            "hybrid",
-            "--limit",
-            "5",
-        )
+        found = _search_results(q)
         elapsed = (time.perf_counter() - start) * 1000
         search_latencies.append(elapsed)
-        hit = expected in r.stdout
+        hit = expected in {result["path"] for result in found}
         if hit:
             hits += 1
-            print(
-                f"    hit: {expected.rsplit('/', 1)[-1]} found in results  ({elapsed:.0f}ms)",
-                flush=True,
-            )
-        else:
-            print(
-                f"    miss: {expected.rsplit('/', 1)[-1]} NOT in results  ({elapsed:.0f}ms)",
-                flush=True,
-            )
-            print(f"    stdout: {r.stdout[:300]!r}", file=sys.stderr, flush=True)
+        print(
+            f"    {'hit' if hit else 'miss'}: {expected.rsplit('/', 1)[-1]} ({elapsed:.0f}ms)",
+            flush=True,
+        )
+        if not hit:
+            print(f"    results: {json.dumps(found)[:300]}", file=sys.stderr, flush=True)
     check(
         f"HERB hit rate {hits}/{len(qa_set)} >= 90%",
         hits >= 7,
@@ -444,48 +437,23 @@ def main() -> None:
     )
     search_latencies.sort()
     p50 = search_latencies[len(search_latencies) // 2]
-    print(f"    Search latency (incl CLI): p50={p50:.0f}ms", flush=True)
+    print(f"    Search HTTP latency: p50={p50:.0f}ms", flush=True)
 
     # =========================================================================
     section("7. PERMISSION-FILTERED SEARCH")
     # =========================================================================
 
     if USER_KEY:
-        step("admin search for Meridian Health")
-        r = cli(
-            "search",
-            "query",
-            "Meridian Health",
-            "--path",
-            HERB_SEARCH_PATH,
-            "--mode",
-            "hybrid",
-            "--limit",
-            "3",
-        )
-        check(
-            "admin finds cust-002",
-            "cust-002" in r.stdout,
-            f"stdout={r.stdout[:300]!r}" if "cust-002" not in r.stdout else "",
-        )
+        expected = f"{HERB_SEARCH_PATH}/customers/cust-002.md"
+        step("admin HTTP search for Meridian Health")
+        found = _search_results("Meridian Health", limit=3)
+        check("admin finds cust-002", expected in {result["path"] for result in found})
 
-        step("viewer search for Meridian Health (dir inheritance)")
-        r = cli(
-            "search",
-            "query",
-            "Meridian Health",
-            "--path",
-            HERB_SEARCH_PATH,
-            "--mode",
-            "hybrid",
-            "--limit",
-            "3",
-            api_key=USER_KEY,
-        )
+        step("viewer HTTP search for Meridian Health (dir inheritance)")
+        found = _search_results("Meridian Health", limit=3, api_key=USER_KEY)
         check(
             "viewer finds cust-002 (dir inheritance)",
-            "cust-002" in r.stdout,
-            f"stdout={r.stdout[:300]!r}" if "cust-002" not in r.stdout else "",
+            expected in {result["path"] for result in found},
         )
 
         step("rebac check viewer read nested HERB file")
@@ -535,27 +503,7 @@ def main() -> None:
     # =========================================================================
     section("9. SEARCH HTTP CONTRACTS + BATCH SEAM (#4616 / #4612 / #4617)")
     # =========================================================================
-    # The P12 pivot shipped /query/batch with a router→proxy signature the
-    # proxy couldn't accept — a hard 500 on EVERY call — and no server-side
-    # e2e existed to catch it (#4616).  It also drifted the /search/index,
-    # /search/health, and /search/stats wire contracts (#4617).  This
-    # section pins all of it through the full HTTP surface, self-seeding
-    # the plugin index first so the assertions hold on ANY topology (the
-    # demo-init pipeline seeds the legacy engine, not the P12 plugin).
-
-    def _http(method: str, url: str, body: dict | None = None):
-        req = urllib.request.Request(
-            url,
-            data=json.dumps(body).encode() if body is not None else None,
-            headers={
-                "Authorization": f"Bearer {ADMIN_KEY}",
-                "Content-Type": "application/json",
-            },
-            method=method,
-        )
-        resp = urllib.request.urlopen(req, timeout=60)
-        return resp.status, json.loads(resp.read().decode())
-
+    # Verify indexing, health, stats, and per-query batch errors through HTTP.
     from nexus.cli.commands.demo_data import DEMO_FILES
 
     readme_text = next(
@@ -659,20 +607,6 @@ def main() -> None:
         check("batch endpoint answers 200", False, str(e)[:200])
         check("batch valid entry: genuine results, no error key", False, "request failed")
         check("batch invalid spec: additive per-entry error", False, "request failed")
-
-    # =========================================================================
-    # Auto-index-on-write + delete-through-index (former sections 9 + 10)
-    # live at tests/e2e/docker/test_search_plugin.py against the sidecar
-    # cluster (Docker Compose in .github/workflows/search-plugin-e2e.yml).
-    # Edge smoke exercises the Python edge topology, which post-P12 (#4598)
-    # has no writer→plugin content path: the plugin sidecar receives
-    # absolute virtual paths via NotifyFileChange but has no way to fetch
-    # the bytes (nexus-e2e writes land in the record store, not on a shared
-    # host FS).  Testing auto-index here would only cover a topology we
-    # don't actually ship — the split-container edge image is being
-    # retired in favour of nexusd-cluster + plugin as the single search
-    # deployment.  See project_search_plugin_python_deleted memory.
-    # =========================================================================
 
     t.close()
 

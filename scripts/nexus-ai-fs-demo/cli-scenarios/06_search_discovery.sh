@@ -1,14 +1,13 @@
 #!/bin/bash
 # ============================================================================
-# Scenario 06: Search, Index & Catalog
+# Scenario 06: File Discovery & Catalog
 # ============================================================================
-# Commands: glob, grep (-i, -n, -C, -f, -l, -c), search init, search index,
-#           search query, search stats, reindex, catalog, aspects, lineage,
-#           graph
+# Commands: glob, grep (-i, -n, -C, -f, -l, -c), reindex, catalog,
+#           aspects, lineage, graph
 # TUI Tab: 7 (Search)
 #
-# Story: Use glob/grep to explore demo data, initialise keyword search,
-#        index files, query, then inspect catalog metadata and lineage.
+# Story: Use glob/grep to explore demo data and the HERB corpus, then
+#        rebuild projections and inspect catalog metadata and lineage.
 # ============================================================================
 
 set -euo pipefail
@@ -16,7 +15,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 source "$SCRIPT_DIR/.env.scenarios"
 
-SCENARIO_NAME="06 — Search, Index & Catalog"
+SCENARIO_NAME="06 — File Discovery & Catalog"
 header "$SCENARIO_NAME"
 
 # Ensure scenario-specific files exist
@@ -107,34 +106,26 @@ else
     assert_contains "gamma.md" "$OUT" "gamma.md"
 fi
 
-# ── 12. search query — keyword mode ─────────────────────────────────────
-header "12. search query (keyword)"
-run_cli OUT nexus search query "vector index architecture" \
-    --path /workspace/demo/ --mode keyword --limit 5
-assert_exit_code "search keyword" 0 "$OUT_RC"
-info "Search results:"
-echo "$OUT" | head -10 | sed 's/^/    /'
-
-# ── 13. HERB corpus — glob customers/employees/products ──────────────────
-header "13. HERB glob (customers)"
+# ── 12. HERB corpus — glob customers/employees/products ──────────────────
+header "12. HERB glob (customers)"
 run_cli OUT nexus glob "*.md" /workspace/demo/herb/customers/
 assert_exit_code "herb glob customers" 0 "$OUT_RC"
 assert_contains "cust-001" "$OUT" "cust-001"
 info "HERB customers:"
 echo "$OUT" | head -5 | sed 's/^/    /'
 
-header "13b. HERB glob (employees)"
+header "12b. HERB glob (employees)"
 run_cli OUT nexus glob "*.md" /workspace/demo/herb/employees/
 assert_exit_code "herb glob employees" 0 "$OUT_RC"
 assert_contains "emp-001" "$OUT" "emp-001"
 
-header "13c. HERB glob (products)"
+header "12c. HERB glob (products)"
 run_cli OUT nexus glob "*.md" /workspace/demo/herb/products/
 assert_exit_code "herb glob products" 0 "$OUT_RC"
 assert_contains "prod-001" "$OUT" "prod-001"
 
-# ── 14. HERB corpus — tree view ──────────────────────────────────────────
-header "14. HERB tree"
+# ── 13. HERB corpus — tree view ──────────────────────────────────────────
+header "13. HERB tree"
 run_cli OUT nexus tree /workspace/demo/herb/
 assert_exit_code "herb tree" 0 "$OUT_RC"
 assert_contains "herb customers dir" "$OUT" "customers"
@@ -143,41 +134,23 @@ assert_contains "herb products dir" "$OUT" "products"
 info "HERB tree:"
 echo "$OUT" | head -15 | sed 's/^/    /'
 
-# ── 15. HERB corpus — grep across all records ────────────────────────────
-header "15. HERB grep (industry)"
+# ── 14. HERB corpus — grep across all records ────────────────────────────
+header "14. HERB grep (industry)"
 run_cli OUT nexus grep "Manufacturing" /workspace/demo/herb/
 assert_exit_code "herb grep Manufacturing" 0 "$OUT_RC"
 info "HERB grep Manufacturing:"
 echo "$OUT" | head -5 | sed 's/^/    /'
 
-header "15b. HERB grep (Healthcare)"
+header "14b. HERB grep (Healthcare)"
 run_cli OUT nexus grep "Healthcare" /workspace/demo/herb/
 assert_exit_code "herb grep Healthcare" 0 "$OUT_RC"
 
-header "15c. HERB grep (Solutions Architect)"
+header "14c. HERB grep (Solutions Architect)"
 run_cli OUT nexus grep "Solutions Architect" /workspace/demo/herb/
 assert_exit_code "herb grep role" 0 "$OUT_RC"
 
-# ── 16. HERB corpus — search query ──────────────────────────────────────
-header "16. HERB search (Acme Corporation)"
-run_cli OUT nexus search query "Acme Corporation manufacturing supply chain" \
-    --path /workspace/demo/herb/ --mode keyword --limit 5
-assert_exit_code "search herb Acme" 0 "$OUT_RC"
-info "HERB search Acme:"
-echo "$OUT" | head -8 | sed 's/^/    /'
-
-header "16b. HERB search (Meridian Health)"
-run_cli OUT nexus search query "Meridian Health HIPAA compliance clinical" \
-    --path /workspace/demo/herb/ --mode keyword --limit 5
-assert_exit_code "search herb Meridian" 0 "$OUT_RC"
-
-header "16c. HERB search (employee expertise)"
-run_cli OUT nexus search query "distributed systems Kubernetes data pipelines" \
-    --path /workspace/demo/herb/employees/ --mode keyword --limit 5
-assert_exit_code "search herb employee" 0 "$OUT_RC"
-
-# ── 17. HERB corpus — info on specific records ───────────────────────────
-header "17. HERB file info"
+# ── 15. HERB corpus — info on specific records ───────────────────────────
+header "15. HERB file info"
 run_cli OUT nexus info /workspace/demo/herb/customers/cust-001.md
 assert_exit_code "herb info cust-001" 0 "$OUT_RC"
 assert_contains "herb cust path" "$OUT" "cust-001"
@@ -185,39 +158,33 @@ assert_contains "herb cust path" "$OUT" "cust-001"
 run_cli OUT nexus info /workspace/demo/herb/employees/emp-001.md
 assert_exit_code "herb info emp-001" 0 "$OUT_RC"
 
-# ── 18. search stats ────────────────────────────────────────────────────
-header "14. search stats"
-run_cli OUT nexus search stats
-assert_exit_code "search stats" 0 "$OUT_RC"
-info "Stats: $OUT"
-
-# ── 15. reindex ──────────────────────────────────────────────────────────
-header "15. reindex"
+# ── 16. reindex ──────────────────────────────────────────────────────────
+header "16. reindex"
 run_cli OUT nexus reindex
 assert_exit_code "reindex" 0 "$OUT_RC"
 info "Reindex: $OUT"
 
-# ── 16. catalog — list catalog entries ───────────────────────────────────
-header "16. catalog"
+# ── 17. catalog — list catalog entries ───────────────────────────────────
+header "17. catalog"
 run_cli OUT nexus catalog 2>&1 || true
 info "Catalog output:"
 echo "$OUT" | head -10 | sed 's/^/    /'
 # catalog may return empty or help — just verify it runs
 
-# ── 17. aspects ──────────────────────────────────────────────────────────
-header "17. aspects"
+# ── 18. aspects ──────────────────────────────────────────────────────────
+header "18. aspects"
 run_cli OUT nexus aspects 2>&1 || true
 info "Aspects output:"
 echo "$OUT" | head -10 | sed 's/^/    /'
 
-# ── 18. lineage ──────────────────────────────────────────────────────────
-header "18. lineage"
+# ── 19. lineage ──────────────────────────────────────────────────────────
+header "19. lineage"
 run_cli OUT nexus lineage 2>&1 || true
 info "Lineage output:"
 echo "$OUT" | head -10 | sed 's/^/    /'
 
-# ── 19. graph ────────────────────────────────────────────────────────────
-header "19. graph"
+# ── 20. graph ────────────────────────────────────────────────────────────
+header "20. graph"
 run_cli OUT nexus graph 2>&1 || true
 info "Graph output:"
 echo "$OUT" | head -10 | sed 's/^/    /'

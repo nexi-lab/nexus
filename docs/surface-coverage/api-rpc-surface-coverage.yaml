@@ -7722,7 +7722,7 @@ operations:
   owning_issue: 4137
 - id: search.cli
   module: search
-  summary: CLI command group for search init, index, query, and stats workflows.
+  summary: CLI index, query, and stats through the Rust cluster HTTP listener and native VFS.
   transports:
     cli:
       name: nexus search
@@ -7731,10 +7731,10 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: nexus search query "auth flow" --mode hybrid --limit 5
-  correctness_test: tests/unit/cli/test_commands_smoke.py
+  usage_example: nexus search query "auth flow" --mode hybrid --limit 5 --remote-url http://localhost:2027
+  correctness_test: tests/unit/cli/test_search_cli.py; scripts/test_rust_http_search_cli.py
   perf_class: not_perf_sensitive
-  perf_link: thin CLI wrapper; underlying grep/query/index paths carry the performance classification
+  perf_link: thin HTTP CLI wrapper; query/index performance belongs to the Rust backend
   gap_issue: null
   owning_issue: 4129
 - id: search.glob
@@ -7919,7 +7919,7 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: GET /api/v2/search/stats; nexus search stats
+  usage_example: GET /api/v2/search/stats
   correctness_test: tests/e2e/self_contained/test_search_surface_live_e2e.py
   perf_class: not_perf_sensitive
   perf_link: stats endpoint; tests/e2e/self_contained/test_search_surface_live_e2e.py enforces live latency

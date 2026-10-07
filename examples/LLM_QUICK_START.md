@@ -311,10 +311,8 @@ nexus llm read /workspace/doc.pdf "Question"
 
 ## Next Steps
 
-- **Index documents for semantic search:**
-  ```bash
-  nexus search index /workspace
-  ```
+- **Search indexed cluster data:** configure the Rust HTTP listener and caller
+  key using the [Search CLI guide](../docs/deployment/search-plugin.md#search-cli).
 
 - **Try different models:**
   - Claude: `claude-sonnet-4`, `claude-opus-4`

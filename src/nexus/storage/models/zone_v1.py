@@ -57,7 +57,10 @@ class ZoneGrantModel(Base):
     __table_args__ = (
         # Idempotent creation anchors on the source identity, never on
         # tuple-matching "similar" grants.
-        UniqueConstraint("source_type", "source_id", name="uq_zone_grant_source"),
+        # source uniqueness is per zone: the same external source (e.g. an
+        # org binding) legitimately issues grants on multiple zones, and a
+        # cross-zone duplicate must not 500 on this constraint
+        UniqueConstraint("source_type", "source_id", "zone_id", name="uq_zone_grant_source"),
         Index("ix_zone_grants_zone_status", "zone_id", "status"),
         Index("ix_zone_grants_grantee", "grantee", postgresql_using="gin"),
         Index("ix_zone_grants_expiry", "expires_at"),

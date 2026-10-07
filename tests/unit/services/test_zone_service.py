@@ -1374,6 +1374,36 @@ def test_projection_race_with_revoke_enqueues_cleanup(session_factory):
     assert written and set(deleted) >= {r for r in written}
 
 
+def test_issue_grant_same_source_across_zones_is_not_a_replay(session_factory):
+    """M-12 regression: one org binding granting on two zones is legitimate;
+    each zone must answer with its OWN operation, and neither may 500 on the
+    (now per-zone) source uniqueness constraint."""
+    from nexus.contracts.zone_v1 import ZoneGrantSource
+
+    svc = make_service(session_factory, FakeRuntime())
+    _active_zone(svc, session_factory, zone_id="zone-alpha")
+    _active_zone(svc, session_factory, zone_id="zone-beta")
+    source = ZoneGrantSource(source_type="moss_org_binding", source_id="binding:1")
+    for zone in ("zone-alpha", "zone-beta"):
+        req = ZoneGrantCreateRequest(
+            api_version="auth.sudo.dev/v1",
+            kind="ZoneGrantCreateRequest",
+            grantee=GRANTEE,
+            capabilities=["zone.data.read"],
+            source=source,
+            reason="org binding",
+        )
+        result = svc.issue_grant(
+            zone, req, idempotency_key=f"gk-{zone}", principal=PRINCIPAL
+        )
+        assert result.state in ("queued", "succeeded")
+    with session_factory() as s:
+        from nexus.storage.models import ZoneGrantModel
+
+        grants = s.execute(sa.select(ZoneGrantModel).where(ZoneGrantModel.source_type == "moss_org_binding")).scalars().all()
+        assert {g.zone_id for g in grants} == {"zone-alpha", "zone-beta"}
+
+
 def _pending_grant_id(session_factory) -> str:
     with session_factory() as s:
         from nexus.storage.models import ZoneGrantModel

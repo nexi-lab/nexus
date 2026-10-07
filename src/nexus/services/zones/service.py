@@ -37,6 +37,7 @@ from typing import Any
 from sqlalchemy import delete, inspect, select, text, update
 from sqlalchemy.orm import Session
 
+from nexus.bricks.auth.constants import RESERVED_ZONE_IDS
 from nexus.contracts.zone_v1 import (
     KNOWN_CAPABILITIES,
     ZoneCreateRequest,
@@ -346,6 +347,12 @@ class ZoneApplicationService:
         principal: dict[str, Any],
     ) -> OperationResult:
         self._require_principal(principal)
+        if request.zone_id in RESERVED_ZONE_IDS:
+            raise ServiceError(
+                "RESERVED_ZONE_ID",
+                f"zone id {request.zone_id!r} is reserved",
+                http_status=400,
+            )
         scope = json.dumps([principal.get("subject_id"), "zone.create", request.zone_id])
         req_hash = _request_hash(request.model_dump(mode="json"))
         with self._session_factory() as session, session.begin():

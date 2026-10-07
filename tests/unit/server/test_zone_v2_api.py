@@ -350,6 +350,42 @@ def test_legacy_mutations_delegate_and_advertise_sunset() -> None:
         assert deleted.headers["location"].startswith("/v2/zone-operations/")
 
 
+def test_legacy_create_reserved_id_answers_400_not_500() -> None:
+    """root hits the vendored not-enum at ContractCreate time; the legacy
+    adapter must answer the contract error shape, not an unhandled 500."""
+    with TestClient(_app()) as client:
+        response = client.post("/api/zones", json={"zone_id": "root", "name": "Root"})
+        assert response.status_code == 400
+        assert response.json()["detail"]["code"] == "INVALID_ZONE_ID"
+
+        # a plain reserved word that passes the vendored schema is still
+        # refused by the service-level RESERVED_ZONE_IDS gate
+        reserved = client.post("/api/zones", json={"zone_id": "admin", "name": "Admin"})
+        assert reserved.status_code == 400
+        assert reserved.json()["detail"]["code"] == "RESERVED_ZONE_ID"
+
+
+def test_legacy_create_duplicate_id_answers_409_not_500() -> None:
+    with TestClient(_app()) as client:
+        first = client.post("/api/zones", json={"zone_id": "dupe-zone", "name": "First"})
+        assert first.status_code == 201
+        # the legacy adapter keys idempotency on the zone id, so a re-POST
+        # with a different body is an idempotency conflict — 409 either way,
+        # never the unhandled 500 this path used to raise
+        second = client.post("/api/zones", json={"zone_id": "dupe-zone", "name": "Second"})
+        assert second.status_code == 409
+        assert second.json()["detail"]["code"] == "IDEMPOTENCY_CONFLICT"
+
+
+def test_legacy_create_refuses_dropped_domain_field() -> None:
+    with TestClient(_app()) as client:
+        response = client.post(
+            "/api/zones", json={"zone_id": "dom-zone", "name": "Dom", "domain": "x.com"}
+        )
+        assert response.status_code == 400
+        assert response.json()["detail"]["code"] == "INVALID_REQUEST"
+
+
 def test_enabled_startup_refuses_missing_mandatory_provider(monkeypatch) -> None:
     app = FastAPI()
     app.state.session_factory = lambda: None

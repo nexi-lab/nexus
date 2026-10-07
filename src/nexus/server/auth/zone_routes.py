@@ -11,15 +11,19 @@ from datetime import UTC, datetime
 from typing import Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import func, select
 
 from nexus.bricks.auth.zone_helpers import normalize_to_slug, suggest_zone_id
 from nexus.contracts.zone_phase import ZonePhase
-from nexus.server.api.v2.zone_security import require_zone_capability, zone_capability_decision
+from nexus.server.api.v2.zone_security import (
+    require_global_capability,
+    require_zone_capability,
+    zone_capability_decision,
+)
 from nexus.server.auth.auth_routes import get_auth_provider
 from nexus.server.dependencies import require_auth
-from nexus.services.zones.service import ZoneApplicationService
+from nexus.services.zones.service import ServiceError, ZoneApplicationService
 from nexus.storage.models import ZoneModel
 
 logger = logging.getLogger(__name__)
@@ -140,6 +144,20 @@ async def create_zone_endpoint(
 
     svc = _zone_service(request)
     if svc is not None:
+        # Admission gate aligned with v2 (zones.py require_global_capability):
+        # the legacy adapter must not be a softer door to the same writer.
+        require_global_capability(auth_result, "zone.global.create")
+        if zone_request.domain:
+            # The v2 contract carries no domain field — refuse loudly instead
+            # of silently accepting and dropping the value.
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "code": "INVALID_REQUEST",
+                    "message": "domain is not supported: v2 zones carry no domain field",
+                    "retryable": False,
+                },
+            )
         from nexus.contracts.zone_v1 import ZoneCreateRequest as ContractCreate
 
         if not zone_request.zone_id:
@@ -149,21 +167,41 @@ async def create_zone_endpoint(
                 zone_id = suggest_zone_id(suggested, session)
         else:
             zone_id = zone_request.zone_id
-        contract = ContractCreate(
-            api_version="auth.sudo.dev/v1",
-            kind="ZoneCreateRequest",
-            zone_id=zone_id,
-            display_name=zone_request.name,
-            description=zone_request.description,
-        )
+        try:
+            contract = ContractCreate(
+                api_version="auth.sudo.dev/v1",
+                kind="ZoneCreateRequest",
+                zone_id=zone_id,
+                display_name=zone_request.name,
+                description=zone_request.description,
+            )
+        except ValidationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "code": "INVALID_ZONE_ID",
+                    "message": f"zone_id {zone_id!r} failed contract validation",
+                    "retryable": False,
+                },
+            ) from exc
         principal = {
             "subject_type": str(auth_result.get("subject_type") or "user"),
             "subject_id": user_id,
             "is_admin": bool(auth_result.get("is_admin", False)),
         }
-        operation = svc.create_zone(
-            contract, idempotency_key=f"legacy:{zone_id}", principal=principal
-        )
+        try:
+            operation = svc.create_zone(
+                contract, idempotency_key=f"legacy:{zone_id}", principal=principal
+            )
+        except ServiceError as exc:
+            raise HTTPException(
+                status_code=exc.http_status,
+                detail={
+                    "code": exc.code,
+                    "message": exc.message,
+                    "retryable": exc.retryable,
+                },
+            ) from exc
         response.headers["Location"] = f"/v2/zone-operations/{operation.operation_id}"
         session_factory = _get_session_factory(request)
         with session_factory() as session:
@@ -198,6 +236,7 @@ async def create_zone_endpoint(
 async def get_zone(
     zone_id: str,
     request: Request,
+    response: Response,
     auth_result: dict[str, Any] = Depends(require_auth),
 ) -> ZoneResponse:
     """Get zone information by ID.
@@ -221,6 +260,7 @@ async def get_zone(
     """
     is_admin = auth_result.get("is_admin", False)
 
+    _deprecation_headers(response)
     _zone_service(request)
     if not is_admin:
         require_zone_capability(

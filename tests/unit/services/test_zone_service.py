@@ -388,6 +388,23 @@ def test_projection_adjudication_refuses_pending_grant_on_deleted_zone(session_f
         assert op["error"]["message"] == "zone deprovision superseded grant activation"
 
 
+def test_advance_epoch_is_atomic_increment_with_returning(session_factory):
+    """H-1 regression: epoch advances must be a single UPDATE epoch=epoch+1
+    (never an ORM read-modify-write that can merge two advances into one),
+    and the returned value is what dependents (outbox payloads, deletion
+    epochs) must consume."""
+    from nexus.services.zones.service import _advance_epoch
+    from nexus.storage.models import ZoneAuthorizationEpochModel
+
+    svc = make_service(session_factory, FakeRuntime())
+    _active_zone(svc, session_factory)  # genesis projection leaves epoch == 1
+    with session_factory() as s:
+        first = _advance_epoch(s, "team-test-zone", "test-first")
+        second = _advance_epoch(s, "team-test-zone", "test-second")
+        assert (first, second) == (2, 3)
+        assert s.get(ZoneAuthorizationEpochModel, "team-test-zone").epoch == 3
+
+
 def test_revoke_commits_fact_epoch_and_invalidation_together(session_factory):
     svc = make_service(session_factory, FakeRuntime())
     _active_zone(svc, session_factory)

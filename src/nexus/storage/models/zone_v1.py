@@ -268,15 +268,16 @@ class RebacRelationSourceModel(Base):
 
     __tablename__ = "rebac_relation_sources"
     __table_args__ = (
+        # NOTE: on PostgreSQL the migration recreates this constraint with
+        # NULLS NOT DISTINCT (authoritative rows with a NULL grant must
+        # dedupe too); SQLAlchemy's constraint DSL cannot express that on
+        # every 2.0.x this project runs on, so the migration owns the DDL.
         UniqueConstraint(
             "subject",
             "relation",
             "object",
             "source_grant_id",
             name="uq_rebac_rel_src",
-            # authoritative rows (source_grant_id IS NULL) must dedupe too —
-            # PostgreSQL's default NULLS DISTINCT would let duplicates through
-            nulls_not_distinct=True,
         ),
         Index("ix_rebac_rel_src_grant", "source_grant_id"),
         Index("ix_rebac_rel_src_tuple", "subject", "relation", "object"),

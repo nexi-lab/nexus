@@ -1,15 +1,6 @@
-"""Search module for Nexus.
+"""Workspace listing, Search clients and indexed query utilities.
 
-Kernel-tier surfaces (``SearchService`` for grep/glob + cross-zone
-federated dispatch) live here alongside the ``QueryRouter`` helpers
-and the ``PgFtsBackend`` / ``SqliteFtsBackend`` / ``Zoekt`` backends
-that the router and CLI still use.
-
-Semantic + hybrid ``/query`` are served by the Rust
-``nexus-search-plugin`` cdylib; boot wiring lives in
-``nexus.server.lifespan.search`` and the Python-side proxy is
-``nexus.bricks.search.rust_daemon.RustSearchDaemon``.  The plugin
-also owns LLM query expansion and contextual chunking internally.
+Discovery and indexed queries use the Rust Search plugin on the owning Kernel.
 """
 
 from nexus.bricks.search.config import SearchConfig, search_config_from_env
@@ -32,16 +23,8 @@ from nexus.contracts.search_types import (
     AGGREGATION_WORDS,
     COMPARISON_WORDS,
     COMPLEX_PATTERNS,
-    GLOB_RUST_THRESHOLD,
-    GREP_CACHED_TEXT_RATIO,
-    GREP_PARALLEL_THRESHOLD,
-    GREP_PARALLEL_WORKERS,
-    GREP_SEQUENTIAL_THRESHOLD,
-    GREP_ZOEKT_THRESHOLD,
     MULTIHOP_PATTERNS,
     TEMPORAL_WORDS,
-    GlobStrategy,
-    SearchStrategy,
 )
 
 __all__ = [
@@ -49,13 +32,6 @@ __all__ = [
     "BaseSearchResult",
     "COMPARISON_WORDS",
     "COMPLEX_PATTERNS",
-    "GLOB_RUST_THRESHOLD",
-    "GREP_CACHED_TEXT_RATIO",
-    "GREP_PARALLEL_THRESHOLD",
-    "GREP_PARALLEL_WORKERS",
-    "GREP_SEQUENTIAL_THRESHOLD",
-    "GREP_ZOEKT_THRESHOLD",
-    "GlobStrategy",
     "MULTIHOP_PATTERNS",
     "PgFtsBackend",
     "QueryRouter",
@@ -63,7 +39,6 @@ __all__ = [
     "RoutingConfig",
     "SearchConfig",
     "SearchService",
-    "SearchStrategy",
     "SqliteFtsBackend",
     "TEMPORAL_WORDS",
     "ZoektClient",

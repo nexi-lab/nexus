@@ -37,6 +37,7 @@ from nexus.contracts.exceptions import (
 )
 from nexus.grpc.defaults import build_channel_options
 from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
+from nexus.lib.request_credentials import request_api_key
 from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.lib.zone_revision import revision_fields as _revision_fields
 from nexus.remote.base_client import BaseRemoteNexusFS
@@ -210,6 +211,9 @@ class RPCTransport:
                 )
             self._channel = grpc.insecure_channel(server_address, options=_CHANNEL_OPTIONS)
         self._stub = vfs_pb2_grpc.NexusVFSServiceStub(self._channel)
+        from nexus.remote.search_client import SearchClient
+
+        self._search = SearchClient(self._channel)
 
         # Pre-warm: trigger eager TCP/TLS handshake so connection establishment
         # overlaps with NexusFS construction instead of blocking on first RPC.
@@ -253,14 +257,26 @@ class RPCTransport:
             RemoteTimeoutError: Call exceeded deadline.
             NexusError subclasses: Application-level errors from server.
         """
-        payload = encode_rpc_message(params or {})
         effective_token = auth_token if auth_token is not None else self._auth_token
+        timeout = read_timeout if read_timeout is not None else self._timeout
+        if method in ("glob", "grep"):
+            caller = request_api_key.get()
+            credential = caller if caller is not None else effective_token or None
+            try:
+                return self._search.call(
+                    method, params or {}, credential=credential, timeout=timeout
+                )
+            except grpc.RpcError as exc:
+                if exc.code() == grpc.StatusCode.INVALID_ARGUMENT:
+                    raise ValueError(exc.details()) from exc
+                self._raise_transport_error(exc, timeout, method)
+
+        payload = encode_rpc_message(params or {})
         request = vfs_pb2.CallRequest(
             method=method,
             payload=payload,
             auth_token=effective_token,
         )
-        timeout = read_timeout if read_timeout is not None else self._timeout
 
         logger.debug("RPCTransport.call_rpc: %s params=%s", method, _redact_params(params))
 

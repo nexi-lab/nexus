@@ -50,7 +50,6 @@ __all__ = [
     "GetShareLinkParams",
     "GetTopLevelMountsParams",
     "GetVersionParams",
-    "GlobBatchParams",
     "GlobParams",
     "GovernanceAlertsParams",
     "GovernanceRingsParams",
@@ -101,7 +100,6 @@ __all__ = [
     "RevokeShareLinkParams",
     "RollbackParams",
     "SaveMountParams",
-    "SemanticSearchIndexParams",
     "SemanticSearchParams",
     "ShareWithUserParams",
     "SnapshotCommitParams",
@@ -457,21 +455,12 @@ class GetVersionParams:
 
 @dataclass
 class GlobParams:
-    """Parameters for glob(): Find files matching a glob pattern."""
+    """Parameters for glob(): Discover files through the owning Kernel's SearchService."""
 
     pattern: str
     path: str = "/"
     context: Any = None
     files: list[str] | None = None
-
-
-@dataclass
-class GlobBatchParams:
-    """Parameters for glob_batch(): Execute multiple glob patterns in a single call (Issue #859)."""
-
-    patterns: list[str]
-    path: str = "/"
-    context: Any = None
 
 
 @dataclass
@@ -980,14 +969,6 @@ class SemanticSearchParams:
 
 
 @dataclass
-class SemanticSearchIndexParams:
-    """Parameters for semantic_search_index(): Index documents for semantic search."""
-
-    path: str = "/"
-    recursive: bool = True
-
-
-@dataclass
 class ShareWithUserParams:
     """Parameters for share_with_user(): Share a resource with a specific user."""
 
@@ -1141,7 +1122,6 @@ METHOD_PARAMS: dict[str, type] = {
     "get_top_level_mounts": GetTopLevelMountsParams,
     "get_version": GetVersionParams,
     "glob": GlobParams,
-    "glob_batch": GlobBatchParams,
     "governance_alerts": GovernanceAlertsParams,
     "governance_rings": GovernanceRingsParams,
     "governance_status": GovernanceStatusParams,
@@ -1192,7 +1172,6 @@ METHOD_PARAMS: dict[str, type] = {
     "rollback": RollbackParams,
     "save_mount": SaveMountParams,
     "semantic_search": SemanticSearchParams,
-    "semantic_search_index": SemanticSearchIndexParams,
     "share_with_user": ShareWithUserParams,
     "snapshot_commit": SnapshotCommitParams,
     "snapshot_create": SnapshotCreateParams,

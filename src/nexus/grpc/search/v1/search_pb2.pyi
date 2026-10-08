@@ -9,6 +9,13 @@ from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
+class DiscoveryFilter(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    DISCOVERY_FILTER_UNSPECIFIED: _ClassVar[DiscoveryFilter]
+    DISCOVERY_FILTER_FILES: _ClassVar[DiscoveryFilter]
+    DISCOVERY_FILTER_BLOCK_TYPE: _ClassVar[DiscoveryFilter]
+    DISCOVERY_FILTER_SECTION: _ClassVar[DiscoveryFilter]
+
 class QueryType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
     QUERY_TYPE_UNSPECIFIED: _ClassVar[QueryType]
@@ -23,6 +30,10 @@ class FusionMethod(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     FUSION_METHOD_WEIGHTED: _ClassVar[FusionMethod]
     FUSION_METHOD_RRF_WEIGHTED: _ClassVar[FusionMethod]
 
+DISCOVERY_FILTER_UNSPECIFIED: DiscoveryFilter
+DISCOVERY_FILTER_FILES: DiscoveryFilter
+DISCOVERY_FILTER_BLOCK_TYPE: DiscoveryFilter
+DISCOVERY_FILTER_SECTION: DiscoveryFilter
 QUERY_TYPE_UNSPECIFIED: QueryType
 QUERY_TYPE_KEYWORD: QueryType
 QUERY_TYPE_SEMANTIC: QueryType
@@ -32,37 +43,52 @@ FUSION_METHOD_RRF: FusionMethod
 FUSION_METHOD_WEIGHTED: FusionMethod
 FUSION_METHOD_RRF_WEIGHTED: FusionMethod
 
+class DiscoveryFiles(_message.Message):
+    __slots__ = ("paths",)
+    PATHS_FIELD_NUMBER: _ClassVar[int]
+    paths: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, paths: _Iterable[str] | None = ...) -> None: ...
+
 class GlobRequest(_message.Message):
-    __slots__ = ("root_path", "pattern", "max_results", "auth_token", "sort_recency")
+    __slots__ = ("root_path", "pattern", "max_results", "auth_token", "sort_recency", "files")
     ROOT_PATH_FIELD_NUMBER: _ClassVar[int]
     PATTERN_FIELD_NUMBER: _ClassVar[int]
     MAX_RESULTS_FIELD_NUMBER: _ClassVar[int]
     AUTH_TOKEN_FIELD_NUMBER: _ClassVar[int]
     SORT_RECENCY_FIELD_NUMBER: _ClassVar[int]
+    FILES_FIELD_NUMBER: _ClassVar[int]
     root_path: str
     pattern: str
     max_results: int
     auth_token: str
     sort_recency: bool
+    files: DiscoveryFiles
     def __init__(
         self,
         root_path: str | None = ...,
         pattern: str | None = ...,
         max_results: int | None = ...,
         auth_token: str | None = ...,
-        sort_recency: bool = ...,
+        sort_recency: bool | None = ...,
+        files: DiscoveryFiles | _Mapping | None = ...,
     ) -> None: ...
 
 class GlobResponse(_message.Message):
-    __slots__ = ("paths", "truncated", "error")
+    __slots__ = ("paths", "truncated", "error", "applied_filters")
     PATHS_FIELD_NUMBER: _ClassVar[int]
     TRUNCATED_FIELD_NUMBER: _ClassVar[int]
     ERROR_FIELD_NUMBER: _ClassVar[int]
+    APPLIED_FILTERS_FIELD_NUMBER: _ClassVar[int]
     paths: _containers.RepeatedScalarFieldContainer[str]
     truncated: bool
     error: str
+    applied_filters: int
     def __init__(
-        self, paths: _Iterable[str] | None = ..., truncated: bool = ..., error: str | None = ...
+        self,
+        paths: _Iterable[str] | None = ...,
+        truncated: bool | None = ...,
+        error: str | None = ...,
+        applied_filters: int | None = ...,
     ) -> None: ...
 
 class GrepRequest(_message.Message):
@@ -77,6 +103,9 @@ class GrepRequest(_message.Message):
         "invert_match",
         "auth_token",
         "sort_recency",
+        "files",
+        "block_type",
+        "section",
     )
     ROOT_PATH_FIELD_NUMBER: _ClassVar[int]
     PATTERN_FIELD_NUMBER: _ClassVar[int]
@@ -88,6 +117,9 @@ class GrepRequest(_message.Message):
     INVERT_MATCH_FIELD_NUMBER: _ClassVar[int]
     AUTH_TOKEN_FIELD_NUMBER: _ClassVar[int]
     SORT_RECENCY_FIELD_NUMBER: _ClassVar[int]
+    FILES_FIELD_NUMBER: _ClassVar[int]
+    BLOCK_TYPE_FIELD_NUMBER: _ClassVar[int]
+    SECTION_FIELD_NUMBER: _ClassVar[int]
     root_path: str
     pattern: str
     file_pattern: str
@@ -98,32 +130,58 @@ class GrepRequest(_message.Message):
     invert_match: bool
     auth_token: str
     sort_recency: bool
+    files: DiscoveryFiles
+    block_type: str
+    section: str
     def __init__(
         self,
         root_path: str | None = ...,
         pattern: str | None = ...,
         file_pattern: str | None = ...,
-        ignore_case: bool = ...,
+        ignore_case: bool | None = ...,
         max_results: int | None = ...,
         before_context: int | None = ...,
         after_context: int | None = ...,
-        invert_match: bool = ...,
+        invert_match: bool | None = ...,
         auth_token: str | None = ...,
-        sort_recency: bool = ...,
+        sort_recency: bool | None = ...,
+        files: DiscoveryFiles | _Mapping | None = ...,
+        block_type: str | None = ...,
+        section: str | None = ...,
+    ) -> None: ...
+
+class GrepSection(_message.Message):
+    __slots__ = ("heading", "depth", "line_start", "line_end")
+    HEADING_FIELD_NUMBER: _ClassVar[int]
+    DEPTH_FIELD_NUMBER: _ClassVar[int]
+    LINE_START_FIELD_NUMBER: _ClassVar[int]
+    LINE_END_FIELD_NUMBER: _ClassVar[int]
+    heading: str
+    depth: int
+    line_start: int
+    line_end: int
+    def __init__(
+        self,
+        heading: str | None = ...,
+        depth: int | None = ...,
+        line_start: int | None = ...,
+        line_end: int | None = ...,
     ) -> None: ...
 
 class GrepMatch(_message.Message):
-    __slots__ = ("path", "line_number", "line", "before", "after")
+    __slots__ = ("path", "line_number", "line", "before", "after", "section")
     PATH_FIELD_NUMBER: _ClassVar[int]
     LINE_NUMBER_FIELD_NUMBER: _ClassVar[int]
     LINE_FIELD_NUMBER: _ClassVar[int]
     BEFORE_FIELD_NUMBER: _ClassVar[int]
     AFTER_FIELD_NUMBER: _ClassVar[int]
+    SECTION_FIELD_NUMBER: _ClassVar[int]
     path: str
     line_number: int
     line: str
     before: _containers.RepeatedScalarFieldContainer[str]
     after: _containers.RepeatedScalarFieldContainer[str]
+    section: GrepSection
     def __init__(
         self,
         path: str | None = ...,
@@ -131,21 +189,25 @@ class GrepMatch(_message.Message):
         line: str | None = ...,
         before: _Iterable[str] | None = ...,
         after: _Iterable[str] | None = ...,
+        section: GrepSection | _Mapping | None = ...,
     ) -> None: ...
 
 class GrepResponse(_message.Message):
-    __slots__ = ("matches", "truncated", "error")
+    __slots__ = ("matches", "truncated", "error", "applied_filters")
     MATCHES_FIELD_NUMBER: _ClassVar[int]
     TRUNCATED_FIELD_NUMBER: _ClassVar[int]
     ERROR_FIELD_NUMBER: _ClassVar[int]
+    APPLIED_FILTERS_FIELD_NUMBER: _ClassVar[int]
     matches: _containers.RepeatedCompositeFieldContainer[GrepMatch]
     truncated: bool
     error: str
+    applied_filters: int
     def __init__(
         self,
         matches: _Iterable[GrepMatch | _Mapping] | None = ...,
-        truncated: bool = ...,
+        truncated: bool | None = ...,
         error: str | None = ...,
+        applied_filters: int | None = ...,
     ) -> None: ...
 
 class QueryRequest(_message.Message):
@@ -293,7 +355,9 @@ class QueryResponse(_message.Message):
     results: _containers.RepeatedCompositeFieldContainer[QueryResult]
     error: str
     def __init__(
-        self, results: _Iterable[QueryResult | _Mapping] | None = ..., error: str | None = ...
+        self,
+        results: _Iterable[QueryResult | _Mapping] | None = ...,
+        error: str | None = ...,
     ) -> None: ...
 
 class IndexRequest(_message.Message):
@@ -312,7 +376,7 @@ class IndexRequest(_message.Message):
         self,
         root_path: str | None = ...,
         zone_id: str | None = ...,
-        recursive: bool = ...,
+        recursive: bool | None = ...,
         max_docs: int | None = ...,
         auth_token: str | None = ...,
     ) -> None: ...
@@ -348,7 +412,7 @@ class RefreshRequest(_message.Message):
         self,
         root_path: str | None = ...,
         zone_id: str | None = ...,
-        recursive: bool = ...,
+        recursive: bool | None = ...,
         max_docs: int | None = ...,
         auth_token: str | None = ...,
     ) -> None: ...
@@ -381,7 +445,7 @@ class RefreshResponse(_message.Message):
         unchanged_count: int | None = ...,
         skipped_count: int | None = ...,
         error: str | None = ...,
-        truncated: bool = ...,
+        truncated: bool | None = ...,
     ) -> None: ...
 
 class BatchQueryRequest(_message.Message):
@@ -391,7 +455,9 @@ class BatchQueryRequest(_message.Message):
     queries: _containers.RepeatedCompositeFieldContainer[QueryRequest]
     auth_token: str
     def __init__(
-        self, queries: _Iterable[QueryRequest | _Mapping] | None = ..., auth_token: str | None = ...
+        self,
+        queries: _Iterable[QueryRequest | _Mapping] | None = ...,
+        auth_token: str | None = ...,
     ) -> None: ...
 
 class BatchQueryResponse(_message.Message):
@@ -491,7 +557,10 @@ class NotifyFileChangeResponse(_message.Message):
     error: str
     index_seq: int
     def __init__(
-        self, status: str | None = ..., error: str | None = ..., index_seq: int | None = ...
+        self,
+        status: str | None = ...,
+        error: str | None = ...,
+        index_seq: int | None = ...,
     ) -> None: ...
 
 class LocateRequest(_message.Message):
@@ -503,7 +572,10 @@ class LocateRequest(_message.Message):
     zone_id: str
     auth_token: str
     def __init__(
-        self, path: str | None = ..., zone_id: str | None = ..., auth_token: str | None = ...
+        self,
+        path: str | None = ...,
+        zone_id: str | None = ...,
+        auth_token: str | None = ...,
     ) -> None: ...
 
 class LocateResponse(_message.Message):
@@ -518,7 +590,7 @@ class LocateResponse(_message.Message):
     zone_id: str
     def __init__(
         self,
-        indexed: bool = ...,
+        indexed: bool | None = ...,
         chunk_count: int | None = ...,
         mtime_ms: int | None = ...,
         zone_id: str | None = ...,
@@ -557,7 +629,9 @@ class ParkedListResponse(_message.Message):
     entries: _containers.RepeatedCompositeFieldContainer[ParkedEntry]
     error: str
     def __init__(
-        self, entries: _Iterable[ParkedEntry | _Mapping] | None = ..., error: str | None = ...
+        self,
+        entries: _Iterable[ParkedEntry | _Mapping] | None = ...,
+        error: str | None = ...,
     ) -> None: ...
 
 class ParkedRetryRequest(_message.Message):
@@ -622,7 +696,10 @@ class IndexedDirectory(_message.Message):
     zone_id: str
     added_at_ms: int
     def __init__(
-        self, path: str | None = ..., zone_id: str | None = ..., added_at_ms: int | None = ...
+        self,
+        path: str | None = ...,
+        zone_id: str | None = ...,
+        added_at_ms: int | None = ...,
     ) -> None: ...
 
 class AddIndexedDirectoryRequest(_message.Message):
@@ -634,7 +711,10 @@ class AddIndexedDirectoryRequest(_message.Message):
     zone_id: str
     auth_token: str
     def __init__(
-        self, path: str | None = ..., zone_id: str | None = ..., auth_token: str | None = ...
+        self,
+        path: str | None = ...,
+        zone_id: str | None = ...,
+        auth_token: str | None = ...,
     ) -> None: ...
 
 class AddIndexedDirectoryResponse(_message.Message):
@@ -643,7 +723,7 @@ class AddIndexedDirectoryResponse(_message.Message):
     ERROR_FIELD_NUMBER: _ClassVar[int]
     added: bool
     error: str
-    def __init__(self, added: bool = ..., error: str | None = ...) -> None: ...
+    def __init__(self, added: bool | None = ..., error: str | None = ...) -> None: ...
 
 class RemoveIndexedDirectoryRequest(_message.Message):
     __slots__ = ("path", "zone_id", "auth_token")
@@ -654,7 +734,10 @@ class RemoveIndexedDirectoryRequest(_message.Message):
     zone_id: str
     auth_token: str
     def __init__(
-        self, path: str | None = ..., zone_id: str | None = ..., auth_token: str | None = ...
+        self,
+        path: str | None = ...,
+        zone_id: str | None = ...,
+        auth_token: str | None = ...,
     ) -> None: ...
 
 class RemoveIndexedDirectoryResponse(_message.Message):
@@ -663,7 +746,7 @@ class RemoveIndexedDirectoryResponse(_message.Message):
     ERROR_FIELD_NUMBER: _ClassVar[int]
     removed: bool
     error: str
-    def __init__(self, removed: bool = ..., error: str | None = ...) -> None: ...
+    def __init__(self, removed: bool | None = ..., error: str | None = ...) -> None: ...
 
 class ListIndexedDirectoriesRequest(_message.Message):
     __slots__ = ("zone_id", "auth_token")
@@ -694,7 +777,10 @@ class SetZoneIndexingModeRequest(_message.Message):
     mode: str
     auth_token: str
     def __init__(
-        self, zone_id: str | None = ..., mode: str | None = ..., auth_token: str | None = ...
+        self,
+        zone_id: str | None = ...,
+        mode: str | None = ...,
+        auth_token: str | None = ...,
     ) -> None: ...
 
 class SetZoneIndexingModeResponse(_message.Message):
@@ -724,7 +810,9 @@ class ListZoneIndexingModesResponse(_message.Message):
     modes: _containers.RepeatedCompositeFieldContainer[ZoneIndexingMode]
     error: str
     def __init__(
-        self, modes: _Iterable[ZoneIndexingMode | _Mapping] | None = ..., error: str | None = ...
+        self,
+        modes: _Iterable[ZoneIndexingMode | _Mapping] | None = ...,
+        error: str | None = ...,
     ) -> None: ...
 
 class HealthRequest(_message.Message):

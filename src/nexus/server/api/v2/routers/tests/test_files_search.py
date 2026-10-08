@@ -9,7 +9,6 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from nexus._rust_compat import grep_files_mmap
 from nexus.contracts.exceptions import AccessDeniedError, NexusPermissionError
 from nexus.server.api.v2.routers.async_files import create_async_files_router
 from nexus.server.dependencies import get_auth_result
@@ -220,32 +219,21 @@ class TestGrepEndpoint:
         resp = client.get("/grep")
         assert resp.status_code == 422
 
-    def test_grep_derives_match_from_real_mmap_service_result(
+    def test_grep_derives_match_from_service_line(
         self,
         client: TestClient,
         mock_fs: MagicMock,
-        tmp_path: Path,
     ) -> None:
-        """Real mmap output without ``match`` remains a valid API result."""
+        """A service line without ``match`` remains a valid API result."""
         virtual_path = "/src/main.py"
-        local_path = tmp_path / "main.py"
-        local_path.write_text("before\nimport os\nafter\n", encoding="utf-8")
 
-        class ProductionShapedSearchService:
+        class SearchResponseService:
             async def grep(self, **kwargs: Any) -> list[dict[str, Any]]:
                 assert kwargs["files"] == [virtual_path]
-                results = grep_files_mmap(
-                    str(kwargs["pattern"]),
-                    [str(local_path)],
-                    ignore_case=bool(kwargs["ignore_case"]),
-                    max_results=int(kwargs["max_results"]),
-                )
-                for result in results:
-                    result["file"] = virtual_path
-                return results
+                return [{"file": virtual_path, "line": 2, "content": "import os"}]
 
         mock_fs.sys_readdir.return_value = [virtual_path]
-        mock_fs.service.return_value = ProductionShapedSearchService()
+        mock_fs.service.return_value = SearchResponseService()
 
         resp = client.get("/grep", params={"pattern": r"imp\w+", "limit": 5})
 

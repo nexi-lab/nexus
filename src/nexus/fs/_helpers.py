@@ -1,18 +1,9 @@
-"""Module-level helpers for kernel-direct nexus-fs callers.
-
-These replace the ``SlimNexusFS`` facade methods that did not justify
-their own wrapper class. Callers hold a ``NexusFS`` directly and pass
-``LOCAL_CONTEXT`` to its ``sys_*`` methods, falling back here only for
-the few operations that need Python-side orchestration (mounts.json
-scrub, multi-step shutdown, grep/glob loops).
-"""
+"""Mount lifecycle and discovery clients for kernel-direct nexus-fs callers."""
 
 from __future__ import annotations
 
 import contextlib
 import logging
-import os
-import threading
 from typing import TYPE_CHECKING, Any, cast
 
 from nexus.contracts.constants import ROOT_ZONE_ID
@@ -30,12 +21,6 @@ LOCAL_CONTEXT = OperationContext(
     zone_id=ROOT_ZONE_ID,
     is_admin=True,
 )
-
-
-_TRIGRAM_LAZY_BUILD_THRESHOLD = 500
-_TRIGRAM_MAX_FILE_SIZE = 1024 * 1024
-_TRIGRAM_BUILD_LOCK = threading.Lock()
-_TRIGRAM_BUILDS_IN_PROGRESS: set[str] = set()
 
 
 def list_mounts(kernel: NexusFS) -> list[str]:
@@ -98,80 +83,6 @@ def close(kernel: NexusFS) -> None:
             kernel.metadata.close()
 
 
-def _trigram_index_path(zone_id: str) -> str:
-    index_dir = os.path.join(os.path.expanduser("~"), ".nexus", "indexes")
-    return os.path.join(index_dir, f"{os.path.basename(zone_id)}.trgm")
-
-
-def _maybe_build_trigram_background(
-    kernel: NexusFS, file_paths: list[str], index_path: str
-) -> None:
-    with _TRIGRAM_BUILD_LOCK:
-        if index_path in _TRIGRAM_BUILDS_IN_PROGRESS:
-            return
-        _TRIGRAM_BUILDS_IN_PROGRESS.add(index_path)
-
-    def _build() -> None:
-        try:
-            from nexus._rust_compat import build_trigram_index_from_entries
-
-            if build_trigram_index_from_entries is None:
-                return
-
-            entries: list[tuple[str, bytes]] = []
-            for fp in file_paths:
-                try:
-                    content = kernel.sys_read(fp, context=LOCAL_CONTEXT)
-                    if isinstance(content, bytes) and len(content) <= _TRIGRAM_MAX_FILE_SIZE:
-                        entries.append((fp, content))
-                except Exception:
-                    continue
-
-            if entries:
-                os.makedirs(os.path.dirname(index_path), exist_ok=True)
-                build_trigram_index_from_entries(entries, index_path)
-                logger.debug(
-                    "Issue #3711: Built trigram index at %s (%d files)", index_path, len(entries)
-                )
-        except Exception:
-            logger.debug("Background trigram build failed", exc_info=True)
-        finally:
-            with _TRIGRAM_BUILD_LOCK:
-                _TRIGRAM_BUILDS_IN_PROGRESS.discard(index_path)
-
-    threading.Thread(target=_build, daemon=True).start()
-
-
-def _ensure_trigram_index(kernel: NexusFS, file_paths: list[str], zone_id: str) -> str | None:
-    """Return existing trigram index path, or kick off a background build."""
-    index_path = _trigram_index_path(zone_id)
-    if os.path.isfile(index_path):
-        return index_path
-    if len(file_paths) < _TRIGRAM_LAZY_BUILD_THRESHOLD:
-        return None
-    _maybe_build_trigram_background(kernel, file_paths, index_path)
-    return None
-
-
-def _trigram_candidates(
-    index_path: str, pattern: str, path: str, ignore_case: bool
-) -> list[str] | None:
-    from nexus._rust_compat import trigram_search_candidates
-
-    if trigram_search_candidates is None:
-        return None
-    try:
-        candidates = trigram_search_candidates(index_path, pattern, ignore_case)
-    except (OSError, ValueError, RuntimeError):
-        return None
-    if candidates is None:
-        return None
-    if path != "/":
-        prefix = path if path.endswith("/") else path + "/"
-        candidates = [c for c in candidates if c.startswith(prefix) or c == path]
-    return cast(list[str], candidates)
-
-
 def grep(
     kernel: NexusFS,
     pattern: str,
@@ -180,70 +91,17 @@ def grep(
     ignore_case: bool = False,
     max_results: int = 1000,
 ) -> list[dict[str, Any]]:
-    """Search file contents for *pattern* under *path*.
-
-    Composes Tier 1 syscalls: ``readdir`` (recursive) + ``sys_read`` +
-    Python ``re`` matching.  Returns ``[{file, line, content, match}]``.
-    """
-    import re
-
-    from nexus.core.dispatch import grep_path
-
-    pushed_down = grep_path(
-        kernel,
-        pattern,
-        path,
-        context=LOCAL_CONTEXT,
-        ignore_case=ignore_case,
-        max_results=max_results,
+    """Search current bytes through the owning Kernel's discovery RPC."""
+    response = kernel._kernel.call_rpc(
+        "grep",
+        {"pattern": pattern, "path": path, "ignore_case": ignore_case, "max_results": max_results},
     )
-    if pushed_down is not None:
-        return pushed_down
-
-    flags = re.IGNORECASE if ignore_case else 0
-    try:
-        compiled = re.compile(pattern, flags)
-    except re.error as exc:
-        raise ValueError(f"Invalid regex pattern: {exc}") from exc
-
-    entries = kernel.sys_readdir(path, recursive=True, details=True, context=LOCAL_CONTEXT)
-    all_files = [
-        e["path"] for e in entries if isinstance(e, dict) and not e.get("is_directory", False)
-    ]
-
-    matches: list[dict[str, Any]] = []
-    for fp in all_files:
-        if len(matches) >= max_results:
-            break
-        try:
-            content = kernel.sys_read(fp, context=LOCAL_CONTEXT)
-        except Exception:
-            continue
-        if not isinstance(content, bytes):
-            continue
-        try:
-            text = content.decode("utf-8", errors="replace")
-        except Exception:
-            continue
-        for line_no, line in enumerate(text.splitlines(), 1):
-            m = compiled.search(line)
-            if m:
-                matches.append({"file": fp, "line": line_no, "content": line, "match": m.group(0)})
-                if len(matches) >= max_results:
-                    return matches
-    return matches
+    return cast(list[dict[str, Any]], response["results"])
 
 
 def glob(kernel: NexusFS, pattern: str, path: str = "/") -> list[str]:
-    """Find files matching *pattern* under *path*.
-
-    Composes Tier 1 ``readdir`` (recursive) + Python ``fnmatch``.
-    """
-    import fnmatch
-
-    entries = kernel.sys_readdir(path, recursive=True, details=False, context=LOCAL_CONTEXT)
-    all_paths = [e for e in entries if isinstance(e, str)]
-    if not all_paths:
-        return []
-
-    return [p for p in all_paths if fnmatch.fnmatch(p, pattern)]
+    """Find files through the owning Kernel's discovery RPC."""
+    search = kernel.service("search")
+    if search is None:
+        raise RuntimeError("Search service is unavailable")
+    return cast(list[str], search.glob(pattern, path))

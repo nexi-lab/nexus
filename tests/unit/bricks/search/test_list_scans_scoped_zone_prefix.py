@@ -71,13 +71,3 @@ def test_list_scans_the_scoped_prefix_not_the_root_namespace() -> None:
     assert all(root.startswith(f"/zone/{ZONE}/ws") for root in fs.readdir_roots), fs.readdir_roots
     assert TENANT_FILE in result
     assert ROOT_FILE not in result
-
-
-def test_glob_matches_under_the_scoped_prefix() -> None:
-    fs = _FakeFS()
-    svc = _service(fs)
-
-    matches = svc.glob("**/*.txt", f"/zone/{ZONE}/ws", context=_tenant())
-
-    assert matches == [TENANT_FILE], matches
-    assert all(root.startswith(f"/zone/{ZONE}") for root in fs.readdir_roots), fs.readdir_roots

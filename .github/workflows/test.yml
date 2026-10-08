@@ -185,6 +185,11 @@ jobs:
           fi
         shell: bash
 
+      - name: Verify discovery client over TCP
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        run: |
+          uv run --no-sync pytest tests/integration/search/test_discovery_client.py -q -o "addopts="
+
       - name: Verify benchmark collection
         if: needs.detect-changes.outputs.code_changed == 'true' && matrix.os == 'ubuntu-latest'
         run: |

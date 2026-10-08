@@ -181,7 +181,6 @@ class TestTuningViaEnvVar:
         assert tuning.concurrency.default_workers == 1
         assert tuning.concurrency.thread_pool_size == 10
         assert tuning.storage.db_pool_size == 3
-        assert tuning.search.grep_parallel_workers == 1
         # New slices
         assert tuning.background_task.heartbeat_flush_interval == 120
         assert tuning.resiliency.default_max_retries == 2
@@ -205,11 +204,6 @@ class TestTuningViaEnvVar:
 
 class TestBackwardCompatibility:
     """Existing module-level constants still work as fallback defaults."""
-
-    def test_grep_parallel_workers_constant(self) -> None:
-        from nexus.contracts.search_types import GREP_PARALLEL_WORKERS
-
-        assert GREP_PARALLEL_WORKERS == 4  # FULL profile default
 
     def test_list_parallel_workers_constant(self) -> None:
         from nexus.bricks.search.search_service import LIST_PARALLEL_WORKERS
@@ -248,10 +242,8 @@ class TestDIWiring:
         svc = SearchService(
             metadata_store=MagicMock(),
             list_parallel_workers=20,
-            grep_parallel_workers=8,
         )
         assert svc._list_parallel_workers == 20
-        assert svc._grep_parallel_workers == 8
 
     def test_tiger_cache_accepts_l2_max_workers(self) -> None:
         """TigerCache constructor accepts custom l2_max_workers."""

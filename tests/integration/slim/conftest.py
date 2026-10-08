@@ -8,9 +8,6 @@ paths in isolated build envs, so we create a temporary ``src`` symlink in
 ``packages/nexus-fs/`` and patch pyproject.toml before building, then
 restore both immediately after.
 
-nexus-runtime is not on PyPI.  Set ``NEXUS_RUNTIME_WHEEL_DIR`` to a
-directory containing the locally-built ``nexus_runtime-*.whl`` so the
-venv install can find it.  In CI this is populated by the build-rust job.
 """
 
 from __future__ import annotations
@@ -63,24 +60,6 @@ def slim_wheel(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return wheels[0]
 
 
-def _install_runtime(py: Path, runtime_wheel_dir: str | None) -> None:
-    """Pre-install nexus-runtime from a local wheel dir if provided."""
-    if runtime_wheel_dir:
-        subprocess.run(
-            [
-                str(py),
-                "-m",
-                "pip",
-                "install",
-                "--no-index",
-                "--find-links",
-                runtime_wheel_dir,
-                "nexus-runtime",
-            ],
-            check=True,
-        )
-
-
 @pytest.fixture(scope="session")
 def slim_base_venv(
     slim_wheel: Path,
@@ -95,7 +74,6 @@ def slim_base_venv(
     subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True)
     py = _venv_python(venv_dir)
     subprocess.run([str(py), "-m", "pip", "install", "--upgrade", "pip"], check=True)
-    _install_runtime(py, os.environ.get("NEXUS_RUNTIME_WHEEL_DIR"))
     subprocess.run([str(py), "-m", "pip", "install", str(slim_wheel)], check=True)
     return venv_dir
 
@@ -107,9 +85,7 @@ def slim_venv(
 ) -> Path:
     """Fresh venv with slim wheel + connector extras (x, gdrive, gmail, gcalendar, slack).
 
-    Used by CRUD and connector-import tests. If ``NEXUS_RUNTIME_WHEEL_DIR`` is
-    set the nexus-runtime wheel is pre-installed from that directory (it is not
-    on PyPI; CI builds it from source via build-rust-extensions).
+    Used by CRUD and connector-import tests.
 
     Returns the venv root.
     """
@@ -117,7 +93,6 @@ def slim_venv(
     subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True)
     py = _venv_python(venv_dir)
     subprocess.run([str(py), "-m", "pip", "install", "--upgrade", "pip"], check=True)
-    _install_runtime(py, os.environ.get("NEXUS_RUNTIME_WHEEL_DIR"))
     subprocess.run(
         [str(py), "-m", "pip", "install", f"{slim_wheel}[x,gdrive,gmail,gcalendar,slack]"],
         check=True,

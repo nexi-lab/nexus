@@ -1,20 +1,4 @@
-"""Search service protocol (Issue #1287: Extract domain services).
-
-Defines the contract for file listing, glob, grep, and semantic search.
-Existing implementation: ``nexus.bricks.search.search_service.SearchService``.
-
-Adaptive algorithm selection (Issue #929):
-- Grep: sequential → parallel → Zoekt based on file count
-- Glob: Python → Rust acceleration based on file count
-
-Issue #1520: Added SearchBrickProtocol for search brick contract.
-
-References:
-    - docs/design/NEXUS-LEGO-ARCHITECTURE.md
-    - Issue #1287: Extract NexusFS domain services from god object
-    - Issue #929: Adaptive algorithm selection
-    - Issue #1520: Extract search module into search brick
-"""
+"""Contracts for workspace listing, discovery and indexed search clients."""
 
 import builtins
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
@@ -66,8 +50,8 @@ class SearchProtocol(Protocol):
 
     Four tiers:
     - ``list``: Directory listing with pagination (sync)
-    - ``glob`` / ``glob_batch``: Pattern matching (sync)
-    - ``grep``: Content search with adaptive strategy selection (async)
+    - ``glob``: Pattern matching (sync)
+    - ``grep``: Content search over current file bytes (async)
     - ``semantic_search``: Natural language queries over indexed documents (async)
     """
 
@@ -89,14 +73,8 @@ class SearchProtocol(Protocol):
         pattern: str,
         path: str = "/",
         context: "OperationContext | None" = None,
+        files: builtins.list[str] | None = None,
     ) -> builtins.list[str]: ...
-
-    def glob_batch(
-        self,
-        patterns: builtins.list[str],
-        path: str = "/",
-        context: "OperationContext | None" = None,
-    ) -> dict[str, builtins.list[str]]: ...
 
     async def grep(
         self,

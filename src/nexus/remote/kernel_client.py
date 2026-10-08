@@ -510,7 +510,7 @@ class KernelClient:
     def _call(self, method: str, params: dict[str, Any] | None = None) -> Any:
         """Generic Call RPC dispatch."""
         assert self._transport is not None
-        return self._transport.call_rpc(method, params or {}, auth_token=self._auth_token)
+        return self._transport.call_rpc(method, params or {})
 
     def sys_read(
         self,

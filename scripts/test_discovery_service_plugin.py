@@ -40,6 +40,14 @@ async def main() -> None:
             value = value.replace(secret, "[redacted]")
         return value
 
+    async def rejects(call, *args, **kwargs):
+        try:
+            await asyncio.to_thread(call, *args, **kwargs)
+        except grpc.RpcError as error:
+            assert error.code() == grpc.StatusCode.UNAUTHENTICATED
+        else:
+            raise AssertionError("Invalid caller used the node certificate identity")
+
     async with httpx.AsyncClient(base_url=base, timeout=20, trust_env=False) as http:
 
         async def request(method: str, path: str, **kwargs):
@@ -122,14 +130,15 @@ async def main() -> None:
             for invalid in ("sk-never-minted", ""):
                 caller = request_api_key.set(invalid)
                 try:
-                    try:
-                        await asyncio.to_thread(search.grep, needle, path="/docs", files=[])
-                    except grpc.RpcError as error:
-                        assert error.code() == grpc.StatusCode.UNAUTHENTICATED
-                    else:
-                        raise AssertionError("Invalid caller used the node certificate identity")
+                    await rejects(search.grep, needle, path="/docs", files=[])
                 finally:
                     request_api_key.reset(caller)
+                await rejects(
+                    transport.call_rpc,
+                    "grep",
+                    {"pattern": needle, "path": "/docs", "files": []},
+                    auth_token=invalid,
+                )
             print(
                 "PASS: SDK/facade discovery, working sets, Markdown, live edits, grants and credentials"
             )

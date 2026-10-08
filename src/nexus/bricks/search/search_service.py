@@ -78,13 +78,7 @@ class SearchService:
             nexus_fs: NexusFS instance for file ops, routing, and dependency tracking
         """
         self.metadata = metadata_store
-        # Kernel handle, kept ONLY for kernel-ABI methods that have no
-        # NexusFilesystem syscall equivalent: stat_batch (bulk stat) and
-        # get_xattr / get_xattr_bulk (extended attributes). These are
-        # composed kernel operations, not MetaStore/ObjectStore HAL pillar
-        # access, so they are not §2.5 boundary violations — NexusFS itself
-        # calls _kernel.stat_batch the same way. All path/list/stat work
-        # goes through self._nexus_fs (the syscall surface).
+        # The owning Kernel client serves listing syscalls and discovery RPCs.
         self._kernel = metadata_store
         self._record_store = record_store
         self._fp_engine: Any = None  # Issue #3266: cached SQLAlchemy engine
@@ -1519,8 +1513,6 @@ class SearchService:
     ) -> builtins.list[str]:
         """Discover files through the owning Kernel's SearchService."""
         response = self._kernel.call_rpc("glob", {"pattern": pattern, "path": path, "files": files})
-        if response["truncated"]:
-            raise ValueError("Glob exceeded the result cap; narrow the path or working set")
         return cast(builtins.list[str], response["matches"])
 
     @rpc_expose(description="Search file contents")

@@ -19,12 +19,14 @@ class Host(search_pb2_grpc.SearchServiceServicer):
         self.calls: list[tuple[str, Any, dict[str, str]]] = []
         self.line = "needle current"
         self.filters = 7
+        self.truncated = False
 
     def Glob(self, request: Any, context: Any) -> Any:
         self.calls.append(("glob", request, dict(context.invocation_metadata())))
         return search_pb2.GlobResponse(
             paths=[] if request.HasField("files") and not request.files.paths else ["/docs/a.md"],
             applied_filters=self.filters,
+            truncated=self.truncated,
         )
 
     def Grep(self, request: Any, context: Any) -> Any:
@@ -107,6 +109,26 @@ def test_credentials_are_request_scoped_and_empty_bearer_remains_explicit(discov
         assert host.calls[-1][1].auth_token == ""
     search.grep("needle")
     assert host.calls[-1][2]["authorization"] == "Bearer default-key"
+
+
+def test_glob_refinement_rejects_an_incomplete_working_set(discovery):
+    host, _transport, search = discovery
+    host.truncated = True
+    with pytest.raises(ValueError, match="narrow the path or working set"):
+        search.glob("**/*", path="/docs")
+
+
+def test_per_call_credentials_preserve_presence_and_request_identity(discovery):
+    host, transport, _search = discovery
+    transport.call_rpc("grep", {"pattern": "needle", "files": []}, auth_token="")
+    assert host.calls[-1][2]["authorization"] == "Bearer "
+    caller = request_api_key.set("caller-key")
+    try:
+        transport.call_rpc("grep", {"pattern": "needle"}, auth_token="override-key")
+    finally:
+        request_api_key.reset(caller)
+    assert host.calls[-1][2]["authorization"] == "Bearer caller-key"
+    assert host.calls[-1][1].auth_token == ""
 
 
 def test_scoped_root_is_preserved_at_the_typed_rpc_boundary(discovery):

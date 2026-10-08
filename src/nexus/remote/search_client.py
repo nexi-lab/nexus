@@ -15,7 +15,7 @@ class SearchClient:
     def __init__(self, channel: grpc.Channel) -> None:
         self._stub = search_pb2_grpc.SearchServiceStub(channel)
 
-    def call(
+    def _call(
         self,
         method: str,
         params: dict[str, Any],
@@ -81,6 +81,8 @@ class SearchClient:
         if response.HasField("error"):
             raise RuntimeError(f"Search discovery failed: {response.error}")
         if method == "glob":
+            if response.truncated:
+                raise ValueError("Glob exceeded the result cap; narrow the path or working set")
             return {"matches": list(response.paths), "truncated": response.truncated}
         grep_request = cast(search_pb2.GrepRequest, request)
         results = []

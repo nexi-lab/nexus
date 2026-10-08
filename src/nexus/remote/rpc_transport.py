@@ -261,9 +261,14 @@ class RPCTransport:
         timeout = read_timeout if read_timeout is not None else self._timeout
         if method in ("glob", "grep"):
             caller = request_api_key.get()
-            credential = caller if caller is not None else effective_token or None
+            if caller is not None:
+                credential = caller
+            elif auth_token is not None:
+                credential = auth_token
+            else:
+                credential = self._auth_token or None
             try:
-                return self._search.call(
+                return self._search._call(
                     method, params or {}, credential=credential, timeout=timeout
                 )
             except grpc.RpcError as exc:

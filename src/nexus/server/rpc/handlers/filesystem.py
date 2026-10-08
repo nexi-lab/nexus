@@ -15,6 +15,7 @@ from nexus.server.path_utils import (
 )
 
 if TYPE_CHECKING:
+    from nexus.bricks.search.search_service import SearchService
     from nexus.core.nexus_fs import NexusFS
 
 
@@ -112,7 +113,7 @@ async def handle_semantic_search_index(
     nexus_fs: "NexusFS", params: Any, _context: Any
 ) -> dict[str, Any]:
     """Index the scoped subtree through the owning kernel's SearchService."""
-    search = nexus_fs.service("search")
+    search = cast("SearchService | None", nexus_fs.service("search"))
     if search is None:
         raise ValueError("SearchService not available")
     return await search.semantic_search_index(

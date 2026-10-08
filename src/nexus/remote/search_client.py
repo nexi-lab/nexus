@@ -29,11 +29,13 @@ class SearchClient:
             args = dict(params)
             mode = args.pop("search_mode", "semantic")
             try:
-                query_type = search_pb2.QueryType.Value(f"QUERY_TYPE_{mode.upper()}")
-            except (AttributeError, ValueError) as exc:
+                query_type = {
+                    "keyword": search_pb2.QUERY_TYPE_KEYWORD,
+                    "semantic": search_pb2.QUERY_TYPE_SEMANTIC,
+                    "hybrid": search_pb2.QUERY_TYPE_HYBRID,
+                }[mode.lower()]
+            except (AttributeError, KeyError) as exc:
                 raise ValueError("search_mode must be keyword, semantic or hybrid") from exc
-            if query_type == search_pb2.QUERY_TYPE_UNSPECIFIED:
-                raise ValueError("search_mode must be keyword, semantic or hybrid")
             if args.pop("filters", None):
                 raise ValueError("semantic_search does not support filters")
             root = args.pop("path", "/")

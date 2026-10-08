@@ -176,27 +176,6 @@ async def test_sandbox_http_surface_is_restricted(
         nx.close()
 
 
-def _resolve_search_service(nx: object) -> object | None:
-    """Return the underlying SearchService instance from ``nx.service("search")``.
-
-    ``nx.service(name)`` returns the raw service instance directly
-    (Rust kernel ABI — no ServiceRef proxy).
-    """
-    return nx.service("search") if hasattr(nx, "service") else None
-
-
-# The three SqliteVec wiring tests here (default-wires / disabled-does-
-# not-wire / enabled-wires) were deleted as part of the R10 arc SANDBOX
-# deprecation: the Rust search-plugin is now the sole semantic-search
-# backend and `SqliteVecBackend` was removed alongside its factory
-# wiring.  `SearchService._sqlite_vec_backend` is now always `None`,
-# so these three assertions would tautologically pass or fail.  The
-# other SANDBOX-boot tests below still exercise "boots without
-# external services / never starts federation / restricted HTTP
-# surface / features endpoint" — the parts of the profile that
-# survive the vec-backend removal.
-
-
 @pytest.mark.asyncio
 async def test_sandbox_features_endpoint_reports_enabled_bricks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

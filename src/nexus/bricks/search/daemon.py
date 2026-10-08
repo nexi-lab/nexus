@@ -23,7 +23,7 @@ from nexus.bricks.search.results import BaseSearchResult
 from nexus.contracts.search_types import BatchQueryFailure
 from nexus.grpc.search.v1 import search_pb2, search_pb2_grpc
 from nexus.lib.request_credentials import request_api_key
-from nexus.remote.search_response import search_stats
+from nexus.remote.search_response import query_result, search_stats
 
 if TYPE_CHECKING:
     from nexus.contracts.search_types import SearchRequest
@@ -560,32 +560,5 @@ def _request_to_pb(request: "SearchRequest", *, chunks_per_page: int) -> search_
 
 
 def _result_to_base(pb: search_pb2.QueryResult) -> BaseSearchResult:
-    """Convert a proto QueryResult into the Python daemon's result
-    shape.  Fields Python has that Rust doesn't (matched_field,
-    reranker_score, splade_score, line_start/end) stay None — the
-    Rust plugin doesn't surface them."""
-    return BaseSearchResult(
-        path=pb.path,
-        chunk_text=pb.chunk_text,
-        score=float(pb.score),
-        chunk_index=int(pb.chunk_index),
-        zone_id=pb.zone_id or None,
-        macro_text=pb.expanded_context or None,
-        # #4628: title-arm attribution — optional proto field, so
-        # presence (not zero-ness) decides None.
-        title_score=float(pb.title_score) if pb.HasField("title_score") else None,
-        # #4644: per-arm scores + applied boost factors.  All optional
-        # proto fields — presence decides None, so "arm didn't vote" /
-        # "boost didn't apply" stay observably distinct from 0.0.
-        keyword_score=float(pb.keyword_score) if pb.HasField("keyword_score") else None,
-        vector_score=float(pb.vector_score) if pb.HasField("vector_score") else None,
-        tier_boost=float(pb.tier_boost) if pb.HasField("tier_boost") else None,
-        recency_boost=float(pb.recency_boost) if pb.HasField("recency_boost") else None,
-        # #4130 R7: LLM query-expansion arm attribution — 0 = original
-        # query, 1..N = LLM variant N.  Optional in proto; presence
-        # decides None so "expansion never ran" stays observably distinct
-        # from "expansion ran and this hit came from the original arm".
-        expansion_variant_index=int(pb.expansion_variant_index)
-        if pb.HasField("expansion_variant_index")
-        else None,
-    )
+    """Convert the shared wire result into the federation result type."""
+    return BaseSearchResult(**query_result(pb))

@@ -6,15 +6,37 @@ from typing import Any
 from nexus.grpc.search.v1 import search_pb2
 
 
-def semantic_hit(result: search_pb2.QueryResult) -> dict[str, Any]:
+def query_result(result: search_pb2.QueryResult) -> dict[str, Any]:
+    """Preserve the host's result facts and optional field presence."""
     hit: dict[str, Any] = {
         "path": result.path,
         "chunk_text": result.chunk_text,
-        "score": round(result.score, 4),
+        "score": result.score,
         "chunk_index": result.chunk_index,
     }
-    if result.HasField("title_score"):
-        hit["title_score"] = round(result.title_score, 4)
+    if result.zone_id:
+        hit["zone_id"] = result.zone_id
+    if result.expanded_context:
+        hit["macro_text"] = result.expanded_context
+    for field in (
+        "title_score",
+        "keyword_score",
+        "vector_score",
+        "tier_boost",
+        "recency_boost",
+        "expansion_variant_index",
+    ):
+        if result.HasField(field):
+            hit[field] = getattr(result, field)
+    return hit
+
+
+def semantic_hit(result: search_pb2.QueryResult) -> dict[str, Any]:
+    """Apply the SDK's score precision to the shared result shape."""
+    hit = query_result(result)
+    hit["score"] = round(hit["score"], 4)
+    if "title_score" in hit:
+        hit["title_score"] = round(hit["title_score"], 4)
     return hit
 
 

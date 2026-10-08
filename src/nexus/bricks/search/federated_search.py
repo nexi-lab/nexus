@@ -14,7 +14,7 @@ from typing import Any
 
 from nexus.bricks.search.daemon import daemon_pooling_cap
 from nexus.bricks.search.fusion import rrf_multi_fusion
-from nexus.bricks.search.result_builders import cap_chunks_per_page
+from nexus.bricks.search.result_limits import cap_chunks_per_page
 from nexus.bricks.search.results import BACKEND_LEG_TIMING_KEYS as _TIMING_LEG_KEYS
 from nexus.bricks.search.search_degraded import (
     FederatedSearchResponse,

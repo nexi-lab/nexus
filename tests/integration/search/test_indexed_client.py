@@ -28,7 +28,14 @@ class Host(search_pb2_grpc.SearchServiceServicer):
                     chunk_text="marigold design",
                     score=0.987654,
                     chunk_index=2,
+                    zone_id="sharedzone",
+                    expanded_context="marigold document context",
                     title_score=0,
+                    keyword_score=0,
+                    vector_score=0.25,
+                    tier_boost=1.5,
+                    recency_boost=0.75,
+                    expansion_variant_index=0,
                 ),
                 search_pb2.QueryResult(path="/docs/notes.md", score=0.5),
             ]
@@ -97,6 +104,13 @@ def test_sdk_queries_the_typed_host_with_exact_scope_limit_and_result_presence(i
     assert [hit["path"] for hit in hits] == ["/docs/design.md", "/docs/notes.md"]
     assert hits[0]["score"] == 0.9877 and hits[0]["title_score"] == 0
     assert hits[0]["chunk_index"] == 2 and "title_score" not in hits[1]
+    assert hits[0]["zone_id"] == "sharedzone"
+    assert hits[0]["macro_text"] == "marigold document context"
+    assert hits[0]["keyword_score"] == 0 and "keyword_score" not in hits[1]
+    assert hits[0]["vector_score"] == 0.25
+    assert hits[0]["tier_boost"] == 1.5 and hits[0]["recency_boost"] == 0.75
+    assert hits[0]["expansion_variant_index"] == 0
+    assert "expansion_variant_index" not in hits[1]
     request, metadata = host.calls[-1]
     assert request.q == "marigold" and request.path_filter == "/docs" and request.limit == 2
     assert request.query_type == search_pb2.QUERY_TYPE_KEYWORD

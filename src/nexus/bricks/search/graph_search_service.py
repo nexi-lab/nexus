@@ -17,7 +17,7 @@ class DaemonSemanticSearchWrapper:
     """Wraps search daemon as SemanticSearch interface.
 
     Preserves backward compatibility with callers that need the
-    SearchableProtocol-shaped interface.
+    search interface.
     """
 
     def __init__(self, daemon: Any, *, zone_id: str | None = None) -> None:

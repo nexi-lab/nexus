@@ -3412,7 +3412,7 @@ operations:
       source: src/nexus/server/_kernel_syscall_dispatch.py:52
     grpc_expose:
       name: list
-      source: src/nexus/bricks/search/search_service.py:395
+      source: src/nexus/bricks/search/search_service.py:163
   profiles:
     lite: supported
     sandbox: supported
@@ -4595,24 +4595,6 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4133
-- id: glob.batch
-  module: search
-  summary: Execute several glob patterns through one RPC call while sharing the recursive file listing.
-  transports:
-    grpc_expose:
-      name: glob_batch
-      source: src/nexus/bricks/search/search_service.py:1981
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: 'RPC: glob_batch(patterns=["**/*.py","**/*.md"], path="/workspace")'
-  correctness_test: tests/integration/services/test_search_service.py::TestGlobBatch::test_glob_batch_reuses_listing_for_multiple_patterns
-  perf_class: hot
-  perf_link: tests/benchmarks/test_search_benchmarks.py covers glob matching latency; glob_batch shares one listing across
-    patterns
-  gap_issue: null
-  owning_issue: 4129
 - id: governance.alerts
   module: governance
   summary: ''
@@ -7746,7 +7728,7 @@ operations:
       source: src/nexus/cli/commands/search.py:1
     grpc_expose:
       name: glob
-      source: src/nexus/bricks/search/search_service.py:1738
+      source: src/nexus/bricks/search/search_service.py:1506
     http:
       name: POST /api/v2/search/glob
       source: src/nexus/server/api/v2/routers/search.py:1674
@@ -7758,10 +7740,10 @@ operations:
     sandbox: supported
     full: supported
   usage_example: nexus glob "**/*.py" /workspace --plain; POST /api/v2/search/glob
-  correctness_test: tests/integration/server/api/v2/routers/test_search_http_grep_glob.py; tests/unit/cli/test_commands_smoke.py
-    tests/e2e/self_contained/test_search_surface_live_e2e.py
+  correctness_test: tests/integration/search/test_discovery_client.py::test_sdk_refinement_preserves_scope_context_and_live_responses
   perf_class: hot
-  perf_link: tests/benchmarks/test_search_benchmarks.py; tests/e2e/self_contained/test_search_surface_live_e2e.py
+  perf_link: scripts/test_discovery_service_plugin.py guards bounded selections and result caps; traversal I/O budgets are
+    enforced by the pinned VFS discovery journeys
   gap_issue: null
   owning_issue: 4129
 - id: search.grep
@@ -7773,7 +7755,7 @@ operations:
       source: src/nexus/cli/commands/search.py:1
     grpc_expose:
       name: grep
-      source: src/nexus/bricks/search/search_service.py:2038
+      source: src/nexus/bricks/search/search_service.py:1518
     http:
       name: POST /api/v2/search/grep
       source: src/nexus/server/api/v2/routers/search.py:1535
@@ -7785,10 +7767,10 @@ operations:
     sandbox: supported
     full: supported
   usage_example: nexus grep "TODO" /workspace --search-mode raw; POST /api/v2/search/grep
-  correctness_test: tests/integration/server/api/v2/routers/test_search_http_grep_glob.py; tests/unit/cli/test_commands_smoke.py
-    tests/e2e/self_contained/test_search_surface_live_e2e.py
+  correctness_test: tests/integration/search/test_discovery_client.py::test_sdk_refinement_preserves_scope_context_and_live_responses
   perf_class: hot
-  perf_link: tests/benchmarks/test_search_benchmarks.py; tests/e2e/self_contained/test_search_surface_live_e2e.py
+  perf_link: scripts/test_discovery_service_plugin.py guards bounded selections and result caps; traversal I/O budgets are
+    enforced by the pinned VFS discovery journeys
   gap_issue: null
   owning_issue: 4129
 - id: search.grep_section
@@ -7965,7 +7947,7 @@ operations:
   transports:
     grpc_expose:
       name: semantic_search
-      source: src/nexus/bricks/search/search_service.py:3686
+      source: src/nexus/bricks/search/search_service.py:1831
     mcp:
       name: nexus_semantic_search
       source: src/nexus/config/tool_profiles.yaml:1
@@ -7986,7 +7968,7 @@ operations:
   transports:
     grpc_expose:
       name: semantic_search_stats
-      source: src/nexus/bricks/search/search_service.py:3838
+      source: src/nexus/bricks/search/search_service.py:1983
   profiles:
     lite: supported
     sandbox: supported

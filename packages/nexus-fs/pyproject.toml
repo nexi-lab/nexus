@@ -45,7 +45,6 @@ dependencies = [
     "httpx>=0.28.1",
     # nexus.core imports nexus.lib.io_metrics for read/write/cache counters.
     "prometheus-client>=0.25.0",
-    # nexus-runtime removed: kernel access now goes through gRPC KernelClient.
     # cachetools is imported at module-level by slim-shipped bricks/auth/oauth/pending.py
     # and by the X connector transport; move to base so plain pip install nexus-fs works.
     "cachetools>=7.1.1",
@@ -110,7 +109,6 @@ packages = ["../../src/nexus"]
 include = [
     "nexus/__init__.py",
     "nexus/py.typed",
-    "nexus/_kernel_api_groups.py",
     "nexus/fs/**",
     "nexus/core/**",
     "nexus/contracts/**",
@@ -152,8 +150,6 @@ exclude = [
     "**/contracts/resource_ref.py",
     "**/contracts/schemas/common/v1/**",
     # Top-level modules that belong to the full runtime
-    # _kernel_api_groups.py is included (listed in include above) — needed to
-    # suppress the validation-disabled warning at import time.
     "**/auth_config.py",
     "**/sync.py",
     # utils/ keep only __init__.py and edit_engine.py
@@ -170,7 +166,7 @@ exclude = [
 # Carve specific bricks subtrees back into the slim wheel.
 # The broad `**/bricks/**` exclude above keeps server/raft/sync/etc. off slim,
 # but the auth bricks (oauth/factory/profile/credential_pool/classifiers) and
-# the search primitives (glob_helpers/trigram_fast) are needed by connectors
+# the event glob matching utilities are needed by connectors
 # that ship in the slim wheel. force-include overrides exclude for these paths.
 #
 # bricks/auth: only the sub-paths that connectors actually import are carved in.

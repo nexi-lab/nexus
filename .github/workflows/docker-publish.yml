@@ -828,6 +828,18 @@ jobs:
             -e NEXUS_SEARCH_TEST_ADMIN_KEY=/tmp/search-credentials/search-admin-key \
             nexus-e2e python /tmp/test_search_credentials_plugin.py
 
+      - name: Verify SDK discovery against the signed Search plugin
+        run: |
+          docker cp scripts/test_discovery_service_plugin.py nexus-e2e:/tmp/test_discovery_service_plugin.py
+          docker exec \
+            -e NEXUS_SEARCH_PLUGIN_TARGET=127.0.0.1:2326 \
+            -e NEXUS_SEARCH_TEST_HTTP=http://127.0.0.1:2327 \
+            -e NEXUS_TLS_CA=/tmp/search-credentials/tls/ca.pem \
+            -e NEXUS_TLS_CERT=/tmp/search-credentials/tls/node.pem \
+            -e NEXUS_TLS_KEY=/tmp/search-credentials/tls/node-key.pem \
+            -e NEXUS_SEARCH_TEST_ADMIN_KEY=/tmp/search-credentials/search-admin-key \
+            nexus-e2e python /tmp/test_discovery_service_plugin.py
+
       - name: Verify Search CLI against Rust HTTP
         run: |
           docker cp scripts/test_rust_http_search_cli.py nexus-e2e:/tmp/test_rust_http_search_cli.py

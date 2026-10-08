@@ -1,7 +1,6 @@
 # Search plugin deployment (post-P12)
 
-Since the P12 pivot (#4598), the Python in-process search daemon is
-gone. The **Rust `nexus-search-plugin` cdylib**, hosted by
+The **Rust `nexus-search-plugin` cdylib**, hosted by
 `nexusd-cluster` and reached over gRPC, is the **sole search backend**
 for the Nexus server. A server deployment that does not run the plugin
 host boots with search disabled — the boot probe fail-softs (logs a
@@ -26,8 +25,21 @@ The Python server still serves `/api/v2/*` for mixed deployments. Its
 remaining callers must migrate before that server can be removed.
 
 Indexed CLI commands (`query`, `index`, `stats`) use the Rust HTTP listener;
-see [CLI setup](#cli-on-a-rust-cluster). CLI `glob` and `grep` still use
-`SearchService`. These commands currently have different connection paths.
+see [CLI setup](#cli-on-a-rust-cluster). Filesystem SDK and CLI `glob`/`grep`
+calls use typed SearchService RPCs on the filesystem's existing gRPC channel.
+The Python facade only translates parameters and results. The Rust plugin
+reads current workspace bytes, prunes ignored subtrees during discovery and
+applies Markdown block/section selections before result limits.
+
+Load Search into the Kernel that owns the workspace mounts. An agent pod's
+workspace belongs to its own Kernel; a VM broker does not gain access to that
+workspace by hosting Search. Preserve the existing agent or delegated user
+identity and pass its credential at each request boundary.
+
+An omitted `files` selection permits directory traversal and requires root
+read access. A supplied selection is bounded, validated and authorized per
+file; `files=[]` returns no results. Search rechecks live permissions on the
+host, and SDK clients reject hosts that do not acknowledge requested filters.
 
 ## Required processes for the Python server
 

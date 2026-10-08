@@ -43,8 +43,7 @@ def _resolve_files_arg(
     * ``--files-from path.txt`` → reads newline-separated paths.
     * ``--files-from -`` → reads from stdin (pipe pattern).
     * Both flags set → explicit values come first, then file contents,
-      in order. De-duplication happens server-side in
-      ``_validate_and_normalize_files``.
+      in order. The Search host validates and deduplicates the paths.
 
     Blank lines and lines beginning with ``#`` in the files-from source
     are skipped so agents can pipe JSON-dumped lists through
@@ -298,9 +297,9 @@ def glob(
 @click.option("-m", "--max-results", default=100, help="Maximum results to show")
 @click.option(
     "--search-mode",
-    type=click.Choice(["auto", "parsed", "raw"]),
+    type=click.Choice(["auto", "raw"]),
     default="auto",
-    help="Search mode: auto (try parsed, fallback to raw), parsed (only parsed), raw (only raw)",
+    help="Search current file bytes (auto and raw use the same discovery service)",
     show_default=True,
 )
 @click.option(

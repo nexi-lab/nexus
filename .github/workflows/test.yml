@@ -185,6 +185,11 @@ jobs:
           fi
         shell: bash
 
+      - name: Verify discovery client over TCP
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        run: |
+          uv run --no-sync pytest tests/integration/search/test_discovery_client.py -q -o "addopts="
+
       - name: Verify benchmark collection
         if: needs.detect-changes.outputs.code_changed == 'true' && matrix.os == 'ubuntu-latest'
         run: |
@@ -756,6 +761,7 @@ jobs:
           fi
 
       - name: Install nexusd-cluster (the shipped production binary)
+        id: install_cluster
         if: needs.detect-changes.outputs.code_changed == 'true'
         # Production ships nexus-vfs's `nexus-cluster` crate as `nexusd-cluster`
         # — the KERNEL-ARCHITECTURE §7 `cluster` profile PLUS the
@@ -776,6 +782,7 @@ jobs:
             echo "::error::could not extract a single nexus-vfs rev from Cargo.toml (got: $NEXUS_VFS_REV)"
             exit 1
           fi
+          echo "rev=${NEXUS_VFS_REV}" >> "$GITHUB_OUTPUT"
           echo "Installing nexusd-cluster from nexus-vfs @ ${NEXUS_VFS_REV}"
           # --force: the Swatinem/rust-cache shared-key restores
           # ~/.cargo/bin from a prior run; before this cutover it held a
@@ -790,31 +797,6 @@ jobs:
             --rev "${NEXUS_VFS_REV}" \
             --bin nexusd-cluster \
             nexus-cluster
-
-      - name: nexusd-cluster size budget (cluster profile purity)
-        if: needs.detect-changes.outputs.code_changed == 'true'
-        # The production cluster binary is size-gated (KERNEL-ARCHITECTURE §7;
-        # mirrors nexus-vfs cluster-binary-build.yml's linux budget). As of
-        # 2026-09-24 the nexus-repo assembly is retired and this gate runs
-        # against the very same binary nexus-vfs's own gate measures, so
-        # this budget is largely redundant with the upstream one — kept as
-        # a belt-and-suspenders leak-catcher for the pin (a rev bump that
-        # doubles the binary would slip past a stale upstream gate but not
-        # this one).  driver-s3 / connectors must NOT leak into the default
-        # (slim) build — that leak is the #36 regression this gate catches.
-        run: |
-          BIN="$HOME/.cargo/bin/nexusd-cluster"
-          # This is the exact nexus-vfs cluster binary installed above, with
-          # no additional nexus-local assembly features. Match its Linux budget
-          # in .github/workflows/cluster-binary-build.yml at the pinned VFS rev:
-          # 17.25 MiB. The mailbox build measured 17,994,696 bytes in this job.
-          MAX=18087936
-          actual=$(stat -c%s "$BIN")
-          echo "nexusd-cluster size: $actual bytes (max: $MAX)"
-          if [ "$actual" -gt "$MAX" ]; then
-            echo "::error::nexusd-cluster ($actual bytes) exceeds the cluster size budget ($MAX). A driver/connector likely leaked into the default slim build — keep driver-s3 & connectors behind opt-in features (KERNEL-ARCHITECTURE §7)."
-            exit 1
-          fi
 
       - name: Boot smoke test
         if: needs.detect-changes.outputs.code_changed == 'true'
@@ -874,6 +856,33 @@ jobs:
       - name: Install dependencies
         if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv pip install -e ".[dev,test]"
+
+      - name: nexusd-cluster size budget (cluster profile purity)
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        env:
+          NEXUS_VFS_REV: ${{ steps.install_cluster.outputs.rev }}
+        run: |
+          export VFS_BINARY_BUDGET_FILE="$RUNNER_TEMP/nexus-vfs-cluster-binary-build.yml"
+          curl --fail --silent --show-error --retry 3 \
+            "https://raw.githubusercontent.com/nexi-lab/nexus-vfs/${NEXUS_VFS_REV}/.github/workflows/cluster-binary-build.yml" \
+            --output "$VFS_BINARY_BUDGET_FILE"
+          uv run --no-sync python - <<'PY'
+          import os
+          from pathlib import Path
+          import yaml
+          workflow = yaml.safe_load(Path(os.environ["VFS_BINARY_BUDGET_FILE"]).read_text())
+          rows = workflow["jobs"]["build"]["strategy"]["matrix"]["include"]
+          rows = [row for row in rows if row["artifact_name"] == "nexusd-cluster-linux-x86_64"]
+          if len(rows) != 1:
+              raise SystemExit("Expected one Linux cluster size budget at the pinned VFS revision")
+          budget = rows[0]["max_size_bytes"]
+          if type(budget) is not int or budget <= 0:
+              raise SystemExit("Invalid upstream cluster size budget")
+          actual = (Path.home() / ".cargo/bin/nexusd-cluster").stat().st_size
+          print(f"nexusd-cluster size: {actual} bytes (pinned VFS max: {budget})")
+          if actual > budget:
+              raise SystemExit(f"nexusd-cluster exceeds the pinned VFS size budget: {actual} > {budget}")
+          PY
 
       - name: Restart-survival regression test (#4343)
         if: needs.detect-changes.outputs.code_changed == 'true'

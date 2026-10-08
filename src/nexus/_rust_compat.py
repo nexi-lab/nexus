@@ -9,8 +9,6 @@ with pure-Python fallback implementations or None sentinels.
 from __future__ import annotations
 
 import hashlib
-import mmap
-import os
 import posixpath
 import re
 from typing import Any
@@ -301,82 +299,6 @@ def read_files_bulk(paths: list[str]) -> dict[str, bytes | None]:
 
 
 # ---------------------------------------------------------------------------
-# Grep — pure Python implementations
-# ---------------------------------------------------------------------------
-
-
-def grep_files_mmap(
-    pattern: str,
-    file_paths: list[str],
-    *,
-    ignore_case: bool = False,
-    max_results: int = 1000,
-) -> list[dict[str, Any]]:
-    """Grep files using mmap for performance. Returns list of match dicts."""
-    flags = re.IGNORECASE if ignore_case else 0
-    try:
-        compiled = re.compile(pattern.encode(), flags)
-    except re.error:
-        return []
-
-    results: list[dict[str, Any]] = []
-    for file_path in file_paths:
-        if len(results) >= max_results:
-            break
-        try:
-            with open(file_path, "rb") as f:
-                if os.fstat(f.fileno()).st_size == 0:
-                    continue
-                with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
-                    for line_num, line in enumerate(iter(mm.readline, b""), 1):
-                        if compiled.search(line):
-                            results.append(
-                                {
-                                    "file": file_path,
-                                    "line": line_num,
-                                    "content": line.decode("utf-8", errors="replace").rstrip("\n"),
-                                }
-                            )
-                            if len(results) >= max_results:
-                                break
-        except (OSError, ValueError):
-            continue
-    return results
-
-
-def grep_bulk(
-    pattern: str,
-    file_contents: dict[str, bytes],
-    *,
-    ignore_case: bool = False,
-    max_results: int = 1000,
-) -> list[dict[str, Any]] | None:
-    """Grep pre-loaded file contents. Returns list of match dicts."""
-    flags = re.IGNORECASE if ignore_case else 0
-    try:
-        compiled = re.compile(pattern.encode(), flags)
-    except re.error:
-        return None
-
-    results: list[dict[str, Any]] = []
-    for file_path, content in file_contents.items():
-        if len(results) >= max_results:
-            break
-        for line_num, line in enumerate(content.split(b"\n"), 1):
-            if compiled.search(line):
-                results.append(
-                    {
-                        "file": file_path,
-                        "line": line_num,
-                        "content": line.decode("utf-8", errors="replace"),
-                    }
-                )
-                if len(results) >= max_results:
-                    break
-    return results
-
-
-# ---------------------------------------------------------------------------
 # Glob — pure Python implementation
 # ---------------------------------------------------------------------------
 
@@ -419,17 +341,6 @@ def glob_match_bulk(patterns: list[str], paths: list[str]) -> list[str]:
 
 batch_prefix_check = None
 any_path_starts_with = None
-
-# ---------------------------------------------------------------------------
-# Trigram index — None sentinels (requires native binary)
-# ---------------------------------------------------------------------------
-
-build_trigram_index = None
-build_trigram_index_from_entries = None
-invalidate_trigram_cache = None
-trigram_grep = None
-trigram_index_stats = None
-trigram_search_candidates = None
 
 # ---------------------------------------------------------------------------
 # ReBAC fast — None sentinels (requires native binary)

@@ -93,7 +93,6 @@ from nexus.contracts.rebac_types import (
     TraversalStats,
     WriteResult,
 )
-from nexus.contracts.search_types import GlobStrategy, SearchStrategy
 from nexus.contracts.types import (
     ContextIdentity,
     OperationContext,
@@ -192,8 +191,6 @@ __all__ = [
     "WILDCARD_SUBJECT",
     "WriteResult",
     # Search types (Issue #2190)
-    "GlobStrategy",
-    "SearchStrategy",
     # Credential types (Issue #1753)
     "Ability",
     "Capability",

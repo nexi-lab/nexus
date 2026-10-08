@@ -22,7 +22,6 @@ REQUIRED_BRICKS_PATHS = [
     "nexus/bricks/search/__init__.py",
     "nexus/bricks/search/primitives/__init__.py",
     "nexus/bricks/search/primitives/glob_helpers.py",
-    "nexus/bricks/search/primitives/trigram_fast.py",
     # auth: individual files carved in
     "nexus/bricks/auth/__init__.py",
     "nexus/bricks/auth/types.py",
@@ -131,19 +130,6 @@ def test_slim_wheel_excludes_forbidden_bricks(
     leaks = [p for p in wheel_namelist if p.startswith(forbidden_prefix)]
     assert not leaks, (
         f"slim wheel leaked forbidden bricks paths under {forbidden_prefix!r}:\n" + "\n".join(leaks)
-    )
-
-
-def test_slim_wheel_nexus_runtime_dep(slim_wheel: Path) -> None:
-    """The METADATA must declare nexus-runtime as Requires-Dist."""
-    with zipfile.ZipFile(slim_wheel) as zf:
-        meta_files = [n for n in zf.namelist() if n.endswith("METADATA")]
-        assert meta_files, f"no METADATA in {slim_wheel}"
-        meta = zf.read(meta_files[0]).decode("utf-8")
-    assert "Requires-Dist: nexus-runtime" in meta, (
-        "slim wheel METADATA missing nexus-runtime requirement.\n"
-        "Found Requires-Dist lines:\n"
-        + "\n".join(line for line in meta.splitlines() if "Requires-Dist" in line)
     )
 
 

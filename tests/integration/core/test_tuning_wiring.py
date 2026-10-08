@@ -110,10 +110,8 @@ class TestDIFlowsToConstructors:
         svc = SearchService(
             metadata_store=MagicMock(),
             list_parallel_workers=full_tuning.search.list_parallel_workers,
-            grep_parallel_workers=full_tuning.search.grep_parallel_workers,
         )
         assert svc._list_parallel_workers == 10
-        assert svc._grep_parallel_workers == 4
 
     def test_tiger_cache_workers_from_profile(self) -> None:
         """TigerCache l2_max_workers matches profile cache tuning."""

@@ -100,14 +100,7 @@ class StorageTuning:
 
 @dataclass(frozen=True)
 class SearchTuning:
-    """Search strategy thresholds and concurrency.
-
-    Consumers: search/strategies, search/daemon, search/semantic,
-    search/vector_db, services/search_service.
-    """
-
-    grep_parallel_workers: int
-    """Thread pool size for parallel grep strategy."""
+    """Listing and indexed search concurrency."""
 
     list_parallel_workers: int
     """Thread pool size for parallel directory listing."""
@@ -309,7 +302,6 @@ _MINIMAL_TUNING = ProfileTuning(
         db_max_overflow=2,
     ),
     search=SearchTuning(
-        grep_parallel_workers=1,
         list_parallel_workers=1,
         search_max_concurrency=1,
         vector_pool_workers=1,
@@ -388,7 +380,6 @@ _EMBEDDED_TUNING = ProfileTuning(
         db_max_overflow=5,
     ),
     search=SearchTuning(
-        grep_parallel_workers=1,
         list_parallel_workers=2,
         search_max_concurrency=2,
         vector_pool_workers=1,
@@ -467,7 +458,6 @@ _LITE_TUNING = ProfileTuning(
         db_max_overflow=15,
     ),
     search=SearchTuning(
-        grep_parallel_workers=2,
         list_parallel_workers=4,
         search_max_concurrency=5,
         vector_pool_workers=1,
@@ -546,7 +536,6 @@ _SANDBOX_TUNING = ProfileTuning(
         db_max_overflow=2,
     ),
     search=SearchTuning(
-        grep_parallel_workers=2,
         list_parallel_workers=2,
         search_max_concurrency=2,
         vector_pool_workers=0,  # no local vector backend
@@ -589,7 +578,6 @@ _FULL_TUNING = ProfileTuning(
         db_max_overflow=5,  # Issue #3997: was 30; single-tenant burst headroom
     ),
     search=SearchTuning(
-        grep_parallel_workers=4,
         list_parallel_workers=10,
         search_max_concurrency=10,
         vector_pool_workers=2,
@@ -668,7 +656,6 @@ _CLOUD_TUNING = ProfileTuning(
         db_max_overflow=50,
     ),
     search=SearchTuning(
-        grep_parallel_workers=8,
         list_parallel_workers=20,
         search_max_concurrency=20,
         vector_pool_workers=4,

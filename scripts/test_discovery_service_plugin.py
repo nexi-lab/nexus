@@ -30,7 +30,11 @@ async def main() -> None:
     facade = SearchService(metadata_store=transport, enforce_permissions=False)
     suffix = uuid4().hex[:8]
     needle = f"discovery{suffix}"
-    paths = {name: f"/docs/{suffix}-{name}.md" for name in ("alice", "bob")}
+    subjects = {
+        name: {"subject_type": kind, "subject_id": f"discovery-{name}-{suffix}"}
+        for name, kind in (("alice", "user"), ("bob", "user"))
+    }
+    paths = {name: f"/docs/{suffix}-{name}.md" for name in subjects}
     keys: dict[str, str] = {}
     hashes: dict[str, str] = {}
     created: list[str] = []
@@ -66,21 +70,28 @@ async def main() -> None:
                     "object_type": "file",
                     "object_id": paths[name],
                     "relation": "viewer",
-                    "subject_type": "user",
-                    "subject_id": f"discovery-{name}-{suffix}",
+                    **subjects[name],
                 },
             )
 
         try:
+            agent_key = await http.post(
+                "/v2/auth/keys",
+                headers={"Authorization": f"Bearer {admin}"},
+                json={
+                    "subject_type": "agent",
+                    "subject_id": f"discovery-scode-{suffix}",
+                    "zones": ["sharedzone:r"],
+                },
+            )
+            if agent_key.is_success:
+                await request("DELETE", f"/v2/auth/keys/{agent_key.json()['key_hash']}")
+            assert agent_key.status_code == 400, "Agent identities must use the certificate plane"
             for name, path in paths.items():
                 minted = await request(
                     "POST",
                     "/v2/auth/keys",
-                    json={
-                        "subject_type": "user",
-                        "subject_id": f"discovery-{name}-{suffix}",
-                        "zones": ["sharedzone:r"],
-                    },
+                    json={**subjects[name], "zones": ["sharedzone:r"]},
                 )
                 keys[name], hashes[name] = minted["key"], minted["key_hash"]
                 text = f"# API\n{needle} prose\n```\n{needle} {name}\n```\n"

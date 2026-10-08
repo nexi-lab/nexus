@@ -512,6 +512,10 @@ class KernelClient:
         assert self._transport is not None
         return self._transport.call_rpc(method, params or {})
 
+    def call_rpc(self, method: str, params: dict[str, Any] | None = None) -> Any:
+        """Forward service calls through the kernel's existing authenticated channel."""
+        return self._call(method, params)
+
     def sys_read(
         self,
         path: str,

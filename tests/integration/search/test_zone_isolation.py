@@ -19,6 +19,8 @@ import asyncio
 import sys
 import types
 
+import pytest
+
 # nexus.bricks.search.__init__ imports SearchService → nexus_runtime (Rust
 # extension).  Stub it before any nexus.bricks.search import triggers it.
 if "nexus_runtime" not in sys.modules:
@@ -86,11 +88,12 @@ class TestQueryZoneStamping:
         ((_, req),) = stub.requests
         assert req.zone_id == ""
 
-    def test_different_zones_are_different_requests(self) -> None:
+    @pytest.mark.asyncio
+    async def test_different_zones_are_different_requests(self) -> None:
         daemon, stub = _daemon_with_stub(Query=search_pb2.QueryResponse(results=[]))
 
-        asyncio.run(daemon.search(SearchRequest(query="test", zone_id="zone-a")))
-        asyncio.run(daemon.search(SearchRequest(query="test", zone_id="zone-b")))
+        await daemon.search(SearchRequest(query="test", zone_id="zone-a"))
+        await daemon.search(SearchRequest(query="test", zone_id="zone-b"))
 
         assert [req.zone_id for _, req in stub.requests] == ["zone-a", "zone-b"]
 
@@ -154,13 +157,14 @@ class TestIndexZoneStamping:
         assert req.zone_id == ""
         assert [d.zone_id for d in req.documents] == ["corp"]
 
-    def test_evict_stamps_zone(self) -> None:
+    @pytest.mark.asyncio
+    async def test_evict_stamps_zone(self) -> None:
         daemon, stub = _daemon_with_stub(
             NotifyFileChange=search_pb2.NotifyFileChangeResponse(status="accepted", index_seq=2)
         )
 
-        asyncio.run(daemon.notify_file_change("/a.py", "delete", zone_id="zone-a"))
-        asyncio.run(daemon.notify_file_change("/b.py", "delete", zone_id="zone-b"))
+        await daemon.notify_file_change("/a.py", "delete", zone_id="zone-a")
+        await daemon.notify_file_change("/b.py", "delete", zone_id="zone-b")
 
         assert [(req.path, req.change_type, req.zone_id) for _, req in stub.requests] == [
             ("/a.py", "delete", "zone-a"),

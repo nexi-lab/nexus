@@ -36,6 +36,7 @@ import os
 import time
 from typing import Any
 
+import grpc
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
@@ -48,6 +49,7 @@ from nexus.lib.rebac_filter import rebac_denial_stats as _rebac_denial_stats
 from nexus.runtime.zone_resolution import target_zone_for_context
 from nexus.server.api.v2._revision_fence import RevisionFence, get_revision_fence
 from nexus.server.api.v2._zone_scoped_fs import scope_rest_path
+from nexus.server.api.v2.error_handling import grpc_http_exception
 from nexus.server.api.v2.routers._index_on_write import (
     REASON_EMPTY,
     REASON_NON_TEXT,
@@ -65,6 +67,7 @@ from nexus.server.api.v2.routers._search_batch import (
 )
 from nexus.server.api.v2.routers._search_deps import _get_search_daemon
 from nexus.server.dependencies import get_auth_result, get_operation_context, require_auth
+from nexus.server.path_utils import unscope_internal_path
 from nexus.server.zone_execution import run_zone_scoped
 
 logger = logging.getLogger(__name__)
@@ -759,6 +762,8 @@ async def _handle_single_zone_search(
             response["routing"] = routing_info
         return response
 
+    except grpc.RpcError as e:
+        raise grpc_http_exception(e) from e
     except Exception as e:
         logger.error("Search error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="Search query failed") from e
@@ -1148,6 +1153,9 @@ async def _do_grep_operation(
     if files:
         files = [scope_rest_path(f, op_context) for f in files]
     target_zone = target_zone_for_context(op_context, {"path": path, "files": files})
+    path = unscope_internal_path(path)
+    if files is not None:
+        files = [unscope_internal_path(file) for file in files]
 
     async def _work() -> dict[str, Any]:
         try:
@@ -1177,6 +1185,8 @@ async def _do_grep_operation(
             # #4740: zone-less non-admin callers are refused by the zone
             # visibility predicate — surface it as 403, not a 500.
             raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except grpc.RpcError as exc:
+            raise grpc_http_exception(exc) from exc
         except Exception as exc:
             logger.error("grep failed: %s", exc, exc_info=True)
             raise HTTPException(
@@ -1305,6 +1315,9 @@ async def _do_glob_operation(
     if files:
         files = [scope_rest_path(f, op_context) for f in files]
     target_zone = target_zone_for_context(op_context, {"path": path, "files": files})
+    path = unscope_internal_path(path)
+    if files is not None:
+        files = [unscope_internal_path(file) for file in files]
 
     async def _work() -> dict[str, Any]:
         try:
@@ -1319,6 +1332,8 @@ async def _do_glob_operation(
             # #4740: zone-less non-admin callers are refused by the zone
             # visibility predicate — surface it as 403, not a 500.
             raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except grpc.RpcError as exc:
+            raise grpc_http_exception(exc) from exc
         except Exception as exc:
             logger.error("glob failed: %s", exc, exc_info=True)
             raise HTTPException(

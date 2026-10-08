@@ -1458,227 +1458,29 @@ def _seed_lineage(
 # Semantic search initialization
 # ---------------------------------------------------------------------------
 
-_DOCKER_PGVECTOR_SCRIPT = (
-    "psql -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-nexus} "
-    "-c 'CREATE EXTENSION IF NOT EXISTS vector;'"
-)
-
-
-def _ensure_pgvector_extension(config: dict[str, Any]) -> bool:
-    """Create pgvector extension via docker exec on the postgres container.
-
-    Returns True if the extension was created (or already existed).
-    """
-    compose_file = config.get("compose_file", "")
-    if not compose_file:
-        return False
-
-    compose_cmd = ["docker", "compose"] if shutil.which("docker") else ["docker-compose"]
-    from nexus.cli.commands.stack import _derive_project_env
-
-    compose_env = _derive_project_env(config)
-
-    cmd = [
-        *compose_cmd,
-        "-f",
-        compose_file,
-        "exec",
-        "-T",
-        "postgres",
-        "sh",
-        "-c",
-        _DOCKER_PGVECTOR_SCRIPT,
-    ]
-    env = {**os.environ, **compose_env}
-
-    try:
-        result = subprocess.run(
-            cmd,
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-        return result.returncode == 0
-    except (subprocess.TimeoutExpired, OSError) as e:
-        logger.debug("docker exec (pgvector) error: %s", e)
-        return False
-
-
-_DOCKER_SEED_CHUNKS_SCRIPT = """\
-import json, os, sys, uuid
-from datetime import datetime, timezone
-db_url = os.environ.get('NEXUS_DATABASE_URL', '')
-# Issue #4238: accept the canonical postgres:// scheme.
-if db_url.startswith('postgres://'):
-    db_url = 'postgresql://' + db_url[len('postgres://'):]
-if not db_url:
-    print('0')
-    sys.exit(0)
-try:
-    from sqlalchemy import create_engine, text
-    engine = create_engine(db_url)
-    docs = json.loads(sys.stdin.read())
-    inserted = 0
-    now = datetime.now(timezone.utc)
-    with engine.connect() as conn:
-        for doc in docs:
-            path = doc['path']
-            content = doc['content']
-            size = len(content.encode('utf-8'))
-            # Check if file_paths entry already exists
-            row = conn.execute(text(
-                "SELECT path_id FROM file_paths "
-                "WHERE zone_id = 'root' AND virtual_path = :vp AND deleted_at IS NULL"
-            ), {"vp": path}).fetchone()
-            if row:
-                path_id = row[0]
-            else:
-                path_id = str(uuid.uuid4())
-                conn.execute(text(
-                    "INSERT INTO file_paths "
-                    "(path_id, zone_id, virtual_path, backend_id, physical_path, "
-                    " size_bytes, created_at, updated_at, current_version) "
-                    "VALUES (:pid, 'root', :vp, 'demo', :vp, :sz, :now, :now, 1)"
-                ), {"pid": path_id, "vp": path, "sz": size, "now": now})
-            # Delete old chunks for this path_id
-            conn.execute(text(
-                "DELETE FROM document_chunks WHERE path_id = :pid"
-            ), {"pid": path_id})
-            # Insert content as a single chunk
-            chunk_id = str(uuid.uuid4())
-            conn.execute(text(
-                "INSERT INTO document_chunks "
-                "(chunk_id, path_id, chunk_index, chunk_text, chunk_tokens, "
-                " start_offset, end_offset, line_start, line_end, created_at) "
-                "VALUES (:cid, :pid, 0, :txt, :tokens, 0, :end, 1, :lines, :now)"
-            ), {
-                "cid": chunk_id, "pid": path_id,
-                "txt": content, "tokens": len(content.split()),
-                "end": len(content), "lines": content.count(chr(10)) + 1,
-                "now": now,
-            })
-            inserted += 1
-        conn.commit()
-    print(inserted)
-except Exception as e:
-    print(f'0 error: {e}', file=sys.stderr)
-    print('0')
-"""
-
-
-async def _seed_search_chunks_docker(nx: Any, config: dict[str, Any]) -> bool:
-    """Seed document_chunks by executing a script inside the Docker container.
-
-    Reads demo file content via RPC, then inserts file_paths + document_chunks
-    entries via docker exec into the PostgreSQL database.
-    """
-    compose_file = config.get("compose_file", "")
-    if not compose_file or not Path(compose_file).exists():
-        return False
-
-    compose_cmd = _find_compose_cmd()
-    if compose_cmd is None:
-        return False
-
-    from nexus.cli.commands.stack import _derive_project_env
-
-    compose_env = _derive_project_env(config)
-
-    # Read file contents via RPC (include HERB corpus for semantic search)
-    docs = []
-    all_files = list(DEMO_FILES) + list(HERB_CORPUS)
-    for path, _content, _desc in all_files:
-        try:
-            raw = nx.sys_read(path)
-            text = raw.decode("utf-8", errors="ignore") if isinstance(raw, bytes) else str(raw)
-            if text.strip():
-                docs.append({"path": path, "content": text})
-        except Exception:
-            pass
-
-    if not docs:
-        return False
-
-    payload = json.dumps(docs)
-    cmd = [
-        *compose_cmd,
-        "-f",
-        compose_file,
-        "exec",
-        "-T",
-        "nexus",
-        "python3",
-        "-c",
-        _DOCKER_SEED_CHUNKS_SCRIPT,
-    ]
-    env = {**os.environ, **compose_env}
-
-    try:
-        result = subprocess.run(
-            cmd,
-            input=payload,
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        count = int(result.stdout.strip().split()[0]) if result.stdout.strip() else 0
-        logger.debug("Seeded %d document chunks (stderr: %s)", count, result.stderr.strip())
-        return count > 0
-    except (subprocess.TimeoutExpired, OSError, ValueError) as e:
-        logger.debug("docker exec (search chunks) error: %s", e)
-        return False
-
 
 async def _init_semantic_search(nx: Any, config: dict[str, Any], manifest: dict[str, Any]) -> bool:
-    """Initialize semantic search by triggering the real indexing pipeline.
-
-    Attempts to index demo files through the server's semantic_search_index
-    RPC, which runs the full embedding pipeline (embeddings → pgvector HNSW).
-    Falls back to direct document_chunks insertion via docker exec if the
-    RPC-based pipeline is unavailable.
-
-    Records the engine used in the manifest so tests can verify which path ran.
-
-    Returns True if semantic search is ready (by either path).
-    """
-    preset = config.get("preset", "local")
-    if preset not in ("shared", "demo"):
+    """Index demo VFS files through the search plugin and record its file count."""
+    if config.get("preset", "local") not in ("shared", "demo"):
         return False
+    import asyncio
+    import inspect
 
-    _ensure_pgvector_extension(config)
-
-    # Try the real indexing pipeline first (Issue #2961: use real embeddings)
     try:
-        search_svc = nx.service("search")
-        results = search_svc.semantic_search_index("/workspace/demo", recursive=True)
-        # RPC handler wraps results as {"indexed": {path: count, ...}, ...}
-        if isinstance(results, dict) and "indexed" in results:
-            indexed_map = results["indexed"]
-            total_chunks = results.get("total_chunks", 0)
-            indexed = sum(1 for v in indexed_map.values() if isinstance(v, int) and v > 0)
-        else:
-            # Direct call (non-RPC) returns dict[str, int]
-            indexed_map = results
-            indexed = sum(1 for v in results.values() if isinstance(v, int) and v > 0)
-            total_chunks = sum(v for v in results.values() if isinstance(v, int) and v > 0)
-        if indexed > 0:
-            logger.info(
-                "Semantic search: indexed %d files (%d chunks) via real pipeline",
-                indexed,
-                total_chunks,
-            )
-            manifest["semantic_engine"] = "vector"
+        result = await asyncio.to_thread(
+            nx.service("search").semantic_search_index, path="/workspace/demo", recursive=True
+        )
+        if inspect.isawaitable(result):
+            result = await result
+        indexed = result["indexed_count"]
+        if indexed:
+            logger.info("Search plugin indexed %d demo files", indexed)
+            manifest["semantic_engine"] = "rust-plugin"
             manifest["semantic_indexed_files"] = indexed
             return True
-    except Exception as e:
-        logger.debug("Real indexing pipeline unavailable: %s", e)
-
-    # Fallback: insert document_chunks directly for SQL-based text search
-    logger.info("Falling back to direct document_chunks insertion (SQL text search)")
-    manifest["semantic_engine"] = "sql_fallback"
-    return await _seed_search_chunks_docker(nx, config)
+    except Exception as exc:
+        logger.warning("Demo search indexing failed: %s", exc)
+    return False
 
 
 # ---------------------------------------------------------------------------

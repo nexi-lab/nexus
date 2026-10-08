@@ -21,7 +21,6 @@ References:
 from nexus.contracts.protocols.auth import APIKeyCreatorProtocol
 from nexus.contracts.protocols.chunked_upload import ChunkedUploadProtocol
 from nexus.contracts.protocols.entity_registry import EntityRegistryProtocol
-from nexus.contracts.protocols.file_reader import FileReaderProtocol
 from nexus.contracts.protocols.lease import LeaseManagerProtocol, LeaseState
 from nexus.contracts.protocols.mcp import MCPProtocol
 from nexus.contracts.protocols.mount import MountProtocol
@@ -48,7 +47,6 @@ __all__ = [
     "BackgroundService",
     "ChunkedUploadProtocol",
     "EntityRegistryProtocol",
-    "FileReaderProtocol",
     "LeaseManagerProtocol",
     "LeaseState",
     "MCPProtocol",

@@ -43,6 +43,7 @@ METHOD_REGISTRY: dict[str, MethodSpec] = {
     "sys_readdir": MethodSpec(response_key="files"),
     "glob": MethodSpec(response_key="matches"),
     "grep": MethodSpec(response_key="results"),
+    "semantic_search": MethodSpec(response_key="results"),
     # --- Boolean result extraction ---
     "access": MethodSpec(response_key="exists"),
     "is_directory": MethodSpec(response_key="is_directory"),

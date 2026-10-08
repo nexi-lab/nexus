@@ -15,7 +15,6 @@ import os
 import threading
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypeVar
 
 import grpc
@@ -24,6 +23,7 @@ from nexus.bricks.search.results import BaseSearchResult
 from nexus.contracts.search_types import BatchQueryFailure
 from nexus.grpc.search.v1 import search_pb2, search_pb2_grpc
 from nexus.lib.request_credentials import request_api_key
+from nexus.remote.search_response import search_stats
 
 if TYPE_CHECKING:
     from nexus.contracts.search_types import SearchRequest
@@ -520,57 +520,11 @@ class SearchDaemon:
         }
 
     async def get_stats(self, zone_id: str | None = None) -> dict[str, Any]:
-        """Plugin counters for ``zone_id`` (empty / None ⇒ the plugin's ROOT zone).
-
-        #4736: the HTTP route passes the caller's token zone so a tenant's
-        ``fts_doc_count`` / ``last_index_seq`` describe ITS index.
-        """
-        resp = await self._rpc("Stats", search_pb2.StatsRequest(zone_id=zone_id or ""))
-        return {
-            "fts_doc_count": resp.fts_doc_count,
-            "fts_path_count": resp.fts_path_count,
-            "ann_chunk_count": resp.ann_chunk_count,
-            "parked_count": resp.parked_count,
-            # #4617 identity fields — pre-P12 stats consumers key on
-            # these.  ``embedding_model`` empty on the wire means
-            # keyword-only mode; surface that as None, matching the
-            # old daemon's "no embedding model configured" contract.
-            "backend": resp.backend or "rust-plugin",
-            "embedding_model": resp.embedding_model or None,
-            # #4643: pre-P12 stats carried ``vector_backend`` and
-            # monitors key on it as the "vector lane is configured"
-            # signal.  Post-P12 the vector store is the plugin's
-            # in-process HNSW index; report that when an embedder is
-            # configured, and None in keyword-only mode so pollers
-            # keep an honest signal instead of going blind.
-            "vector_backend": "hnsw-in-process" if resp.embedding_model else None,
-            # #4623: non-zero while explicit index ops are in flight —
-            # "empty results" then mean "still building", not "no
-            # matches".
-            "indexing_in_progress": resp.indexing_in_progress,
-            # #4736 stall detection: a tenant compares the ``index_seq``
-            # an indexing call returned against ``last_index_seq``, and
-            # reads ``pending`` > 0 with ``last_successful_index_at``
-            # frozen as "acknowledged but never served" (#4725).
-            "last_index_seq": int(resp.last_index_seq),
-            "pending": int(resp.pending),
-            "last_successful_index_at": _ms_to_iso(resp.last_successful_index_at_ms),
-            # Pre-P12 stats carried ``last_index_refresh`` as float epoch
-            # seconds (None when nothing was ever indexed); the same
-            # clock, same shape, so old pollers keep an honest value.
-            "last_index_refresh": (
-                resp.last_successful_index_at_ms / 1000.0
-                if resp.last_successful_index_at_ms
-                else None
-            ),
-        }
-
-
-def _ms_to_iso(ms: int) -> str | None:
-    """Epoch milliseconds → ISO-8601 UTC; ``None`` for the plugin's 0 = never."""
-    if not ms:
-        return None
-    return datetime.fromtimestamp(ms / 1000.0, tz=UTC).isoformat()
+        """Read counters for the requested zone through the SearchService protocol."""
+        response = await self._rpc("Stats", search_pb2.StatsRequest(zone_id=zone_id or ""))
+        if response.error:
+            raise RuntimeError(f"Search plugin statistics failed: {response.error}")
+        return search_stats(response)
 
 
 def _request_to_pb(request: "SearchRequest", *, chunks_per_page: int) -> search_pb2.QueryRequest:

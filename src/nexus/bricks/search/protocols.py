@@ -1,18 +1,11 @@
-"""Search brick protocols for dependency inversion (Issue #1520, #2075, #2663).
-
-Defines SearchableProtocol (daemon-facing facade) and SearchBackend
-(backend-facing primitive). Re-exports FileReaderProtocol for backward compat
-within the brick.
-"""
+"""Search query and backend interfaces."""
 
 from collections.abc import Sequence
 from typing import Any, Protocol, runtime_checkable
 
 from nexus.bricks.search.results import BaseSearchResult
-from nexus.contracts.protocols.file_reader import FileReaderProtocol
 
-# Re-export for backward compat within the brick
-__all__ = ["FileReaderProtocol", "SearchableProtocol", "SearchBackend"]
+__all__ = ["SearchableProtocol", "SearchBackend"]
 
 
 @runtime_checkable

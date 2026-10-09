@@ -241,9 +241,7 @@ def get_zone(
 ) -> ZoneView:
     _service(request)  # arming check — read paths still require the service
     try:
-        require_zone_capability(
-            request, auth_result, zone_id=zone_id, capability="zone.data.read"
-        )
+        require_zone_capability(request, auth_result, zone_id=zone_id, capability="zone.data.read")
     except HTTPException as exc:
         if exc.status_code == 403:
             # anti-enumeration parity with the sessions read surface: a

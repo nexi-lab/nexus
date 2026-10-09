@@ -1287,9 +1287,7 @@ def test_reconcile_pumps_stale_create_via_saga_continuation(session_factory):
 
     runtime = FakeRuntime()
     svc = make_service(session_factory, runtime, worker=False)
-    accepted = svc.create_zone(
-        create_request(), idempotency_key="crash-1", principal=PRINCIPAL
-    )
+    accepted = svc.create_zone(create_request(), idempotency_key="crash-1", principal=PRINCIPAL)
     assert accepted.state == "queued"
     # a worker claimed the op and died; its lease has expired
     with session_factory() as s:
@@ -1316,9 +1314,7 @@ def test_pump_create_fenced_takeover_writes_nothing(session_factory):
     grant, no projection outbox row, no state overwrite."""
     runtime = FakeRuntime()
     svc = make_service(session_factory, runtime, worker=False)
-    accepted = svc.create_zone(
-        create_request(), idempotency_key="fence-1", principal=PRINCIPAL
-    )
+    accepted = svc.create_zone(create_request(), idempotency_key="fence-1", principal=PRINCIPAL)
     original_create = runtime.create_zone
 
     def create_and_takeover(*, zone_id, ctx):
@@ -1346,12 +1342,12 @@ def test_pump_create_fenced_takeover_writes_nothing(session_factory):
 
         op = s.get(ZoneOperationModel, accepted.operation_id)
         assert op.grant_id is None
-        assert (
-            s.execute(sa.select(ZoneGrantModel)).scalars().all() == []
-        ), "stale worker must not INSERT a genesis grant"
-        assert (
-            s.execute(sa.select(ZoneGrantProjectionOutboxModel)).scalars().all() == []
-        ), "stale worker must not enqueue a projection event"
+        assert s.execute(sa.select(ZoneGrantModel)).scalars().all() == [], (
+            "stale worker must not INSERT a genesis grant"
+        )
+        assert s.execute(sa.select(ZoneGrantProjectionOutboxModel)).scalars().all() == [], (
+            "stale worker must not enqueue a projection event"
+        )
 
 
 def test_projection_race_with_revoke_enqueues_cleanup(session_factory):
@@ -1389,13 +1385,12 @@ def test_projection_race_with_revoke_enqueues_cleanup(session_factory):
 
         events = s.execute(sa.select(ZoneGrantProjectionOutboxModel)).scalars().all()
         assert any(
-            e.event_type == "grant.cleanup_projections" and not e.processed_at
-            for e in events
+            e.event_type == "grant.cleanup_projections" and not e.processed_at for e in events
         ), "the racing activation must enqueue its own cleanup event"
     # drain the cleanup event: the fallback recomputes edges from the grant
     # and deletes every edge that was externally written
     ZoneOperationWorker(session_factory, FakeRuntime(), svc).pump_once()
-    assert written and set(deleted) >= {r for r in written}
+    assert written and set(deleted) >= set(written)
 
 
 def test_mount_unmount_remount_same_triple_does_not_500(session_factory):
@@ -1452,14 +1447,18 @@ def test_issue_grant_same_source_across_zones_is_not_a_replay(session_factory):
             source=source,
             reason="org binding",
         )
-        result = svc.issue_grant(
-            zone, req, idempotency_key=f"gk-{zone}", principal=PRINCIPAL
-        )
+        result = svc.issue_grant(zone, req, idempotency_key=f"gk-{zone}", principal=PRINCIPAL)
         assert result.state in ("queued", "succeeded")
     with session_factory() as s:
         from nexus.storage.models import ZoneGrantModel
 
-        grants = s.execute(sa.select(ZoneGrantModel).where(ZoneGrantModel.source_type == "moss_org_binding")).scalars().all()
+        grants = (
+            s.execute(
+                sa.select(ZoneGrantModel).where(ZoneGrantModel.source_type == "moss_org_binding")
+            )
+            .scalars()
+            .all()
+        )
         assert {g.zone_id for g in grants} == {"zone-alpha", "zone-beta"}
 
 
@@ -1468,9 +1467,7 @@ def _pending_grant_id(session_factory) -> str:
         from nexus.storage.models import ZoneGrantModel
 
         return (
-            s.execute(
-                sa.select(ZoneGrantModel).where(ZoneGrantModel.status == "pending")
-            )
+            s.execute(sa.select(ZoneGrantModel).where(ZoneGrantModel.status == "pending"))
             .scalars()
             .first()
             .grant_id
@@ -1498,9 +1495,7 @@ def test_cleanup_remaining_check_is_scoped_to_the_same_zone(session_factory):
         from nexus.storage.models import ZoneGrantModel
 
         alpha = (
-            s.execute(
-                sa.select(ZoneGrantModel).where(ZoneGrantModel.source_id == "gk-zone-alpha")
-            )
+            s.execute(sa.select(ZoneGrantModel).where(ZoneGrantModel.source_id == "gk-zone-alpha"))
             .scalars()
             .one()
         )

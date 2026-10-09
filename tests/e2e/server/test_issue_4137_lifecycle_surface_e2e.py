@@ -11,11 +11,14 @@ from typing import Any
 
 import httpx
 
+
 def _e2e_api_key() -> str:
     """Minted kernel admin key (conftest publishes it as NEXUS_E2E_API_KEY);
     read at call time because module import happens before any fixture."""
     import os
+
     return os.environ.get("NEXUS_E2E_API_KEY", "test-e2e-api-key-12345")
+
 
 API_KEY = _e2e_api_key()
 HEADERS = {

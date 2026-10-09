@@ -99,9 +99,7 @@ def test_distinct_record_names_get_distinct_vfs_paths():
         session_id="sess-1", record_kind="transcript", payload=b"two", record_name="b"
     )
     # default name keeps the canonical path
-    runtime.write_session_record(
-        session_id="sess-1", record_kind="transcript", payload=b"def"
-    )
+    runtime.write_session_record(session_id="sess-1", record_kind="transcript", payload=b"def")
     assert paths == [
         "/sessions/sess-1/transcript.jsonl.a",
         "/sessions/sess-1/transcript.jsonl.b",
@@ -112,10 +110,16 @@ def test_distinct_record_names_get_distinct_vfs_paths():
 def test_attach_pid_refuses_terminal_attempt():
     _factory, _runtime, tasks = _env("attach")
     task = tasks.ensure_implicit_task(
-        session_id="sess-1", requested_by={"subject_type": "user", "subject_id": "u1"}, resource_refs=[]
+        session_id="sess-1",
+        requested_by={"subject_type": "user", "subject_id": "u1"},
+        resource_refs=[],
     )
     ref = tasks.create_attempt(
-        task_id=task.task_id, execution_zone_id="zone-a", reason_code="r", reason="r", policy_version=None
+        task_id=task.task_id,
+        execution_zone_id="zone-a",
+        reason_code="r",
+        reason="r",
+        policy_version=None,
     )
     tasks.attach_pid(attempt_id=ref.attempt_id, pid="pid-9")
     from nexus.services.zones.session_tasks import SessionTaskError
@@ -151,8 +155,7 @@ def test_reaper_terminates_stale_parked_and_registered_runs():
         from nexus.storage.models import SessionRuntimeRunModel
 
         states = {
-            r.pid: r.state
-            for r in s.execute(sa.select(SessionRuntimeRunModel)).scalars().all()
+            r.pid: r.state for r in s.execute(sa.select(SessionRuntimeRunModel)).scalars().all()
         }
         assert states["pid-parked"] == "terminated"
         assert states["pid-orphan"] == "terminated"

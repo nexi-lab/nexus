@@ -1033,7 +1033,8 @@ def test_p0_scenario_17_state_survives_full_restart(tmp_path) -> None:
                     "X-Nexus-Zone-Delegation": delegation,
                 },
             )
-            assert r.status_code == 403, (
+            # v2 read surface folds denials into the absence shape (404)
+            assert r.status_code == 404, (
                 f"revocation must survive restart: {r.status_code} {r.text}"
             )
         subprocess.run(["taskkill", "/PID", str(proc2.pid), "/T", "/F"], capture_output=True)
@@ -1256,7 +1257,7 @@ def test_p0_c2_truth_table_supplements(nexus_server, test_app) -> None:
             "X-Nexus-Zone-Delegation": nb_delegation,
         },
     )
-    assert outside.status_code == 403, (
+    assert outside.status_code == 404, (
         f"path knowledge must not bypass prefixes: {outside.status_code}"
     )
 
@@ -1277,7 +1278,8 @@ def test_p0_c2_truth_table_supplements(nexus_server, test_app) -> None:
         f"/v2/zones/{zone}",
         headers={"Authorization": f"Bearer {zoneless_key}"},
     )
-    assert zoneless.status_code == 403, (
+    # v2 read surface folds denials into the absence shape (404)
+    assert zoneless.status_code == 404, (
         f"zone-less non-admin must be refused: {zoneless.status_code}"
     )
 

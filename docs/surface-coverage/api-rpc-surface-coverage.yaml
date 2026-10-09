@@ -11494,7 +11494,7 @@ operations:
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:37
     http:
       name: POST /api/v2/search/glob
-      source: src/nexus/server/api/v2/routers/search.py:1345
+      source: src/nexus/server/api/v2/routers/search.py:1333
     mcp:
       name: nexus_glob
       source: src/nexus/config/tool_profiles.yaml:1
@@ -11525,7 +11525,7 @@ operations:
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:42
     http:
       name: POST /api/v2/search/grep
-      source: src/nexus/server/api/v2/routers/search.py:1206
+      source: src/nexus/server/api/v2/routers/search.py:1194
     mcp:
       name: nexus_grep
       source: src/nexus/config/tool_profiles.yaml:1
@@ -11573,7 +11573,7 @@ operations:
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:52
     http:
       name: POST /api/v2/search/index
-      source: src/nexus/server/api/v2/routers/search.py:1415
+      source: src/nexus/server/api/v2/routers/search.py:1403
   profiles:
     lite: supported
     sandbox: supported
@@ -11786,7 +11786,7 @@ operations:
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:47
     http:
       name: GET /api/v2/search/query
-      source: src/nexus/server/api/v2/routers/search.py:177
+      source: src/nexus/server/api/v2/routers/search.py:165
   profiles:
     lite: supported
     sandbox: supported
@@ -11803,7 +11803,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/query/batch
-      source: src/nexus/server/api/v2/routers/search.py:623
+      source: src/nexus/server/api/v2/routers/search.py:611
   profiles:
     lite: supported
     sandbox: supported
@@ -11823,7 +11823,7 @@ operations:
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:57
     http:
       name: POST /api/v2/search/refresh
-      source: src/nexus/server/api/v2/routers/search.py:1600
+      source: src/nexus/server/api/v2/routers/search.py:1588
   profiles:
     lite: supported
     sandbox: supported

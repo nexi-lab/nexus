@@ -474,10 +474,15 @@ async def startup_zone_control(app: FastAPI) -> list[asyncio.Task[Any]]:
 
         return asyncio.create_task(run(), name="zone-operation-worker")
 
-    tasks: list[asyncio.Task[Any]] = []
-    if report["composite_armed"]:
-        tasks.append(start_worker())
-    else:
+    # The recovery worker starts UNCONDITIONALLY: the outbox retry loop is
+    # itself the crash-recovery mechanism and tolerates an unreachable
+    # runtime (a probe failure is often just a kernel still warming —
+    # gating the worker on the probe made a slow boot burn the whole outbox
+    # retry budget before the first pump, fault class 1-2-3). The readiness
+    # probe only governs the HTTP surface's 503 answers, not the recovery
+    # loop.
+    tasks: list[asyncio.Task[Any]] = [start_worker()]
+    if not report["composite_armed"]:
         # The kernel may legitimately still be warming when the Python
         # lifespan starts (its zone-runtime service registers late): retry
         # the probe in the background instead of pinning the zone surface
@@ -493,7 +498,6 @@ async def startup_zone_control(app: FastAPI) -> list[asyncio.Task[Any]]:
                     continue
                 if retry["composite_armed"]:
                     logger.info("zone control armed after late runtime readiness")
-                    tasks.append(start_worker())
                     return
 
         tasks.append(asyncio.create_task(rearm_until_ready(), name="zone-control-rearm"))

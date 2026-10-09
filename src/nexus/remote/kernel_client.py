@@ -528,6 +528,15 @@ class KernelClient:
         assert self._transport is not None
         return self._transport.call_rpc(method, params or {})
 
+    def call_rpc(self, method: str, params: dict[str, Any] | None = None) -> Any:
+        """Public generic Call RPC surface.
+
+        Search-side discovery (search_service glob/grep) dispatches through
+        this name on whatever kernel object the assembly hands it; keep the
+        bridge public so typed and untyped callers coexist across the
+        kernel-client rewrite."""
+        return self._call(method, params)
+
     def zone_runtime_call(
         self,
         method: str,

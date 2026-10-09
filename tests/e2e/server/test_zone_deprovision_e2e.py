@@ -61,7 +61,10 @@ class TestZoneDeprovisionFlow:
         """DELETE on Active zone returns 202 Accepted."""
         response = test_app.delete(
             f"/api/zones/{zone_id}",
-            headers={"Authorization": f"Bearer {auth_token}"},
+            headers={
+                "Authorization": f"Bearer {auth_token}",
+                "X-Nexus-Confirm-Zone": zone_id,
+            },
         )
         assert response.status_code == 202, f"Got {response.status_code}: {response.text}"
         data = response.json()
@@ -73,7 +76,10 @@ class TestZoneDeprovisionFlow:
         # Deprovision
         del_response = test_app.delete(
             f"/api/zones/{zone_id}",
-            headers={"Authorization": f"Bearer {auth_token}"},
+            headers={
+                "Authorization": f"Bearer {auth_token}",
+                "X-Nexus-Confirm-Zone": zone_id,
+            },
         )
         assert del_response.status_code == 202, del_response.text
         operation = _wait_for_operation(
@@ -98,14 +104,20 @@ class TestZoneDeprovisionFlow:
         # First DELETE
         first = test_app.delete(
             f"/api/zones/{zone_id}",
-            headers={"Authorization": f"Bearer {auth_token}"},
+            headers={
+                "Authorization": f"Bearer {auth_token}",
+                "X-Nexus-Confirm-Zone": zone_id,
+            },
         )
         assert first.status_code == 202, first.text
 
         # Second DELETE — if Terminating → 202 (retry), if Terminated → 404
         second = test_app.delete(
             f"/api/zones/{zone_id}",
-            headers={"Authorization": f"Bearer {auth_token}"},
+            headers={
+                "Authorization": f"Bearer {auth_token}",
+                "X-Nexus-Confirm-Zone": zone_id,
+            },
         )
         assert second.status_code == 202, second.text
         assert second.headers["Location"] == first.headers["Location"]
@@ -114,7 +126,10 @@ class TestZoneDeprovisionFlow:
         """DELETE on non-existent zone returns 404 for the global admin."""
         response = test_app.delete(
             "/api/zones/nonexistent-zone",
-            headers={"Authorization": f"Bearer {auth_token}"},
+            headers={
+                "Authorization": f"Bearer {auth_token}",
+                "X-Nexus-Confirm-Zone": "nonexistent-zone",
+            },
         )
         assert response.status_code == 404, f"Got {response.status_code}: {response.text}"
 
@@ -149,7 +164,10 @@ class TestZoneDeprovisionDBState:
         # Deprovision
         del_response = test_app.delete(
             f"/api/zones/{zone_id}",
-            headers={"Authorization": f"Bearer {auth_token}"},
+            headers={
+                "Authorization": f"Bearer {auth_token}",
+                "X-Nexus-Confirm-Zone": zone_id,
+            },
         )
         assert del_response.status_code == 202, del_response.text
 
@@ -166,7 +184,10 @@ class TestZoneDeprovisionDBState:
         # Deprovision
         del_response = test_app.delete(
             f"/api/zones/{zone_id}",
-            headers={"Authorization": f"Bearer {auth_token}"},
+            headers={
+                "Authorization": f"Bearer {auth_token}",
+                "X-Nexus-Confirm-Zone": zone_id,
+            },
         )
         assert del_response.status_code == 202, del_response.text
         operation = _wait_for_operation(

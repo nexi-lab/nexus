@@ -90,7 +90,7 @@ jobs:
           echo "${RUNNER_TEMP}/nexus-vfs/target/debug" >> "$GITHUB_PATH"
       - name: Full-profile Zone HTTP E2E
         env:
-          NEXUS_KERNEL_BINARY: ${{ github.workspace }}/target/debug/nexusd-cluster
+          NEXUS_KERNEL_BINARY: ${{ runner.temp }}/nexus-vfs/target/debug/nexusd-cluster
         # shadow_compare is cross-platform (httpx only, conftest has POSIX
         # branches) — it runs here on ubuntu.
         run: uv run pytest -n 0 tests/e2e/server/test_zone_routes_e2e.py tests/e2e/server/test_zone_deprovision_e2e.py tests/e2e/server/test_full_profile_control_plane_e2e.py tests/e2e/server/test_zone_shadow_compare_e2e.py

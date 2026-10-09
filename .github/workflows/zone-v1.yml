@@ -119,7 +119,7 @@ jobs:
           echo "${RUNNER_TEMP}/nexus-vfs/target/debug" >> "$GITHUB_PATH"
       - name: Windows-only Zone E2E suites
         env:
-          NEXUS_KERNEL_BINARY: ${{ github.workspace }}/target/debug/nexusd-cluster
+          NEXUS_KERNEL_BINARY: ${{ runner.temp }}/nexus-vfs/target/debug/nexusd-cluster
         run: uv run pytest -n 0 tests/e2e/server/test_zone_v2_p0_matrix_e2e.py tests/e2e/server/test_zone_v2_fault_injection_e2e.py tests/e2e/server/test_session_runtime_p1a_e2e.py tests/e2e/server/test_session_runtime_p1b_e2e.py
 
   typescript-sdk:

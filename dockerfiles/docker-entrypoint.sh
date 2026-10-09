@@ -432,32 +432,6 @@ setup_admin_api_key() {
     echo ""
 }
 
-init_semantic_search_if_enabled() {
-    if [ -z "$CONFIG_FILE" ] || [ ! -f "$CONFIG_FILE" ]; then
-        echo ""
-        echo "ℹ️  No config file — semantic search controlled by deployment profile (${NEXUS_PROFILE:-full})"
-        return 0
-    fi
-
-    local enabled
-    enabled="$(python3 "$SCRIPTS_DIR/check_semantic_search_config.py" "$CONFIG_FILE" 2>/dev/null)" || enabled="false"
-
-    if [ "$enabled" != "true" ]; then
-        echo ""
-        echo "ℹ️  Semantic search not enabled in config (features.semantic_search: false)"
-        return 0
-    fi
-
-    echo ""
-    echo "🔍 Initializing semantic search (from config)..."
-
-    if ! python3 "$SCRIPTS_DIR/init_semantic_search.py"; then
-        echo -e "${RED}✗ Semantic search initialization failed${NC}"
-        exit 1
-    fi
-    echo -e "${GREEN}✓ Semantic search initialized${NC}"
-}
-
 build_serve_cmd() {
     local auth_type="${NEXUS_AUTH_TYPE:-database}"
     if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
@@ -602,7 +576,6 @@ main() {
     else
         echo -e "${GREEN}✓ No NEXUS_DATABASE_URL — skipping PostgreSQL init (cluster profile)${NC}"
     fi
-    init_semantic_search_if_enabled
     # Note: TLS provisioning is file-based. If {data_dir}/tls/join-token
     # exists, nexusd reads it and provisions certs from the leader.
     start_nexus_server

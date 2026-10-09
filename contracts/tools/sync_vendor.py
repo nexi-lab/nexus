@@ -147,7 +147,7 @@ def build_manifest() -> bytes:
                 # LF-normalized so a CRLF checkout (core.autocrlf) computes
                 # the same digest as CI's LF checkout — raw bytes would make
                 # every Windows-generated manifest stale on Linux.
-                "schema_digest": f"sha256:{sha256(path.read_bytes().replace(b'\\r\\n', b'\\n'))}",
+                "schema_digest": f"sha256:{sha256(path.read_bytes().replace(bytes((13, 10)), bytes((10,))))}",
                 "semantic_adr_refs": ["sudostack/docs/adr/ADR-002-zone-and-tenancy-model.md"],
                 **fm,
                 "secrets_allowed": False,

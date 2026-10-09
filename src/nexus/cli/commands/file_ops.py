@@ -14,7 +14,6 @@ from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import (
     add_backend_options,
     add_context_options,
-    connect_local_workspace,
     console,
     get_filesystem,
     handle_error,
@@ -24,11 +23,7 @@ from nexus.cli.utils import (
 
 
 def register_commands(cli: click.Group) -> None:
-    """Register all file operation commands.
-
-    Note: ``init`` has been moved to ``init_cmd.py`` (Issue #2915).
-    It is registered separately in ``__init__.py``.
-    """
+    """Register all file operation commands."""
     cli.add_command(cat)
     cli.add_command(stat_cmd)
     cli.add_command(metadata_cmd)
@@ -45,50 +40,6 @@ def register_commands(cli: click.Group) -> None:
     cli.add_command(sync_cmd)
     cli.add_command(rm)
     cli.add_command(edit)
-
-
-@click.command()
-@click.argument("path", default="./nexus-workspace", type=click.Path())
-def init(path: str) -> None:
-    """Initialize a new Nexus workspace.
-
-    Creates a new Nexus workspace with the following structure:
-    - nexus-data/    # Metadata and content storage
-    - workspace/     # Agent-specific scratch space
-    - shared/        # Shared data between agents
-
-    Example:
-        nexus init ./my-workspace
-    """
-
-    async def _impl() -> None:
-        workspace_path = Path(path)
-        data_dir = workspace_path / "nexus-data"
-
-        try:
-            # Create workspace structure
-            workspace_path.mkdir(parents=True, exist_ok=True)
-            data_dir.mkdir(parents=True, exist_ok=True)
-
-            # Initialize Nexus
-            nx = connect_local_workspace(str(data_dir))
-
-            # Create default directories
-            nx.mkdir("/workspace", exist_ok=True)
-            nx.mkdir("/shared", exist_ok=True)
-
-            nx.close()
-
-            console.print(
-                f"[nexus.success]✓[/nexus.success] Initialized Nexus workspace at [nexus.path]{workspace_path}[/nexus.path]"
-            )
-            console.print(f"  Data directory: [nexus.path]{data_dir}[/nexus.path]")
-            console.print(f"  Workspace: [nexus.path]{workspace_path / 'workspace'}[/nexus.path]")
-            console.print(f"  Shared: [nexus.path]{workspace_path / 'shared'}[/nexus.path]")
-        except Exception as e:
-            handle_error(e)
-
-    asyncio.run(_impl())
 
 
 @click.command()

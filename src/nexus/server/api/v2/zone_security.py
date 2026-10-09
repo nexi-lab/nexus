@@ -108,6 +108,7 @@ def require_zone_capability(
     zone_id: str,
     capability: str,
     resource_path: str | None = None,
+    delegation_ref: str | None = None,
 ) -> None:
     decision = zone_capability_decision(
         request,
@@ -115,6 +116,7 @@ def require_zone_capability(
         zone_id=zone_id,
         capability=capability,
         resource_path=resource_path,
+        delegation_ref=delegation_ref,
     )
     if not decision.allowed:
         raise HTTPException(

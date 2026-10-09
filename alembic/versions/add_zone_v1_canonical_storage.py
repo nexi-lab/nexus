@@ -267,7 +267,7 @@ def upgrade() -> None:
         op.execute(
             "ALTER TABLE rebac_relation_sources "
             "ADD CONSTRAINT uq_rebac_rel_src "
-            "UNIQUE (subject, relation, object, source_grant_id) NULLS NOT DISTINCT"
+            "UNIQUE NULLS NOT DISTINCT (subject, relation, object, source_grant_id)"
         )
 
 

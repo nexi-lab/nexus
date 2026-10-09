@@ -8138,7 +8138,7 @@ operations:
   transports:
     http:
       name: GET /v2/sessions/{session_id}/tasks/{task_id}
-      source: src/nexus/server/api/v2/routers/sessions.py:608
+      source: src/nexus/server/api/v2/routers/sessions.py:624
   profiles:
     lite: supported
     sandbox: supported

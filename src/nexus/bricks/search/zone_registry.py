@@ -56,6 +56,7 @@ class ZoneSearchRegistry:
             capabilities: Capabilities reported by the host, when known.
         """
         self._daemons[zone_id] = daemon
+        self._transports.pop(zone_id, None)
         if capabilities is not None:
             self._capabilities[zone_id] = capabilities
         else:
@@ -80,6 +81,7 @@ class ZoneSearchRegistry:
             capabilities: Zone capabilities (discovered via GetSearchCapabilities).
         """
         self._transports[zone_id] = transport
+        self._daemons.pop(zone_id, None)
         if capabilities is not None:
             self._capabilities[zone_id] = capabilities
         else:

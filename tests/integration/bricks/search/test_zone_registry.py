@@ -94,6 +94,29 @@ class TestZoneSearchRegistry:
         register("zone", MagicMock())
         assert registry.get_capabilities("zone") is None
 
+    @pytest.mark.parametrize("remote_first", [False, True])
+    def test_moving_a_zone_replaces_the_route_and_capability_snapshot(
+        self, remote_first: bool
+    ) -> None:
+        default, daemon, transport = object(), object(), object()
+        registry = ZoneSearchRegistry(default_daemon=default)
+        caps = ZoneSearchCapabilities("zone", search_modes=("keyword",))
+        if remote_first:
+            registry.register_remote("zone", transport, caps)
+            registry.register("zone", daemon)
+            assert not registry.is_remote("zone")
+            assert registry.get_transport("zone") is None
+            assert registry.get_daemon("zone") is daemon
+            assert registry.list_zones() == ["zone"]
+        else:
+            registry.register("zone", daemon, caps)
+            registry.register_remote("zone", transport)
+            assert registry.is_remote("zone")
+            assert registry.get_transport("zone") is transport
+            assert registry.get_daemon("zone") is default
+            assert registry.list_zones() == []
+        assert registry.get_capabilities("zone") is None
+
 
 class TestRemoteCapabilityDiscovery:
     @pytest.mark.asyncio

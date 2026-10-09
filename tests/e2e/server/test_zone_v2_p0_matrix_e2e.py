@@ -375,7 +375,7 @@ def test_p0_scenario_10_overlapping_grants_and_independent_relations(
     )
     assert rev2.status_code == 202, rev2.text
     _wait_operation(test_app, rev2.headers["Location"].split("/")[-1], headers)
-# v2 read surface folds denials into the absence shape (404)
+    # v2 read surface folds denials into the absence shape (404)
     assert _access(test_app, zone, user_key, delegation2) == 404
     # §5.4: with no active grant left, even issuance is refused outright —
     # new tokens cannot be minted from a revoked source.
@@ -1002,7 +1002,7 @@ def test_p0_scenario_17_state_survives_full_restart(tmp_path) -> None:
             assert rev.status_code == 202, rev.text
             revoke_op_id = rev.headers["Location"].split("/")[-1]
             _wait_operation(client, revoke_op_id, headers)
-        # v2 read surface folds denials into the absence shape (404)
+            # v2 read surface folds denials into the absence shape (404)
             assert _access(client, zone, user_key, delegation) == 404
 
         # Hard-kill the whole tree, restart over the same data dir + db.
@@ -1360,6 +1360,4 @@ def test_p0_c2_office_core_data_domain_default_deny(nexus_server, test_app) -> N
     # (§11.2 "Office 不默认读 Core" — the default across data domains is
     # denial; nothing about data_domain itself widens or narrows access).
     denied = _access(test_app, core_zone, user_key, delegation)
-    assert denied == 404, (
-        f"office-domain principal must not read core zone by default: {denied}"
-    )
+    assert denied == 404, f"office-domain principal must not read core zone by default: {denied}"

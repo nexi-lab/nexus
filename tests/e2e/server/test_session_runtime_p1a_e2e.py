@@ -470,8 +470,10 @@ def test_p1a_runtime_delegation_revalidation_and_revoke_isolation(nexus_server, 
         headers={"Authorization": f"Bearer {user_key}"},
         json={"record_kind": "context", "data": '{"authorized":false}'},
     )
-    assert no_delegation.status_code == 403, no_delegation.text
-    assert no_delegation.json()["detail"]["code"] == "GRANT_NOT_ACTIVE"
+    # record writes fold denials into the absence shape (anti-enumeration
+    # parity with the read surface): 404 SESSION_NOT_FOUND, not 403
+    assert no_delegation.status_code == 404, no_delegation.text
+    assert no_delegation.json()["detail"]["code"] == "SESSION_NOT_FOUND"
 
     allowed = test_app.post(
         "/v2/sessions/p1a-delegated-session/records",
@@ -490,18 +492,22 @@ def test_p1a_runtime_delegation_revalidation_and_revoke_isolation(nexus_server, 
         state = test_app.get("/v2/runtime/runs/p1a-delegated-pid", headers=admin_headers).json()[
             "state"
         ]
-        if state == "revocation_pending":
+        # The dependency reaper converges a parked run once its grant is
+        # revoked (M-5: revocation_pending is a waiting room) — the parked
+        # instant or the converged terminal state both prove fail-closed
+        if state in ("revocation_pending", "terminated"):
             break
         time.sleep(0.25)
-    assert state == "revocation_pending"
+    assert state in ("revocation_pending", "terminated"), state
 
     denied = test_app.post(
         "/v2/sessions/p1a-delegated-session/records",
         headers=user_headers,
         json={"record_kind": "context", "data": '{"authorized":false}'},
     )
-    assert denied.status_code == 403, denied.text
-    assert denied.json()["detail"]["code"] == "GRANT_REVOKED"
+    # record writes fold denials into the absence shape (anti-enumeration)
+    assert denied.status_code == 404, denied.text
+    assert denied.json()["detail"]["code"] == "SESSION_NOT_FOUND"
 
 
 def test_p1a_zones_survive_full_restart(tmp_path) -> None:

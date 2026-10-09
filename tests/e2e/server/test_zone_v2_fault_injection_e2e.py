@@ -481,7 +481,8 @@ def test_fault_classes_6_7_revoke_killed_before_broadcast_stays_fail_closed(tmp_
                     "X-Nexus-Zone-Delegation": delegation,
                 },
             )
-            assert denied.status_code == 403, (
+            # v2 read surface folds denials into the absence shape (404)
+            assert denied.status_code == 404, (
                 f"old delegation must stay denied after crash: {denied.status_code}"
             )
             # And nothing new can be minted from the revoked grant.

@@ -337,7 +337,8 @@ class KernelClient:
         self._stderr_path: str | None = None
         self._transport: RPCTransport | None = None
         self._timeout = timeout
-        self._auth_token = auth_token or ""
+        self._auth_token = auth_token
+        self._spawn_local = not server_address
         self.requires_python_hooks = True
         self._hooks: dict[str, list[Any]] = {}
 
@@ -353,7 +354,7 @@ class KernelClient:
 
     def open(self) -> None:
         """Start kernel subprocess (if local) and establish gRPC channel."""
-        if self._process is None and not self._is_remote():
+        if self._spawn_local and self._process is None:
             self._spawn_kernel()
         self._transport = RPCTransport(
             server_address=self._server_address,
@@ -373,9 +374,6 @@ class KernelClient:
         self._terminate_spawned_kernel()
         with contextlib.suppress(Exception):
             atexit.unregister(self._terminate_spawned_kernel)
-
-    def _is_remote(self) -> bool:
-        return self._process is None and self._transport is not None
 
     def _spawn_kernel(self) -> None:
         """Spawn nexus-cluster as a subprocess."""

@@ -174,6 +174,12 @@ async def main() -> None:
                     [hit["path"] for hit in result["results"]] == [paths["alice"]]
                     for result in batch.json()["queries"]
                 ), batch.text
+
+                class NoPythonPolicy:
+                    def __getattr__(self, name):
+                        raise AssertionError(f"HTTP discovery consulted Python policy: {name}")
+
+                app.state.permission_enforcer = NoPythonPolicy()
                 for operation, pattern in (("glob", "*.txt"), ("grep", needle)):
                     response = await client.post(
                         f"/api/v2/search/{operation}",
@@ -197,6 +203,7 @@ async def main() -> None:
                     )
                     assert denied.status_code == 403, denied.text
 
+                app.state.permission_enforcer = None
                 from nexus.server.dependencies import _get_cached_auth
 
                 cached_identity = await _get_cached_auth(app.state.auth_cache_store, keys["alice"])

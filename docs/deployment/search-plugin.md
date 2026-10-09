@@ -41,6 +41,10 @@ read access. A supplied selection is bounded, validated and authorized per
 file; `files=[]` returns no results. Search rechecks live permissions on the
 host, and SDK clients reject hosts that do not acknowledge requested filters.
 
+HTTP discovery paginates the host's authorized results. Grep requests the
+page window plus one match to detect `has_more`. The response includes
+observed latency and counts; the host does not expose a per-file denial rate.
+
 ## Required processes for the Python server
 
 | Process | Image | Role |

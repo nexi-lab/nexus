@@ -10,13 +10,14 @@ import pytest
 from nexus.bricks.search.search_service import SearchService
 from nexus.contracts.types import OperationContext
 from nexus.grpc.search.v1 import search_pb2, search_pb2_grpc
+from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
 from nexus.lib.request_credentials import request_api_key
 from nexus.remote.kernel_client import KernelClient
 from nexus.remote.rpc_transport import RPCTransport
 from nexus.remote.service_proxy import RemoteServiceProxy
 
 
-class Host(search_pb2_grpc.SearchServiceServicer):
+class Host(search_pb2_grpc.SearchServiceServicer, vfs_pb2_grpc.NexusVFSServiceServicer):
     def __init__(self) -> None:
         self.calls: list[tuple[Any, dict[str, str]]] = []
         self.status: grpc.StatusCode | None = None
@@ -56,6 +57,9 @@ class Host(search_pb2_grpc.SearchServiceServicer):
         if self.status is not None:
             context.abort(self.status, "caller rejected by Search host")
 
+    def Ping(self, request: Any, context: Any) -> Any:
+        return vfs_pb2.PingResponse(version="fixture")
+
     def Query(self, request: Any, context: Any) -> Any:
         self.record(request, context)
         return self.query
@@ -75,6 +79,7 @@ def indexed():
     with ThreadPoolExecutor(max_workers=4) as pool:
         server = grpc.server(pool)
         search_pb2_grpc.add_SearchServiceServicer_to_server(host, server)
+        vfs_pb2_grpc.add_NexusVFSServiceServicer_to_server(host, server)
         port = server.add_insecure_port("127.0.0.1:0")
         server.start()
         transport = RPCTransport(f"127.0.0.1:{port}", auth_token="operator-key")
@@ -167,11 +172,18 @@ def test_request_credentials_take_precedence_over_per_call_and_default_keys(inde
     assert host.calls[-1][1]["authorization"] == "Bearer "
 
 
+@pytest.mark.parametrize("client_type", [RPCTransport, KernelClient])
 @pytest.mark.parametrize("credential", [None, "", "caller-key"])
-def test_configured_credential_presence_is_preserved_on_the_wire(indexed, credential):
+def test_configured_credential_presence_is_preserved_on_the_wire(indexed, credential, client_type):
     host, transport, _search, _service = indexed
-    configured = RPCTransport(transport.server_address, auth_token=credential)
+    configured = client_type(server_address=transport.server_address, auth_token=credential)
     try:
+        if isinstance(configured, KernelClient):
+            configured.open()
+            assert configured._process is None
+            configured.close()
+            configured.open()
+            assert configured._process is None
         configured.call_rpc("semantic_search", {"query": "marigold"})
     finally:
         configured.close()

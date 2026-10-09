@@ -23,6 +23,10 @@ import inspect
 import logging
 from typing import Any
 
+import grpc
+
+from nexus.contracts.exceptions import RemoteConnectionError, RemoteTimeoutError
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -76,6 +80,7 @@ def handle_tool_errors(operation: str) -> Any:
     parameter introspection. Supports both sync and async tool functions.
 
     Caught exceptions (in order):
+        - gRPC and remote transport errors -> service/authentication/input errors
         - ``FileNotFoundError`` → ``"not_found"``
         - ``PermissionError`` → ``"permission_denied"``
         - ``Exception`` → ``"internal"``
@@ -103,7 +108,41 @@ def handle_tool_errors(operation: str) -> Any:
 
     def _handle_error(args: tuple[Any, ...], kwargs: dict[str, Any], exc: Exception) -> str:
         """Shared error handling for both sync and async wrappers."""
-        if isinstance(exc, FileNotFoundError):
+        if isinstance(exc, (grpc.RpcError, RemoteConnectionError, RemoteTimeoutError)):
+            if isinstance(exc, grpc.RpcError):
+                status = exc.code()
+            elif isinstance(exc, RemoteTimeoutError):
+                status = grpc.StatusCode.DEADLINE_EXCEEDED
+            else:
+                status = grpc.StatusCode.UNAVAILABLE
+            category, message = {
+                grpc.StatusCode.UNAVAILABLE: (
+                    "unavailable",
+                    f"{operation.capitalize()} not available.",
+                ),
+                grpc.StatusCode.UNIMPLEMENTED: (
+                    "unavailable",
+                    f"{operation.capitalize()} not available.",
+                ),
+                grpc.StatusCode.UNAUTHENTICATED: (
+                    "unauthorized",
+                    f"Authentication required for {operation}.",
+                ),
+                grpc.StatusCode.PERMISSION_DENIED: (
+                    "permission_denied",
+                    f"Permission denied for {operation}.",
+                ),
+                grpc.StatusCode.INVALID_ARGUMENT: (
+                    "invalid_input",
+                    f"Invalid arguments for {operation}.",
+                ),
+                grpc.StatusCode.DEADLINE_EXCEEDED: (
+                    "unavailable",
+                    f"{operation.capitalize()} timed out.",
+                ),
+            }.get(status, ("internal", f"Error in {operation}."))
+            return tool_error(category, message, str(exc))
+        elif isinstance(exc, FileNotFoundError):
             path = _extract_path_hint(args, kwargs)
             hint = f" at '{path}'" if path else ""
             return tool_error(

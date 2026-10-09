@@ -81,7 +81,7 @@ COPY src/nexus/lib/rpc_codec.py         /opt/proto/nexus/lib/rpc_codec.py
 # ARGs — see test.yml's kernel-pin preflight).  Falls back to the
 # hardcoded default so a local `docker build` without a build-arg
 # still works.
-ARG NEXUS_VFS_REV=bf9ce7727b527f21953ab4493bb916e5c08142db
+ARG NEXUS_VFS_REV=5cbe862d8199636e939a50f063fab581796c5a3f
 RUN curl -fsSL "https://raw.githubusercontent.com/nexi-lab/nexus-vfs/${NEXUS_VFS_REV}/rust/proto/nexus/search/v1/search.proto" \
         -o /tmp/search.proto \
     && /opt/testvenv/bin/python -m grpc_tools.protoc \

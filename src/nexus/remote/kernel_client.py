@@ -514,7 +514,10 @@ class KernelClient:
         if stderr_path is None:
             return ""
         try:
-            with open(stderr_path) as f:
+            # The kernel writes UTF-8; a locale-default open (GBK on Chinese
+            # Windows) raises UnicodeDecodeError on non-ASCII bytes and the
+            # caller's error path then kills an otherwise healthy kernel.
+            with open(stderr_path, encoding="utf-8", errors="replace") as f:
                 all_lines = f.readlines()
                 tail = all_lines[-lines:]
                 return "".join(tail)

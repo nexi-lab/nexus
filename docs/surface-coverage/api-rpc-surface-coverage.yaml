@@ -9992,7 +9992,7 @@ operations:
   transports:
     http:
       name: POST /v2/zones/{zone_id}:suspend
-      source: src/nexus/server/api/v2/routers/zones.py:308
+      source: src/nexus/server/api/v2/routers/zones.py:332
   profiles:
     lite: supported
     sandbox: supported

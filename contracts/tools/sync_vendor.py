@@ -31,7 +31,6 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CARGO_TOML = REPO_ROOT / "Cargo.toml"
-HTTP_API_CARGO_TOML = REPO_ROOT / "rust" / "services" / "http-api" / "Cargo.toml"
 VENDOR_DIR = REPO_ROOT / "contracts" / "vendor" / "nexus-vfs.gen"
 SOURCE_LOCK = REPO_ROOT / "contracts" / "source-lock.gen.json"
 MANIFEST_META = REPO_ROOT / "contracts" / "manifests" / "zone-v1.meta.json"
@@ -73,9 +72,13 @@ CHECK = "--check" in sys.argv
 
 
 def pinned_rev() -> str:
-    """Extract the one revision used by both direct dependency surfaces."""
+    """Extract the one revision used by both direct dependency surfaces.
+
+    The in-repo Rust services (http-api among them) were retired when the
+    implementation moved into the pinned nexus-vfs repo — the workspace
+    Cargo.toml is the one remaining pin surface."""
     revs: set[str] = set()
-    for cargo_toml in (CARGO_TOML, HTTP_API_CARGO_TOML):
+    for cargo_toml in (CARGO_TOML,):
         matches = set(
             re.findall(
                 r'git\s*=\s*"https://github\.com/nexi-lab/nexus-vfs"\s*,\s*rev\s*=\s*"([0-9a-f]{40})"',

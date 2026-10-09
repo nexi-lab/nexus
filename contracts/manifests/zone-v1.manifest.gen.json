@@ -13,7 +13,7 @@
       "kind": "ZoneCreateRequest",
       "schema_id": "https://contracts.sudo.dev/schemas/auth/v1/zone-create-request.schema.json",
       "schema_path": "contracts/auth/v1/zone-create-request.schema.json",
-      "schema_digest": "sha256:09048f46281d9154c6a33619ed31a5a8a2f02f278500747847cb91220d0f363b",
+      "schema_digest": "sha256:be284312c2d91608b7cd0ae45958e5021e46e7b16ad771c7befb189516cb08c7",
       "semantic_adr_refs": [
         "sudostack/docs/adr/ADR-002-zone-and-tenancy-model.md"
       ],
@@ -36,7 +36,7 @@
       "kind": "ZoneDelegationIssueRequest",
       "schema_id": "https://contracts.sudo.dev/schemas/auth/v1/zone-delegation-issue-request.schema.json",
       "schema_path": "contracts/auth/v1/zone-delegation-issue-request.schema.json",
-      "schema_digest": "sha256:cc983fb8bbd421553c68ff6208ce551c6542304847f2aac7b0b01adf84624c8e",
+      "schema_digest": "sha256:85eec38698a55f288d88da48c316f0dc155fb06cca0a16655773d8f93dd8e153",
       "semantic_adr_refs": [
         "sudostack/docs/adr/ADR-002-zone-and-tenancy-model.md"
       ],
@@ -59,7 +59,7 @@
       "kind": "ZoneDelegationScopeRule",
       "schema_id": "https://contracts.sudo.dev/schemas/auth/v1/zone-delegation-scope-rule.schema.json",
       "schema_path": "contracts/auth/v1/zone-delegation-scope-rule.schema.json",
-      "schema_digest": "sha256:8c0d8c5c3d54c7c9d762e90336d92d4ec031c4258349c4dffdf49d334f2f2148",
+      "schema_digest": "sha256:59177b157e54b6cbeab8cbb6f17cc21c05686b49bddf6534bb7375aa67c69edb",
       "semantic_adr_refs": [
         "sudostack/docs/adr/ADR-002-zone-and-tenancy-model.md"
       ],
@@ -82,7 +82,7 @@
       "kind": "ZoneDelegation",
       "schema_id": "https://contracts.sudo.dev/schemas/auth/v1/zone-delegation.schema.json",
       "schema_path": "contracts/auth/v1/zone-delegation.schema.json",
-      "schema_digest": "sha256:a1aa01128d91a19238cb93388d6ff49b22e18d19f75107b753af0083749728d4",
+      "schema_digest": "sha256:39379e229386f0637c91083c3bd0d191784132cef5bd3951d6cced014bece446",
       "semantic_adr_refs": [
         "sudostack/docs/adr/ADR-002-zone-and-tenancy-model.md"
       ],
@@ -105,7 +105,7 @@
       "kind": "ZoneGrantCreateRequest",
       "schema_id": "https://contracts.sudo.dev/schemas/auth/v1/zone-grant-create-request.schema.json",
       "schema_path": "contracts/auth/v1/zone-grant-create-request.schema.json",
-      "schema_digest": "sha256:afe4b2add6651356831ac492b5e979f2ba9eff712640d3481e741dad63e87d33",
+      "schema_digest": "sha256:eec24c692c4c19da5d04465ab721b2ea62c9168ae7ac2566efc0e8f2f2cad5d9",
       "semantic_adr_refs": [
         "sudostack/docs/adr/ADR-002-zone-and-tenancy-model.md"
       ],
@@ -128,7 +128,7 @@
       "kind": "ZoneGrant",
       "schema_id": "https://contracts.sudo.dev/schemas/auth/v1/zone-grant.schema.json",
       "schema_path": "contracts/auth/v1/zone-grant.schema.json",
-      "schema_digest": "sha256:9d06c4f033df862b360d5c2a5467bf599d0e6050410bc940b9a8868ee13829d8",
+      "schema_digest": "sha256:cadb50732a9757d6859f9bfba918be420be53159f1356d04da4dee1baa30465f",
       "semantic_adr_refs": [
         "sudostack/docs/adr/ADR-002-zone-and-tenancy-model.md"
       ],
@@ -151,7 +151,7 @@
       "kind": "ZoneOperation",
       "schema_id": "https://contracts.sudo.dev/schemas/auth/v1/zone-operation.schema.json",
       "schema_path": "contracts/auth/v1/zone-operation.schema.json",
-      "schema_digest": "sha256:ed7dd7852e3b70ee80e99bce2a09b96ec047d99b880f063f5fcb40f8fc9f53f9",
+      "schema_digest": "sha256:d68d63b2393649a3d3e0abd832c266a4b1d4f2b12c7eb0aa0a2ae10fbabe5e03",
       "semantic_adr_refs": [
         "sudostack/docs/adr/ADR-002-zone-and-tenancy-model.md"
       ],
@@ -174,7 +174,7 @@
       "kind": "ZonePatchRequest",
       "schema_id": "https://contracts.sudo.dev/schemas/auth/v1/zone-patch-request.schema.json",
       "schema_path": "contracts/auth/v1/zone-patch-request.schema.json",
-      "schema_digest": "sha256:fd553fd75d26a861decdbc11aeb6f31355c1da292ef1ca685da0eda1cfb2fab5",
+      "schema_digest": "sha256:6311015395f0850b40937ead6e87b0ca531c049b5f1afe3c0797bf73c367b032",
       "semantic_adr_refs": [
         "sudostack/docs/adr/ADR-002-zone-and-tenancy-model.md"
       ],
@@ -197,7 +197,7 @@
       "kind": "Zone",
       "schema_id": "https://contracts.sudo.dev/schemas/auth/v1/zone.schema.json",
       "schema_path": "contracts/auth/v1/zone.schema.json",
-      "schema_digest": "sha256:b7551d924d9696a64a3c87bdf9b15d08a28b16b512fc82b07058b4b404fdc3bb",
+      "schema_digest": "sha256:d7cdabe61e02e63004860746cdca3dde90bfac9cc0eec6b60ae9d40fa76d7fdd",
       "semantic_adr_refs": [
         "sudostack/docs/adr/ADR-002-zone-and-tenancy-model.md"
       ],
@@ -220,7 +220,7 @@
       "kind": "PrincipalRef",
       "schema_id": "https://contracts.sudo.dev/schemas/common/v1/principal-ref.schema.json",
       "schema_path": "contracts/common/v1/principal-ref.schema.json",
-      "schema_digest": "sha256:b22ae6aef357889028ab7a378c7b373120004f6ec8efd8349dd2d2ed2490c62e",
+      "schema_digest": "sha256:9cb1d68d963b295e5918847f7fca9b52a9f9c339a661ec241d722010dcd2f7a5",
       "semantic_adr_refs": [
         "sudostack/docs/adr/ADR-002-zone-and-tenancy-model.md"
       ],
@@ -243,7 +243,7 @@
       "kind": "ResourceRef",
       "schema_id": "https://contracts.sudo.dev/schemas/common/v1/resource-ref.schema.json",
       "schema_path": "contracts/common/v1/resource-ref.schema.json",
-      "schema_digest": "sha256:f311c6bcf5b1aa59217d1a72f27a6e2bc48446f76eaa6eeb6b0f12c832c7e0e5",
+      "schema_digest": "sha256:a454419257c0875e4155b71cd67301dcd856100b177a90d18168a18a78d13fb7",
       "semantic_adr_refs": [
         "sudostack/docs/adr/ADR-002-zone-and-tenancy-model.md"
       ],
@@ -266,7 +266,7 @@
       "kind": "ZonePath",
       "schema_id": "https://contracts.sudo.dev/schemas/common/v1/zone-path.schema.json",
       "schema_path": "contracts/common/v1/zone-path.schema.json",
-      "schema_digest": "sha256:0cd6f0227f23fb9a6c58f3aa048fd2086c984f53f4786ae2435168e0f2d5b158",
+      "schema_digest": "sha256:faf96d9f621969d7d9e08abc076f8e7584d7c91bb69d0aa08fd32aea59fb74a0",
       "semantic_adr_refs": [
         "sudostack/docs/adr/ADR-002-zone-and-tenancy-model.md"
       ],
@@ -289,7 +289,7 @@
       "kind": "RuntimeResourceScope",
       "schema_id": "https://contracts.sudo.dev/schemas/runtime/v2/runtime-resource-scope.schema.json",
       "schema_path": "contracts/runtime/v2/runtime-resource-scope.schema.json",
-      "schema_digest": "sha256:a8943d084bf53dc508012ed00409792bd76b90e08ce42b579bd314f15de1d1c5",
+      "schema_digest": "sha256:c8bda9ba196bea9193cde2ed88375fb0fdacff6d4ff40fbaa3a92f2db875023b",
       "semantic_adr_refs": [
         "sudostack/docs/adr/ADR-002-zone-and-tenancy-model.md"
       ],

@@ -8121,7 +8121,7 @@ operations:
   transports:
     http:
       name: POST /v2/runtime/start
-      source: src/nexus/server/api/v2/routers/sessions.py:631
+      source: src/nexus/server/api/v2/routers/sessions.py:647
   profiles:
     lite: supported
     sandbox: supported
@@ -9856,7 +9856,7 @@ operations:
   transports:
     http:
       name: GET /v2/auth/zone-delegations/{delegation_id}
-      source: src/nexus/server/api/v2/routers/zone_grants.py:310
+      source: src/nexus/server/api/v2/routers/zone_grants.py:321
   profiles:
     lite: supported
     sandbox: supported
@@ -9873,7 +9873,7 @@ operations:
   transports:
     http:
       name: GET /v2/zone-capabilities
-      source: src/nexus/server/api/v2/routers/zone_grants.py:251
+      source: src/nexus/server/api/v2/routers/zone_grants.py:258
   profiles:
     lite: supported
     sandbox: supported
@@ -9890,7 +9890,7 @@ operations:
   transports:
     http:
       name: GET /v2/zone-operations/{operation_id}
-      source: src/nexus/server/api/v2/routers/zone_grants.py:224
+      source: src/nexus/server/api/v2/routers/zone_grants.py:237
   profiles:
     lite: supported
     sandbox: supported
@@ -9907,7 +9907,7 @@ operations:
   transports:
     http:
       name: GET /v2/zones/{zone_id}/grants/{grant_id}
-      source: src/nexus/server/api/v2/routers/zone_grants.py:171
+      source: src/nexus/server/api/v2/routers/zone_grants.py:183
   profiles:
     lite: supported
     sandbox: supported
@@ -9924,7 +9924,7 @@ operations:
   transports:
     http:
       name: GET /api/zones/{zone_id}
-      source: src/nexus/server/auth/zone_routes.py:197
+      source: src/nexus/server/auth/zone_routes.py:240
   profiles:
     lite: supported
     sandbox: supported
@@ -9941,7 +9941,7 @@ operations:
   transports:
     http:
       name: DELETE /v2/zone-mounts/{mount_id}
-      source: src/nexus/server/api/v2/routers/zone_runtime.py:115
+      source: src/nexus/server/api/v2/routers/zone_runtime.py:114
   profiles:
     lite: supported
     sandbox: supported
@@ -9958,7 +9958,7 @@ operations:
   transports:
     http:
       name: GET /v2/zone-transfers/{operation_id}
-      source: src/nexus/server/api/v2/routers/zone_runtime.py:233
+      source: src/nexus/server/api/v2/routers/zone_runtime.py:240
   profiles:
     lite: supported
     sandbox: supported
@@ -9975,7 +9975,7 @@ operations:
   transports:
     http:
       name: POST /v2/zones/{zone_id}/joins
-      source: src/nexus/server/api/v2/routers/zone_runtime.py:56
+      source: src/nexus/server/api/v2/routers/zone_runtime.py:55
   profiles:
     lite: supported
     sandbox: supported

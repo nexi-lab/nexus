@@ -359,10 +359,17 @@ def test_p1b_rejections_revocation_and_authorization_order(nexus_server, test_ap
     while time.monotonic() < deadline:
         run = test_app.get("/v2/runtime/runs/p1b-revoke-pid", headers=admin).json()
         task = test_app.get(f"/v2/sessions/p1b-revoke/tasks/{task_id}", headers=admin).json()
-        if run["state"] == "revocation_pending" and task["attempts"][0]["state"] == "cancelled":
+        # The dependency reaper converges a parked run once its grant is
+        # revoked (M-5: revocation_pending is a waiting room, never a
+        # permanent state) — accept either the parked instant or the
+        # converged terminal state, both with the attempt cancelled.
+        if (
+            run["state"] in ("revocation_pending", "terminated")
+            and task["attempts"][0]["state"] == "cancelled"
+        ):
             break
         time.sleep(0.25)
-    assert run["state"] == "revocation_pending"
+    assert run["state"] in ("revocation_pending", "terminated"), run
     assert task["attempts"][0]["state"] == "cancelled"
     assert task["attempts"][0]["failure"]["code"] == "GRANT_REVOKED"
 

@@ -426,7 +426,8 @@ def test_v2_create_delegation_revoke_and_deprovision(nexus_server, test_app) -> 
             "X-Nexus-Zone-Delegation": delegation_id,
         },
     )
-    assert collision.status_code == 403, collision.text
+    # v2 read surface folds denials into the same 404 shape as absence
+    assert collision.status_code == 404, collision.text
 
     revoked = test_app.delete(
         f"/v2/zones/{zone_id}/grants/{org_grant['grant_id']}",
@@ -434,7 +435,8 @@ def test_v2_create_delegation_revoke_and_deprovision(nexus_server, test_app) -> 
     )
     assert revoked.status_code == 202, revoked.text
     denied = test_app.get(f"/v2/zones/{zone_id}", headers=user_headers)
-    assert denied.status_code == 403, denied.text
+    # v2 read surface folds denials into the same 404 shape as absence
+    assert denied.status_code == 404, denied.text
 
     deleted = test_app.delete(
         f"/v2/zones/{zone_id}",

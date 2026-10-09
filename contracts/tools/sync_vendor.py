@@ -144,7 +144,10 @@ def build_manifest() -> bytes:
                 "kind": doc["title"],
                 "schema_id": doc["$id"],
                 "schema_path": f"contracts/{rel}",
-                "schema_digest": f"sha256:{sha256(path.read_bytes())}",
+                # LF-normalized so a CRLF checkout (core.autocrlf) computes
+                # the same digest as CI's LF checkout — raw bytes would make
+                # every Windows-generated manifest stale on Linux.
+                "schema_digest": f"sha256:{sha256(path.read_bytes().replace(b'\\r\\n', b'\\n'))}",
                 "semantic_adr_refs": ["sudostack/docs/adr/ADR-002-zone-and-tenancy-model.md"],
                 **fm,
                 "secrets_allowed": False,
@@ -219,6 +222,27 @@ def main() -> int:
     manifest_current = MANIFEST_GEN.read_bytes() if MANIFEST_GEN.exists() else None
     if manifest_current != manifest_bytes:
         stale.append(MANIFEST_GEN.name)
+        if CHECK and manifest_current is not None:
+            # first divergent region — turns "stale" into an actionable diff
+            # instead of a guessing game across checkouts
+            for i, (a, b) in enumerate(
+                zip(manifest_current or b"", manifest_bytes)
+            ):
+                if a != b:
+                    lo = max(0, i - 120)
+                    print(
+                        f"manifest diverges at byte {i}:",
+                        file=sys.stderr,
+                    )
+                    print(f"  committed: ...{manifest_current[lo:i + 120]!r}", file=sys.stderr)
+                    print(f"  generated: ...{manifest_bytes[lo:i + 120]!r}", file=sys.stderr)
+                    break
+            else:
+                print(
+                    f"manifest length differs: committed "
+                    f"{len(manifest_current or b'')} vs generated {len(manifest_bytes)}",
+                    file=sys.stderr,
+                )
         if not CHECK:
             MANIFEST_GEN.parent.mkdir(parents=True, exist_ok=True)
             MANIFEST_GEN.write_bytes(manifest_bytes)

@@ -763,20 +763,26 @@ class SessionRuntimeService:
                 if run is not None and run.state == "revocation_pending":
                     self._terminate_with_attempt(session, run, now)
                     moved += 1
-            stale = session.execute(
-                select(SessionRuntimeRunModel).where(
-                    SessionRuntimeRunModel.state.in_(("revocation_pending", "registered")),
-                    SessionRuntimeRunModel.started_at.is_not(None),
-                    SessionRuntimeRunModel.started_at < stale_cutoff,
+            stale = (
+                session.execute(
+                    select(SessionRuntimeRunModel).where(
+                        SessionRuntimeRunModel.state.in_(("revocation_pending", "registered")),
+                        SessionRuntimeRunModel.started_at.is_not(None),
+                        SessionRuntimeRunModel.started_at < stale_cutoff,
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             for run in stale:
                 self._terminate_with_attempt(session, run, now)
                 moved += 1
             return moved
 
     @staticmethod
-    def _terminate_with_attempt(session: Session, run: SessionRuntimeRunModel, now: datetime) -> None:
+    def _terminate_with_attempt(
+        session: Session, run: SessionRuntimeRunModel, now: datetime
+    ) -> None:
         """Terminate a run and end its still-running attempt with it."""
         run.state = "terminated"
         run.ended_at = now

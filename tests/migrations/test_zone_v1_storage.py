@@ -93,10 +93,7 @@ def _column_types(engine, table: str) -> dict[str, str]:
     """Name -> compiled type (length included): column-name equality alone
     once hid a 64-vs-255 varchar drift between migration and model."""
     insp = sa.inspect(engine)
-    return {
-        c["name"]: str(c["type"]).upper()
-        for c in insp.get_columns(table)
-    }
+    return {c["name"]: str(c["type"]).upper() for c in insp.get_columns(table)}
 
 
 def test_upgrade_and_fresh_agree_on_zone_v1_tables(upgraded_sqlite, fresh_sqlite):
@@ -119,9 +116,7 @@ def test_upgrade_and_fresh_agree_on_zone_v1_tables(upgraded_sqlite, fresh_sqlite
     # (SQLite reports VARCHAR without length, so the fresh/upgrade pair pins
     # model-vs-migration DDL parity; the PG variant below pins real lengths.)
     for table in sorted(ZONE_DOMAIN_TABLES):
-        assert _column_types(upgraded_sqlite, table) == _column_types(
-            fresh_sqlite, table
-        ), table
+        assert _column_types(upgraded_sqlite, table) == _column_types(fresh_sqlite, table), table
 
 
 @pytest.mark.postgres

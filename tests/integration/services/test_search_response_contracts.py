@@ -176,7 +176,7 @@ class TestIndexResponseContract:
         # A populated plugin error must NEVER 200 (review R1) — clients
         # need to retry, not believe the index is complete.
         assert resp.status_code == 500, resp.text
-        assert "fts commit failed" in resp.text
+        assert resp.json()["detail"] == "Failed to index Search documents"
 
     def test_cross_zone_document_rejected(self):
         from nexus.grpc.search.v1 import search_pb2
@@ -197,35 +197,6 @@ class TestIndexResponseContract:
                     {"path": "/ws/a.md", "text": "alpha", "zone_id": "victim-zone"},
                 ]
             },
-        )
-
-        assert resp.status_code == 403, resp.text
-        assert stub.requests == []
-
-    def test_read_only_principal_cannot_index(self):
-        from nexus.grpc.search.v1 import search_pb2
-        from nexus.server.dependencies import require_auth
-
-        daemon, stub = _daemon_with_stub(
-            IndexDocuments=search_pb2.IndexDocumentsResponse(indexed_count=1)
-        )
-        app = _build_app(daemon)
-        # Non-admin principal + no permission enforcer wired ⇒ the
-        # WRITE gate fails CLOSED (review R3): explicit indexing
-        # replaces content other readers see, so a read-only token
-        # must not reach the daemon.
-        app.dependency_overrides[require_auth] = lambda: {
-            "authenticated": True,
-            "user_id": "reader",
-            "zone_id": "eng",
-            "zone_set": ["eng"],
-            "zone_perms": [["eng", "r"]],
-            "is_admin": False,
-        }
-
-        resp = TestClient(app).post(
-            "/api/v2/search/index",
-            json={"documents": [{"path": "/ws/a.md", "text": "poison"}]},
         )
 
         assert resp.status_code == 403, resp.text
@@ -560,7 +531,7 @@ class TestRefreshResponseContract:
         )
 
         assert resp.status_code == 500
-        assert "tombstone" in resp.json()["detail"]
+        assert resp.json()["detail"] == "Failed to refresh Search document"
 
     def test_invalid_change_type_is_400(self):
         from nexus.grpc.search.v1 import search_pb2

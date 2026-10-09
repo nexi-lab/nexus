@@ -18,6 +18,22 @@ from nexus.runtime.zone_runner import ZoneRegistry
 from nexus.server.api.v2.routers.search import router
 from nexus.server.middleware.request_credentials import RequestCredentialsMiddleware
 
+_MUTATIONS = [
+    ("POST", "/api/v2/search/index", {"json": {"documents": [{"path": "/alice.md", "text": "a"}]}}),
+    ("POST", "/api/v2/search/refresh", {"params": {"path": "/probe.md", "change_type": "delete"}}),
+    ("POST", "/api/v2/search/index-directory", {"json": {"path": "/docs"}}),
+    ("DELETE", "/api/v2/search/index-directory", {"json": {"path": "/docs"}}),
+    ("GET", "/api/v2/search/indexed-dirs", {}),
+    ("POST", "/api/v2/search/indexing-mode", {"json": {"mode": "on"}}),
+]
+
+
+async def mutation_responses(client, headers):
+    return [
+        await client.request(method, route, headers=headers, **kwargs)
+        for method, route, kwargs in _MUTATIONS
+    ]
+
 
 @pytest_asyncio.fixture
 async def host_client(monkeypatch):
@@ -54,6 +70,42 @@ async def host_client(monkeypatch):
                 await context.abort(grpc.StatusCode.PERMISSION_DENIED, "Diagnostic access denied")
             calls.append(("Stats", user, request))
             return search_pb2.StatsResponse(fts_doc_count=7, fts_path_count=3)
+
+        async def manage(self, method, request, context):
+            user = await self.authorize(context)
+            if user == "bob":
+                await context.abort(grpc.StatusCode.PERMISSION_DENIED, "Management access denied")
+            calls.append((method, user, request))
+
+        async def IndexDocuments(self, request, context):
+            await self.manage("IndexDocuments", request, context)
+            return search_pb2.IndexDocumentsResponse(
+                indexed_count=len(request.documents), index_seq=7
+            )
+
+        async def NotifyFileChange(self, request, context):
+            await self.manage("NotifyFileChange", request, context)
+            return search_pb2.NotifyFileChangeResponse(status="accepted", index_seq=8)
+
+        async def AddIndexedDirectory(self, request, context):
+            await self.manage("AddIndexedDirectory", request, context)
+            return search_pb2.AddIndexedDirectoryResponse(added=True)
+
+        async def RemoveIndexedDirectory(self, request, context):
+            await self.manage("RemoveIndexedDirectory", request, context)
+            return search_pb2.RemoveIndexedDirectoryResponse(removed=True)
+
+        async def ListIndexedDirectories(self, request, context):
+            await self.manage("ListIndexedDirectories", request, context)
+            return search_pb2.ListIndexedDirectoriesResponse()
+
+        async def ListZoneIndexingModes(self, request, context):
+            await self.manage("ListZoneIndexingModes", request, context)
+            return search_pb2.ListZoneIndexingModesResponse()
+
+        async def SetZoneIndexingMode(self, request, context):
+            await self.manage("SetZoneIndexingMode", request, context)
+            return search_pb2.SetZoneIndexingModeResponse()
 
         async def Query(self, request, context):
             user = await self.authorize(context)
@@ -234,7 +286,43 @@ async def test_host_rpc_failures_keep_their_http_category(host_client, code, sta
             headers={"Authorization": "sk-alice"},
         ),
     ]
-    assert [response.status_code for response in responses] == [status] * 4
+    responses += await mutation_responses(client, {"Authorization": "Bearer sk-alice"})
+    assert [response.status_code for response in responses] == [status] * len(responses)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "key,status", [("sk-alice", 200), ("sk-bob", 403), (None, 401), ("sk-invalid", 401)]
+)
+async def test_host_authorizes_management_without_python_policy(host_client, key, status):
+    client, calls, _, _ = host_client
+    headers = {"Authorization": f"Bearer {key}"} if key is not None else {}
+    responses = await mutation_responses(client, headers)
+    assert [response.status_code for response in responses] == [status] * len(responses)
+    if status == 200:
+        assert responses[0].json()["count"] == 1
+        assert responses[0].json()["indexSeq"] == 7
+        assert all(user == "alice" for _, user, _ in calls)
+        assert all(
+            request.zone_id == "sharedzone"
+            for _, _, request in calls
+            if hasattr(request, "zone_id")
+        )
+    else:
+        assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_revoked_host_key_rejects_management_with_cached_identity(host_client):
+    client, _, state, app = host_client
+    headers = {"Authorization": "Bearer sk-alice"}
+    assert all(
+        response.status_code == 200 for response in await mutation_responses(client, headers)
+    )
+    state.revoked = True
+    responses = await mutation_responses(client, headers)
+    assert [response.status_code for response in responses] == [401] * len(responses)
+    assert app.state.search_index_inflight == 0
 
 
 @pytest.mark.asyncio

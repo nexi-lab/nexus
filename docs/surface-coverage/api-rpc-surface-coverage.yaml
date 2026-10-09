@@ -11386,7 +11386,7 @@ operations:
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:37
     http:
       name: POST /api/v2/search/glob
-      source: src/nexus/server/api/v2/routers/search.py:1333
+      source: src/nexus/server/api/v2/routers/search.py:1335
     mcp:
       name: nexus_glob
       source: src/nexus/config/tool_profiles.yaml:1
@@ -11417,7 +11417,7 @@ operations:
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:42
     http:
       name: POST /api/v2/search/grep
-      source: src/nexus/server/api/v2/routers/search.py:1194
+      source: src/nexus/server/api/v2/routers/search.py:1196
     mcp:
       name: nexus_grep
       source: src/nexus/config/tool_profiles.yaml:1
@@ -11442,7 +11442,7 @@ operations:
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:122
     http:
       name: GET /api/v2/search/health
-      source: src/nexus/server/api/v2/routers/search.py:124
+      source: src/nexus/server/api/v2/routers/search.py:126
   profiles:
     lite: supported
     sandbox: supported
@@ -11465,7 +11465,7 @@ operations:
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:52
     http:
       name: POST /api/v2/search/index
-      source: src/nexus/server/api/v2/routers/search.py:1403
+      source: src/nexus/server/api/v2/routers/search.py:1405
   profiles:
     lite: supported
     sandbox: supported
@@ -11482,7 +11482,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/index-directory
-      source: src/nexus/server/api/v2/routers/_search_indexed_dirs.py:74
+      source: src/nexus/server/api/v2/routers/_search_indexed_dirs.py:22
   profiles:
     lite: supported
     sandbox: supported
@@ -11516,7 +11516,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/search/indexed-dirs
-      source: src/nexus/server/api/v2/routers/_search_indexed_dirs.py:143
+      source: src/nexus/server/api/v2/routers/_search_indexed_dirs.py:89
   profiles:
     lite: supported
     sandbox: supported
@@ -11533,7 +11533,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/indexing-mode
-      source: src/nexus/server/api/v2/routers/_search_indexed_dirs.py:174
+      source: src/nexus/server/api/v2/routers/_search_indexed_dirs.py:114
   profiles:
     lite: supported
     sandbox: supported
@@ -11678,7 +11678,7 @@ operations:
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:47
     http:
       name: GET /api/v2/search/query
-      source: src/nexus/server/api/v2/routers/search.py:165
+      source: src/nexus/server/api/v2/routers/search.py:167
   profiles:
     lite: supported
     sandbox: supported
@@ -11695,7 +11695,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/query/batch
-      source: src/nexus/server/api/v2/routers/search.py:611
+      source: src/nexus/server/api/v2/routers/search.py:613
   profiles:
     lite: supported
     sandbox: supported
@@ -11715,7 +11715,7 @@ operations:
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:57
     http:
       name: POST /api/v2/search/refresh
-      source: src/nexus/server/api/v2/routers/search.py:1588
+      source: src/nexus/server/api/v2/routers/search.py:1555
   profiles:
     lite: supported
     sandbox: supported
@@ -11789,7 +11789,7 @@ operations:
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:127
     http:
       name: GET /api/v2/search/stats
-      source: src/nexus/server/api/v2/routers/search.py:148
+      source: src/nexus/server/api/v2/routers/search.py:150
   profiles:
     lite: supported
     sandbox: supported

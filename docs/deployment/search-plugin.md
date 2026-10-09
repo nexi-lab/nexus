@@ -60,7 +60,11 @@ Use Search `Health` to check readiness separately.
 
 The host checks its zone catalog without materializing a Raft replica. An
 unknown zone returns `NOT_FOUND`; an absent Search plugin returns
-`UNIMPLEMENTED`. Capabilities are runtime state and have no persistent store.
+`UNIMPLEMENTED`. An embedding dimension beyond the existing RPC's int32
+range returns `FAILED_PRECONDITION`. Incomplete or invalid remote embedding
+configuration advertises keyword search only.
+
+Capabilities are runtime state and have no persistent store.
 Python zone routes start with unknown capabilities; failed peer discovery
 clears any previous snapshot and propagates the error.
 

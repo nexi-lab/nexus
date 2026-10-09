@@ -46,7 +46,10 @@ def _error(exc: ServiceError) -> HTTPException:
 def _operation(svc: Any, result: Any) -> OperationView:
     # M-2: the contract requires created_at/updated_at on every 202 —
     # from_operation fills them (and the action) from the persisted row
-    return OperationView.from_operation(svc.get_operation(result.operation_id))
+    op = svc.get_operation(result.operation_id)
+    if op is None:  # pragma: no cover — the row was committed in this request
+        raise HTTPException(status_code=500, detail="operation row missing after write")
+    return OperationView.from_operation(op)
 
 
 @router.post("/zones/{zone_id}/joins", status_code=202)

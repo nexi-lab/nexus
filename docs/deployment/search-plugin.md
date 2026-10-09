@@ -36,6 +36,13 @@ workspace belongs to its own Kernel; a VM broker does not gain access to that
 workspace by hosting Search. Preserve the existing agent or delegated user
 identity and pass its credential at each request boundary.
 
+Certificate agents use SearchService on the same mTLS channel as VFS. Their
+certificate establishes identity without a zone grant; the Kernel's installed
+file policy, including containment and ReBAC, determines access. A requested
+Search zone does not grant access to its files. User and service API keys still
+require a read grant for that zone. An explicit invalid bearer token fails
+authentication even when the channel carries a valid agent certificate.
+
 An omitted `files` selection permits directory traversal and requires root
 read access. A supplied selection is bounded, validated and authorized per
 file; `files=[]` returns no results. Search rechecks live permissions on the
@@ -217,9 +224,9 @@ that made the batch visible. `GET /api/v2/search/stats` reports:
 |---|---|
 | `last_index_seq` | Sequence of the last committed index mutation. `last_index_seq >= <your index_seq>` means your batch is served. |
 | `pending` | Documents accepted by in-flight `search/index` / write+index calls and not yet returned. |
-| `last_successful_index_at` | ISO-8601 UTC instant of the last committed mutation (`null` = never). `last_index_refresh` carries the same instant as float epoch seconds for pre-P12 pollers. |
+| `last_successful_index_at` | ISO-8601 UTC instant of the last committed mutation (`null` = never). `last_index_refresh` carries the same instant as float epoch seconds. |
 | `indexing_in_progress` | In-flight `Index` / `IndexDocuments` / `Refresh` operations (#4623). |
-| `zone_id` | The zone these counters describe: the caller's token zone, or the root zone for a token-less poller. |
+| `zone_id` | The zone these counters describe, selected for the authenticated caller. Statistics require management authority. |
 
 Stall signature — the #4725 class, index acknowledged but nothing
 served: `pending > 0` or `indexing_in_progress > 0` for longer than one

@@ -3867,7 +3867,7 @@ operations:
   transports:
     cli:
       name: nexus doctor remote
-      source: src/nexus/cli/commands/doctor.py:817
+      source: src/nexus/cli/commands/doctor.py:799
   profiles:
     lite: unverified
     sandbox: unverified
@@ -7815,40 +7815,6 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
-- id: mobile.detect
-  module: uncategorized
-  summary: ''
-  transports:
-    http:
-      name: GET /api/v2/mobile/detect
-      source: src/nexus/server/api/v2/routers/mobile_search.py:66
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/e2e/self_contained/test_auth_enforcement_e2e.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
-  gap_issue: null
-  owning_issue: 4135
-- id: mobile.download
-  module: uncategorized
-  summary: ''
-  transports:
-    http:
-      name: POST /api/v2/mobile/download
-      source: src/nexus/server/api/v2/routers/mobile_search.py:132
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/e2e/self_contained/test_auth_enforcement_e2e.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
-  gap_issue: null
-  owning_issue: 4135
 - id: mount.connectors
   module: mount
   summary: CLI command group for discovering connector types before mounting external sources.
@@ -13349,7 +13315,7 @@ operations:
   transports:
     cli:
       name: nexus doctor
-      source: src/nexus/cli/commands/doctor.py:598
+      source: src/nexus/cli/commands/doctor.py:580
   profiles:
     lite: supported
     sandbox: supported
@@ -17353,22 +17319,6 @@ parity_warnings:
   missing:
   - grpc_typed
   - http
-  - mcp
-  - sdk
-- operation_id: mobile.detect
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
-- operation_id: mobile.download
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
   - mcp
   - sdk
 - operation_id: mount.connectors

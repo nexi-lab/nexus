@@ -16,12 +16,11 @@ Provides search daemon endpoints:
 - POST /api/v2/search/parked/discard    -- discard parked events (#4337, admin)
 - POST /api/v2/search/consumers/{name}/skip-to -- force checkpoint advance (#4337, admin)
 
-Discovery returns results authorized by the Rust Search host, then applies
-HTTP pagination and response shaping.
+Search returns results authorized by the Rust Search host. HTTP adapters
+forward caller credentials and shape those results.
 """
 
 import asyncio
-import inspect
 import logging
 import os
 import time
@@ -34,9 +33,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from nexus.bricks.search.results import BACKEND_LEG_TIMING_KEYS as _BACKEND_LEG_TIMING_KEYS
 from nexus.contracts.search_types import BatchQueryFailure, SearchRequest, split_path_scope
 from nexus.lib.pagination import build_paginated_list_response
-from nexus.lib.rebac_filter import apply_rebac_filter as _apply_rebac_filter
-from nexus.lib.rebac_filter import compute_rebac_fetch_limit as _compute_rebac_fetch_limit
-from nexus.lib.rebac_filter import rebac_denial_stats as _rebac_denial_stats
 from nexus.runtime.zone_resolution import target_zone_for_context
 from nexus.server.api.v2._revision_fence import RevisionFence, get_revision_fence
 from nexus.server.api.v2._zone_scoped_fs import scope_rest_path
@@ -64,30 +60,6 @@ from nexus.server.zone_execution import run_zone_scoped
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/search", tags=["search"])
-
-# =============================================================================
-# Constants (#3701 review — Issue 16A)
-# =============================================================================
-
-# When a permission enforcer is active we over-fetch to compensate for
-# results that will be stripped during ReBAC filtering. 3x is the legacy
-# value chosen empirically when #2056 landed. Beware: when the denial rate
-# exceeds ~66% this factor is insufficient and the response reports
-# ``truncated_by_permissions`` so callers can detect the silent undercount.
-
-# ReBAC constants and helpers are now in nexus.lib.rebac_filter (#3731).
-
-# =============================================================================
-# Dependencies
-# =============================================================================
-
-
-def _get_record_store(request: Request) -> Any:
-    """Get RecordStore from app.state."""
-    store = getattr(request.app.state, "record_store", None)
-    if store is None:
-        raise HTTPException(status_code=503, detail="Record store not available")
-    return store
 
 
 def _add_backend_leg_timings(
@@ -125,20 +97,6 @@ def _get_optional_search_daemon(request: Request) -> Any:
     return getattr(request.app.state, "search_daemon", None)
 
 
-def _get_async_read_session_factory(request: Request) -> Any:
-    """Get async read session factory for read-only operations."""
-    factory = getattr(request.app.state, "async_read_session_factory", None)
-    if factory is not None:
-        return factory
-    factory = getattr(request.app.state, "async_session_factory", None)
-    if factory is None:
-        raise HTTPException(
-            status_code=503,
-            detail="Async session factory not available (RecordStore not configured)",
-        )
-    return factory
-
-
 def _get_zone_registry(request: Request) -> Any | None:
     return getattr(request.app.state, "zone_registry", None)
 
@@ -149,8 +107,6 @@ def _auth_target_zone(auth_result: dict[str, Any]) -> str | None:
     zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
     return zone_id if zone_id != ROOT_ZONE_ID else None
 
-
-# ReBAC filtering helpers are in nexus.lib.rebac_filter (#3731).
 
 # Response shaping lives in ``_search_serialize`` (#3701 Issue 5A; extracted
 # at the 2000-line router cap during the #4545 rebase). Re-exported here so
@@ -290,8 +246,6 @@ async def search_query(
     federated: bool = Query(False, description="Cross-zone federated search (Issue #3147)"),
     auth_result: dict[str, Any] = Depends(require_auth),
     search_daemon: Any = Depends(_get_search_daemon),
-    async_session_factory: Any = Depends(_get_async_read_session_factory),
-    record_store: Any = Depends(_get_record_store),
     revision_fence: RevisionFence = Depends(get_revision_fence),
 ) -> dict[str, Any]:
     """Execute a fast search query using the search daemon."""
@@ -374,6 +328,9 @@ async def search_query(
             detail="Multiple path prefixes are not supported for federated or graph_mode search",
         )
 
+    if graph_mode != "none":
+        raise HTTPException(status_code=501, detail="Graph search is not available")
+
     target_zone = zone_id if zone_id != ROOT_ZONE_ID else None
 
     # Token zone allow-list for the federated path (#3785). An EXPLICIT
@@ -417,15 +374,11 @@ async def search_query(
             alpha=alpha,
             fusion_method=fusion,
             rrf_k=rrf_k,
-            graph_mode=graph_mode,
             expand=expand,
             recency=recency,
             recency_weight=recency_weight,
             recency_half_life_days=recency_half_life_days,
-            auth_result=auth_result,
             search_daemon=search_daemon,
-            async_session_factory=async_session_factory,
-            record_store=record_store,
             zone_id=zone_id,
             start_time=start_time,
         )
@@ -539,128 +492,18 @@ async def _handle_single_zone_search(
     recency_weight: float | None = None,
     recency_half_life_days: float | None = None,
     path_filters: tuple[str, ...] = (),
-    graph_mode: str,
     expand: str,
-    auth_result: dict[str, Any],
     search_daemon: Any,
-    async_session_factory: Any,
-    record_store: Any,
     zone_id: str,
     start_time: float,
 ) -> dict[str, Any]:
-    """Handle the non-federated search branch."""
-    from nexus.bricks.search.query_router import QueryRouter
-
-    # --- Standard single-zone search path ---
-    # ReBAC file-level permission enforcer (Decision #17)
-    permission_enforcer = getattr(request.app.state, "permission_enforcer", None)
-    op_context = get_operation_context(auth_result)
-
-    routing_info: dict[str, Any] | None = None
-    effective_graph_mode = graph_mode
-    effective_limit = limit
-
-    if graph_mode == "auto":
-        query_router = QueryRouter()
-        routed = query_router.route(q, base_limit=limit)
-        effective_graph_mode = routed.graph_mode
-        effective_limit = routed.adjusted_limit
-        routing_info = routed.to_dict()
-        logger.info(
-            "[QUERY-ROUTER] %s, graph_mode=%s, limit=%s",
-            routed.reasoning,
-            effective_graph_mode,
-            effective_limit,
-        )
-
-    # Coerce graph_mode to 'none' when the txtai backend has graph
-    # disabled (the default — see DaemonConfig.txtai_graph). Without
-    # this, an explicit graph_mode=low|high|dual|auto request would
-    # silently fall through to ``graph_search`` which returns ``[]``
-    # for empty graph state, regressing to zero results instead of
-    # ordinary hybrid search. We log a warning so operators can flip
-    # ``NEXUS_TXTAI_GRAPH=true`` if they actually need graph queries.
-    _txtai_graph_enabled = bool(
-        getattr(getattr(search_daemon, "config", None), "txtai_graph", False)
-    )
-    if effective_graph_mode != "none" and not _txtai_graph_enabled:
-        logger.info(
-            "graph_mode=%s requested but txtai graph is disabled; "
-            "falling back to graph_mode=none. Set NEXUS_TXTAI_GRAPH=true "
-            "to enable graph-augmented search.",
-            effective_graph_mode,
-        )
-        effective_graph_mode = "none"
-
-    # Over-fetch when permission filtering is active to compensate for
-    # filtered results (#3701 review: Issue 16A — replaces the 3x magic
-    # number with a named constant and adds silent-undercount detection).
-    fetch_limit = _compute_rebac_fetch_limit(
-        effective_limit, has_enforcer=permission_enforcer is not None
-    )
-
+    """Serialize the owning host's authorized query response."""
     try:
-        filter_ms = 0.0
-
-        if effective_graph_mode != "none":
-            from nexus.bricks.search.graph_search_service import graph_enhanced_search
-
-            results = await graph_enhanced_search(
-                query=q,
-                search_type=search_type,
-                limit=fetch_limit,
-                path_filter=path_filter,
-                alpha=alpha,
-                graph_mode=effective_graph_mode,
-                record_store=record_store,
-                async_session_factory=async_session_factory,
-                search_daemon=search_daemon,
-                zone_id=zone_id,
-            )
-
-            # ReBAC file-level filtering (Decision #17)
-            pre_filter_count = len(results)
-            results, filter_ms = _apply_rebac_filter(
-                results,
-                permission_enforcer,
-                auth_result,
-                zone_id,
-                operation_context=op_context,
-            )
-            post_filter_count = len(results)
-            results = results[:effective_limit]
-
-            latency_ms = (time.perf_counter() - start_time) * 1000
-
-            graph_latency_breakdown = {
-                "total_ms": round(latency_ms, 2),
-                "permission_filter_ms": round(filter_ms, 2),
-            }
-            _bind_search_phase_timings(graph_latency_breakdown)
-
-            response: dict[str, Any] = {
-                "query": q,
-                "search_type": search_type,
-                "graph_mode": effective_graph_mode,
-                "results": [_serialize_search_result(r) for r in results],
-                "total": len(results),
-                "latency_ms": round(latency_ms, 2),
-                "latency_breakdown": graph_latency_breakdown,
-                **_rebac_denial_stats(pre_filter_count, post_filter_count, effective_limit),
-            }
-            if routing_info:
-                response["routing"] = routing_info
-            return response
-
-        # #4620: stamp the zone's path_contexts weight rows onto the
-        # request — the plugin applies them post-fusion (longest-prefix
-        # multiplier) and keys its query cache on them.
         path_prefix_boosts = await _resolve_path_prefix_boosts(request, zone_id)
-
         search_request = SearchRequest(
             query=q,
             search_type=search_type,
-            limit=fetch_limit,
+            limit=limit,
             path_filter=path_filter,
             path_filters=path_filters,
             alpha=alpha,
@@ -673,66 +516,16 @@ async def _handle_single_zone_search(
             recency_half_life_days=recency_half_life_days,
             path_prefix_boosts=path_prefix_boosts or None,
         )
-        # Review R4: preserve the plugin's per-query error so a
-        # degraded backend is distinguishable from "no matches" — the
-        # additive ``error`` field mirrors the batch endpoint's
-        # per-entry contract (#4612).  ``search_with_error`` is the
-        # P12 proxy's surface; mocked/legacy daemons without it keep
-        # the plain degrade-to-empty path.
-        backend_error: str | None = None
-        search_with_error = getattr(search_daemon, "search_with_error", None)
-        # Bound-method guard (review R5): Magic/AsyncMock daemons
-        # fabricate this attribute (AsyncMock's even passes
-        # iscoroutinefunction), so only a REAL class-defined coroutine
-        # method — bound, with __func__ — takes the error-preserving
-        # path; every mock shape falls back to plain search().
-        if search_with_error is not None and inspect.iscoroutinefunction(
-            getattr(search_with_error, "__func__", None)
-        ):
-            results, backend_error = await search_with_error(search_request)
-        else:
-            results = await search_daemon.search(search_request)
-
-        # Prefer the request-local snapshot carried by SearchDaemon results.
-        # Fall back to the legacy daemon field for older/mocked search daemons.
+        results, backend_error = await search_daemon.search_with_error(search_request)
         daemon_timing = getattr(results, "search_timing", None)
-        if daemon_timing is None:
-            daemon_timing = getattr(search_daemon, "last_search_timing", {})
-        backend_ms = daemon_timing.get("backend_ms", 0.0)
-        rerank_ms = daemon_timing.get("rerank_ms", 0.0)
-
-        # Capture request-level degradation BEFORE the ReBAC filter — it
-        # returns a plain list, dropping the SearchResultList flag. The
-        # list-level flag matters for EMPTY degraded responses, where no
-        # per-result marker exists (#4541 review round 8).
         semantic_degraded_flag = bool(getattr(results, "semantic_degraded", False)) or any(
             getattr(r, "semantic_degraded", None) for r in results
         )
-
-        # ReBAC file-level filtering (Decision #17)
-        pre_filter_count = len(results)
-        results, filter_ms = _apply_rebac_filter(
-            results,
-            permission_enforcer,
-            auth_result,
-            zone_id,
-            operation_context=op_context,
-        )
-        post_filter_count = len(results)
-        results = results[:effective_limit]
-
         latency_ms = (time.perf_counter() - start_time) * 1000
-
-        latency_breakdown = {
-            "total_ms": round(latency_ms, 2),
-            "backend_ms": round(backend_ms, 2),
-            "rerank_ms": round(rerank_ms, 2),
-            "permission_filter_ms": round(filter_ms, 2),
-        }
+        latency_breakdown = {"total_ms": round(latency_ms, 2)}
         _add_backend_leg_timings(latency_breakdown, daemon_timing)
         _bind_search_phase_timings(latency_breakdown)
-
-        response = {
+        response: dict[str, Any] = {
             "query": q,
             "search_type": search_type,
             "graph_mode": "none",
@@ -740,19 +533,12 @@ async def _handle_single_zone_search(
             "total": len(results),
             "latency_ms": round(latency_ms, 2),
             "latency_breakdown": latency_breakdown,
-            **_rebac_denial_stats(pre_filter_count, post_filter_count, effective_limit),
         }
-        # Truthy-only so default responses stay byte-identical (#3778 shape).
         if semantic_degraded_flag:
             response["semantic_degraded"] = True
-        # Additive per-query backend error (review R4) — absence means
-        # the result set is genuine, mirroring the batch contract.
         if backend_error:
             response["error"] = backend_error
-        if routing_info:
-            response["routing"] = routing_info
         return response
-
     except grpc.RpcError as e:
         raise grpc_http_exception(e) from e
     except Exception as e:
@@ -802,7 +588,6 @@ async def _handle_federated_search(
     subject = (subject_type, subject_id)
 
     registry = getattr(request.app.state, "zone_search_registry", None)
-    per_file_rebac = getattr(request.app.state, "federated_per_file_rebac", True)
 
     # #4620: each local federated leg gets its zone's path-context tier
     # weights, resolved through the same cache the single-zone path uses.
@@ -813,7 +598,6 @@ async def _handle_federated_search(
         daemon=search_daemon,
         rebac=rebac,
         registry=registry,
-        enable_per_file_rebac=per_file_rebac,
         path_prefix_boosts_resolver=_boosts_for_zone,
     )
     fed_response = await dispatcher.search(
@@ -886,10 +670,8 @@ async def search_query_batch(
     genuine); batch-level auth/read-gate/daemon-init failures still fail
     the whole request.
 
-    Applies the same ReBAC file-level permission filter as ``/query``
-    (Decision #17), over-fetching via ``_compute_rebac_fetch_limit`` and
-    trimming to each query's requested ``limit`` after filtering. The
-    Rust plugin runs the inner searches concurrently
+    The host authorizes every inner query with the request's credential.
+    Each query forwards its requested limit. The Rust plugin runs searches concurrently
     (``NEXUS_SEARCH_BATCH_CONCURRENCY``, default 4, clamped 1..=16) and
     pre-warms its query-embedding cache for duplicate embedding-needing
     query texts, so a fan-out batch embeds each unique text once (#4611).
@@ -947,10 +729,6 @@ async def search_query_batch(
     )
     revision_fence.stamp(response)
 
-    # Same ReBAC hook the single-query endpoint uses.
-    permission_enforcer = getattr(request.app.state, "permission_enforcer", None)
-    op_context = get_operation_context(auth_result)
-
     parsed = [parse_batch_query_spec(raw) for raw in raw_queries]
     valid: list[tuple[int, ParsedBatchSpec]] = [
         (i, p) for i, p in enumerate(parsed) if isinstance(p, ParsedBatchSpec)
@@ -967,9 +745,7 @@ async def search_query_batch(
         SearchRequest(
             query=spec.query,
             search_type=spec.search_type,
-            limit=_compute_rebac_fetch_limit(
-                spec.limit, has_enforcer=permission_enforcer is not None
-            ),
+            limit=spec.limit,
             path_filter=spec.path_filter,
             path_filters=spec.path_filters,
             alpha=spec.alpha,
@@ -986,14 +762,16 @@ async def search_query_batch(
     ]
 
     t0 = time.perf_counter()
-    raw_results = await search_daemon.batch_search(fetch_requests) if fetch_requests else []
+    try:
+        raw_results = await search_daemon.batch_search(fetch_requests) if fetch_requests else []
+    except grpc.RpcError as e:
+        raise grpc_http_exception(e) from e
     elapsed_ms = (time.perf_counter() - t0) * 1000
 
     result_by_index: dict[int, Any] = {
         i: result for (i, _), result in zip(valid, raw_results, strict=True)
     }
 
-    filter_ms_total = 0.0
     response_queries: list[dict[str, Any]] = []
     for i, p in enumerate(parsed):
         if isinstance(p, str):
@@ -1012,21 +790,11 @@ async def search_query_batch(
                 {"query": p.query, "results": [], "total": 0, "error": inner.error}
             )
             continue
-        # File-level ReBAC filtering (Decision #17) — same enforcement as /query.
-        filtered, filter_ms = _apply_rebac_filter(
-            inner,
-            permission_enforcer,
-            auth_result,
-            zone_id,
-            operation_context=op_context,
-        )
-        filter_ms_total += filter_ms
-        trimmed = filtered[: p.limit]
         response_queries.append(
             {
                 "query": p.query,
-                "results": [_serialize_search_result(r) for r in trimmed],
-                "total": len(trimmed),
+                "results": [_serialize_search_result(r) for r in inner],
+                "total": len(inner),
             }
         )
 
@@ -1035,7 +803,6 @@ async def search_query_batch(
         "total_queries": len(raw_queries),
         "latency_ms": round(elapsed_ms, 2),
         "avg_per_query_ms": round(elapsed_ms / max(len(raw_queries), 1), 2),
-        "permission_filter_ms": round(filter_ms_total, 2),
     }
 
 

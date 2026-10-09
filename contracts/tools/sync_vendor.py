@@ -226,7 +226,7 @@ def main() -> int:
             # first divergent region — turns "stale" into an actionable diff
             # instead of a guessing game across checkouts
             for i, (a, b) in enumerate(
-                zip(manifest_current or b"", manifest_bytes)
+                zip(manifest_current or b"", manifest_bytes, strict=False)
             ):
                 if a != b:
                     lo = max(0, i - 120)

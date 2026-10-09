@@ -124,7 +124,6 @@ def live_search_app(
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
     monkeypatch.setenv("NEXUS_ENFORCE_PERMISSIONS", "false")
     monkeypatch.setenv("NEXUS_SEARCH_DAEMON", "true")
-    monkeypatch.setenv("NEXUS_TXTAI_USE_API_EMBEDDINGS", "false")
     monkeypatch.setenv("NEXUS_ENABLE_WRITE_BUFFER", "false")
     monkeypatch.setenv("NEXUS_ACTIVITY_ENABLED", "0")
     monkeypatch.setenv("NEXUS_ACTIVITY_DB_PATH", str(tmp_path / "activity.db"))

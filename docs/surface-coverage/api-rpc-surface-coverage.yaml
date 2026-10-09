@@ -1102,7 +1102,7 @@ operations:
   transports:
     cli:
       name: nexus logs
-      source: src/nexus/cli/commands/stack.py:1914
+      source: src/nexus/cli/commands/stack.py:1889
   profiles:
     lite: supported
     sandbox: supported
@@ -7841,7 +7841,7 @@ operations:
   transports:
     cli:
       name: nexus down
-      source: src/nexus/cli/commands/stack.py:1860
+      source: src/nexus/cli/commands/stack.py:1835
   profiles:
     lite: supported
     sandbox: supported
@@ -7877,7 +7877,7 @@ operations:
   transports:
     cli:
       name: nexus restart
-      source: src/nexus/cli/commands/stack.py:1942
+      source: src/nexus/cli/commands/stack.py:1917
   profiles:
     lite: supported
     sandbox: supported
@@ -7894,7 +7894,7 @@ operations:
   transports:
     cli:
       name: nexus start
-      source: src/nexus/cli/commands/stack.py:2163
+      source: src/nexus/cli/commands/stack.py:2138
   profiles:
     lite: supported
     sandbox: supported
@@ -7911,7 +7911,7 @@ operations:
   transports:
     cli:
       name: nexus stop
-      source: src/nexus/cli/commands/stack.py:2131
+      source: src/nexus/cli/commands/stack.py:2106
   profiles:
     lite: supported
     sandbox: supported
@@ -7930,7 +7930,7 @@ operations:
   transports:
     cli:
       name: nexus up
-      source: src/nexus/cli/commands/stack.py:859
+      source: src/nexus/cli/commands/stack.py:835
   profiles:
     lite: supported
     sandbox: supported
@@ -13521,7 +13521,7 @@ operations:
   transports:
     cli:
       name: nexus upgrade
-      source: src/nexus/cli/commands/stack.py:2002
+      source: src/nexus/cli/commands/stack.py:1977
   profiles:
     lite: supported
     sandbox: supported

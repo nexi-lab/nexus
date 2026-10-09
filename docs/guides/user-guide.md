@@ -106,10 +106,9 @@ develop`.
 The base package already includes the main CLI, server, remote client, LLM,
 MCP, and most storage/search plumbing. Add extras only when you need them.
 
-- Semantic search with remote embedding providers: `pip install "nexus-ai-fs[semantic-search-remote]"`
+- Semantic search: enable the Rust Search plugin on `nexusd-cluster`; the Python client uses the core package. See [Search deployment](../deployment/search-plugin.md).
 - E2B sandbox provider: `pip install "nexus-ai-fs[e2b]"`
 - Docker sandbox provider: `pip install "nexus-ai-fs[docker]"`
-- FUSE support: `pip install "nexus-ai-fs[fuse]"`
 
 ### Verify the install
 

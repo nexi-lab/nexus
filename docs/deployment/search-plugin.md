@@ -67,6 +67,13 @@ The current Search host reports `has_graph=false`. Explicit Python HTTP
 uses the ordinary keyword, semantic or hybrid pipeline. Batch entries requesting
 Graph search return a per-entry error.
 
+`GET /api/v2/search/health` returns the host's `status`, `detail` and writer
+liveness fields: `fts_writer_faults`, `fts_writer_unavailable`,
+`last_verified_commit_age_ms` and `dispatch_panics`. `initialized` describes
+the local transport; it can remain true while the host reports `unavailable`.
+`backend` identifies the configured transport as `rust-plugin`. A disabled
+transport reports `status=disabled`, `initialized=false` and `backend=null`.
+
 ## Runtime capability discovery
 
 The peer `ZoneApiService.GetSearchCapabilities` RPC queries the currently

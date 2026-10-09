@@ -123,52 +123,26 @@ from nexus.server.api.v2.routers._search_serialize import (  # noqa: E402
 
 @router.get("/health")
 async def search_daemon_health(
-    request: Request,
     search_daemon: Any = Depends(_get_optional_search_daemon),
 ) -> dict[str, Any]:
-    """Health check for the search daemon.
-
-    #4617: the P12 pivot reduced this to the plugin's raw
-    ``{status, detail}`` pair, breaking health pollers keyed on the
-    pre-pivot fields.  Restore the contract keys with honest post-P12
-    values — ``backend`` is now ``rust-plugin``, ``bm25_index_loaded``
-    means the plugin's FTS leg answers, ``db_pool_ready`` reports the
-    server's own async session factory (the daemon no longer owns a
-    pool), and ``zoekt_available`` is always False (retired from this
-    path).  Absent keys break consumers; changed values don't.
-    """
-    db_pool_ready = getattr(request.app.state, "async_session_factory", None) is not None
+    """Report host health and the local transport's initialization state."""
     if not search_daemon:
         return {
             "status": "disabled",
-            "daemon_enabled": False,
-            "message": "Search daemon unavailable (set NEXUS_SEARCH_DAEMON=false to disable)",
+            "detail": "Search daemon is not configured",
             "initialized": False,
-            "daemon_initialized": False,
             "backend": None,
-            "bm25_index_loaded": False,
-            "db_pool_ready": db_pool_ready,
-            "zoekt_available": False,
         }
     try:
         health: dict[str, Any] = await search_daemon.get_health()
     except Exception as exc:  # plugin died after the boot probe — health must not 500
         logger.warning("search health probe failed: %s", exc)
         health = {"status": "unavailable", "detail": f"{type(exc).__name__}: {exc}"}
-    status = health.get("status", "unavailable")
-    initialized = bool(getattr(search_daemon, "is_initialized", False))
-    health.update(
-        {
-            "initialized": initialized,
-            "daemon_initialized": initialized,
-            "backend": "rust-plugin",
-            # "degraded" = semantic leg missing, keyword still answers.
-            "bm25_index_loaded": status in ("healthy", "degraded"),
-            "db_pool_ready": db_pool_ready,
-            "zoekt_available": False,
-        }
-    )
-    return health
+    return {
+        **health,
+        "initialized": bool(search_daemon.is_initialized),
+        "backend": "rust-plugin",
+    }
 
 
 @router.get("/stats")

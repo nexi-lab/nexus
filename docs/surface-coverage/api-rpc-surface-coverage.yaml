@@ -1859,7 +1859,7 @@ operations:
   owning_issue: 4133
 - id: call.rpc
   module: uncategorized
-  summary: ''
+  summary: "Generic Call RPC bridge \u2014 search-side discovery (glob/grep) dispatches through it"
   transports:
     sdk:
       name: KernelClient.call_rpc
@@ -1869,11 +1869,11 @@ operations:
     sandbox: supported
     full: supported
   usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  correctness_test: tests/e2e/self_contained/test_zone_visibility_matrix_e2e.py:1
+  perf_class: control
+  perf_link: tests/benchmarks/bench_read_write_overhead.py:1
   gap_issue: null
-  owning_issue: null
+  owning_issue: 1326
 - id: catalog.aspects
   module: catalog
   summary: ''

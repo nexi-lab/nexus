@@ -101,7 +101,6 @@ _ADD_COMMAND: dict[str, tuple[str, str]] = {
     "delegation": ("delegation", "delegation"),
     "scheduler_cli": ("scheduler", "scheduler"),
     # "share" removed: /api/v2/share-links endpoints not implemented server-side
-    "graph_cli": ("graph", "graph"),
     "hub": ("hub", "hub"),
     "conflicts": ("conflicts", "conflicts"),
     "manifest_cli": ("manifest", "manifest"),

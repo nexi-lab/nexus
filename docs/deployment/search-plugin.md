@@ -49,6 +49,21 @@ Rust HTTP discovery uses the canonical VFS `root_path` to select its mount
 and zone. An optional `zone_id` must match that mount; a mismatch returns
 HTTP 400. The revision fence uses the same zone as the gRPC host.
 
+## Runtime capability discovery
+
+The peer `ZoneApiService.GetSearchCapabilities` RPC queries the currently
+loaded Search plugin. It reports configured search modes and the embedding
+vector-space tag and dimension without opening indices, loading a model or
+calling an embedding endpoint. A local model's dimension remains zero until
+its first inference probe; remote configuration supplies an explicit dimension.
+Use Search `Health` to check readiness separately.
+
+The host checks its zone catalog without materializing a Raft replica. An
+unknown zone returns `NOT_FOUND`; an absent Search plugin returns
+`UNIMPLEMENTED`. Capabilities are runtime state and have no persistent store.
+Python zone routes start with unknown capabilities; failed peer discovery
+clears any previous snapshot and propagates the error.
+
 ## Required processes for the Python server
 
 | Process | Image | Role |

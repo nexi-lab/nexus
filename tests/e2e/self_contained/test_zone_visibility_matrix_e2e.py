@@ -1,26 +1,10 @@
 """Zone visibility matrix — acceptance test for nexi-lab/nexus#4740.
 
-Real kernel-backed NexusFS + the real FastAPI app + real API-key auth
-(``DatabaseAPIKeyAuth`` for the tenant/admin keys, chained with a
-``StaticAPIKeyAuth`` key that deliberately carries no zone).  No mocks on
-the request path, so a regression in the RPC zone scoping, the REST zone
-gate, ``sys_readdir`` or the search list pipeline shows up as a real HTTP
-result.
-
-Matrix (each cell over ``/api/nfs/list``, ``/api/v2/files/list``,
-``/api/v2/search/glob`` and ``/api/v2/search/grep``):
-
-* tenant A, with and without ``X-Nexus-Zone-ID`` — sees its own file, never
-  tenant B's or the root-tagged file;
-* tenant B — symmetric;
-* tenant A asking for tenant B's zone via the header — rejected;
-* a non-admin asking for ``all_zones`` — 403, not silently narrowed;
-* a key with **no zone claim** (the issue's headline case) — 403 on list
-  and search instead of the root/global view;
-* admin without a zone header — the root zone only (root-tagged file, no
-  tenant trees);
-* admin with ``all_zones=true`` — the anti-vacuity control: sees tenant A,
-  tenant B and the root-tagged file, and the access is audited exactly once.
+Real kernel-backed NexusFS, FastAPI and API-key authentication exercise
+filesystem namespace isolation. This fixture disables Search; discovery
+must return its typed unavailable response. Search authorization is exercised
+with the signed plugin and Raft stores in the pinned VFS integration journeys
+and scripts/test_search_credentials_plugin.py.
 """
 
 from __future__ import annotations
@@ -253,31 +237,6 @@ def _seed(s: Stack) -> None:
     _rpc_result(_rpc(s, s.key_b, "write", {"path": FILE_B, "content": WORD_B}))
     _rpc_result(_rpc(s, s.key_admin, "write", {"path": FILE_ROOT, "content": WORD_ROOT}))
 
-    # The search router applies a file-level ReBAC filter to glob/grep hits
-    # on top of the zone predicate (Decision #17), so give each principal a
-    # read grant on the files it legitimately owns.  Without these the
-    # tenant cells would be vacuous ("sees nothing" for the wrong reason);
-    # the zone predicate is what must hide the OTHER tenants' files.
-    # ReBAC objects are keyed by the user-facing path within the zone (the
-    # enforcer unscopes ``/zone/<id>/`` before checking), hence ``/a.txt``
-    # in zone ``ta``, not ``/zone/ta/a.txt``.
-    rebac = s.nx.service("rebac")
-    assert rebac is not None, "ReBAC service must be wired for the search cells"
-    grants = [
-        ("alice", FILE_A, ZONE_A),
-        ("bob", FILE_B, ZONE_B),
-        ("root-op", FILE_ROOT, ROOT_ZONE_ID),
-        ("root-op", FILE_A, ZONE_A),
-        ("root-op", FILE_B, ZONE_B),
-    ]
-    for user, path, zone in grants:
-        rebac.rebac_create_sync(
-            subject=("user", user),
-            relation="direct_viewer",
-            object=("file", path),
-            zone_id=zone,
-        )
-
 
 def _assert_only_tenant(paths: set[str], *, own: str, others: tuple[str, ...]) -> None:
     assert any(p.endswith(own) for p in paths), f"own file {own} missing from {sorted(paths)}"
@@ -302,25 +261,8 @@ def test_tenant_a_list_sees_only_its_zone(stack: Stack, zone_header: str | None)
     assert not leaked, f"REST list leaked {leaked}"
 
 
-@pytest.mark.parametrize("zone_header", [None, ZONE_A], ids=["no-header", "own-zone-header"])
-def test_tenant_a_search_sees_only_its_zone(stack: Stack, zone_header: str | None) -> None:
-    glob = _glob(stack, stack.key_a, zone_header)
-    assert glob.status_code == 200, glob.text
-    _assert_only_tenant(_collect_paths(glob.json()), own=FILE_A, others=(FILE_B, FILE_ROOT))
-
-    grep = _grep(stack, stack.key_a, zone_header)
-    assert grep.status_code == 200, grep.text
-    body = grep.text
-    assert WORD_A in body
-    assert WORD_B not in body
-    assert WORD_ROOT not in body
-
-
 def test_tenant_b_is_symmetric(stack: Stack) -> None:
     _assert_only_tenant(_rpc_list(stack, stack.key_b), own=FILE_B, others=(FILE_A, FILE_ROOT))
-    glob = _glob(stack, stack.key_b, ZONE_B)
-    assert glob.status_code == 200, glob.text
-    _assert_only_tenant(_collect_paths(glob.json()), own=FILE_B, others=(FILE_A, FILE_ROOT))
 
 
 def test_tenant_cannot_borrow_another_zone_via_header(stack: Stack) -> None:
@@ -359,11 +301,6 @@ def test_zone_less_non_admin_list_returns_403(stack: Stack) -> None:
     assert code == RPC_PERMISSION_ERROR
 
 
-def test_zone_less_non_admin_search_returns_403(stack: Stack) -> None:
-    assert _glob(stack, stack.key_zoneless).status_code == 403
-    assert _grep(stack, stack.key_zoneless).status_code == 403
-
-
 def test_zone_less_non_admin_with_zone_header_is_scoped_not_global(stack: Stack) -> None:
     """Sending a zone header turns the zone-less key into a zone-scoped caller."""
     resp = _rpc(stack, stack.key_zoneless, "list", {"path": "/"}, zone=ZONE_A)
@@ -391,27 +328,6 @@ def test_admin_without_all_zones_sees_root_zone_only(stack: Stack) -> None:
     rest_paths = _collect_paths(rest.json())
     assert FILE_ROOT in rest_paths, sorted(rest_paths)
     assert not any(p.endswith(FILE_A) or p.endswith(FILE_B) for p in rest_paths)
-
-
-def test_admin_search_is_scoped_per_zone_header(stack: Stack) -> None:
-    """Search has no ``all_zones``; the admin control is one zone per request."""
-    glob_root = _glob(stack, stack.key_admin)
-    assert glob_root.status_code == 200, glob_root.text
-    _assert_only_tenant(_collect_paths(glob_root.json()), own=FILE_ROOT, others=(FILE_A, FILE_B))
-
-    glob_a = _glob(stack, stack.key_admin, ZONE_A)
-    assert glob_a.status_code == 200, glob_a.text
-    _assert_only_tenant(_collect_paths(glob_a.json()), own=FILE_A, others=(FILE_B, FILE_ROOT))
-
-    glob_b = _glob(stack, stack.key_admin, ZONE_B)
-    assert glob_b.status_code == 200, glob_b.text
-    _assert_only_tenant(_collect_paths(glob_b.json()), own=FILE_B, others=(FILE_A, FILE_ROOT))
-
-    grep_b = _grep(stack, stack.key_admin, ZONE_B)
-    assert grep_b.status_code == 200, grep_b.text
-    assert WORD_B in grep_b.text
-    assert WORD_A not in grep_b.text
-    assert WORD_ROOT not in grep_b.text
 
 
 # ---------------------------------------------------------------------------
@@ -549,3 +465,25 @@ def test_admin_all_zones_is_the_anti_vacuity_control_and_is_audited(stack: Stack
     rest = _rest_list(stack, stack.key_admin, all_zones="true")
     assert rest.status_code == 200, rest.text
     assert FILE_ROOT in _collect_paths(rest.json())
+
+
+@pytest.mark.parametrize(
+    "key_name,zone",
+    [
+        ("key_a", None),
+        ("key_a", ZONE_A),
+        ("key_b", ZONE_B),
+        ("key_admin", None),
+        ("key_admin", ZONE_A),
+        ("key_admin", ZONE_B),
+        ("key_zoneless", None),
+    ],
+)
+@pytest.mark.parametrize("operation", [_glob, _grep], ids=["glob", "grep"])
+def test_search_without_a_plugin_returns_unavailable(
+    stack: Stack, key_name: str, zone: str | None, operation: Any
+) -> None:
+    response = operation(stack, getattr(stack, key_name), zone)
+    assert response.status_code == 501, response.text
+    assert response.json() == {"detail": "Upstream RPC failed"}
+    assert all(word not in response.text for word in (WORD_A, WORD_B, WORD_ROOT))

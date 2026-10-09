@@ -9,7 +9,7 @@ cross-checked, never trusted (§6.7). Store errors fail closed.
 from __future__ import annotations
 
 import logging
-from datetime import UTC
+from datetime import UTC, datetime
 from typing import Any, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
@@ -57,13 +57,21 @@ def _svc_error(exc: ServiceError) -> HTTPException:
     return HTTPException(status_code=exc.http_status, detail=detail)
 
 
-def _iso(value: Any) -> str:
+def _iso(value: datetime | None) -> str:
     """RFC3339 with an explicit offset: the legacy zones columns are naive
     (develop-era schema), and the contract pattern requires Z/±hh:mm."""
     if value is None:
         return ""
     as_utc = value.replace(tzinfo=UTC) if value.tzinfo is None else value
     return as_utc.isoformat()
+
+
+def _view_operation(svc: ZoneApplicationService, result: Any) -> OperationView:
+    """202 bodies carry contract timestamps read back from the row (M-2)."""
+    op = svc.get_operation(result.operation_id)
+    if op is None:  # pragma: no cover — the row was committed in this request
+        raise HTTPException(status_code=500, detail="operation row missing after write")
+    return OperationView.from_operation(op)
 
 
 _PHASE_FALLBACK = {"Creating": "creating", "Active": "active", "Terminated": "deleted"}
@@ -136,7 +144,7 @@ def create_zone(
     response.headers["Location"] = f"/v2/zone-operations/{result.operation_id}"
     # M-2: the contract requires created_at/updated_at on every 202 —
     # from_operation fills them from the persisted operation row
-    return OperationView.from_operation(svc.get_operation(result.operation_id))
+    return _view_operation(svc, result)
 
 
 @router.get("")
@@ -361,7 +369,7 @@ def _lifecycle(
         raise _svc_error(exc) from exc
     # M-2: the contract requires created_at/updated_at on every 202 —
     # from_operation fills them from the persisted operation row
-    return OperationView.from_operation(svc.get_operation(result.operation_id))
+    return _view_operation(svc, result)
 
 
 @router.delete("/{zone_id}", status_code=202)
@@ -401,7 +409,7 @@ def request_deprovision(
     response.headers["Location"] = f"/v2/zone-operations/{result.operation_id}"
     # M-2: the contract requires created_at/updated_at on every 202 —
     # from_operation fills them from the persisted operation row
-    return OperationView.from_operation(svc.get_operation(result.operation_id))
+    return _view_operation(svc, result)
 
 
 def _zone_session(request: Request) -> Session:

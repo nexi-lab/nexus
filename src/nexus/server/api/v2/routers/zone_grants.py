@@ -91,6 +91,14 @@ def _optional_iso(value: Any) -> str | None:
     return value.isoformat() if isinstance(value, datetime) else None
 
 
+def _view_operation(svc: ZoneApplicationService, result: Any) -> OperationView:
+    """202 bodies carry contract timestamps read back from the row (M-2)."""
+    op = svc.get_operation(result.operation_id)
+    if op is None:  # pragma: no cover — the row was committed in this request
+        raise HTTPException(status_code=500, detail="operation row missing after write")
+    return OperationView.from_operation(op)
+
+
 @router.post("/zones/{zone_id}/grants", status_code=202)
 def create_grant(
     zone_id: str,
@@ -127,7 +135,7 @@ def create_grant(
     response.headers["Location"] = f"/v2/zone-operations/{result.operation_id}"
     # M-2: the contract requires created_at/updated_at on every 202 —
     # from_operation fills them from the persisted operation row
-    return OperationView.from_operation(svc.get_operation(result.operation_id))
+    return _view_operation(svc, result)
 
 
 @router.get("/zones/{zone_id}/grants")

@@ -108,6 +108,43 @@ ZonePathStr = Annotated[
     str, AfterValidator(lambda v: _via_owned("common/v1/zone-path.schema.json", v))
 ]
 
+#: Product-reserved zone ids (zone-create admission semantics). Mirrors
+#: nexus.bricks.auth.constants.RESERVED_ZONE_IDS (auth's own copy serves the
+#: auth layer's historical checks; this copy keeps the zone contract layer
+#: self-contained — services may not import bricks).
+RESERVED_ZONE_IDS: frozenset[str] = frozenset(
+    {
+        "admin",
+        "agent",
+        "api",
+        "auth",
+        "billing",
+        "callback",
+        "default",
+        "docs",
+        "features",
+        "group",
+        "health",
+        "help",
+        "login",
+        "logout",
+        "nexus",
+        "oauth",
+        "pricing",
+        "register",
+        "root",
+        "settings",
+        "signup",
+        "status",
+        "support",
+        "swagger",
+        "system",
+        "user",
+        "zone",
+    }
+)
+
+
 #: Open registry of known capabilities (§4.6). Unknown codes are legal wire
 #: values within the same major; this list exists for callers that want the
 #: known constants, not to close the set.

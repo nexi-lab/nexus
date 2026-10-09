@@ -38,9 +38,9 @@ from sqlalchemy import delete, inspect, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from nexus.bricks.auth.constants import RESERVED_ZONE_IDS
 from nexus.contracts.zone_v1 import (
     KNOWN_CAPABILITIES,
+    RESERVED_ZONE_IDS,
     ZoneCreateRequest,
     ZoneGrantCreateRequest,
     ZonePatchRequest,

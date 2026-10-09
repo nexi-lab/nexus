@@ -77,7 +77,10 @@ def test_manifest_covers_every_owned_schema_with_real_digests() -> None:
     assert covered == expected
     for entry in manifest["schemas"]:
         path = CONTRACTS_DIR.parent / entry["schema_path"]
-        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        # LF-normalized to match sync_vendor: a CRLF checkout must not read
+        # the same schema as a different document than CI does
+        raw = path.read_bytes().replace(bytes((13, 10)), bytes((10,)))
+        digest = hashlib.sha256(raw).hexdigest()
         assert entry["schema_digest"] == f"sha256:{digest}", entry["schema_path"]
         for key in (
             "owner",
@@ -132,8 +135,9 @@ def test_runtime_schema_mirrors_match_the_repo_root_ssot(sorted_pair: tuple[str,
 
     import nexus.contracts as contracts_pkg
 
-    ssot = hashlib.sha256((CONTRACTS_DIR / rel).read_bytes()).hexdigest()
-    shipped = hashlib.sha256(
-        (Path(contracts_pkg.__file__).parent / mirror).read_bytes()
-    ).hexdigest()
+    def _lf(p: Path) -> bytes:
+        return p.read_bytes().replace(bytes((13, 10)), bytes((10,)))
+
+    ssot = hashlib.sha256(_lf(CONTRACTS_DIR / rel)).hexdigest()
+    shipped = hashlib.sha256(_lf(Path(contracts_pkg.__file__).parent / mirror)).hexdigest()
     assert ssot == shipped, f"runtime mirror {mirror} drifted from {rel}"

@@ -2645,7 +2645,7 @@ operations:
   owning_issue: 4133
 - id: call.rpc
   module: uncategorized
-  summary: Dispatch service calls on the owning kernel's authenticated channel.
+  summary: "Generic Call RPC bridge \u2014 search-side discovery (glob/grep) dispatches through it"
   transports:
     sdk:
       name: KernelClient.call_rpc
@@ -2654,12 +2654,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: kernel.call_rpc("semantic_search", {"query":"auth flow","search_mode":"keyword"})
-  correctness_test: tests/integration/search/test_indexed_client.py
-  perf_class: hot
-  perf_link: scripts/test_published_search_quality.py; docs/benchmarks/2026-04-18-sandbox-vs-gbrain.md
+  usage_example: null
+  correctness_test: tests/e2e/self_contained/test_zone_visibility_matrix_e2e.py:1
+  perf_class: control
+  perf_link: tests/benchmarks/bench_read_write_overhead.py:1
   gap_issue: null
-  owning_issue: 4129
+  owning_issue: 1326
 - id: catalog.aspects
   module: catalog
   summary: ''

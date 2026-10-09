@@ -327,7 +327,10 @@ def test_fault_classes_1_2_3_create_crashed_mid_flight_recovers_exactly_once(tmp
         harness.start()
         with harness.client() as client:
             harness.poke_until_up(client, headers)
-            op = _wait_operation(client, op_id, headers)
+            # The recovery outbox backs off exponentially while the respawned
+            # kernel binds its journal zone (ZoneRuntime answers Unavailable
+            # until then); a cold runner needs minutes, not the default 90s
+            op = _wait_operation(client, op_id, headers, timeout_s=480.0)
             diagnostics = "".join(
                 line
                 for line in harness.stderr_lines

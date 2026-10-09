@@ -166,7 +166,17 @@ class ZoneOperationWorker:
                     .values(
                         processed_at=datetime.now(UTC) if done else None,
                         attempt_count=attempts,
-                        next_retry_at=None if done else datetime.now(UTC) + timedelta(seconds=5),
+                        # Exponential backoff for transient unavailability: a
+                        # freshly (re)spawned kernel answers ZoneRuntime RPCs
+                        # with Unavailable until its journal zone binds — on a
+                        # cold CI runner that window exceeds a flat 5s budget
+                        # (fault class 1-2-3 burned all 8 retries before the
+                        # kernel was live). 5,10,20,40,80,160,320,640s gives
+                        # slow boots room while genuine permanent failures
+                        # still exhaust at the same attempt count.
+                        next_retry_at=None
+                        if done
+                        else datetime.now(UTC) + timedelta(seconds=5 * 2 ** (attempts - 1)),
                         lease_owner=None,
                         lease_expires_at=None,
                     )

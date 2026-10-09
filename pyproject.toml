@@ -115,7 +115,7 @@ dependencies = [
     "bsdiff4>=1.2.6",
     # Content-Defined Chunking for large file deduplication (Issue #1074)
     "fastcdc>=1.7.0",
-    # BM25S for 500x faster ranked text search (Issue #796)
+    # BM25S for MCP tool catalog ranking
     "bm25s>=0.3.8",
     # Rapidfuzz for fast fuzzy string matching in edit engine (Issue #800)
     # 10-100x faster than difflib (Rust-backed)
@@ -698,11 +698,6 @@ module = "nexus.backends.storage.cas_local"
 disable_error_code = ["import-untyped"]
 
 [[tool.mypy.overrides]]
-module = "nexus.bricks.search.embeddings"
-# Provider wrapper class has complex inheritance, openai stubs mismatch
-disable_error_code = ["override", "attr-defined"]
-
-[[tool.mypy.overrides]]
 module = [
     "nexus.bricks.workflows.loader",
     "nexus.bricks.mcp.provider_registry",
@@ -832,12 +827,6 @@ module = [
 ]
 # Raft module uses follow_imports=skip (PyO3), so callers get Any - suppress no-any-return
 disable_error_code = ["attr-defined", "union-attr", "no-any-return", "misc", "import-untyped", "arg-type"]
-warn_unused_ignores = false
-
-[[tool.mypy.overrides]]
-module = "nexus.bricks.search.semantic"
-# Inherits same suppressions as raft-callers group + misc for "None" not callable
-disable_error_code = ["attr-defined", "union-attr", "no-any-return", "misc"]
 warn_unused_ignores = false
 
 # --- Backend / driver return-type mismatches ---
@@ -1071,11 +1060,6 @@ ignore_imports = [
     "nexus.contracts.types -> nexus.storage.read_set",
     # WirableFS TYPE_CHECKING imports (cross-tier wiring contract, #2359)
     "nexus.contracts.wirable_fs -> nexus.storage.record_store",
-    # search_semantic → factory._semantic_search → bricks (transitive chain)
-    "nexus.factory._semantic_search -> nexus.bricks.search.chunking",
-    "nexus.factory._semantic_search -> nexus.bricks.search.indexing",
-    "nexus.factory._semantic_search -> nexus.bricks.search.indexing_service",
-    "nexus.factory._semantic_search -> nexus.bricks.search.pipeline_indexer",
     # (removed: services.delegation/memory/governance → bricks entries; modules relocated to bricks/)
     # --- bricks importing non-layer modules ---
     # --- non-layer module chain hops ---

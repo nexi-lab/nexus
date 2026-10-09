@@ -22,7 +22,9 @@ from typing import Annotated, Literal
 from jsonschema import Draft202012Validator
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
-RFC3339_PATTERN = r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$"
+RFC3339_PATTERN = (
+    r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$"
+)
 DECIMAL_STRING_PATTERN = r"^[0-9]+$"
 DIGEST_PATTERN = r"^[a-z0-9-]+:[A-Za-z0-9+/=._-]+$"
 CAPABILITY_PATTERN = r"^zone\.[a-z-]+\.[a-z-]+$"

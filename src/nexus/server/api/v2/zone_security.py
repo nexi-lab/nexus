@@ -241,9 +241,16 @@ def zone_capability_decision(
 ) -> Any:
     # The API key's zone binding is a hard token boundary (legacy auth_zone):
     # a key minted for zone A never widens to zone B through this surface,
-    # whatever grants its subject holds elsewhere.
+    # whatever grants its subject holds elsewhere — UNLESS the caller presents
+    # an explicit delegation for this zone: a delegation is a named, TTL- and
+    # prefix-scoped grant for exactly this decision, which is a stronger
+    # statement than the token's ambient binding (cross-zone execution, p0
+    # §15b). The delegation itself is still verified below.
+    explicit_delegation = (delegation_ref or "").strip() or request.headers.get(
+        "X-Nexus-Zone-Delegation"
+    )
     bound = _token_zone_binding(auth_result)
-    if bound is not None and zone_id not in bound:
+    if bound is not None and zone_id not in bound and not explicit_delegation:
         from nexus.services.zones.authz import Decision
 
         return Decision(

@@ -246,7 +246,8 @@ def test_p0_scenario_7_either_side_missing_denies(nexus_server, test_app) -> Non
     )
     assert del_r.status_code == 200, del_r.text
     assert del_r.json().get("deleted", 0) >= 1, del_r.text
-    assert _access(test_app, zone, user_key, delegation) == 403
+    # v2 read surface folds denials into the absence shape (404)
+    assert _access(test_app, zone, user_key, delegation) == 404
 
     # (b) restore the relation (grant + ReBAC both present again → allow),
     # then revoke the grant → deny even with a relation manually re-added.
@@ -274,7 +275,8 @@ def test_p0_scenario_7_either_side_missing_denies(nexus_server, test_app) -> Non
     op = _wait_operation(test_app, rev.headers["Location"].split("/")[-1], headers)
     assert op["state"] == "succeeded", op
     # Scenario 9 (simplified): revocation is effective immediately — no window.
-    assert _access(test_app, zone, user_key, delegation) == 403
+    # v2 read surface folds denials into the absence shape (404)
+    assert _access(test_app, zone, user_key, delegation) == 404
     # The revoke's independent deny power: a manually re-added relation must
     # NOT resurrect access once the grant is gone.
     re_put = test_app.post(
@@ -290,7 +292,8 @@ def test_p0_scenario_7_either_side_missing_denies(nexus_server, test_app) -> Non
         },
     )
     assert re_put.status_code in (200, 201), re_put.text
-    assert _access(test_app, zone, user_key, delegation) == 403
+    # v2 read surface folds denials into the absence shape (404)
+    assert _access(test_app, zone, user_key, delegation) == 404
 
 
 def test_p0_scenario_10_overlapping_grants_and_independent_relations(
@@ -348,7 +351,8 @@ def test_p0_scenario_10_overlapping_grants_and_independent_relations(
 
     # Revocation advances the zone authorization epoch, so the OLD delegation
     # is denied immediately (the fail-closed behaviour scenario 9 asserts).
-    assert _access(test_app, zone, user_key, delegation) == 403
+    # v2 read surface folds denials into the absence shape (404)
+    assert _access(test_app, zone, user_key, delegation) == 404
 
     # The other grant still covers the principal — its derived relation was
     # NOT removed (reference-counted provenance). A freshly issued delegation
@@ -371,7 +375,8 @@ def test_p0_scenario_10_overlapping_grants_and_independent_relations(
     )
     assert rev2.status_code == 202, rev2.text
     _wait_operation(test_app, rev2.headers["Location"].split("/")[-1], headers)
-    assert _access(test_app, zone, user_key, delegation2) == 403
+# v2 read surface folds denials into the absence shape (404)
+    assert _access(test_app, zone, user_key, delegation2) == 404
     # §5.4: with no active grant left, even issuance is refused outright —
     # new tokens cannot be minted from a revoked source.
     refused = test_app.post(
@@ -997,7 +1002,8 @@ def test_p0_scenario_17_state_survives_full_restart(tmp_path) -> None:
             assert rev.status_code == 202, rev.text
             revoke_op_id = rev.headers["Location"].split("/")[-1]
             _wait_operation(client, revoke_op_id, headers)
-            assert _access(client, zone, user_key, delegation) == 403
+        # v2 read surface folds denials into the absence shape (404)
+            assert _access(client, zone, user_key, delegation) == 404
 
         # Hard-kill the whole tree, restart over the same data dir + db.
         subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True)
@@ -1354,4 +1360,6 @@ def test_p0_c2_office_core_data_domain_default_deny(nexus_server, test_app) -> N
     # (§11.2 "Office 不默认读 Core" — the default across data domains is
     # denial; nothing about data_domain itself widens or narrows access).
     denied = _access(test_app, core_zone, user_key, delegation)
-    assert denied == 403, f"office-domain principal must not read core zone by default: {denied}"
+    assert denied == 404, (
+        f"office-domain principal must not read core zone by default: {denied}"
+    )

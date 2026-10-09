@@ -25,6 +25,7 @@ _GRPC_SERVICE_TO_MODULE = {
     "ReBAC": "rebac",
     "Workspace": "workspace",
     "Search": "search",
+    "SearchService": "search",
     "MCP": "mcp",
 }
 

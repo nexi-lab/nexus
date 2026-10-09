@@ -2,7 +2,48 @@
 
 from pathlib import Path
 
+import pytest
+
 from scripts.surface_coverage.extract_http import extract_http_routes
+
+
+def test_included_router_prefixes_aliases_and_multiple_mounts(tmp_path: Path):
+    (tmp_path / "child.py").write_text(
+        "from fastapi import APIRouter\n"
+        "leaf = APIRouter(prefix='/leaf')\n"
+        "@leaf.post('/query')\n"
+        "async def query(): pass\n"
+    )
+    (tmp_path / "middle.py").write_text(
+        "from fastapi import APIRouter\n"
+        "from .child import leaf as child\n"
+        "router = APIRouter(prefix='/middle')\n"
+        "router.include_router(child, prefix='/extra')\n"
+    )
+    (tmp_path / "parent.py").write_text(
+        "from fastapi import APIRouter\n"
+        "from .middle import router as nested\n"
+        "api = APIRouter(prefix='/api/v2')\n"
+        "api.include_router(nested, prefix='/search')\n"
+        "api.include_router(nested, prefix='/other')\n"
+    )
+    routes = extract_http_routes(tmp_path)
+    assert {(r.method, r.path) for r in routes} == {
+        ("POST", "/api/v2/search/middle/extra/leaf/query"),
+        ("POST", "/api/v2/other/middle/extra/leaf/query"),
+    }
+    assert all(r.source == f"{tmp_path / 'child.py'}:3" for r in routes)
+
+
+def test_router_include_cycle_fails_explicitly(tmp_path: Path):
+    (tmp_path / "api.py").write_text(
+        "from fastapi import APIRouter\n"
+        "a = APIRouter()\nb = APIRouter()\n"
+        "a.include_router(b)\nb.include_router(a)\n"
+        "@a.get('/x')\ndef x(): pass\n"
+    )
+    with pytest.raises(ValueError, match="Router include cycle"):
+        extract_http_routes(tmp_path)
 
 
 def test_extract_http_from_fixture(tmp_path: Path):

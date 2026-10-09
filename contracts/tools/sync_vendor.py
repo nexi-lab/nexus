@@ -225,17 +225,15 @@ def main() -> int:
         if CHECK and manifest_current is not None:
             # first divergent region — turns "stale" into an actionable diff
             # instead of a guessing game across checkouts
-            for i, (a, b) in enumerate(
-                zip(manifest_current or b"", manifest_bytes, strict=False)
-            ):
+            for i, (a, b) in enumerate(zip(manifest_current or b"", manifest_bytes, strict=False)):
                 if a != b:
                     lo = max(0, i - 120)
                     print(
                         f"manifest diverges at byte {i}:",
                         file=sys.stderr,
                     )
-                    print(f"  committed: ...{manifest_current[lo:i + 120]!r}", file=sys.stderr)
-                    print(f"  generated: ...{manifest_bytes[lo:i + 120]!r}", file=sys.stderr)
+                    print(f"  committed: ...{manifest_current[lo : i + 120]!r}", file=sys.stderr)
+                    print(f"  generated: ...{manifest_bytes[lo : i + 120]!r}", file=sys.stderr)
                     break
             else:
                 print(

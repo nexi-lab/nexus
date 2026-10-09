@@ -263,10 +263,7 @@ def upgrade() -> None:
     # 2.0.x this project supports, so the DDL lives here. SQLite has no such
     # syntax (and no NULL-grant writer exists today).
     if op.get_bind().dialect.name == "postgresql":
-        op.execute(
-            "ALTER TABLE rebac_relation_sources "
-            "DROP CONSTRAINT IF EXISTS uq_rebac_rel_src"
-        )
+        op.execute("ALTER TABLE rebac_relation_sources DROP CONSTRAINT IF EXISTS uq_rebac_rel_src")
         op.execute(
             "ALTER TABLE rebac_relation_sources "
             "ADD CONSTRAINT uq_rebac_rel_src "

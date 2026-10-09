@@ -262,9 +262,7 @@ def zone_capabilities(
     if auth_result.get("is_admin", False):
         # internal arming detail is an operator's view; a regular caller
         # gets the contract surface only
-        payload["providers"] = dict(
-            getattr(request.app.state, "zone_control_readiness", {})
-        )
+        payload["providers"] = dict(getattr(request.app.state, "zone_control_readiness", {}))
     return payload
 
 

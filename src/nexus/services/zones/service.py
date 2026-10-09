@@ -475,26 +475,28 @@ class ZoneApplicationService:
                     )
 
                 zone = ZoneModel(
-                zone_id=request.zone_id,
-                name=request.display_name,  # legacy mirror column, mapper owns history
-                display_name=request.display_name,
-                description=request.description,
-                phase="Creating",
-                canonical_status="creating",  # not active — only a receipt makes it so
-                canonical_revision=_new_id("rev"),
-                created_by=principal,
-                placement_location=request.deployment.location if request.deployment else "cloud",
-                placement_data_domain=(
-                    request.deployment.data_domain if request.deployment else None
-                ),
-                trust_domain=(
-                    request.deployment.trust_domain
+                    zone_id=request.zone_id,
+                    name=request.display_name,  # legacy mirror column, mapper owns history
+                    display_name=request.display_name,
+                    description=request.description,
+                    phase="Creating",
+                    canonical_status="creating",  # not active — only a receipt makes it so
+                    canonical_revision=_new_id("rev"),
+                    created_by=principal,
+                    placement_location=request.deployment.location
                     if request.deployment
-                    else str(principal.get("trust_domain") or "local")
-                ),
-                placement_region=(request.deployment.region if request.deployment else None),
-                labels=request.labels,
-            )
+                    else "cloud",
+                    placement_data_domain=(
+                        request.deployment.data_domain if request.deployment else None
+                    ),
+                    trust_domain=(
+                        request.deployment.trust_domain
+                        if request.deployment
+                        else str(principal.get("trust_domain") or "local")
+                    ),
+                    placement_region=(request.deployment.region if request.deployment else None),
+                    labels=request.labels,
+                )
             session.add(zone)
             if exists is None:
                 # a tombstone rebuild reuses the surviving epoch row —
@@ -564,9 +566,7 @@ class ZoneApplicationService:
             # terminal — the worker's stop criterion is exactly
             # ``failed and not retryable``, and outbox retries must be able
             # to re-drive it instead of spinning on a dead operation.
-            if op is None or op.state == "succeeded" or (
-                op.state == "failed" and not op.retryable
-            ):
+            if op is None or op.state == "succeeded" or (op.state == "failed" and not op.retryable):
                 return OperationResult(
                     op.operation_id if op else operation_id,
                     op.state if op else "unknown",
@@ -690,17 +690,13 @@ class ZoneApplicationService:
                 # outbox included) — the fence-owning worker owns the saga
                 # now, and the UPDATE's row lock holds to commit, so later
                 # fenced writes cannot race past this check.
-                return OperationResult(
-                    operation_id, "failed", "stale-worker-fenced", False
-                )
+                return OperationResult(operation_id, "failed", "stale-worker-fenced", False)
             if not receipt.ok or not receipt.physical_identity:
                 # A deterministic runtime refusal is terminal and must not be
                 # retried (the receipt says so); only unknown-family failures
                 # stay retryable.
                 retryable = not receipt.rejected
-                code = (
-                    "ZONE_RUNTIME_REJECTED" if receipt.rejected else "ZONE_RUNTIME_UNAVAILABLE"
-                )
+                code = "ZONE_RUNTIME_REJECTED" if receipt.rejected else "ZONE_RUNTIME_UNAVAILABLE"
                 _fenced_update(
                     session,
                     ZoneOperationModel,

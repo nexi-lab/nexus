@@ -76,9 +76,9 @@ class MossMembershipVerifier:
             if len(self._cache) >= _CACHE_MAX_ENTRIES:
                 # lazy sweep: expired entries go first; a fully-live cache at
                 # the cap drops the oldest entries rather than growing on
-                self._cache = {
-                    k: v for k, v in self._cache.items() if v.expires_at > now
-                } or dict(list(self._cache.items())[: _CACHE_MAX_ENTRIES // 2])
+                self._cache = {k: v for k, v in self._cache.items() if v.expires_at > now} or dict(
+                    list(self._cache.items())[: _CACHE_MAX_ENTRIES // 2]
+                )
             self._cache[key] = _CachedMembership(
                 status=result[0], revision=result[1], expires_at=now + self._cache_ttl_s
             )

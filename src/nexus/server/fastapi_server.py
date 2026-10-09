@@ -31,7 +31,6 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from fastapi import (
     Depends,
     FastAPI,
-    HTTPException,
     Request,
 )
 from fastapi.exceptions import RequestValidationError
@@ -45,7 +44,6 @@ from starlette.routing import Route as _StarletteRoute
 from nexus.contracts.exceptions import (
     NexusError,
 )
-
 
 #: The zone/sessions surface this handler owns (contract-typed bodies answer
 #: in the contract error shape). Listed by actual route prefix; a plain

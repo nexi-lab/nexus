@@ -113,9 +113,7 @@ def _normalize_scope_rules(
             "SCOPE_REQUIRED", "runtime execution scope requires purpose=runtime", http_status=422
         )
     if purpose == "data-access":
-        managing = sorted(
-            {str(rule["capability"]) for rule in normalized} & _MANAGING_CAPABILITIES
-        )
+        managing = sorted({str(rule["capability"]) for rule in normalized} & _MANAGING_CAPABILITIES)
         if managing:
             # A short-TTL data-access delegation must never be able to mint
             # a permanent grant that outlives it: managing capabilities are

@@ -37,9 +37,8 @@ from nexus.contracts.exceptions import (
     RemoteTimeoutError,
 )
 from nexus.grpc.defaults import build_channel_options
-from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
-from nexus.lib.request_credentials import request_api_key
 from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc, zone_runtime_pb2, zone_runtime_pb2_grpc
+from nexus.lib.request_credentials import request_api_key
 from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.lib.zone_revision import revision_fields as _revision_fields
 from nexus.remote.base_client import BaseRemoteNexusFS

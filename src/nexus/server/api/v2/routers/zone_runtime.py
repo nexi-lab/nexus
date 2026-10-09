@@ -43,9 +43,9 @@ def _error(exc: ServiceError) -> HTTPException:
     )
 
 
-def _operation(svc: Any, result: Any, action: str) -> OperationView:
+def _operation(svc: Any, result: Any) -> OperationView:
     # M-2: the contract requires created_at/updated_at on every 202 —
-    # from_operation fills them from the persisted operation row
+    # from_operation fills them (and the action) from the persisted row
     return OperationView.from_operation(svc.get_operation(result.operation_id))
 
 
@@ -70,7 +70,7 @@ def join_zone(
     except ServiceError as exc:
         raise _error(exc) from exc
     response.headers["Location"] = f"/v2/zone-operations/{result.operation_id}"
-    return _operation(_service(request), result, "create")
+    return _operation(_service(request), result)
 
 
 @router.post("/zone-mounts", status_code=202)
@@ -105,7 +105,7 @@ def create_mount(
     except ServiceError as exc:
         raise _error(exc) from exc
     response.headers["Location"] = f"/v2/zone-operations/{result.operation_id}"
-    return _operation(_service(request), result, "mount")
+    return _operation(_service(request), result)
 
 
 @router.delete("/zone-mounts/{mount_id}", status_code=202)
@@ -143,7 +143,7 @@ def delete_mount(
     except ServiceError as exc:
         raise _error(exc) from exc
     response.headers["Location"] = f"/v2/zone-operations/{result.operation_id}"
-    return _operation(_service(request), result, "unmount")
+    return _operation(_service(request), result)
 
 
 @router.get("/zone-mounts")
@@ -231,7 +231,7 @@ def create_transfer(
     except ServiceError as exc:
         raise _error(exc) from exc
     response.headers["Location"] = f"/v2/zone-transfers/{result.operation_id}"
-    return _operation(_service(request), result, "transfer")
+    return _operation(_service(request), result)
 
 
 @router.get("/zone-transfers/{operation_id}")

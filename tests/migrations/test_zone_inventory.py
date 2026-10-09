@@ -79,9 +79,7 @@ def test_inventory_classifies_all_nine_buckets_and_touches_nothing(session) -> N
     # The illegal id is never insertable (the model layer rejects it); the
     # classification itself is covered by direct-SQL test below.
     assert report.items["zone_illegal_historical_id"] == ()
-    assert report.items["api_key_zone_unattributable"] == (
-        "key-unknown:inv-consistent",
-    )
+    assert report.items["api_key_zone_unattributable"] == ("key-unknown:inv-consistent",)
     assert report.counts["api_key_zone_unattributable"] == 1
     assert report.moss_side == MOSS_SIDE_INVENTORY_CLASSES
     for cls in MOSS_SIDE_INVENTORY_CLASSES:

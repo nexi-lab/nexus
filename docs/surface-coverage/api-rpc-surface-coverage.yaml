@@ -194,7 +194,7 @@ modules:
   depends_on: []
 - id: search
   name: Search
-  description: Zoekt / BM25 / semantic search daemon.
+  description: 'Rust Search plugin: live discovery and indexed keyword/semantic search.'
   layer: brick
   depends_on: []
 - id: secrets
@@ -303,19 +303,19 @@ operations:
   owning_issue: 4135
 - id: _search_locate.locate
   module: search
-  summary: Locate likely files or skeleton candidates by query while preserving permission filtering.
+  summary: Inspect the Search host index status for one readable VFS path.
   transports:
     http:
       name: POST /locate
-      source: src/nexus/server/api/v2/routers/_search_locate.py:43
+      source: src/nexus/server/api/v2/routers/_search_locate.py:29
   profiles:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: POST /api/v2/search/locate {"q":"authentication"}
-  correctness_test: tests/e2e/self_contained/test_search_surface_live_e2e.py
+  usage_example: POST /api/v2/search/locate {"path":"/docs/authentication.md"}
+  correctness_test: tests/integration/services/test_search_host_authority.py; scripts/test_search_credentials_plugin.py; tests/integration/services/test_search_query_batch.py
   perf_class: hot
-  perf_link: tests/benchmarks/test_search_protocol_benchmark.py; docs/benchmarks/2026-04-18-sandbox-vs-gbrain.md; tests/e2e/self_contained/test_search_surface_live_e2e.py
+  perf_link: scripts/test_search_credentials_plugin.py (locate elapsed_ms < 2000)
   gap_issue: null
   owning_issue: 4135
 - id: access.share_link
@@ -7748,7 +7748,7 @@ operations:
       source: src/nexus/bricks/search/search_service.py:1503
     http:
       name: POST /api/v2/search/glob
-      source: src/nexus/server/api/v2/routers/search.py:1604
+      source: src/nexus/server/api/v2/routers/search.py:1345
     mcp:
       name: nexus_glob
       source: src/nexus/config/tool_profiles.yaml:1
@@ -7776,7 +7776,7 @@ operations:
       source: src/nexus/bricks/search/search_service.py:1515
     http:
       name: POST /api/v2/search/grep
-      source: src/nexus/server/api/v2/routers/search.py:1465
+      source: src/nexus/server/api/v2/routers/search.py:1206
     mcp:
       name: nexus_grep
       source: src/nexus/config/tool_profiles.yaml:1
@@ -7813,7 +7813,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/search/health
-      source: src/nexus/server/api/v2/routers/search.py:168
+      source: src/nexus/server/api/v2/routers/search.py:124
   profiles:
     lite: supported
     sandbox: supported
@@ -7830,7 +7830,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/index
-      source: src/nexus/server/api/v2/routers/search.py:1674
+      source: src/nexus/server/api/v2/routers/search.py:1415
   profiles:
     lite: supported
     sandbox: supported
@@ -7843,17 +7843,17 @@ operations:
   owning_issue: 4135
 - id: search.query
   module: search
-  summary: HTTP query endpoint for keyword, semantic, hybrid, graph, and federated retrieval.
+  summary: HTTP query endpoint for keyword, semantic, hybrid and federated retrieval; Graph requests return 501.
   transports:
     http:
       name: GET /api/v2/search/query
-      source: src/nexus/server/api/v2/routers/search.py:247
+      source: src/nexus/server/api/v2/routers/search.py:177
   profiles:
     lite: supported
     sandbox: supported
     full: supported
   usage_example: GET /api/v2/search/query?q=database%20migration&type=hybrid&limit=5
-  correctness_test: tests/integration/services/test_search_router.py; tests/integration/bricks/search/test_fusion.py tests/e2e/self_contained/test_search_surface_live_e2e.py
+  correctness_test: tests/integration/services/test_search_host_authority.py; scripts/test_search_credentials_plugin.py; tests/integration/services/test_search_query_batch.py
   perf_class: hot
   perf_link: tests/benchmarks/test_search_protocol_benchmark.py; docs/benchmarks/2026-04-18-sandbox-vs-gbrain.md; tests/e2e/self_contained/test_search_surface_live_e2e.py
   gap_issue: null
@@ -7864,13 +7864,13 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/query/batch
-      source: src/nexus/server/api/v2/routers/search.py:865
+      source: src/nexus/server/api/v2/routers/search.py:623
   profiles:
     lite: supported
     sandbox: supported
     full: supported
   usage_example: POST /api/v2/search/query/batch {"queries":[{"q":"auth"},{"q":"billing"}]}
-  correctness_test: tests/e2e/self_contained/test_search_surface_live_e2e.py
+  correctness_test: tests/integration/services/test_search_host_authority.py; scripts/test_search_credentials_plugin.py; tests/integration/services/test_search_query_batch.py
   perf_class: hot
   perf_link: tests/benchmarks/test_search_protocol_benchmark.py; docs/benchmarks/2026-04-18-sandbox-vs-gbrain.md; tests/e2e/self_contained/test_search_surface_live_e2e.py
   gap_issue: null
@@ -7881,7 +7881,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/refresh
-      source: src/nexus/server/api/v2/routers/search.py:1859
+      source: src/nexus/server/api/v2/routers/search.py:1600
   profiles:
     lite: supported
     sandbox: supported
@@ -7915,7 +7915,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/search/stats
-      source: src/nexus/server/api/v2/routers/search.py:218
+      source: src/nexus/server/api/v2/routers/search.py:148
   profiles:
     lite: supported
     sandbox: supported

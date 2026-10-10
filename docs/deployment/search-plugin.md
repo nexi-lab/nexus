@@ -41,13 +41,57 @@ read access. A supplied selection is bounded, validated and authorized per
 file; `files=[]` returns no results. Search rechecks live permissions on the
 host, and SDK clients reject hosts that do not acknowledge requested filters.
 
-HTTP discovery paginates the host's authorized results. Grep requests the
-page window plus one match to detect `has_more`. The response includes
-observed latency and counts; the host does not expose a per-file denial rate.
+HTTP and MCP discovery paginate the host's authorized results. Grep requests the
+page window plus one match to detect `has_more`. Responses report observed
+counts; HTTP also reports latency. The host does not expose a per-file denial rate.
 
 Rust HTTP discovery uses the canonical VFS `root_path` to select its mount
 and zone. An optional `zone_id` must match that mount; a mismatch returns
 HTTP 400. The revision fence uses the same zone as the gRPC host.
+
+Indexed Python HTTP query and batch routes forward the caller's credential and
+requested limits to SearchService. The host authorizes returned candidates;
+Python does not evaluate file grants again. These reads do not require a Python
+record store. Path-context ranking weights remain optional durable configuration.
+Responses report observed timings; permission-denial statistics are not exposed.
+The query limit bounds the host's ranked candidate window. Live authorization
+and VFS checks can leave fewer returned hits than that limit.
+
+`POST /api/v2/search/locate` accepts `{"path": "/docs/file.md", "zone_id": "team"}`
+(`zone_id` defaults to the caller's zone) and returns `indexed`, `chunk_count`,
+`mtime_ms`, `zone_id`, and `elapsed_ms`. It queries one path's index status.
+The host checks current read permission and VFS existence on each call.
+
+The current Search host reports `has_graph=false`. Explicit Python HTTP
+`graph_mode=low|high|dual|auto` requests return HTTP 501. `graph_mode=none`
+uses the ordinary keyword, semantic or hybrid pipeline. Batch entries requesting
+Graph search return a per-entry error.
+
+`GET /api/v2/search/health` returns the host's `status`, `detail` and writer
+liveness fields: `fts_writer_faults`, `fts_writer_unavailable`,
+`last_verified_commit_age_ms` and `dispatch_panics`. `initialized` describes
+the local transport; it can remain true while the host reports `unavailable`.
+`backend` identifies the configured transport as `rust-plugin`. A disabled
+transport reports `status=disabled`, `initialized=false` and `backend=null`.
+
+## Runtime capability discovery
+
+The peer `ZoneApiService.GetSearchCapabilities` RPC queries the currently
+loaded Search plugin. It reports configured search modes and the embedding
+vector-space tag and dimension without opening indices, loading a model or
+calling an embedding endpoint. A local model's dimension remains zero until
+its first inference probe; remote configuration supplies an explicit dimension.
+Use Search `Health` to check readiness separately.
+
+The host checks its zone catalog without materializing a Raft replica. An
+unknown zone returns `NOT_FOUND`; an absent Search plugin returns
+`UNIMPLEMENTED`. An embedding dimension beyond the existing RPC's int32
+range returns `FAILED_PRECONDITION`. Incomplete or invalid remote embedding
+configuration advertises keyword search only.
+
+Capabilities are runtime state and have no persistent store.
+Python zone routes start with unknown capabilities; failed peer discovery
+clears any previous snapshot and propagates the error.
 
 ## Required processes for the Python server
 

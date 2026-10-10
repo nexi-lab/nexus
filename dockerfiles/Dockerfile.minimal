@@ -1,5 +1,5 @@
 # Nexus Minimal Docker Image
-# Lightweight standalone server with storage only (no Zoekt, no ML, no cloud).
+# Lightweight standalone server for storage.
 # Kernel-tier Rust migrated to nexus-vfs (#4259); nexusd-cluster installed
 # from the nexus-vfs git repo.
 #
@@ -42,7 +42,7 @@ RUN pip install --no-cache-dir --no-deps --prefix=/install .
 # enforces agreement) — an unpinned install tracks nexus-vfs HEAD and
 # ships an untested kernel (#4343). --locked honors the source tree's
 # Cargo.lock.
-ARG NEXUS_VFS_REV=6cadc134ba8bfc83043a8c06df649b88406b951c
+ARG NEXUS_VFS_REV=51528447f17512ac86cb112196e284f95ec5aeb6
 RUN cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --rev "${NEXUS_VFS_REV}" --features http-api --bin nexusd-cluster nexus-cluster
 
 # -- Runtime stage --

@@ -4,15 +4,6 @@
 # 国内镜像支持：APT、pip、Rust、Go
 ARG USE_CHINA_MIRROR=false
 
-# Zoekt was previously built here as an independent Go stage and copied
-# into the final image, but it's disabled by default (ZOEKT_ENABLED=false
-# in compose) and nothing in the runtime requires it. Building the Go
-# toolchain + cross-compiling for arm64 added ~600 MB to the multi-arch
-# image and regularly flaked on transient module-proxy TLS timeouts
-# (see develop CI run 24639873826). Dropped entirely — operators who
-# want zoekt can install the binaries separately and bind-mount them
-# into the container.
-
 # ---------- Build Python + Rust ----------
 FROM python:3.14-slim AS builder
 
@@ -93,7 +84,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # the Python runtime spawns it unchanged.
 ENV CARGO_NET_RETRY=10 \
     CARGO_HTTP_TIMEOUT=120
-ARG NEXUS_VFS_REV=6cadc134ba8bfc83043a8c06df649b88406b951c
+ARG NEXUS_VFS_REV=51528447f17512ac86cb112196e284f95ec5aeb6
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
     cargo install --locked \

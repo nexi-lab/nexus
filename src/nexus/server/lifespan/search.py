@@ -224,61 +224,18 @@ def search_zone_and_path(path: str, zone_id: str | None) -> tuple[str, str]:
 
 
 def _init_zone_registry(app: "FastAPI", svc: "LifespanServices") -> None:
-    """Initialize ZoneSearchRegistry for federated search dispatch (Issue #3147).
-
-    All zones share the single global daemon (the Rust plugin serves the
-    local zone; cross-zone dispatch is a kernel concern).  When a
-    ``zone_manager`` is available we also persist per-zone capabilities to
-    ``{base_path}/{zone_id}/search_caps.json`` so the Rust
-    ``GetSearchCapabilities`` gRPC handler can serve federation queries.
-    """
-    from nexus.bricks.search.zone_registry import ZoneSearchCapabilities, ZoneSearchRegistry
+    """Register local zone routes for federated Search calls."""
+    from nexus.bricks.search.zone_registry import ZoneSearchRegistry
 
     daemon = app.state.search_daemon
     registry = ZoneSearchRegistry(default_daemon=daemon)
-
     zone_manager = getattr(svc, "zone_manager", None)
     if zone_manager is not None:
         try:
             zone_ids = zone_manager.list_zones()
-            base_path = getattr(zone_manager, "_base_path", None)
             for zone_id in zone_ids:
-                caps = ZoneSearchCapabilities.from_daemon_stats(zone_id, daemon)
-                registry.register(zone_id, daemon, capabilities=caps)
-                if base_path is not None:
-                    _write_search_caps_file(base_path, zone_id, caps)
-            logger.info(
-                "[ZONE-REGISTRY] Registered %d zones from ZoneManager",
-                len(zone_ids),
-            )
+                registry.register(zone_id, daemon)
+            logger.info("[ZONE-REGISTRY] Registered %d local zones", len(zone_ids))
         except Exception as e:
             logger.warning("[ZONE-REGISTRY] Failed to register zones: %s", e)
-
     app.state.zone_search_registry = registry
-
-
-def _write_search_caps_file(base_path: str, zone_id: str, caps: object) -> None:
-    """Atomically write per-zone search capabilities JSON (R20.12).
-
-    Non-fatal on error — federation ``GetSearchCapabilities`` falls back
-    to keyword-only defaults when the file is missing.
-    """
-    import json
-    from pathlib import Path
-
-    try:
-        zone_dir = Path(base_path) / zone_id
-        zone_dir.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "device_tier": getattr(caps, "device_tier", "server"),
-            "search_modes": list(getattr(caps, "search_modes", ["keyword"])),
-            "embedding_model": getattr(caps, "embedding_model", None) or "",
-            "embedding_dimensions": int(getattr(caps, "embedding_dimensions", 0) or 0),
-            "has_graph": bool(getattr(caps, "has_graph", False)),
-        }
-        final_path = zone_dir / "search_caps.json"
-        tmp_path = zone_dir / "search_caps.json.tmp"
-        tmp_path.write_text(json.dumps(payload, indent=2))
-        os.replace(tmp_path, final_path)
-    except Exception as e:
-        logger.warning("[ZONE-REGISTRY] Failed to write search_caps for %s: %s", zone_id, e)

@@ -16,6 +16,7 @@ import yaml
 
 
 class ProfileStatus(StrEnum):
+    UNVERIFIED = "unverified"
     SUPPORTED = "supported"
     UNAVAILABLE = "unavailable"
     ADMIN_ONLY = "admin_only"

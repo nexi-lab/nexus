@@ -52,7 +52,7 @@ What you need depends on how far you go:
 | shared server for multiple users or agents | `nexusd` plus an API key |
 | database auth and richer multi-user setups | Postgres-compatible database |
 | parsed document search | parser API keys such as `UNSTRUCTURED_API_KEY` or `LLAMA_CLOUD_API_KEY` |
-| Zoekt-backed code search | a separately running Zoekt service |
+| indexed keyword and semantic search | a Rust Search host, with an embedder for semantic queries |
 | sandbox execution | Docker or E2B, depending on provider |
 | federation mesh networking | TLS material and usually WireGuard |
 
@@ -106,10 +106,9 @@ develop`.
 The base package already includes the main CLI, server, remote client, LLM,
 MCP, and most storage/search plumbing. Add extras only when you need them.
 
-- Semantic search with remote embedding providers: `pip install "nexus-ai-fs[semantic-search-remote]"`
+- Semantic search: enable the Rust Search plugin on `nexusd-cluster`; the Python client uses the core package. See [Search deployment](../deployment/search-plugin.md).
 - E2B sandbox provider: `pip install "nexus-ai-fs[e2b]"`
 - Docker sandbox provider: `pip install "nexus-ai-fs[docker]"`
-- FUSE support: `pip install "nexus-ai-fs[fuse]"`
 
 ### Verify the install
 
@@ -198,11 +197,11 @@ set of values in every terminal.
 **Goal:** start a lightweight, self-contained Nexus for a single agent
 sandbox with one command, and know exactly what it runs locally.
 
-**Why this profile:** `sandbox` runs with **no PostgreSQL, no
-Dragonfly/Redis, no Zoekt** — SQLite + in-process cache + BM25S keyword
-search. It is the per-agent runtime target: low RSS, fast boot, optional
-hub federation. Full reference: [Sandbox deployment
-profile](../deployment/sandbox-profile.md).
+**Why this profile:** `sandbox` uses SQLite and an in-process cache for
+its local runtime. Indexed keyword and semantic search use the Rust Search
+host that owns the workspace mounts. See the [Sandbox deployment
+profile](../deployment/sandbox-profile.md) and [Search deployment
+contract](../deployment/search-plugin.md).
 
 > **Not to be confused with the sandbox-provisioning brick.** The
 > `sandbox` *deployment profile* is *how Nexus runs* (a lightweight
@@ -302,8 +301,7 @@ curl -s http://127.0.0.1:2026/api/v2/features
 
 **Correctness assertion you can run:** with the daemon up,
 `curl -s http://127.0.0.1:2026/api/v2/features | jq -r .profile` prints
-`sandbox`, and the boot succeeds with no Postgres/Redis/Zoekt process
-running. Proven in CI by `tests/integration/test_sandbox_boot_smoke.py`
+`sandbox`, and the boot succeeds with SQLite and an in-process cache. Proven in CI by `tests/integration/test_sandbox_boot_smoke.py`
 (real-subprocess boot, HTTP surface, no external services) and
 `tests/unit/cli/test_stack_sandbox.py` (flag-gating).
 
@@ -351,8 +349,7 @@ probe (waits for `~/.nexus/nexusd.ready`, polls `/health` +
 ### Sandbox local file workflow (agent-local edits)
 
 **Goal:** let an agent inspect and edit the operator's local project through
-the sandbox runtime without starting Postgres, Redis/Dragonfly, Zoekt, or the
-full shared stack.
+the sandbox runtime with SQLite and an in-process cache.
 
 When the daemon is started with `--profile sandbox --workspace ~/app`, the
 workspace is mounted inside Nexus at `/zone/local`. That mount is the
@@ -1110,7 +1107,7 @@ Search surface coverage matrix:
 Expected outcomes are deliberately boring:
 
 - success returns paths, grep items, or ranked chunks; CLI query JSON is an array
-- permission denial filters paths or candidates and reports truncation/denial metadata where the endpoint supports it
+- the Search host filters unreadable paths and candidates; a successful result may be empty or contain fewer items than the requested limit
 - unavailable providers return a clear unavailable/configuration error instead of pretending semantic or parsed search ran
 
 Correctness is covered by the search router, grep/glob, semantic-search, parser, path-context, and RRF tests. Performance-sensitive rows are classified in `docs/surface-coverage/api-rpc-surface-coverage.yaml`; grep/glob and query paths are hot, indexing is setup work, and health/stats/control endpoints are not performance sensitive. Retrieval-quality benchmark notes live in `docs/benchmarks/2026-04-18-sandbox-vs-gbrain.md`.
@@ -1120,19 +1117,16 @@ Correctness is covered by the search router, grep/glob, semantic-search, parser,
 ```bash
 nexus glob "**/*.py" /workspace
 nexus grep "TODO" /workspace
-nexus grep "revenue" /workspace -f "**/*.pdf" --search-mode parsed
+nexus grep "token" /workspace/docs/api.md --in-section "## API"
 ```
 
-Parser providers are auto-discovered from environment variables:
+Grep reads current VFS bytes on the Search host. Use it for code and plain text.
+The `auto` and `raw` modes use this contract; `--search-mode parsed` is unsupported.
+For PDFs and Office documents, parse them into text before searching that output.
 
-- `UNSTRUCTURED_API_KEY`
-- `LLAMA_CLOUD_API_KEY`
-- local pdf-inspector fallback
-
-Parsed grep uses parser output when possible. Raw grep is better for code and
-plain text; parsed grep is better for PDFs, Office documents, and markdown
-structure. The section-aware grep flow is not available yet; track build issue #4186
-for `nexus grep PATTERN PATH --in-section "## API"`.
+Markdown section-aware grep is available through `--in-section`, with the same
+filter exposed by the SDK, HTTP, and MCP grep calls. The host applies the section
+scope; a missing heading returns no matches within that file.
 
 The parser introspection and direct run-parse commands are also not exposed yet.
 Track build issue #4187 for `nexus parsers list` and
@@ -1225,47 +1219,21 @@ curl "$NEXUS_URL/api/v2/search/health"
 curl -H "Authorization: Bearer $NEXUS_API_KEY" "$NEXUS_URL/api/v2/search/stats"
 ```
 
-### 5.6 What about Zoekt?
+### 5.6 Configure the Search host
 
-Zoekt is an optional fast trigram/code-search backend behind Nexus search.
-There is not a separate `nexus zoekt ...` command today. You run Zoekt
-separately, then point Nexus at it.
+Load `nexus-search-plugin` into the `nexusd-cluster` Kernel that owns the
+workspace mounts. Keyword search uses Tantivy; semantic search uses HNSW
+with the host's configured local or API embedder. `glob` and `grep` inspect
+current workspace bytes through typed SearchService RPCs.
 
-Step by step:
+For the Python server, set `NEXUS_SEARCH_PLUGIN_TARGET` to that cluster's gRPC
+listener and configure its transport credentials. Indexed CLI commands use
+the Rust HTTP listener through `NEXUS_URL`; SDK and MCP filesystem discovery
+use the existing gRPC channel. Pass the caller's credential on every request.
 
-1. start your Zoekt service outside Nexus
-2. point Nexus at that service with the Zoekt environment variables
-3. start `nexusd`
-4. keep using `nexus grep` and `nexus search ...` from the client side
-
-Typical Nexus-side setup:
-
-```bash
-export ZOEKT_ENABLED=true
-export ZOEKT_URL="http://localhost:6070"
-export ZOEKT_INDEX_DIR="$PWD/.zoekt-index"
-export ZOEKT_DATA_DIR="$PWD"
-export ZOEKT_INDEX_BINARY="zoekt-index"
-export NEXUS_SEARCH_DAEMON=true
-
-nexusd --profile full --port 2026 --data-dir "$PWD/data"
-```
-
-What this means in practice:
-
-- Nexus still exposes normal `grep` and `search` flows
-- the search brick uses Zoekt when it is available
-- Zoekt is especially useful for large code trees
-
-If you only want a beginner path, start with `nexus search init/index/query`
-and add Zoekt later.
-
-Packages behind this:
-
-- Search daemon and retrieval: `nexus.bricks.search`
-- Document parsing: `nexus.bricks.parsers`
-- Search HTTP API: `nexus.server.api.v2.routers.search`
-- Search daemon startup: `nexus.server.lifespan.search`
+Follow the [Search deployment contract](../deployment/search-plugin.md) for
+plugin loading, embeddings and per-zone index configuration. Check
+`/api/v2/search/health` for host status and writer-liveness counters.
 
 ## 6. Turn On Permissions And Policy
 
@@ -2454,7 +2422,6 @@ Check:
 - The Rust search plugin is configured and the target files are indexed
 - `NEXUS_SEARCH_DAEMON=true` for long-running server-side search
 - parser keys such as `UNSTRUCTURED_API_KEY` or `LLAMA_CLOUD_API_KEY` if you expect parsed search
-- `ZOEKT_ENABLED=true` only after a Zoekt server is actually running
 
 ### If older docs say `nexus serve`
 

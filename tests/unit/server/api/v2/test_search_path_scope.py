@@ -97,12 +97,9 @@ def _client(monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient, MagicMock]:
     daemon = MagicMock()
     daemon.is_initialized = True
     daemon.config = MagicMock()
-    daemon.config.txtai_graph = False
-    daemon.search = AsyncMock(return_value=[])
+    daemon.search_with_error = AsyncMock(return_value=([], None))
     app = FastAPI()
     app.state.search_daemon = daemon
-    app.state.record_store = object()
-    app.state.async_read_session_factory = object()
     app.state.permission_enforcer = None
     app.state.zone_registry = _Registry()
     app.dependency_overrides[require_auth] = lambda: _AUTH
@@ -118,7 +115,7 @@ def test_repeated_path_reaches_the_plugin_as_one_scope(monkeypatch: pytest.Monke
             params=[("q", "revenue"), ("path", "/ws/documents/"), ("path", "/ws/notes/")],
         )
     assert resp.status_code == 200, resp.text
-    req = daemon.search.call_args.args[0]
+    req = daemon.search_with_error.call_args.args[0]
     assert req.path_filter is None
     assert req.path_filters == ("/ws/documents/", "/ws/notes/")
 
@@ -128,7 +125,7 @@ def test_single_path_is_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
     with client:
         resp = client.get("/api/v2/search/query", params={"q": "revenue", "path": "/ws/"})
     assert resp.status_code == 200, resp.text
-    req = daemon.search.call_args.args[0]
+    req = daemon.search_with_error.call_args.args[0]
     assert req.path_filter == "/ws/"
     assert req.path_filters == ()
 
@@ -145,4 +142,4 @@ def test_multiple_paths_are_refused_where_unsupported(
         )
     assert resp.status_code == 400, resp.text
     assert "Multiple path prefixes" in resp.text
-    daemon.search.assert_not_called()
+    daemon.search_with_error.assert_not_called()

@@ -19,6 +19,22 @@ members = [
     # syscalls via the plugin-abi KernelHandle.  Loaded by
     # nexusd-cluster via --plugin-dir alongside nexus-vault.
     "rust/services/fuse-plugin",
+    # ── Formerly here, relocated to nexus-vfs ─────────────────────
+    #
+    # `nexus-http-api` / `nexus-federated-search` / `nexus-search-common`
+    # / `nexus-rebac` moved into nexus-vfs at commit 2467f358
+    # (nexus-vfs#319 / nexus#4825, 2026-09-24), then
+    # `nexus-search-plugin` + `rust/services/proto/nexus/search/`
+    # followed at commit eb77b66b (nexus-vfs#321, 2026-09-25).  All
+    # five crates SSOT from the same repo as the daemon binary
+    # (`nexusd-cluster` under `nexus-vfs/rust/profiles/cluster/`) that
+    # would host them, and the nexus-repo assembly binary that used
+    # to link the first four (`rust/nexusd/`) is gone too — one
+    # production build path, one binary name, one repo.
+    #
+    # `rust/services/proto/` still hosts the vault + secrets protos
+    # (used by `rust/services/vault`, which stays here); only the
+    # search proto tree relocated.
 ]
 # nexus-fuse excluded: standalone FUSE daemon with different dependency versions
 # from the workspace.  Distinct from nexus-fuse-plugin (the new
@@ -211,14 +227,15 @@ exclude = ["nexus-fuse"]
 #
 # Bump alongside the rest of nexus-vfs updates when a downstream
 # change needs newer kernel bits.
+contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "5cbe862d8199636e939a50f063fab581796c5a3f" }
+lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "5cbe862d8199636e939a50f063fab581796c5a3f" }
+transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "5cbe862d8199636e939a50f063fab581796c5a3f" }
+backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "5cbe862d8199636e939a50f063fab581796c5a3f", default-features = false }
+kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "5cbe862d8199636e939a50f063fab581796c5a3f", default-features = false }
+raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "5cbe862d8199636e939a50f063fab581796c5a3f", default-features = false, features = ["grpc"] }
+nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "5cbe862d8199636e939a50f063fab581796c5a3f" }
+# Includes Search RPC authentication and live result permissions (nexus-vfs#375).
 # Includes production ReBAC and HTTP Search credential forwarding (nexus-vfs#376).
-contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "b0cdd1720161d9cfc61e91262a274ee2c99d8b98" }
-lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "b0cdd1720161d9cfc61e91262a274ee2c99d8b98" }
-transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "b0cdd1720161d9cfc61e91262a274ee2c99d8b98" }
-backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "b0cdd1720161d9cfc61e91262a274ee2c99d8b98", default-features = false }
-kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "b0cdd1720161d9cfc61e91262a274ee2c99d8b98", default-features = false }
-raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "b0cdd1720161d9cfc61e91262a274ee2c99d8b98", default-features = false, features = ["grpc"] }
-nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "b0cdd1720161d9cfc61e91262a274ee2c99d8b98" }
 # The cluster daemon library entry (`nexus_cluster::run_with_services`).
 # The `nexusd-cluster` binary that composes it now lives in nexus-vfs
 # (`rust/profiles/cluster/`); this workspace only pulls the library
@@ -226,19 +243,19 @@ nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "b0cdd
 # decls) at compile time — the daemon itself is installed via
 # `cargo install --git nexus-vfs nexus-cluster --bin nexusd-cluster`
 # in the Dockerfiles.
-nexus-cluster = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "b0cdd1720161d9cfc61e91262a274ee2c99d8b98" }
+nexus-cluster = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "5cbe862d8199636e939a50f063fab581796c5a3f" }
 # a2a messaging substrate. `default-features = false` leaves the
 # `install` feature (which pulls raft to arm the stream-wakeup observer)
 # OFF, so nexus-side consumers link only the stamp hook and stay
 # raft-free — they reach raft through kernel.sys_* (§6.1). The substrate
 # is armed in production at cluster boot in nexus-vfs, not here.
-a2a = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "b0cdd1720161d9cfc61e91262a274ee2c99d8b98", default-features = false }
+a2a = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "5cbe862d8199636e939a50f063fab581796c5a3f", default-features = false }
 # managed-agent control plane + the shared subprocess host — RELOCATED into
 # nexus-vfs (kernel-tier) so the production nexusd-cluster carries the agent
 # control plane. `subprocess-host` enables the raw ACP-subprocess spawner (the
 # nexus-side acp path + managed-agent both use HostedSubprocess).
-managed-agent = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "b0cdd1720161d9cfc61e91262a274ee2c99d8b98", default-features = false }
-subprocess = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "b0cdd1720161d9cfc61e91262a274ee2c99d8b98" }
+managed-agent = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "5cbe862d8199636e939a50f063fab581796c5a3f", default-features = false }
+subprocess = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "5cbe862d8199636e939a50f063fab581796c5a3f" }
 # Local service crate (nexus-owned).
 services = { path = "rust/services" }
 serde = { version = "1.0", features = ["derive"] }

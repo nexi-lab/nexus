@@ -798,6 +798,47 @@ jobs:
             --bin nexusd-cluster \
             nexus-cluster
 
+      - name: nexusd-cluster size budget (cluster profile purity)
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        # The production cluster binary is size-gated (KERNEL-ARCHITECTURE §7;
+        # mirrors nexus-vfs cluster-binary-build.yml's linux budget). As of
+        # 2026-09-24 the nexus-repo assembly is retired and this gate runs
+        # against the very same binary nexus-vfs's own gate measures, so
+        # this budget is largely redundant with the upstream one — kept as
+        # a belt-and-suspenders leak-catcher for the pin (a rev bump that
+        # doubles the binary would slip past a stale upstream gate but not
+        # this one).  driver-s3 / connectors must NOT leak into the default
+        # (slim) build — that leak is the #36 regression this gate catches.
+        run: |
+          BIN="$HOME/.cargo/bin/nexusd-cluster"
+          # 17.0 MiB = the nexus-vfs linux cluster budget (17563648 = 16.75
+          # MiB) plus 0.25 MiB for what this assembly adds on top: the nexus
+          # service crates, and the managed-agent `subprocess-host` feature
+          # that the vfs cluster build does not enable. It is DERIVED from the
+          # nexus-vfs number rather than measured here, so a pin bump that
+          # legitimately grows the kernel moves both budgets together instead
+          # of failing this gate for growth nexus-vfs already accepted.
+          #
+          # Raised from 16.5 MiB when the pin advanced to 191fa0efa: nexus-vfs
+          # raised its own budget from 16.25 to 16.75 MiB for the managed-agent
+          # control plane relocated INTO nexusd-cluster (nexus-vfs#241), while
+          # this cap still tracked the pre-relocation number. That relocation
+          # is also why managed_agent is no longer a nexus-local crate — it
+          # arrives inside the vfs dependency.
+          #
+          # Still a leak-catcher. driver-s3 and the connectors are megabytes,
+          # so the ~1.2 MiB of slack this leaves cannot hide one.
+          # 19.75 MiB — the vfs 1.99.0-toolchain baseline (19.5 MiB,
+          # cluster-binary-build.yml) plus the usual 0.25 MiB for what this
+          # assembly adds on top.
+          MAX=20709376
+          actual=$(stat -c%s "$BIN")
+          echo "nexusd-cluster size: $actual bytes (max: $MAX)"
+          if [ "$actual" -gt "$MAX" ]; then
+            echo "::error::nexusd-cluster ($actual bytes) exceeds the cluster size budget ($MAX). A driver/connector likely leaked into the default slim build — keep driver-s3 & connectors behind opt-in features (KERNEL-ARCHITECTURE §7)."
+            exit 1
+          fi
+
       - name: Boot smoke test
         if: needs.detect-changes.outputs.code_changed == 'true'
         run: |

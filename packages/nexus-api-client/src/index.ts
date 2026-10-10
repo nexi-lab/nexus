@@ -15,6 +15,17 @@
 
 // Client
 export { FetchClient } from "./fetch-client.js";
+export { ZoneClient } from "./zones.js";
+export type {
+  ZoneCreateInput,
+  ZoneDelegationInput,
+  ZoneDelegation,
+  ZoneDelegationScopeRule,
+  ZoneGrantInput,
+  ZoneMount,
+  ZoneOperation,
+  ZoneRef,
+} from "./zones.js";
 
 // SSE
 export { SseClient, RingBuffer } from "./sse-client.js";

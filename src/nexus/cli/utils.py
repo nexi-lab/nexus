@@ -529,6 +529,19 @@ def handle_error(e: Exception) -> None:
     """
     from nexus.contracts.exceptions import AccessDeniedError, NexusPermissionError
 
+    if isinstance(e, ZoneApiError):
+        print_error("Zone API Error", e)
+        if e.connect_failure:
+            sys.exit(ExitCode.UNAVAILABLE)
+        if e.status_code is None:
+            sys.exit(ExitCode.USAGE_ERROR)  # missing --remote-url / NEXUS_URL
+        if e.status_code in (401, 403):
+            sys.exit(ExitCode.PERMISSION_DENIED)
+        if e.status_code == 404:
+            sys.exit(ExitCode.NOT_FOUND)
+        if 400 <= e.status_code < 500:
+            sys.exit(ExitCode.USAGE_ERROR)
+        sys.exit(ExitCode.TEMPFAIL)  # server-side, retryable
     if isinstance(e, PermissionError | AccessDeniedError | NexusPermissionError):
         print_error("Permission Denied", e)
         sys.exit(ExitCode.PERMISSION_DENIED)
@@ -651,3 +664,73 @@ def rpc_call(
             nx.close()
 
     return asyncio.run(_call())
+
+
+class ZoneApiError(RuntimeError):
+    """Remote zone API failure carrying its HTTP status.
+
+    handle_error maps this onto sysexits codes (77/66/64/75/69) so scripts
+    can branch on exit codes instead of parsing text."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        connect_failure: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.connect_failure = connect_failure
+
+
+def api_call(
+    remote_url: str | None,
+    remote_api_key: str | None,
+    method: str,
+    path: str,
+    *,
+    json_body: dict[str, Any] | None = None,
+    idempotency_key: str | None = None,
+) -> Any:
+    """Call a public REST endpoint with the CLI's configured credentials."""
+    if not remote_url:
+        raise ZoneApiError("Zone mutations require --remote-url or NEXUS_URL")
+    import httpx
+
+    headers: dict[str, str] = {}
+    if remote_api_key:
+        headers["Authorization"] = f"Bearer {remote_api_key}"
+    if idempotency_key:
+        headers["Idempotency-Key"] = idempotency_key
+    try:
+        response = httpx.request(
+            method,
+            f"{remote_url.rstrip('/')}{path}",
+            json=json_body,
+            headers=headers,
+            timeout=30.0,
+        )
+    except httpx.HTTPError as exc:
+        # httpx.ConnectError is NOT the builtin ConnectionError — without
+        # this arm it fell through to INTERNAL_ERROR (70) instead of
+        # UNAVAILABLE (69).
+        raise ZoneApiError(f"Zone API unreachable: {exc}", connect_failure=True) from exc
+    if response.is_error or response.is_redirect:
+        # Redirects are a misconfigured base URL (e.g. http→https jump);
+        # httpx does not follow them by default and .json() would only
+        # produce a cryptic decode error.
+        raise (
+            ZoneApiError(
+                f"Zone API {response.status_code} (redirect): {response.text}",
+                status_code=response.status_code,
+            )
+            if response.is_redirect
+            else ZoneApiError(
+                f"Zone API {response.status_code}: {response.text}",
+                status_code=response.status_code,
+            )
+        )
+    if response.status_code == 204:
+        return None
+    return response.json()

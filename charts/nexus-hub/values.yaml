@@ -9,6 +9,14 @@ fullnameOverride: ""
 
 nexus:
   profile: full
+  # Empty issuers keep the full profile standalone. To enable Moss delegation,
+  # set issuers, the complete membership endpoint URL, and a Secret reference.
+  zoneDelegationIssuers: ""
+  zoneMembership:
+    url: ""
+    tokenSecretRef:
+      name: ""
+      key: token
   # Keep this at 1 when nexus.persistence.enabled=true. Multiple persistent
   # Nexus pods would otherwise mount the same writable data PVC.
   replicaCount: 1

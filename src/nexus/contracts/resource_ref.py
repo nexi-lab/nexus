@@ -536,6 +536,18 @@ def _extensions_resource_issue(
 
 
 def _zone_path_preflight_issue(value: str) -> ResourceRefValidationIssue | None:
+    # Reserved-prefix parity with the owned zone-path contract: __sys__ is
+    # the kernel's own namespace and the one security rule this older
+    # projection does not carry — without it a path the zones surface
+    # always rejects could pass here (the only harmful divergence: every
+    # other rule difference makes this layer strictly stricter).
+    if value == "/__sys__" or value.startswith("/__sys__/"):
+        return ResourceRefValidationIssue(
+            category="invalid_zone_path",
+            path="/path",
+            keyword="sudoZonePath",
+            message="__sys__ is a reserved prefix and may not be addressed",
+        )
     rules = _zone_path_schema().get("sudoZonePath")
     error = next(_validate_zone_path(None, rules, value, {}), None)
     if error is None:

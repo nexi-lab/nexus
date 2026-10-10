@@ -11,6 +11,14 @@ import httpx
 import pytest
 
 
+def _e2e_api_key() -> str:
+    """Minted kernel admin key (conftest publishes it as NEXUS_E2E_API_KEY);
+    read at call time because module import happens before any fixture."""
+    import os
+
+    return os.environ.get("NEXUS_E2E_API_KEY", "test-e2e-api-key-12345")
+
+
 @pytest.fixture
 def auth_headers():
     """Provide authentication headers for e2e tests.
@@ -18,7 +26,7 @@ def auth_headers():
     The API key is configured in conftest.py as NEXUS_API_KEY.
     API key auth grants admin privileges.
     """
-    return {"Authorization": "Bearer test-e2e-api-key-12345"}
+    return {"Authorization": f"Bearer {_e2e_api_key()}"}
 
 
 def _redis_available() -> bool:

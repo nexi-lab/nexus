@@ -16,6 +16,7 @@ Subcommands:
 """
 
 import sys
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -31,12 +32,42 @@ from nexus.cli.utils import (
     REMOTE_API_KEY_OPTION,
     REMOTE_URL_OPTION,
     add_backend_options,
+    api_call,
     console,
     get_filesystem,
     handle_error,
-    rpc_call,
 )
 from nexus.contracts.constants import DEFAULT_GRPC_BIND_ADDR
+
+
+def _refuse_dropped_local_options(
+    ctx: click.Context, *, hostname: str | None, data_dir: str, bind: str
+) -> None:
+    """M-13: legacy local-ZoneManager flags have no /v2 remote equivalent —
+    refuse loudly instead of silently dropping them (a silent drop produced
+    exit-0 fake successes for documented flags).
+
+    Only a value the user typed on the COMMAND LINE is refused: env-injected
+    values (NEXUS_DATA_DIR and friends) are ambient configuration common in
+    docker exec / CI shells, not an explicit request for local behaviour."""
+    explicit = lambda name: (  # noqa: E731 - local readability
+        ctx.get_parameter_source(name) == click.core.ParameterSource.COMMANDLINE
+    )
+    unsupported = [
+        name
+        for name, value, typed in (
+            ("--hostname", hostname, explicit("hostname")),
+            ("--data-dir", data_dir, explicit("data_dir")),
+            ("--bind", bind, explicit("bind")),
+        )
+        if typed and value
+    ]
+    if unsupported:
+        raise click.UsageError(
+            "not supported via the remote zone API: "
+            + ", ".join(unsupported)
+            + " (the server owns placement)"
+        )
 
 
 @click.group()
@@ -118,6 +149,8 @@ def _get_zone_manager(
     default=False,
     help="Succeed silently if zone already exists",
 )
+@REMOTE_URL_OPTION
+@REMOTE_API_KEY_OPTION
 @add_dry_run_option
 def create_zone_cmd(
     zone_id: str,
@@ -126,6 +159,8 @@ def create_zone_cmd(
     bind: str,
     peers: str | None,
     if_not_exists: bool,
+    remote_url: str | None,
+    remote_api_key: str | None,
     dry_run: bool,
 ) -> None:
     """Create a new Raft zone.
@@ -135,8 +170,6 @@ def create_zone_cmd(
 
     Examples:
         nexus zone create my-zone
-
-        nexus zone create shared-zone --peers peer2:2126,peer3:2126
 
         nexus zone create my-zone --hostname nexus-1
 
@@ -148,36 +181,45 @@ def create_zone_cmd(
 
     if hostname is None:
         hostname = socket.gethostname()
+    # M-13: refuse legacy local options the remote API cannot honour.
+    if peers:
+        raise click.UsageError(
+            "--peers is not supported via the remote zone API "
+            "(participants join via `nexus zone join`)"
+        )
+    _refuse_dropped_local_options(
+        click.get_current_context(),
+        hostname=hostname,
+        data_dir=data_dir,
+        bind=bind,
+    )
 
     try:
         if dry_run:
-            preview = dry_run_preview(
-                "zone create", path=zone_id, details={"hostname": hostname, "peers": peers}
-            )
+            preview = dry_run_preview("zone create", path=zone_id, details={"hostname": hostname})
             render_dry_run(preview)
             return
 
-        peer_list = [p.strip() for p in peers.split(",")] if peers else []
-        mgr = _get_zone_manager(hostname, data_dir, bind, peers=peer_list)
-
         try:
-            store = mgr.create_zone(zone_id, peers=peer_list)
+            result = api_call(
+                remote_url,
+                remote_api_key,
+                "POST",
+                "/v2/zones",
+                json_body={"zone_id": zone_id, "display_name": zone_id},
+                idempotency_key=f"cli-create-{uuid.uuid4().hex}",
+            )
         except Exception as create_err:
-            if if_not_exists and "already exists" in str(create_err).lower():
+            if if_not_exists and (
+                "already exists" in str(create_err).lower()
+                or "zone_already_exists" in str(create_err).lower()
+            ):
                 console.print(f"[nexus.success]✓[/nexus.success] Zone already exists: {zone_id}")
-                mgr.shutdown()
                 return
             raise
 
-        console.print(f"[nexus.success]Zone '{zone_id}' created[/nexus.success]")
-        console.print(f"  Hostname: {hostname}")
-        console.print(f"  Data dir: {data_dir}/{zone_id}/")
-        console.print(f"  Bind: {bind}")
-        if peer_list:
-            console.print(f"  Peers: {', '.join(peer_list)}")
-
-        store.close()
-        mgr.shutdown()
+        console.print(f"[nexus.success]Zone '{zone_id}' accepted[/nexus.success]")
+        console.print(f"  Operation: {result.get('operation_id', 'unknown')}")
     except Exception as e:
         handle_error(e)
 
@@ -213,12 +255,16 @@ def create_zone_cmd(
     required=True,
     help="Comma-separated existing peer addresses (format: host:port)",
 )
+@REMOTE_URL_OPTION
+@REMOTE_API_KEY_OPTION
 def join_zone_cmd(
     zone_id: str,
     hostname: str | None,
     data_dir: str,
     bind: str,
     peers: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Join an existing zone as a new Voter.
 
@@ -228,23 +274,27 @@ def join_zone_cmd(
     Examples:
         nexus zone join shared-zone --peers leader:2126,peer2:2126
     """
-    import socket
-
-    if hostname is None:
-        hostname = socket.gethostname()
+    _refuse_dropped_local_options(
+        click.get_current_context(),
+        hostname=hostname,
+        data_dir=data_dir,
+        bind=bind,
+    )
 
     try:
         peer_list = [p.strip() for p in peers.split(",")]
-        mgr = _get_zone_manager(hostname, data_dir, bind, peers=peer_list)
-        store = mgr.join_zone(zone_id, peers=peer_list)
+        result = api_call(
+            remote_url,
+            remote_api_key,
+            "POST",
+            f"/v2/zones/{zone_id}/joins",
+            json_body={"peers": peer_list, "learner": False},
+            idempotency_key=f"cli-join-{uuid.uuid4().hex}",
+        )
 
-        console.print(f"[nexus.success]Joined zone '{zone_id}'[/nexus.success]")
-        console.print(f"  Hostname: {hostname}")
+        console.print(f"[nexus.success]Join accepted for '{zone_id}'[/nexus.success]")
         console.print(f"  Peers: {', '.join(peer_list)}")
-        console.print("  Waiting for leader to send snapshot...")
-
-        store.close()
-        mgr.shutdown()
+        console.print(f"  Operation: {result.get('operation_id', 'unknown')}")
     except Exception as e:
         handle_error(e)
 
@@ -306,8 +356,19 @@ def list_zones_cmd(
         # for maintenance scenarios (no server running).
         if remote_url:
             with timing.phase("server"):
-                rpc_data = rpc_call(remote_url, remote_api_key, "federation_list_zones")
-            zones = [z.get("zone_id", "") for z in rpc_data.get("zones", [])]
+                # the server pages zones (default limit 50) — follow
+                # next_cursor so listings beyond the first page survive
+                zones: list[str] = []
+                cursor: str | None = None
+                while True:
+                    query = "/v2/zones"
+                    if cursor:
+                        query += f"?cursor={cursor}"
+                    rpc_data = api_call(remote_url, remote_api_key, "GET", query)
+                    zones.extend(z.get("zone_id", "") for z in rpc_data.get("zones", []))
+                    cursor = rpc_data.get("next_cursor")
+                    if not cursor:
+                        break
         else:
             with timing.phase("server"):
                 mgr = _get_zone_manager(hostname, data_dir, bind)
@@ -374,6 +435,8 @@ def list_zones_cmd(
     show_default=True,
     help="gRPC bind address",
 )
+@REMOTE_URL_OPTION
+@REMOTE_API_KEY_OPTION
 @add_dry_run_option
 def mount_zone_cmd(
     mount_path: str,
@@ -382,6 +445,8 @@ def mount_zone_cmd(
     hostname: str | None,
     data_dir: str,
     bind: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
     dry_run: bool,
 ) -> None:
     """Mount a zone at a path (DT_MOUNT).
@@ -398,10 +463,12 @@ def mount_zone_cmd(
 
         nexus zone mount /shared team-zone --dry-run
     """
-    import socket
-
-    if hostname is None:
-        hostname = socket.gethostname()
+    _refuse_dropped_local_options(
+        click.get_current_context(),
+        hostname=hostname,
+        data_dir=data_dir,
+        bind=bind,
+    )
 
     try:
         if dry_run:
@@ -413,14 +480,26 @@ def mount_zone_cmd(
             render_dry_run(preview)
             return
 
-        mgr = _get_zone_manager(hostname, data_dir, bind)
-        mgr.mount(parent_zone, mount_path, target_zone)
-
-        console.print(
-            f"[nexus.success]Mounted zone '{target_zone}' at '{mount_path}' in zone '{parent_zone}'[/nexus.success]"
+        result = api_call(
+            remote_url,
+            remote_api_key,
+            "POST",
+            "/v2/zone-mounts",
+            json_body={
+                "parent_zone_id": parent_zone,
+                "target_zone_id": target_zone,
+                "path": mount_path,
+            },
+            idempotency_key=f"cli-mount-{uuid.uuid4().hex}",
         )
 
-        mgr.shutdown()
+        console.print(
+            f"[nexus.success]Mount of '{target_zone}' at '{mount_path}' in zone "
+            f"'{parent_zone}' accepted (async)[/nexus.success]"
+        )
+        console.print("  Track it with: nexus zone wait <operation_id>")
+
+        console.print(f"  Operation: {result.get('operation_id', 'unknown')}")
     except Exception as e:
         handle_error(e)
 
@@ -457,6 +536,8 @@ def mount_zone_cmd(
     show_default=True,
     help="gRPC bind address",
 )
+@REMOTE_URL_OPTION
+@REMOTE_API_KEY_OPTION
 @add_dry_run_option
 def unmount_zone_cmd(
     mount_path: str,
@@ -464,6 +545,8 @@ def unmount_zone_cmd(
     hostname: str | None,
     data_dir: str,
     bind: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
     dry_run: bool,
 ) -> None:
     """Remove a mount point (DT_MOUNT).
@@ -475,10 +558,12 @@ def unmount_zone_cmd(
 
         nexus zone unmount /shared --dry-run
     """
-    import socket
-
-    if hostname is None:
-        hostname = socket.gethostname()
+    _refuse_dropped_local_options(
+        click.get_current_context(),
+        hostname=hostname,
+        data_dir=data_dir,
+        bind=bind,
+    )
 
     try:
         if dry_run:
@@ -490,14 +575,76 @@ def unmount_zone_cmd(
             render_dry_run(preview)
             return
 
-        mgr = _get_zone_manager(hostname, data_dir, bind)
-        mgr.unmount(parent_zone, mount_path)
-
-        console.print(
-            f"[nexus.success]Unmounted '{mount_path}' from zone '{parent_zone}'[/nexus.success]"
+        # L-11: the server pages mounts (default limit 50) — follow
+        # next_cursor until the target is found or the listing is exhausted.
+        mount = None
+        cursor = None
+        while mount is None:
+            query = f"/v2/zone-mounts?zone_id={parent_zone}"
+            if cursor:
+                query += f"&cursor={cursor}"
+            listing = api_call(remote_url, remote_api_key, "GET", query)
+            mount = next(
+                (
+                    item
+                    for item in listing.get("mounts", [])
+                    if item.get("parent_zone_id") == parent_zone and item.get("path") == mount_path
+                ),
+                None,
+            )
+            cursor = listing.get("next_cursor")
+            if mount is None and not cursor:
+                break
+        if mount is None:
+            raise RuntimeError(f"No mount at {parent_zone}:{mount_path}")
+        result = api_call(
+            remote_url,
+            remote_api_key,
+            "DELETE",
+            f"/v2/zone-mounts/{mount['mount_id']}",
+            idempotency_key=f"cli-unmount-{uuid.uuid4().hex}",
         )
 
-        mgr.shutdown()
+        console.print(
+            f"[nexus.success]Unmount of '{mount_path}' from zone '{parent_zone}' "
+            "accepted (async)[/nexus.success]"
+        )
+        console.print("  Track it with: nexus zone wait <operation_id>")
+
+        console.print(f"  Operation: {result.get('operation_id', 'unknown')}")
+    except Exception as e:
+        handle_error(e)
+
+
+@zone.command(name="wait")
+@click.argument("operation_id", type=str)
+@REMOTE_URL_OPTION
+@REMOTE_API_KEY_OPTION
+def wait_operation_cmd(
+    operation_id: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
+    """Poll a zone operation until it settles.
+
+    L-11: the zone surface accepts mutations asynchronously (202 + operation);
+    without a polling command the caller could not observe progress.
+    """
+    import time as _time
+
+    try:
+        deadline = _time.monotonic() + 120.0
+        while True:
+            op = api_call(remote_url, remote_api_key, "GET", f"/v2/zone-operations/{operation_id}")
+            state = str(op.get("state") or "")
+            console.print(f"operation {operation_id}: {state} ({op.get('step', '')})")
+            if state in ("succeeded", "failed"):
+                if state == "failed":
+                    raise RuntimeError(f"operation {operation_id} failed: {op.get('error')}")
+                return
+            if _time.monotonic() > deadline:
+                raise RuntimeError(f"operation {operation_id} not settled in 120s")
+            _time.sleep(1.0)
     except Exception as e:
         handle_error(e)
 

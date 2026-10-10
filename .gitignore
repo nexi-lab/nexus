@@ -107,6 +107,8 @@ cython_debug/
 *_pb2.py
 *_pb2_grpc.py
 *_pb2.pyi
+!src/nexus/grpc/vfs/zone_runtime_pb2.py
+!src/nexus/grpc/vfs/zone_runtime_pb2_grpc.py
 
 # Rust
 target/
@@ -258,6 +260,8 @@ deploy/
 
 # Build tools (binary)
 tools/
+!contracts/tools/
+!contracts/tools/sync_vendor.py
 tls/
 nexus.yaml
 scripts/nexus-ai-fs-demo/.env.scenarios

@@ -46,7 +46,10 @@ def test_vendored_projections_match_source_lock_digests() -> None:
     for entry in lock["files"]:
         path = CONTRACTS_DIR.parent / entry["path"]
         assert path.exists(), entry["path"]
-        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        # LF-normalized (checkout-independent): a CRLF checkout must hash the
+        # vendored projection the same as the bytes sync_vendor fetched
+        raw = path.read_bytes().replace(bytes((13, 10)), bytes((10,)))
+        digest = hashlib.sha256(raw).hexdigest()
         assert digest == entry["sha256"], f"{entry['path']} drifted from source lock"
 
 

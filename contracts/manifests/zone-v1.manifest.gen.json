@@ -197,7 +197,7 @@
       "kind": "Zone",
       "schema_id": "https://contracts.sudo.dev/schemas/auth/v1/zone.schema.json",
       "schema_path": "contracts/auth/v1/zone.schema.json",
-      "schema_digest": "sha256:b7551d924d9696a64a3c87bdf9b15d08a28b16b512fc82b07058b4b404fdc3bb",
+      "schema_digest": "sha256:4accc91080970d5e7fc7bd28d70f96d1e2ae190926f44cde231d4a03a9998af1",
       "semantic_adr_refs": [
         "sudostack/docs/adr/ADR-002-zone-and-tenancy-model.md"
       ],

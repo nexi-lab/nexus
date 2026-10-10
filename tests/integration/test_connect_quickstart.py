@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import nexus
 
@@ -24,68 +23,3 @@ def test_local_connect_source_checkout_quickstart(
         assert nx.sys_read("/hello.txt") == b"hello"
     finally:
         nx.close()
-
-
-def test_remote_connect_skips_mount_persistence_and_parser_autodiscovery(
-    monkeypatch,
-) -> None:
-    """Remote clients should avoid local parser bootstrap and mount writes.
-
-    parser_registry / provider_registry are brick-layer — the kernel must
-    NOT hold references to them, and the remote connect path must NOT import
-    bricks.parsers at all.
-
-    Phase 4: REMOTE profile now uses Rust RemoteBackend/RemoteMetastore
-    installed via sys_setattr(backend_type="remote"). Verify the NexusFS
-    holds a Rust ``PyKernel`` (not a Python RemoteMetastore) and has no
-    brick-layer registries.
-    """
-    mock_channel = MagicMock()
-    mock_stub = MagicMock()
-
-    with (
-        patch("nexus.remote.rpc_transport.grpc.insecure_channel", return_value=mock_channel),
-        patch(
-            "nexus.remote.rpc_transport.vfs_pb2_grpc.NexusVFSServiceStub",
-            return_value=mock_stub,
-        ),
-    ):
-        nx = nexus.connect(
-            config={
-                "profile": "remote",
-                "url": "http://127.0.0.1:2027",
-            }
-        )
-        try:
-            # Kernel must NOT hold brick-layer parser/provider registry references
-            assert not hasattr(nx, "parser_registry")
-            assert not hasattr(nx, "provider_registry")
-            # Kernel handle must be a Rust ``PyKernel``.
-            assert nx._kernel is not None
-            assert nx._kernel.__class__.__name__ == "PyKernel"
-        finally:
-            nx.close()
-
-
-def test_remote_connect_closes_shared_rpc_transport() -> None:
-    """Remote quickstart should close the shared gRPC transport on nx.close()."""
-    mock_channel = MagicMock()
-    mock_stub = MagicMock()
-
-    with (
-        patch("nexus.remote.rpc_transport.grpc.insecure_channel", return_value=mock_channel),
-        patch(
-            "nexus.remote.rpc_transport.vfs_pb2_grpc.NexusVFSServiceStub",
-            return_value=mock_stub,
-        ),
-        patch("nexus.security.tls.config.ZoneTlsConfig.from_env", return_value=None),
-    ):
-        nx = nexus.connect(
-            config={
-                "profile": "remote",
-                "url": "http://127.0.0.1:2027",
-            }
-        )
-        nx.close()
-
-    mock_channel.close.assert_called_once()

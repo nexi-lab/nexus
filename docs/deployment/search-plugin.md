@@ -36,6 +36,25 @@ workspace belongs to its own Kernel; a VM broker does not gain access to that
 workspace by hosting Search. Preserve the existing agent or delegated user
 identity and pass its credential at each request boundary.
 
+Remote SDK files and Search share the filesystem's authenticated gRPC channel.
+File operations use typed VFS RPCs; range reads use BatchRead. Directory pages
+walk only as far as the page window plus one entry and fetch detailed metadata
+in one BatchStat call. Their `total_count` remains unknown rather than requiring
+a complete namespace scan.
+
+Directory enumeration requires read permission on the directory and each
+returned child. Stat and BatchStat use the same installed file policy; a mixed
+BatchStat request is rejected before reading metadata. Xattr reads follow that
+policy too; xattr support still depends on the selected metastore. Xattr writes,
+locks and IPC close operations require write permission. Force unlock and
+closing all pipes require administrative authority. A wildcard watch needs
+read permission on its fixed parent, and every returned event is checked
+again after the wait.
+
+The current typed Write contract represents complete file replacement. Offset
+writes and TTL requests return `NotImplementedError` before writing. The typed
+Rename contract also rejects `force=True` before changing either path.
+
 Certificate agents use SearchService on the same mTLS channel as VFS. Their
 certificate establishes identity without a zone grant; the Kernel's installed
 file policy, including containment and ReBAC, determines access. A requested

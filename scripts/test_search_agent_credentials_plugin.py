@@ -10,15 +10,17 @@ import asyncio
 import json
 import os
 from pathlib import Path
+from unittest.mock import patch
 from uuid import uuid4
 
 import grpc
 import httpx
 
+import nexus
+from nexus.contracts.exceptions import NexusPermissionError
 from nexus.grpc.search.v1 import search_pb2, search_pb2_grpc
 from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
 from nexus.remote.rpc_transport import RPCTransport
-from nexus.security.tls.config import ZoneTlsConfig
 
 
 async def denied(call, code):
@@ -40,6 +42,7 @@ async def main() -> None:
     channels = []
     agents = {}
     transports = {}
+    filesystems = {}
 
     def dial(ca, cert, key, server_name=None):
         credentials = grpc.ssl_channel_credentials(
@@ -72,16 +75,25 @@ async def main() -> None:
                 vfs_pb2_grpc.NexusVFSServiceStub(channel),
                 search_pb2_grpc.SearchServiceStub(channel),
             )
-            transports[name] = RPCTransport(
-                target,
-                tls_config=ZoneTlsConfig(
-                    ca_cert_path=bundle / manifest["ca"],
-                    node_cert_path=bundle / manifest["cert"],
-                    node_key_path=bundle / manifest["key"],
-                    known_zones_path=Path(f"/tmp/search-cert-zones-{name}-{suffix}"),
-                ),
-                timeout=15,
+            client_env = {
+                key: value
+                for key, value in os.environ.items()
+                if not key.startswith("NEXUS_") or key == "NEXUS_KERNEL_BINARY"
+            }
+            client_env.update(
+                NEXUS_GRPC_PORT=target.rsplit(":", 1)[1],
+                NEXUS_GRPC_TLS="true",
+                NEXUS_TLS_CA=str(bundle / manifest["ca"]),
+                NEXUS_TLS_CERT=str(bundle / manifest["cert"]),
+                NEXUS_TLS_KEY=str(bundle / manifest["key"]),
             )
+            with patch.dict(os.environ, client_env, clear=True):
+                filesystem = await asyncio.to_thread(
+                    nexus.connect, {"profile": "remote", "url": f"https://{target}", "timeout": 15}
+                )
+            filesystems[name] = filesystem
+            transports[name] = filesystem._nexus_remote_call_rpc.__self__
+            assert isinstance(transports[name], RPCTransport)
             written = await vfs.Write(
                 vfs_pb2.WriteRequest(
                     path=paths[name], content=f"{needle} {name}".encode(), auth_token=admin
@@ -171,24 +183,43 @@ async def main() -> None:
             assert [hit.path for hit in response.results] == expected, response
 
         async def sdk(name, expected):
-            transport = transports[name]
+            filesystem = filesystems[name]
             response = await asyncio.to_thread(
-                transport.call_rpc,
-                "semantic_search",
-                {"query": needle, "search_mode": "keyword", "zone_id": "sharedzone"},
+                filesystem.semantic_search,
+                query=needle,
+                search_mode="keyword",
+                zone_id="sharedzone",
             )
-            assert [hit["path"] for hit in response["results"]] == expected, response
-            for method, pattern, result_key, path_key in (
-                ("glob", "*.txt", "matches", None),
-                ("grep", needle, "results", "file"),
+            assert [hit["path"] for hit in response] == expected, response
+            for method, pattern, path_key in (
+                ("glob", "*.txt", None),
+                ("grep", needle, "file"),
             ):
                 response = await asyncio.to_thread(
-                    transport.call_rpc,
-                    method,
-                    {"path": "/docs", "pattern": pattern, "files": list(paths.values())},
+                    getattr(filesystem, method),
+                    pattern=pattern,
+                    path="/docs",
+                    files=list(paths.values()),
                 )
-                found = response[result_key]
+                found = response
                 assert (found if path_key is None else [hit[path_key] for hit in found]) == expected
+
+        async def sdk_denied(name, method, *args, **kwargs):
+            try:
+                result = await asyncio.to_thread(
+                    getattr(filesystems[name], method), *args, **kwargs
+                )
+            except NexusPermissionError:
+                pass
+            except grpc.RpcError as error:
+                assert error.code() == grpc.StatusCode.PERMISSION_DENIED, error
+            else:
+                raise AssertionError(f"SDK {method} unexpectedly passed authorization: {result!r}")
+
+        async def vfs_denied(call):
+            response = await call
+            assert response.is_error, response
+            assert json.loads(response.error_payload)["code"] in (-32003, -32018), response
 
         async def discovery(name, expected):
             client = agents[name][2]
@@ -214,7 +245,7 @@ async def main() -> None:
 
         async with httpx.AsyncClient(base_url=base, timeout=15, trust_env=False) as http:
 
-            async def grant(name, method):
+            async def grant(name, method, path=None, relation="viewer"):
                 response = await http.request(
                     method,
                     "/v2/rebac/tuples",
@@ -222,8 +253,8 @@ async def main() -> None:
                     json={
                         "zone": "sharedzone",
                         "object_type": "file",
-                        "object_id": paths[name],
-                        "relation": "viewer",
+                        "object_id": path or paths[name],
+                        "relation": relation,
                         "subject_type": "agent",
                         "subject_id": agents[name][0],
                     },
@@ -235,11 +266,66 @@ async def main() -> None:
                 await query(name, [])
                 await discovery(name, [])
                 await sdk(name, [])
+                await sdk_denied(name, "sys_read", paths[name])
+                await sdk_denied(name, "sys_stat", paths[name])
                 await grant(name, "POST")
             await asyncio.gather(*(query(name, [paths[name]]) for name in paths for _ in range(3)))
             for name, (_, agent_vfs, client) in agents.items():
                 read = await agent_vfs.Read(vfs_pb2.ReadRequest(path=paths[name]), timeout=15)
                 assert not read.is_error and needle.encode() in read.content, read
+                sdk_bytes = await asyncio.to_thread(filesystems[name].sys_read, paths[name])
+                assert sdk_bytes == read.content
+                sdk_range = await asyncio.to_thread(
+                    filesystems[name].sys_read, paths[name], offset=1, count=5
+                )
+                assert sdk_range == read.content[1:6]
+                sdk_stat = await asyncio.to_thread(filesystems[name].sys_stat, paths[name])
+                assert sdk_stat["path"] == paths[name] and sdk_stat["size"] == len(read.content)
+                tagged = await vfs.SetXattr(
+                    vfs_pb2.SetXattrRequest(
+                        path=paths[name], key="r10_label", value=name, auth_token=admin
+                    ),
+                    timeout=15,
+                )
+                label = await agent_vfs.GetXattr(
+                    vfs_pb2.GetXattrRequest(path=paths[name], key="r10_label"), timeout=15
+                )
+                if tagged.is_error:
+                    # This cluster metastore has no xattr implementation. Check
+                    # admission separately from backend support.
+                    assert json.loads(tagged.error_payload)["code"] == -32603, tagged
+                    assert "not implemented for this metastore" in str(tagged), tagged
+                    reference = await vfs.GetXattr(
+                        vfs_pb2.GetXattrRequest(
+                            path=paths[name], key="r10_label", auth_token=admin
+                        ),
+                        timeout=15,
+                    )
+                    assert label == reference, (label, reference)
+                else:
+                    assert label.found and label.value == name, label
+                await vfs_denied(
+                    agent_vfs.SetXattr(
+                        vfs_pb2.SetXattrRequest(path=paths[name], key="r10_label", value="bad"),
+                        timeout=15,
+                    )
+                )
+                await vfs_denied(
+                    agent_vfs.Lock(
+                        vfs_pb2.LockRequest(path=paths[name], timeout_ms=1000), timeout=15
+                    )
+                )
+                await vfs_denied(
+                    agent_vfs.Unlock(
+                        vfs_pb2.UnlockRequest(path=paths[name], force=True), timeout=15
+                    )
+                )
+                await vfs_denied(agent_vfs.CloseAllPipes(vfs_pb2.IpcEmpty(), timeout=15))
+                await vfs_denied(
+                    agent_vfs.Watch(vfs_pb2.WatchRequest(path="/docs/*", timeout_ms=0), timeout=15)
+                )
+                await sdk_denied(name, "sys_write", paths[name], b"bad", context={"is_admin": True})
+                await sdk_denied(name, "sys_readdir", "/docs")
                 await discovery(name, [paths[name]])
                 await sdk(name, [paths[name]])
                 batch = await client.BatchQuery(
@@ -276,6 +362,77 @@ async def main() -> None:
                     grpc.StatusCode.PERMISSION_DENIED,
                 )
                 other = "b" if name == "a" else "a"
+                await sdk_denied(name, "sys_stat", paths[other])
+                await vfs_denied(
+                    agent_vfs.GetXattr(
+                        vfs_pb2.GetXattrRequest(path=paths[other], key="r10_label"), timeout=15
+                    )
+                )
+                await vfs_denied(
+                    agent_vfs.GetXattrBulk(
+                        vfs_pb2.GetXattrBulkRequest(
+                            paths=[paths[name], paths[other]], key="r10_label"
+                        ),
+                        timeout=15,
+                    )
+                )
+                await denied(
+                    agent_vfs.BatchStat(
+                        vfs_pb2.BatchStatRequest(paths=[paths[name], paths[other]]), timeout=15
+                    ),
+                    grpc.StatusCode.PERMISSION_DENIED,
+                )
+                # Directory permission allows enumeration, while each returned
+                # child still needs its own current file grant.
+                await grant(name, "POST", "/docs")
+                listed = await asyncio.to_thread(filesystems[name].sys_readdir, "/docs")
+                assert listed == [paths[name]], listed
+                page = await asyncio.to_thread(
+                    filesystems[name].sys_readdir, "/docs", details=True, limit=1
+                )
+                assert [item["path"] for item in page.items] == [paths[name]]
+                assert not page.has_more
+                await grant(name, "DELETE", "/docs")
+                await sdk_denied(name, "sys_readdir", "/docs")
+                # Writer grants permit metadata and coordination operations.
+                await grant(name, "POST", relation="writer")
+                changed = await agent_vfs.SetXattr(
+                    vfs_pb2.SetXattrRequest(
+                        path=paths[name], key="r10_label", value=f"{name}-writer"
+                    ),
+                    timeout=15,
+                )
+                if tagged.is_error:
+                    assert changed.error_payload == tagged.error_payload, (changed, tagged)
+                else:
+                    assert not changed.is_error, changed
+                label = await agent_vfs.GetXattr(
+                    vfs_pb2.GetXattrRequest(path=paths[name], key="r10_label"), timeout=15
+                )
+                if tagged.is_error:
+                    assert label == reference, (label, reference)
+                else:
+                    assert label.value == f"{name}-writer", label
+                locked = await agent_vfs.Lock(
+                    vfs_pb2.LockRequest(path=paths[name], timeout_ms=1000), timeout=15
+                )
+                assert locked.acquired and not locked.is_error, locked
+                await vfs_denied(
+                    agent_vfs.Unlock(
+                        vfs_pb2.UnlockRequest(path=paths[name], force=True), timeout=15
+                    )
+                )
+                unlocked = await agent_vfs.Unlock(
+                    vfs_pb2.UnlockRequest(path=paths[name], lock_id=locked.lock_id), timeout=15
+                )
+                assert unlocked.released and not unlocked.is_error, unlocked
+                await grant(name, "DELETE", relation="writer")
+                await vfs_denied(
+                    agent_vfs.SetXattr(
+                        vfs_pb2.SetXattrRequest(path=paths[name], key="r10_label", value="bad"),
+                        timeout=15,
+                    )
+                )
                 await denied(
                     client.Locate(
                         search_pb2.LocateRequest(path=paths[other], zone_id="sharedzone"),
@@ -306,6 +463,12 @@ async def main() -> None:
             await query("a", [])
             await discovery("a", [])
             await sdk("a", [])
+            await sdk_denied("a", "sys_read", paths["a"])
+            await sdk_denied("a", "sys_stat", paths["a"])
+            await denied(
+                agents["a"][1].BatchStat(vfs_pb2.BatchStatRequest(paths=[paths["a"]]), timeout=15),
+                grpc.StatusCode.PERMISSION_DENIED,
+            )
             await denied(
                 agents["a"][2].Locate(
                     search_pb2.LocateRequest(path=paths["a"], zone_id="sharedzone"), timeout=15
@@ -324,8 +487,8 @@ async def main() -> None:
             "Agent certificate Search passed: Query/Batch/Glob/Grep/Locate/SDK/isolation/ReBAC/revocation/VFS/admin"
         )
     finally:
-        for transport in transports.values():
-            transport.close()
+        for filesystem in filesystems.values():
+            await asyncio.to_thread(filesystem.close)
         for channel in channels:
             await channel.close()
 

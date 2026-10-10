@@ -141,7 +141,7 @@ class TestBootRemoteServices:
         _, call_rpc = _make_recorder()
         with patch("nexus.factory.service_routing.enlist_wired_services") as mock_enlist:
             # enlist_wired_services is async — mock returns a coroutine
-            async def _fake_enlist(coordinator, wired_dict):
+            def _fake_enlist(coordinator, wired_dict):
                 return len(_CANONICAL_NAMES)
 
             mock_enlist.side_effect = _fake_enlist
@@ -174,7 +174,7 @@ class TestBootRemoteServices:
         _, call_rpc = _make_recorder()
         with patch("nexus.factory.service_routing.enlist_wired_services") as mock_enlist:
 
-            async def _fake_enlist(coordinator, wired_dict):
+            def _fake_enlist(coordinator, wired_dict):
                 return len(_CANONICAL_NAMES)
 
             mock_enlist.side_effect = _fake_enlist

@@ -351,11 +351,11 @@ def connect(
             # method calls to the server via gRPC.
             from nexus.factory._remote import (
                 _boot_remote_services,
-                install_remote_kernel_rpc_overrides,
+                wire_remote_filesystem,
             )
 
             _boot_remote_services(nfs, call_rpc=transport.call_rpc)
-            install_remote_kernel_rpc_overrides(nfs, transport)
+            wire_remote_filesystem(nfs, transport)
             cast(Any, nfs)._nexus_remote_call_rpc = transport.call_rpc
             nfs._remote_base_url = server_url
             nfs._remote_api_key = api_key or ""

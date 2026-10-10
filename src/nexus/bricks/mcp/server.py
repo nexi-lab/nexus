@@ -22,13 +22,11 @@ from cachetools import LRUCache
 from fastmcp import Context, FastMCP
 from fastmcp.server.dependencies import get_http_request
 
-from nexus.bricks.mcp.auth_bridge import op_context_to_auth_dict as _op_context_to_auth_dict
 from nexus.bricks.mcp.auth_bridge import (
     resolve_mcp_operation_context as _resolve_mcp_operation_context,
 )
 from nexus.bricks.mcp.formatters import format_response
 from nexus.bricks.mcp.tool_utils import handle_tool_errors, tool_error
-from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.lib.pagination import build_paginated_list_response
 from nexus.lib.request_credentials import api_key_from_authorization
 from nexus.lib.request_credentials import request_api_key as _request_api_key
@@ -112,7 +110,6 @@ async def create_mcp_server(
     api_key: str | None = None,
     tool_namespace_middleware: Any | None = None,
     manifest_resolver: Any | None = None,
-    permission_enforcer: Any | None = None,
     auth_provider: Any | None = None,
 ) -> FastMCP:
     """Create an MCP server for Nexus operations.
@@ -130,10 +127,6 @@ async def create_mcp_server(
             tool. Expected signature: ``(sources_json: str, variables_json: str)
             -> dict`` returning resolution results. Built by the factory via
             ``build_manifest_resolve_fn()``.
-        permission_enforcer: Optional PermissionEnforcer for file-level ReBAC
-            filtering on MCP search results (#3731). When provided, MCP
-            ``nexus_grep`` and ``nexus_glob`` apply the same
-            ``_apply_rebac_filter`` that the HTTP endpoints use.
         auth_provider: Optional auth provider for resolving per-request API
             keys to subject identity (#3731). Used by
             ``_resolve_mcp_operation_context`` to build an authoritative
@@ -200,14 +193,6 @@ async def create_mcp_server(
             except Exception:
                 pass  # Graceful degradation — tool returns "unavailable"
 
-    # NOTE: permission_enforcer and auth_provider are intentionally NOT
-    # auto-resolved from NexusFS services. A NexusFS with enforce=False
-    # may still register a PermissionEnforcer service that denies all
-    # requests (no grants → empty permit list). Callers that need ReBAC
-    # must pass permission_enforcer explicitly. The HTTP server does
-    # this via app.state.permission_enforcer; the CLI MCP command
-    # should thread it when auth is configured (#3731).
-
     # Store default connection and config for per-request API key support
     assert nx is not None  # guaranteed by the if-block above
     _default_nx: NexusFS = nx
@@ -241,7 +226,7 @@ async def create_mcp_server(
         request_api_key: str | None = _request_api_key.get()
 
         # If no API key in context, use default connection
-        if not request_api_key:
+        if request_api_key is None:
             return _default_nx
 
         # If remote_url not configured, can't use per-request API keys
@@ -1040,51 +1025,24 @@ async def create_mcp_server(
             Narrowed: nexus_glob("**/*.py", files=["/src/a.py", "/src/b.py"])
         """
         from nexus.core.path_utils import split_zone_from_internal_path
-        from nexus.lib.rebac_filter import (
-            apply_rebac_filter,
-            rebac_denial_stats,
-        )
 
         nx_instance: Any = _get_nexus_instance(ctx)
         _search = nx_instance.service("search")
         if _search is None:
             raise ValueError("SearchService not available — glob requires the search brick")
-        # Codex review #3 finding #1: build an explicit OperationContext
-        # from the connection's authenticated whoami identity so ReBAC
-        # filtering sees the real (subject_id, zone_id, is_admin) rather
-        # than the ambient identity of whatever default connection the
-        # MCP server was booted with. ``_resolve_mcp_operation_context``
-        # fails closed if the identity can't be resolved.
+        # Resolve routing identity; the host verifies the original credential.
         op_context = _resolve_mcp_operation_context(nx_instance, auth_provider=auth_provider)
         # #3731 R2: if a per-request key was set but identity resolution
         # failed (fail-closed → None), reject the request rather than
         # executing with an anonymous/ambient context.
-        if op_context is None and _request_api_key.get():
+        if op_context is None and _request_api_key.get() is not None:
             return tool_error(
                 "unauthorized",
                 "Per-request API key could not be verified; search denied.",
             )
-        auth_result = _op_context_to_auth_dict(op_context)
-        zone_id = auth_result.get("zone_id", ROOT_ZONE_ID)
-
         all_matches = _search.glob(pattern, path, files=files, context=op_context)
-
-        # #3731: Apply file-level ReBAC filtering (second layer,
-        # same as HTTP _do_glob_operation).
-        pre_filter_count = len(all_matches)
-        filtered_paths, filter_ms = apply_rebac_filter(
-            all_matches,
-            permission_enforcer,
-            auth_result,
-            zone_id,
-            path_extractor=lambda p: p,
-            operation_context=op_context,
-        )
-        post_filter_count = len(filtered_paths)
-        total = post_filter_count
-
-        # Apply pagination
-        paginated_matches = filtered_paths[offset : offset + limit]
+        total = len(all_matches)
+        paginated_matches = all_matches[offset : offset + limit]
 
         # #3731: Zone unscoping — convert internal zone-prefixed paths
         # to user-facing paths and build parallel zone list for
@@ -1104,17 +1062,12 @@ async def create_mcp_server(
                 f"(offset={offset}, limit={limit})"
             )
 
-        # #3731: Include permission stats + zone disambiguation in
-        # response (parity with HTTP).
         # #3731: Detect multi-zone ambiguity (parity with HTTP
         # _do_glob_operation).
         _keys = list(zip(paginated_matches, item_zones, strict=False))
         glob_multi_zone_ambiguous = len(set(_keys)) < len(_keys)
 
-        extras: dict[str, Any] = {
-            **rebac_denial_stats(pre_filter_count, post_filter_count, limit + offset),
-            "item_zones": item_zones,
-        }
+        extras: dict[str, Any] = {"item_zones": item_zones}
         if glob_multi_zone_ambiguous:
             extras["multi_zone_ambiguous"] = True
 
@@ -1201,42 +1154,25 @@ async def create_mcp_server(
             Non-matching lines: nexus_grep("debug", invert_match=True)
         """
         from nexus.core.path_utils import split_zone_from_internal_path
-        from nexus.lib.rebac_filter import (
-            apply_rebac_filter,
-            compute_rebac_fetch_limit,
-            rebac_denial_stats,
-        )
 
         nx_instance: Any = _get_nexus_instance(ctx)
         _search = nx_instance.service("search")
         if _search is None:
             raise ValueError("SearchService not available — grep requires the search brick")
-        # Codex review #3 finding #1: build an explicit OperationContext
-        # (see ``_resolve_mcp_operation_context`` for the fail-closed
-        # semantics). Previously grep ran without any context so ReBAC
-        # filtering fell back to the ambient connection identity.
+        # Resolve routing identity; the host verifies the original credential.
         op_context = _resolve_mcp_operation_context(nx_instance, auth_provider=auth_provider)
         # #3731 R2: reject if per-request key present but auth failed.
-        if op_context is None and _request_api_key.get():
+        if op_context is None and _request_api_key.get() is not None:
             return tool_error(
                 "unauthorized",
                 "Per-request API key could not be verified; search denied.",
             )
 
-        # #3731: Build auth_result dict from OperationContext for
-        # _apply_rebac_filter. Falls back to anonymous if no context.
-        auth_result = _op_context_to_auth_dict(op_context)
-        zone_id = auth_result.get("zone_id", ROOT_ZONE_ID)
-
-        # Sentinel fetch + ReBAC over-fetch (#3731).
         window_size = limit + offset
-        sentinel_window = window_size + 1
-        fetch_limit = compute_rebac_fetch_limit(
-            sentinel_window, has_enforcer=permission_enforcer is not None
-        )
+        fetch_limit = window_size + 1
         grep_kwargs: dict[str, Any] = {
             "ignore_case": ignore_case,
-            "max_results": max(fetch_limit, 1),
+            "max_results": fetch_limit,
             "files": files,
             "context": op_context,
         }
@@ -1260,25 +1196,9 @@ async def create_mcp_server(
             _grep_result = await _grep_result
         all_results = _grep_result
 
-        # #3731: Apply file-level ReBAC filtering (second layer,
-        # same as HTTP _do_grep_operation).
-        pre_filter_count = len(all_results)
-        filtered_results, filter_ms = apply_rebac_filter(
-            all_results,
-            permission_enforcer,
-            auth_result,
-            zone_id,
-            path_extractor=lambda r: r.get("file", ""),
-            operation_context=op_context,
-        )
-        post_filter_count = len(filtered_results)
-
-        # Sentinel-based has_more (post-ReBAC).
-        has_more = post_filter_count > window_size
-        total = post_filter_count
-
-        # Apply pagination.
-        paginated_results = filtered_results[offset : offset + limit]
+        total = len(all_results)
+        has_more = total > window_size
+        paginated_results = all_results[offset : offset + limit]
 
         # #3731: Zone unscoping — convert internal zone-prefixed paths
         # to user-facing paths and annotate with zone_id for round-trip
@@ -1307,10 +1227,7 @@ async def create_mcp_server(
         _keys = [(it["file"], it.get("zone_id")) for it in paginated_results]
         multi_zone_ambiguous = len(set(_keys)) < len(_keys)
 
-        # #3731: Include permission stats in response (parity with HTTP).
-        extras: dict[str, Any] = {
-            **rebac_denial_stats(pre_filter_count, post_filter_count, window_size),
-        }
+        extras: dict[str, Any] = {}
         if multi_zone_ambiguous:
             extras["multi_zone_ambiguous"] = True
         if section is not None:
@@ -1395,7 +1312,7 @@ async def create_mcp_server(
         # Use the authenticated context for target selection; the Search host
         # checks the original credential and current permissions.
         op_context = _resolve_mcp_operation_context(nx_instance, auth_provider=auth_provider)
-        if op_context is None and _request_api_key.get():
+        if op_context is None and _request_api_key.get() is not None:
             return tool_error(
                 "unauthorized",
                 "Per-request API key could not be verified; semantic search denied.",

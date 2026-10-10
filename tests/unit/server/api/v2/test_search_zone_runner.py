@@ -27,8 +27,8 @@ class RecordingRegistry:
 class FakeSearchDaemon:
     is_initialized = True
 
-    async def search(self, *args: Any, **kwargs: Any) -> list[Any]:
-        return []
+    async def search_with_error(self, *args: Any, **kwargs: Any) -> tuple[list[Any], str | None]:
+        return ([], None)
 
     def get_health(self) -> dict[str, Any]:
         return {"status": "healthy"}
@@ -41,8 +41,6 @@ def test_search_query_runs_in_auth_zone_runner() -> None:
     registry = RecordingRegistry()
     app = FastAPI()
     app.state.search_daemon = FakeSearchDaemon()
-    app.state.record_store = object()
-    app.state.async_read_session_factory = object()
     app.state.permission_enforcer = None
     app.state.zone_registry = registry
     app.dependency_overrides[require_auth] = lambda: {
@@ -58,5 +56,5 @@ def test_search_query_runs_in_auth_zone_runner() -> None:
     with TestClient(app) as client:
         response = client.get("/api/v2/search/query", params={"q": "hello"})
 
-    assert response.status_code in (200, 503)
+    assert response.status_code == 200
     assert registry.zones == ["eng"]

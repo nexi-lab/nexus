@@ -81,7 +81,7 @@ def create_event_bus(
         logger.info("EventBus: creating RedisEventBus (url=%s)", url)
         return RedisEventBus(client, **_optional)
 
-    raise ValueError(
-        "No event bus backend available. "
-        "Set NATS_URL or REDIS_URL/DRAGONFLY_URL, or configure event_bus_backend='nats'."
-    )
+    from nexus.services.event_bus.in_memory import InMemoryEventBus
+
+    logger.info("EventBus: no Redis/NATS URL available, falling back to InMemoryEventBus")
+    return InMemoryEventBus(**_optional)

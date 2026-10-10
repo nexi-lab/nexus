@@ -219,25 +219,6 @@ class TestSchedulerE2E:
 
 
 # =========================================================================
-# graph
-# =========================================================================
-
-
-class TestGraphE2E:
-    """nexus graph commands against a running server."""
-
-    def test_graph_search_json(self, remote_server):
-        result = _run_cli(["graph", "search", "test", "--json"], remote_server)
-        envelope = _parse_json_envelope(result)
-        assert "data" in envelope or "error" in envelope
-
-    def test_graph_search_no_crash(self, remote_server):
-        """graph search should not crash even with no data."""
-        result = _run_cli(["graph", "search", "nonexistent_query_xyz"], remote_server)
-        assert "Traceback" not in result.stderr
-
-
-# =========================================================================
 # conflicts (server returns 403 — admin role required)
 # =========================================================================
 

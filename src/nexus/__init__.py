@@ -312,7 +312,12 @@ def connect(
             nfs = _RemoteNexusFS(
                 metadata_store=remote_kernel,
                 permissions=_PermissionConfig(enforce=False),
-                init_cred=_RemoteOC(user_id="remote", groups=[], is_admin=False),
+                init_cred=_RemoteOC(
+                    user_id="remote",
+                    zone_id=cfg.zone_id,
+                    groups=[],
+                    is_admin=False,
+                ),
             )
             nfs._register_runtime_closeable(remote_kernel)
             nfs._register_runtime_closeable(transport)

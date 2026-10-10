@@ -43,6 +43,7 @@ async def main() -> None:
     agents = {}
     transports = {}
     filesystems = {}
+    mcp_servers = {}
 
     def dial(ca, cert, key, server_name=None):
         credentials = grpc.ssl_channel_credentials(
@@ -89,9 +90,18 @@ async def main() -> None:
             )
             with patch.dict(os.environ, client_env, clear=True):
                 filesystem = await asyncio.to_thread(
-                    nexus.connect, {"profile": "remote", "url": f"https://{target}", "timeout": 15}
+                    nexus.connect,
+                    {
+                        "profile": "remote",
+                        "url": f"https://{target}",
+                        "timeout": 15,
+                        "zone_id": "sharedzone",
+                    },
                 )
             filesystems[name] = filesystem
+            from nexus.bricks.mcp.server import create_mcp_server
+
+            mcp_servers[name] = await create_mcp_server(nx=filesystem)
             transports[name] = filesystem._nexus_remote_call_rpc.__self__
             assert isinstance(transports[name], RPCTransport)
             written = await vfs.Write(
@@ -188,7 +198,6 @@ async def main() -> None:
                 filesystem.semantic_search,
                 query=needle,
                 search_mode="keyword",
-                zone_id="sharedzone",
             )
             assert [hit["path"] for hit in response] == expected, response
             for method, pattern, path_key in (
@@ -203,6 +212,30 @@ async def main() -> None:
                 )
                 found = response
                 assert (found if path_key is None else [hit[path_key] for hit in found]) == expected
+
+            # Use the public MCP transport atop the remote SDK, including its
+            # configured zone, certificate and sync Search proxy.
+            from fastmcp import Client
+
+            async with Client(mcp_servers[name]) as mcp_client:
+                result = await mcp_client.call_tool(
+                    "nexus_semantic_search",
+                    {"query": needle, "path": "/docs", "search_mode": "keyword"},
+                )
+                body = json.loads(result.content[0].text)
+                assert [hit["path"] for hit in body["items"]] == expected, body
+                for operation, pattern in (("glob", "*.txt"), ("grep", needle)):
+                    result = await mcp_client.call_tool(
+                        f"nexus_{operation}",
+                        {"pattern": pattern, "path": "/docs", "files": list(paths.values())},
+                    )
+                    body = json.loads(result.content[0].text)
+                    found = (
+                        body["items"]
+                        if operation == "glob"
+                        else [hit["file"] for hit in body["items"]]
+                    )
+                    assert found == expected, body
 
         async def sdk_denied(name, method, *args, **kwargs):
             try:

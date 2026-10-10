@@ -49,7 +49,7 @@ def _boot_remote_services(nfs: "NexusFS", call_rpc: Callable[..., Any]) -> None:
     """
     from nexus.remote.service_proxy import RemoteServiceProxy
 
-    proxy = RemoteServiceProxy(call_rpc, service_name="universal")
+    proxy = RemoteServiceProxy(call_rpc, service_name="universal", default_context=nfs._init_cred)
     for method in (
         "glob",
         "grep",

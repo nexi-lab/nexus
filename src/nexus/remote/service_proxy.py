@@ -30,27 +30,27 @@ class RemoteServiceProxy:
     intercepts any method call via ``__getattr__`` and forwards it to
     the server using the ``call_rpc`` callback.
 
-    The proxy doesn't need to know which service it stands in for —
-    method name dispatch is handled server-side by the RPC dispatch table.
+    The transport dispatches method names to their service contracts.
 
     Args:
-        call_rpc: Transport-agnostic RPC callback. Today this is
-            ``RemoteBackend._call_rpc`` (HTTP/JSON-RPC); the callable
-            interface allows future gRPC transport (Task #1133) with
-            zero proxy code changes.
+        call_rpc: RPC callback on the filesystem's authenticated transport.
         service_name: Optional label for debug logging (e.g. "universal").
+        default_context: Borrowed filesystem context for declared zone selectors.
+            Identity and authority remain in the transport credential.
     """
 
-    __slots__ = ("_call_rpc", "_service_name")
+    __slots__ = ("_call_rpc", "_service_name", "_default_context")
 
     def __init__(
         self,
         call_rpc: Callable[..., Any],
         service_name: str = "",
+        default_context: Any = None,
     ) -> None:
         # Use object.__setattr__ to avoid triggering our __getattr__
         object.__setattr__(self, "_call_rpc", call_rpc)
         object.__setattr__(self, "_service_name", service_name)
+        object.__setattr__(self, "_default_context", default_context)
 
     def __getattr__(self, name: str) -> Callable[..., Any]:
         """Return an RPC forwarder for any public method access.
@@ -63,7 +63,7 @@ class RemoteServiceProxy:
             raise AttributeError(name)
 
         # Lazy import to avoid circular dependency at module load
-        from nexus.remote.method_registry import METHOD_REGISTRY
+        from nexus.remote.method_registry import METHOD_REGISTRY, strip_context
         from nexus.remote.rpc_proxy import RPCProxyBase
 
         def rpc_forwarder(*args: Any, **kwargs: Any) -> Any:
@@ -80,9 +80,8 @@ class RemoteServiceProxy:
                     if i < len(param_names):
                         kwargs[param_names[i]] = val
 
-            # Strip context params (handled server-side via auth headers)
-            kwargs.pop("context", None)
-            kwargs.pop("_context", None)
+            spec = METHOD_REGISTRY.get(rpc_name)
+            strip_context(kwargs, spec, self._default_context)
 
             # Extract timeout hint for gRPC transport deadline override.
             # The timeout value stays in kwargs (sent as RPC param to server)
@@ -97,7 +96,6 @@ class RemoteServiceProxy:
             # dict wrapper ({"results": [...]}) instead of the unwrapped
             # list that callers expect. This matches the unwrapping that
             # RPCProxyBase._dispatch_rpc() does for the main NexusFS proxy.
-            spec = METHOD_REGISTRY.get(rpc_name)
             if spec and spec.response_key and isinstance(result, dict):
                 return result.get(spec.response_key, result)
 

@@ -42,6 +42,12 @@ walk only as far as the page window plus one entry and fetch detailed metadata
 in one BatchStat call. Their `total_count` remains unknown rather than requiring
 a complete namespace scan.
 
+MCP Search tools support both local async services and the remote SDK's sync
+proxy. Sync calls run outside the MCP event loop with the request credential
+preserved. Set `zone_id` in `nexus.connect()` configuration to select the
+default indexed Search zone. An explicit zone selector takes precedence;
+the daemon still determines identity and permissions from the credential.
+
 Directory enumeration requires read permission on the directory and each
 returned child. Stat and BatchStat use the same installed file policy; a mixed
 BatchStat request is rejected before reading metadata. Xattr reads follow that

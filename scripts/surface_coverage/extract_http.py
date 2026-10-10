@@ -23,39 +23,100 @@ class RawHttpRoute:
 
 
 def extract_http_routes(py_path_or_dir: Path) -> list[RawHttpRoute]:
-    """Accept a single file (legacy) or a directory (v3 recursive scan)."""
+    """Extract routes, composing router mounts within the scanned directory."""
+    paths = (
+        [py_path_or_dir]
+        if py_path_or_dir.is_file()
+        else sorted(py_path_or_dir.rglob("*.py"))
+        if py_path_or_dir.is_dir()
+        else []
+    )
+    trees: dict[Path, ast.Module] = {}
+    for path in paths:
+        try:
+            trees[path] = ast.parse(path.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError):
+            continue
+    routers = {
+        (path, name): prefix
+        for path, tree in trees.items()
+        for name, prefix in _collect_router_prefixes(tree).items()
+    }
+    parents: dict[tuple[Path, str], list[tuple[tuple[Path, str], str]]] = {}
+    for path, tree in trees.items():
+        imports = _router_imports(path, tree, trees)
+        for node in ast.walk(tree):
+            if not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "include_router"
+                and isinstance(node.func.value, ast.Name)
+                and node.args
+                and isinstance(node.args[0], ast.Name)
+            ):
+                continue
+            parent = (path, node.func.value.id)
+            child = imports.get(node.args[0].id, (path, node.args[0].id))
+            if parent in routers and child in routers:
+                parents.setdefault(child, []).append((parent, _kwarg_str(node, "prefix") or ""))
+
+    def prefixes(key: tuple[Path, str], visiting: frozenset = frozenset()) -> set[str]:
+        if key in visiting:
+            raise ValueError(f"Router include cycle at {key[0]}:{key[1]}")
+        own = routers.get(key, "")
+        if key not in parents:
+            return {own}
+        return {
+            _join_path(_join_path(base, mount), own)
+            for parent, mount in parents[key]
+            for base in prefixes(parent, visiting | {key})
+        }
+
     out: list[RawHttpRoute] = []
-    if py_path_or_dir.is_file():
-        out.extend(_extract_from_file(py_path_or_dir))
-    elif py_path_or_dir.is_dir():
-        for py in sorted(py_path_or_dir.rglob("*.py")):
-            out.extend(_extract_from_file(py))
+    for path, tree in trees.items():
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            for deco in node.decorator_list:
+                if not isinstance(deco, ast.Call) or not isinstance(deco.func, ast.Attribute):
+                    continue
+                obj = deco.func.value
+                name = obj.id if isinstance(obj, ast.Name) else ""
+                for prefix in prefixes((path, name)):
+                    route = _route_from_decorator(deco, {name: prefix})
+                    if route is not None:
+                        method, full_path = route
+                        out.append(RawHttpRoute(method.upper(), full_path, f"{path}:{deco.lineno}"))
     return sorted(out, key=lambda r: (r.path, r.method))
 
 
-def _extract_from_file(py_path: Path) -> list[RawHttpRoute]:
-    try:
-        tree = ast.parse(py_path.read_text(encoding="utf-8"))
-    except (SyntaxError, UnicodeDecodeError):
-        return []
-    prefixes = _collect_router_prefixes(tree)
-    out: list[RawHttpRoute] = []
+def _join_path(prefix: str, suffix: str) -> str:
+    return prefix.rstrip("/") + ("/" if suffix and not suffix.startswith("/") else "") + suffix
+
+
+def _router_imports(
+    path: Path, tree: ast.Module, trees: dict[Path, ast.Module]
+) -> dict[str, tuple[Path, str]]:
+    by_path = {p.resolve(): p for p in trees}
+    imports: dict[str, tuple[Path, str]] = {}
     for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        if not isinstance(node, ast.ImportFrom) or not node.module:
             continue
-        for deco in node.decorator_list:
-            route = _route_from_decorator(deco, prefixes)
-            if route is None:
-                continue
-            method, path = route
-            out.append(
-                RawHttpRoute(
-                    method=method.upper(),
-                    path=path,
-                    source=f"{py_path}:{deco.lineno}",
-                )
+        parts = node.module.split(".")
+        target = None
+        if node.level:
+            base = path.parent
+            for _ in range(node.level - 1):
+                base = base.parent
+            target = by_path.get(base.joinpath(*parts).with_suffix(".py").resolve())
+        else:
+            target = next(
+                (p for p in trees if p.with_suffix("").parts[-len(parts) :] == tuple(parts)), None
             )
-    return out
+        if target is not None:
+            for alias in node.names:
+                imports[alias.asname or alias.name] = (target, alias.name)
+    return imports
 
 
 def _collect_router_prefixes(tree: ast.AST) -> dict[str, str]:
@@ -76,9 +137,7 @@ def _collect_router_prefixes(tree: ast.AST) -> dict[str, str]:
             continue
         if "APIRouter" not in callee_name and "Router" not in callee_name:
             continue
-        prefix = _kwarg_str(value, "prefix")
-        if prefix is None:
-            continue
+        prefix = _kwarg_str(value, "prefix") or ""
         for tgt in targets:
             if isinstance(tgt, ast.Name):
                 out[tgt.id] = prefix

@@ -19,7 +19,6 @@ _SUPPORTED_SANDBOX_ROWS = {
     "filesystem.rmdir",
     "filesystem.stat",
     "filesystem.write",
-    "filesystem.write-batch",
     "filesystem.write_batch",
     "metadata.batch",
     "nexus_fs.sys_mkdir",
@@ -33,6 +32,12 @@ _SUPPORTED_SANDBOX_ROWS = {
     "read.batch",
     "read.bulk",
     "rename.batch",
+    "nexus_v_f_s_service.batch_read",
+    "nexus_v_f_s_service.call",
+    "nexus_v_f_s_service.delete",
+    "nexus_v_f_s_service.ping",
+    "nexus_v_f_s_service.read",
+    "nexus_v_f_s_service.write",
 }
 
 _SANDBOX_UNAVAILABLE_ROWS = {
@@ -53,12 +58,6 @@ _SANDBOX_UNAVAILABLE_ROWS = {
     "async_files.rename_batch",
     "async_files.stream",
     "async_files.write",
-    "nexus_v_f_s_service.batch_read",
-    "nexus_v_f_s_service.call",
-    "nexus_v_f_s_service.delete",
-    "nexus_v_f_s_service.ping",
-    "nexus_v_f_s_service.read",
-    "nexus_v_f_s_service.write",
 }
 
 

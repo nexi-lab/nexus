@@ -87,7 +87,7 @@ def test_issue_4130_user_guide_contains_federation_workflow_and_gap_verdict() ->
         "nexus hub status --detail --json",
         'nexus hub status --remote https://hub.example.com/mcp --admin-token "$NEXUS_HUB_ADMIN_TOKEN" --json',
         "nexus federation info <zone-id>",
-        "semantic_degraded",
+        "zones_failed",
         "zone_qualified_path",
         "tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py",
         "tests/benchmarks/bench_sandbox_federation_latency.py",

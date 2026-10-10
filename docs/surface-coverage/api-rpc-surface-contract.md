@@ -34,7 +34,7 @@ works, and what remains missing.
 | `module` | extractor (overridable) | Owning module id. Heuristic from source path. |
 | `summary` | extractor → human-refined | One-line description. Extractor seeds from docstring; subissues refine. |
 | `transports` | extractor | Per-transport cells (CLI / gRPC typed / gRPC call / `@rpc_expose` / HTTP / MCP / SDK). |
-| `profiles` | extractor (default supported) → subissue overrides | Status per profile: `supported \| unavailable \| admin_only \| deprecated \| missing_needed`. |
+| `profiles` | extractor (default unverified) → reviewed profile evidence | Status per profile: `unverified \| supported \| unavailable \| admin_only \| deprecated \| missing_needed`. |
 | `usage_example` | subissue | CLI snippet + SDK snippet showing real invocation. |
 | `correctness_test` | subissue | `path:line` of a pytest function exercising the surface. |
 | `perf_class` | subissue | `hot \| setup \| control \| not_perf_sensitive`. |
@@ -43,6 +43,8 @@ works, and what remains missing.
 | `owning_issue` | subissue | GitHub issue # responsible for filling this row. |
 
 ## 100% external API testing standard
+
+Newly discovered entry points start as `unverified`. This records their existence while profile behavior, tests, and performance evidence await review. These rows remain visible in the inventory and cannot establish that a profile story is complete. Promote a row to `supported` only after filling and checking its evidence; regeneration preserves reviewed fields.
 
 Every supported row must have correctness coverage proving:
 
@@ -130,14 +132,14 @@ The gap issue must specify:
 - docs location it unblocks
 - benchmark expectations (or `not_perf_sensitive` rationale)
 
-A profile epic cannot close while any of its owned `missing_needed` rows are open.
+A profile epic cannot close while its owned rows are `missing_needed` or `unverified` for that profile.
 
 ## Source anchors
 
 Extractor reads:
 
-- CLI: `src/nexus/cli/commands/__init__.py` (`_REGISTER_COMMANDS`)
-- typed gRPC: `proto/nexus/grpc/vfs/vfs.proto`
+- CLI: registrations in `src/nexus/cli/commands/__init__.py`, followed through nested Click group and command decorators
+- typed gRPC: local `proto/` definitions when present; checked-in `src/nexus/grpc/**/*_pb2_grpc.py` client bindings for externally owned protos
 - gRPC `Call` (syscalls): `src/nexus/server/_kernel_syscall_dispatch.py` (`KERNEL_SYSCALL_NAMES` frozenset)
 - `@rpc_expose`: scan of `src/nexus/**/*.py`
 - HTTP: `src/nexus/server/fastapi_server.py`

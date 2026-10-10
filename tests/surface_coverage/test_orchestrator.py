@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from scripts.gen_api_surface_coverage import generate_coverage
-from scripts.surface_coverage.schema import load_yaml
+from scripts.surface_coverage.schema import ProfileStatus, TransportCell, dump_yaml, load_yaml
 
 
 def _build_fixture_tree(root: Path) -> None:
@@ -96,3 +96,43 @@ def test_orchestrator_idempotent(tmp_path: Path):
     generate_coverage(repo_root=repo, output=out, overrides=None)
     second = out.read_text()
     assert first == second
+
+
+def test_discovery_starts_unverified_and_preserves_reviewed_support(tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _build_fixture_tree(repo)
+    out = tmp_path / "coverage.yaml"
+    coverage = generate_coverage(repo_root=repo, output=out, overrides=None)
+    read = next(op for op in coverage.operations if op.id == "filesystem.read")
+    assert all(status == ProfileStatus.UNVERIFIED for status in read.profiles.values())
+    read.profiles["sandbox"] = ProfileStatus.SUPPORTED
+    read.correctness_test = "tests/integration/test_typed_grpc_cluster.py"
+    dump_yaml(coverage, out)
+    regenerated = generate_coverage(repo_root=repo, output=out, overrides=None)
+    read = next(op for op in regenerated.operations if op.id == "filesystem.read")
+    assert read.profiles["sandbox"] == ProfileStatus.SUPPORTED
+    assert read.profiles["full"] == ProfileStatus.UNVERIFIED
+    assert read.correctness_test == "tests/integration/test_typed_grpc_cluster.py"
+
+
+def test_external_proto_bindings_fill_inventory_and_local_proto_keeps_provenance(tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _build_fixture_tree(repo)
+    grpc = repo / "src/nexus/grpc"
+    grpc.mkdir()
+    (grpc / "vfs_pb2_grpc.py").write_text(
+        "class FilesystemStub:\n"
+        "    def __init__(self, channel):\n"
+        "        self.Read = channel.unary_unary('/nexus.Filesystem/Read')\n"
+        "        self.Stat = channel.unary_unary('/nexus.Filesystem/Stat')\n"
+    )
+    coverage = generate_coverage(repo_root=repo, output=tmp_path / "coverage.yaml", overrides=None)
+    ops = {op.id: op for op in coverage.operations}
+    assert (
+        ops["filesystem.read"].transports["grpc_typed"].source == "proto/nexus/grpc/vfs/vfs.proto:1"
+    )
+    assert ops["filesystem.stat"].transports["grpc_typed"] == TransportCell(
+        "Filesystem.Stat", "src/nexus/grpc/vfs_pb2_grpc.py:4"
+    )

@@ -1108,7 +1108,7 @@ Search surface coverage matrix:
 Expected outcomes are deliberately boring:
 
 - success returns paths, grep items, or ranked chunks; CLI query JSON is an array
-- permission denial filters paths or candidates and reports truncation/denial metadata where the endpoint supports it
+- the Search host filters unreadable paths and candidates; a successful result may be empty or contain fewer items than the requested limit
 - unavailable providers return a clear unavailable/configuration error instead of pretending semantic or parsed search ran
 
 Correctness is covered by the search router, grep/glob, semantic-search, parser, path-context, and RRF tests. Performance-sensitive rows are classified in `docs/surface-coverage/api-rpc-surface-coverage.yaml`; grep/glob and query paths are hot, indexing is setup work, and health/stats/control endpoints are not performance sensitive. Retrieval-quality benchmark notes live in `docs/benchmarks/2026-04-18-sandbox-vs-gbrain.md`.
@@ -1118,19 +1118,16 @@ Correctness is covered by the search router, grep/glob, semantic-search, parser,
 ```bash
 nexus glob "**/*.py" /workspace
 nexus grep "TODO" /workspace
-nexus grep "revenue" /workspace -f "**/*.pdf" --search-mode parsed
+nexus grep "token" /workspace/docs/api.md --in-section "## API"
 ```
 
-Parser providers are auto-discovered from environment variables:
+Grep reads current VFS bytes on the Search host. Use it for code and plain text.
+The `auto` and `raw` modes use this contract; `--search-mode parsed` is unsupported.
+For PDFs and Office documents, parse them into text before searching that output.
 
-- `UNSTRUCTURED_API_KEY`
-- `LLAMA_CLOUD_API_KEY`
-- local pdf-inspector fallback
-
-Parsed grep uses parser output when possible. Raw grep is better for code and
-plain text; parsed grep is better for PDFs, Office documents, and markdown
-structure. The section-aware grep flow is not available yet; track build issue #4186
-for `nexus grep PATTERN PATH --in-section "## API"`.
+Markdown section-aware grep is available through `--in-section`, with the same
+filter exposed by the SDK, HTTP, and MCP grep calls. The host applies the section
+scope; a missing heading returns no matches within that file.
 
 The parser introspection and direct run-parse commands are also not exposed yet.
 Track build issue #4187 for `nexus parsers list` and

@@ -75,7 +75,7 @@ def test_issue_4128_remote_zone_readonly_write_denial_is_linked() -> None:
 
 
 def test_issue_4128_tool_profile_assignment_cli_is_supported() -> None:
-    op = _operations_by_id()["mcp.tool_profile_assign"]
+    op = _operations_by_id()["mcp.profile_assign"]
     assert op.owning_issue == 4128
     assert op.gap_issue is None
     assert all(status == ProfileStatus.SUPPORTED for status in op.profiles.values())

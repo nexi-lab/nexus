@@ -472,9 +472,17 @@ class TestRegistryDispatch:
         daemon_b.search = search_b
 
         registry = ZoneSearchRegistry()
-        caps = ZoneSearchCapabilities(zone_id="zone_a")
+        caps = ZoneSearchCapabilities(
+            zone_id="zone_a", search_modes=("keyword", "semantic", "hybrid")
+        )
         registry.register("zone_a", daemon_a, capabilities=caps)
-        registry.register("zone_b", daemon_b, capabilities=ZoneSearchCapabilities(zone_id="zone_b"))
+        registry.register(
+            "zone_b",
+            daemon_b,
+            capabilities=ZoneSearchCapabilities(
+                zone_id="zone_b", search_modes=("keyword", "semantic", "hybrid")
+            ),
+        )
 
         rebac = _make_rebac(["zone_a", "zone_b"])
         fallback = AsyncMock()

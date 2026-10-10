@@ -24,9 +24,7 @@ BACKEND_LEG_TIMING_KEYS = (
 class BaseSearchResult:
     """Common search result fields shared by all search types.
 
-    All search result dataclasses in the search brick extend this base.
-    This enables fuse_results() to accept typed results directly instead
-    of requiring dict conversion.
+    Search clients and cross-zone response adapters share these fields.
     """
 
     path: str

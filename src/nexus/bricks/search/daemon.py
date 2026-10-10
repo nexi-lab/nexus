@@ -193,11 +193,7 @@ class _ProxyPoolingConfig:
 def daemon_pooling_cap(daemon: Any) -> int | None:
     """Resolve the per-document pooling cap from a daemon's config.
 
-    Strict ``is True`` / ``isinstance`` guards keep Mock daemons
-    (tests) from enabling pooling via auto-created attributes
-    (Issue #4542).  Moved here from the deleted ``federated_search``
-    module — this is where the daemon lives, so this is where the
-    daemon-side cap resolver belongs.
+    Require explicit settings so mock attributes cannot enable pooling.
     """
     cfg = getattr(daemon, "config", None)
     if getattr(cfg, "page_aggregation", None) is not True:

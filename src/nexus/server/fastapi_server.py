@@ -167,18 +167,7 @@ async def to_thread_with_timeout(
 # Issue #3778: SANDBOX HTTP allowlist
 # ============================================================================
 
-SANDBOX_HTTP_ALLOWLIST: frozenset[str] = frozenset(
-    {
-        # Issue #3778: SANDBOX HTTP surface
-        "/health",
-        "/api/v2/features",
-        # FastAPI built-ins
-        "/openapi.json",
-        "/docs",
-        "/docs/oauth2-redirect",
-        "/redoc",
-    }
-)
+SANDBOX_HTTP_ALLOWLIST: frozenset[str] = frozenset({"/health", "/api/v2/features"})
 
 
 def _federation_rpc_active(kernel: Any) -> bool:
@@ -208,22 +197,6 @@ def _federation_rpc_active(kernel: Any) -> bool:
     the cause.
     """
     return kernel is not None
-
-
-def _filter_routes_for_sandbox(app: "FastAPI") -> None:
-    """Issue #3778: remove every `Route` not in SANDBOX_HTTP_ALLOWLIST.
-
-    Idempotent. Leaves `Mount`s, `WebSocketRoute`s, and startup/shutdown
-    event handlers untouched — only path-bound `Route` instances are
-    filtered. Called once after all routers have been included, when the
-    profile is sandbox.
-    """
-    kept = []
-    for r in app.router.routes:
-        if isinstance(r, _StarletteRoute) and r.path not in SANDBOX_HTTP_ALLOWLIST:
-            continue
-        kept.append(r)
-    app.router.routes = kept
 
 
 # ============================================================================
@@ -721,7 +694,8 @@ def create_app(
         from nexus.server.metrics import PrometheusMiddleware, metrics_endpoint
 
         app.add_middleware(PrometheusMiddleware)
-        app.add_route("/metrics", metrics_endpoint, methods=["GET"])
+        if _profile != DeploymentProfile.SANDBOX:
+            app.add_route("/metrics", metrics_endpoint, methods=["GET"])
     except ImportError:
         pass
 
@@ -747,12 +721,10 @@ def create_app(
     except ImportError:
         pass
 
-    # Issue #3778: SANDBOX profile restricts HTTP surface. Gate on the
-    # resolved enum (not the raw string) so invalid/unknown env values that
-    # fell through to DeploymentProfile.FULL above don't accidentally enable
-    # or skip the allowlist.
-    if _profile == DeploymentProfile.SANDBOX:
-        _filter_routes_for_sandbox(app)
+    # Starlette runs the last-added middleware first.
+    from nexus.server.middleware.correlation import CorrelationMiddleware
+
+    app.add_middleware(CorrelationMiddleware)  # type: ignore[arg-type]
 
     return app
 
@@ -806,12 +778,25 @@ def _build_envelope_provider_from_env(choice: str) -> tuple[Any, str]:
 def _register_routes(app: FastAPI) -> None:
     """Register all routes."""
 
-    # Features endpoint (Issue #1389) — public, rate-limit exempt
-    # ---- Core API routers (extracted from inline endpoints, #1602) ----
-    from nexus.server.api.core.debug import router as debug_router
-    from nexus.server.api.core.extensions import router as extensions_router
     from nexus.server.api.core.features import router as features_router
     from nexus.server.api.core.health import router as health_router
+
+    if app.state.deployment_profile == "sandbox":
+        from fastapi import APIRouter
+
+        sandbox_router = APIRouter(
+            routes=[
+                route
+                for router in (health_router, features_router)
+                for route in router.routes
+                if isinstance(route, _StarletteRoute) and route.path in SANDBOX_HTTP_ALLOWLIST
+            ]
+        )
+        app.include_router(sandbox_router)
+        return
+
+    from nexus.server.api.core.debug import router as debug_router
+    from nexus.server.api.core.extensions import router as extensions_router
     from nexus.server.api.core.rpc import router as rpc_router
     from nexus.server.api.core.streaming import router as streaming_router
 
@@ -897,14 +882,6 @@ def _register_routes(app: FastAPI) -> None:
         html_path = Path(__file__).parent / "static" / "task_manager.html"
         return HTMLResponse(html_path.read_text())
 
-    # Request correlation middleware (Issue #1002).
-    # MUST be the last add_middleware call — Starlette applies in reverse order,
-    # so last-added = outermost = first to execute on each request.
-    # This ensures ALL other middlewares run with correlation context.
-    from nexus.server.middleware.correlation import CorrelationMiddleware
-
-    app.add_middleware(CorrelationMiddleware)  # type: ignore[arg-type]
-
     # Exchange Protocol error handler (Issue #1361)
     try:
         from nexus.server.api.v2.error_handler import register_exchange_error_handler
@@ -924,39 +901,6 @@ def _register_routes(app: FastAPI) -> None:
         logger.info("Payment endpoints registered (/api/v2/pay/*, /api/v2/audit/*)")
     except ImportError as e:
         logger.debug(f"Pay router unavailable: {e}")
-
-    # Catalog, Aspects, Lineage, Graph endpoints (Issue #3250: TUI Search/Knowledge)
-    try:
-        from nexus.server.api.v2.routers.catalog import router as catalog_router
-
-        app.include_router(catalog_router)
-        logger.info("Catalog endpoints registered (/api/v2/catalog/*)")
-    except ImportError as e:
-        logger.debug(f"Catalog router unavailable: {e}")
-
-    try:
-        from nexus.server.api.v2.routers.aspects import router as aspects_router
-
-        app.include_router(aspects_router)
-        logger.info("Aspects endpoints registered (/api/v2/aspects/*)")
-    except ImportError as e:
-        logger.debug(f"Aspects router unavailable: {e}")
-
-    try:
-        from nexus.server.api.v2.routers.lineage import router as lineage_router
-
-        app.include_router(lineage_router)
-        logger.info("Lineage endpoints registered (/api/v2/lineage/*)")
-    except ImportError as e:
-        logger.debug(f"Lineage router unavailable: {e}")
-
-    try:
-        from nexus.server.api.v2.routers.graph import router as graph_router
-
-        app.include_router(graph_router)
-        logger.info("Graph endpoints registered (/api/v2/graph/*)")
-    except ImportError as e:
-        logger.debug(f"Graph router unavailable: {e}")
 
     # Locks endpoints (Issue #3250: TUI Locks tab)
     try:

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import re as _re
+from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
 import grpc
@@ -210,17 +211,18 @@ class RPCTransport:
                     "(docker-compose, k8s pod-local)."
                 )
             self._channel = grpc.insecure_channel(server_address, options=_CHANNEL_OPTIONS)
-        self._stub = vfs_pb2_grpc.NexusVFSServiceStub(self._channel)
-        from nexus.remote.search_client import SearchClient
+        self._closed = False
+        try:
+            self._stub = vfs_pb2_grpc.NexusVFSServiceStub(self._channel)
+            from nexus.remote.search_client import SearchClient
 
-        self._search = SearchClient(self._channel)
+            self._search = SearchClient(self._channel)
 
-        # Pre-warm: trigger eager TCP/TLS handshake so connection establishment
-        # overlaps with NexusFS construction instead of blocking on first RPC.
-        self._channel_ready = grpc.channel_ready_future(self._channel)
-
-        # Reuse BaseRemoteNexusFS error handling (static method access)
-        self._error_handler = BaseRemoteNexusFS()
+            self._error_handler = BaseRemoteNexusFS()
+        except BaseException:
+            with suppress(Exception):
+                self.close()
+            raise
 
     # ------------------------------------------------------------------
     # RPC call
@@ -1165,7 +1167,10 @@ class RPCTransport:
             ) from exc
 
     def close(self) -> None:
-        """Close the gRPC channel."""
+        """Close the owned gRPC channel once."""
+        if self._closed:
+            return
+        self._closed = True
         self._channel.close()
 
 

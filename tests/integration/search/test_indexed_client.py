@@ -235,6 +235,29 @@ async def test_indexing_reads_vfs_on_the_host_and_returns_its_counts(indexed):
     assert len(host.calls) == before + 1
 
 
+@pytest.mark.parametrize(
+    ("method", "arguments"),
+    [
+        ("semantic_search", {"query": "marigold"}),
+        ("semantic_search_index", {"path": "/docs"}),
+        ("semantic_search_stats", {}),
+    ],
+)
+def test_configured_search_zone_does_not_replace_the_transport_identity(indexed, method, arguments):
+    host, transport, _search, _service = indexed
+    proxy = RemoteServiceProxy(
+        transport.call_rpc,
+        default_context=OperationContext(
+            user_id="forged", groups=[], zone_id="workspace", is_admin=True
+        ),
+    )
+    getattr(proxy, method)(**arguments)
+    request, metadata = host.calls[-1]
+    assert request.zone_id == "workspace"
+    assert not request.auth_token
+    assert metadata["authorization"] == "Bearer operator-key"
+
+
 def test_transient_search_host_failures_still_retry(indexed):
     host, _transport, search, _service = indexed
     host.failures = [grpc.StatusCode.UNAVAILABLE]

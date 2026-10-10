@@ -66,7 +66,7 @@ async def test_startup_failsoft_when_plugin_unreachable(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_startup_publishes_daemon_when_plugin_healthy(monkeypatch):
+async def test_startup_publishes_daemon_when_plugin_healthy(monkeypatch, tmp_path):
     """Healthy probe ⇒ HTTP search transport published."""
     monkeypatch.setenv("NEXUS_SEARCH_DAEMON", "true")
     monkeypatch.setenv("NEXUS_SEARCH_PLUGIN_TARGET", "127.0.0.1:2126")
@@ -78,14 +78,16 @@ async def test_startup_publishes_daemon_when_plugin_healthy(monkeypatch):
     app, svc = _FakeApp(), _FakeSvc()
     svc.nexus_fs = SimpleNamespace()
 
-    # _wire_notify_hooks + _init_zone_registry short-circuit on the
-    # SimpleNamespace fake (no register_intercept_write / zone_manager).
+    svc.zone_manager = SimpleNamespace(_base_path=str(tmp_path), list_zones=lambda: ["local"])
     with patch("nexus.bricks.search.daemon.SearchDaemon", return_value=fake):
         tasks = await startup_search(app, svc)
 
     assert tasks == []
     assert app.state.search_daemon is fake
     assert app.state.search_daemon_enabled is True
+    assert app.state.zone_search_registry.get_daemon("local") is fake
+    assert app.state.zone_search_registry.get_capabilities("local") is None
+    assert list(tmp_path.iterdir()) == []
 
 
 @pytest.mark.asyncio

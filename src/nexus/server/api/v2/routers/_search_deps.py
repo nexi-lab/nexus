@@ -26,6 +26,6 @@ def _get_search_daemon(request: Request) -> Any:
     if daemon is None:
         raise HTTPException(
             status_code=503,
-            detail="Search daemon unavailable (set NEXUS_SEARCH_DAEMON=false to disable)",
+            detail="Search daemon unavailable (configure NEXUS_SEARCH_PLUGIN_TARGET)",
         )
     return daemon

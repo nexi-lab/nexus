@@ -41,7 +41,7 @@ def _make_boot_context(**overrides: object) -> _BootContext:
         "record_store": record_store,
         "metadata_store": MagicMock(),
         "backend": backend,
-        "router": MagicMock(),
+        "dlc": MagicMock(),
         "engine": record_store.engine,
         "read_engine": record_store.read_engine,
         "perm": MagicMock(

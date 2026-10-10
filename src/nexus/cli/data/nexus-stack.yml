@@ -18,8 +18,7 @@ services:
   # ============================================================================
   # PostgreSQL Database (with pgvector + pg_search for hybrid search)
   # paradedb image bundles pgvector (halfvec) + pg_search (BM25 via @@@ /
-  # paradedb.score) — both required by PgVectorBackend + PgFtsBackend
-  # since #3699 dropped the in-memory bm25s fallback.
+  # paradedb.score).
   # ============================================================================
   postgres:
     image: paradedb/paradedb:latest-pg17

@@ -16,17 +16,8 @@ Provides search daemon endpoints:
 - POST /api/v2/search/parked/discard    -- discard parked events (#4337, admin)
 - POST /api/v2/search/consumers/{name}/skip-to -- force checkpoint advance (#4337, admin)
 
-Rewritten for txtai backend (#2663):
-- txtai handles hybrid BM25+dense fusion internally
-- Zone-level isolation via txtai SQL WHERE (brick layer)
-- File-level ReBAC filtering in router (server layer)
-
-#3701 review:
-- Added grep/glob HTTP endpoints (previously MCP-only).
-- Collapsed duplicated response shaping into ``_serialize_search_result``.
-- Replaced the 3x over-fetch magic number with ``_REBAC_OVERFETCH_FACTOR``
-  and added ``truncated_by_permissions`` / ``permission_denial_rate``
-  instrumentation so callers can detect silent-undercount scenarios.
+Discovery returns results authorized by the Rust Search host, then applies
+HTTP pagination and response shaping.
 """
 
 import asyncio
@@ -36,6 +27,7 @@ import os
 import time
 from typing import Any
 
+import grpc
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
@@ -48,6 +40,7 @@ from nexus.lib.rebac_filter import rebac_denial_stats as _rebac_denial_stats
 from nexus.runtime.zone_resolution import target_zone_for_context
 from nexus.server.api.v2._revision_fence import RevisionFence, get_revision_fence
 from nexus.server.api.v2._zone_scoped_fs import scope_rest_path
+from nexus.server.api.v2.error_handling import grpc_http_exception
 from nexus.server.api.v2.routers._index_on_write import (
     REASON_EMPTY,
     REASON_NON_TEXT,
@@ -65,6 +58,7 @@ from nexus.server.api.v2.routers._search_batch import (
 )
 from nexus.server.api.v2.routers._search_deps import _get_search_daemon
 from nexus.server.dependencies import get_auth_result, get_operation_context, require_auth
+from nexus.server.path_utils import unscope_internal_path
 from nexus.server.zone_execution import run_zone_scoped
 
 logger = logging.getLogger(__name__)
@@ -759,6 +753,8 @@ async def _handle_single_zone_search(
             response["routing"] = routing_info
         return response
 
+    except grpc.RpcError as e:
+        raise grpc_http_exception(e) from e
     except Exception as e:
         logger.error("Search error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="Search query failed") from e
@@ -1044,21 +1040,7 @@ async def search_query_batch(
 
 
 # =============================================================================
-# grep / glob HTTP endpoints (#3701 — Issue 1A)
-#
-# These endpoints mirror the existing ``nexus_grep``/``nexus_glob`` MCP
-# tools but enforce file-level ReBAC via the same ``_apply_rebac_filter``
-# helper used by ``search_query``. They are the first time agents can
-# get permission-filtered grep/glob results over HTTP.
-#
-# Implementation notes:
-# * Both endpoints delegate to ``SearchService`` via ``nexus_fs.service("search")``
-#   because ``SearchDaemon`` does not expose grep/glob methods — those live
-#   only at the SearchService layer.
-# * ``OperationContext`` is constructed from ``auth_result`` so SearchService's
-#   internal path/zone filtering uses the caller's identity.
-# * ``_compute_rebac_fetch_limit`` over-fetches from SearchService to
-#   compensate for ReBAC denial, matching the pattern in ``search_query``.
+# Discovery HTTP adapters
 # =============================================================================
 
 
@@ -1108,39 +1090,24 @@ async def _do_grep_operation(
     """Execute a grep request and assemble the paginated response.
 
     Shared by ``GET /grep`` (query params) and ``POST /grep`` (JSON body).
-    Enforces ReBAC at the router layer and surfaces
-    ``permission_denial_rate``/``truncated_by_permissions`` in the
-    response envelope.
+    The Search host returns authorized results before pagination.
     """
-    from nexus.contracts.constants import ROOT_ZONE_ID
     from nexus.contracts.exceptions import InvalidPathError, NexusPermissionError
     from nexus.server.dependencies import get_operation_context
 
     start_time = time.perf_counter()
-    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
 
     nexus_fs = getattr(request.app.state, "nexus_fs", None)
     if nexus_fs is None:
         raise HTTPException(status_code=503, detail="NexusFS not initialized")
     search_service = _get_search_service(nexus_fs)
 
-    # Build OperationContext so SearchService's internal path/zone filter
-    # matches the caller's identity (Issue 6A scope: HTTP side).
+    # The context selects the target; the host authenticates the bearer.
     op_context = get_operation_context(auth_result)
 
-    permission_enforcer = getattr(request.app.state, "permission_enforcer", None)
-    # Sentinel fetch (Codex adversarial review of #3701): request one
-    # extra row beyond the caller's window so we can reliably detect
-    # whether there are more matches after ReBAC filtering. Without
-    # this sentinel, fetching exactly ``limit + offset`` and treating
-    # the length as the true total silently reports ``has_more=False``
-    # on the first page of a large result set whenever SearchService's
-    # cap happens to match the requested window.
+    # One extra authorized match detects the next page in a single call.
     window_size = limit + offset
-    sentinel_window = window_size + 1
-    fetch_limit = _compute_rebac_fetch_limit(
-        sentinel_window, has_enforcer=permission_enforcer is not None
-    )
+    fetch_limit = window_size + 1
 
     # #4740: scope the caller's path and files into its zone namespace, as the
     # RPC layer does for every syscall; a path naming another zone is a 403.
@@ -1148,6 +1115,9 @@ async def _do_grep_operation(
     if files:
         files = [scope_rest_path(f, op_context) for f in files]
     target_zone = target_zone_for_context(op_context, {"path": path, "files": files})
+    path = unscope_internal_path(path)
+    if files is not None:
+        files = [unscope_internal_path(file) for file in files]
 
     async def _work() -> dict[str, Any]:
         try:
@@ -1177,39 +1147,17 @@ async def _do_grep_operation(
             # #4740: zone-less non-admin callers are refused by the zone
             # visibility predicate — surface it as 403, not a 500.
             raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except grpc.RpcError as exc:
+            raise grpc_http_exception(exc) from exc
         except Exception as exc:
             logger.error("grep failed: %s", exc, exc_info=True)
             raise HTTPException(
                 status_code=500, detail=f"grep failed: {type(exc).__name__}"
             ) from exc
 
-        # ReBAC file-level filtering, reusing the same helper as search_query.
-        # SearchService already filters by zone/path via context, so this is
-        # a second-layer guarantee for the HTTP surface.
-        pre_filter_count = len(raw_results)
-
-        # #3731: path_extractor eliminates the _GrepResultShim shim class.
-        filtered_results, filter_ms = _apply_rebac_filter(
-            raw_results,
-            permission_enforcer,
-            auth_result,
-            zone_id,
-            path_extractor=lambda r: r.get("file", ""),
-            operation_context=op_context,
-        )
-        post_filter_count = len(filtered_results)
-
-        # Sentinel detection: if we got at least one result beyond the
-        # window, there's a next page. The sentinel row is not included in
-        # the items we return to the caller.
-        has_more = post_filter_count > window_size
-        # ``total`` reports the best-known count. When has_more is true,
-        # we know at least ``window_size + 1`` exist but the true total
-        # may be larger; we report the observed post-filter count as a
-        # floor. When has_more is false, post_filter_count is the true
-        # total of matches visible to this caller.
-        total = post_filter_count
-        paginated = filtered_results[offset : offset + limit]
+        total = len(raw_results)
+        has_more = total > window_size
+        paginated = raw_results[offset : offset + limit]
 
         # Codex review of #3701 (review #2 finding #2 + review #3 finding #3):
         # unscope every result entry's ``file`` so the HTTP response surfaces
@@ -1248,9 +1196,7 @@ async def _do_grep_operation(
             "latency_ms": round(latency_ms, 2),
             "latency_breakdown": {
                 "total_ms": round(latency_ms, 2),
-                "permission_filter_ms": round(filter_ms, 2),
             },
-            **_rebac_denial_stats(pre_filter_count, post_filter_count, window_size),
         }
         if multi_zone_ambiguous:
             extras["multi_zone_ambiguous"] = True
@@ -1284,12 +1230,10 @@ async def _do_glob_operation(
 
     Shared by ``GET /glob`` (query params) and ``POST /glob`` (JSON body).
     """
-    from nexus.contracts.constants import ROOT_ZONE_ID
     from nexus.contracts.exceptions import InvalidPathError, NexusPermissionError
     from nexus.server.dependencies import get_operation_context
 
     start_time = time.perf_counter()
-    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
 
     nexus_fs = getattr(request.app.state, "nexus_fs", None)
     if nexus_fs is None:
@@ -1297,7 +1241,6 @@ async def _do_glob_operation(
     search_service = _get_search_service(nexus_fs)
 
     op_context = get_operation_context(auth_result)
-    permission_enforcer = getattr(request.app.state, "permission_enforcer", None)
 
     # #4740: scope the caller's path and files into its zone namespace, as the
     # RPC layer does for every syscall; a path naming another zone is a 403.
@@ -1305,11 +1248,13 @@ async def _do_glob_operation(
     if files:
         files = [scope_rest_path(f, op_context) for f in files]
     target_zone = target_zone_for_context(op_context, {"path": path, "files": files})
+    path = unscope_internal_path(path)
+    if files is not None:
+        files = [unscope_internal_path(file) for file in files]
 
     async def _work() -> dict[str, Any]:
         try:
-            # SearchService.glob is synchronous (metastore walk); keep it
-            # off the event loop like the grep sibling (#4777).
+            # The synchronous gRPC client runs outside the event loop.
             all_matches: list[str] = await asyncio.to_thread(
                 search_service.glob, pattern=pattern, path=path, context=op_context, files=files
             )
@@ -1319,26 +1264,16 @@ async def _do_glob_operation(
             # #4740: zone-less non-admin callers are refused by the zone
             # visibility predicate — surface it as 403, not a 500.
             raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except grpc.RpcError as exc:
+            raise grpc_http_exception(exc) from exc
         except Exception as exc:
             logger.error("glob failed: %s", exc, exc_info=True)
             raise HTTPException(
                 status_code=500, detail=f"glob failed: {type(exc).__name__}"
             ) from exc
 
-        # #3731: path_extractor=identity eliminates the _GlobResultShim shim class.
-        pre_filter_count = len(all_matches)
-        filtered_paths, filter_ms = _apply_rebac_filter(
-            all_matches,
-            permission_enforcer,
-            auth_result,
-            zone_id,
-            path_extractor=lambda p: p,
-            operation_context=op_context,
-        )
-        post_filter_count = len(filtered_paths)
-
-        total = len(filtered_paths)
-        paginated = filtered_paths[offset : offset + limit]
+        total = len(all_matches)
+        paginated = all_matches[offset : offset + limit]
 
         # Codex review of #3701 (review #2 finding #2 + review #3 finding #3):
         # unscope every glob path so the HTTP response surfaces user-facing
@@ -1371,9 +1306,7 @@ async def _do_glob_operation(
             "latency_ms": round(latency_ms, 2),
             "latency_breakdown": {
                 "total_ms": round(latency_ms, 2),
-                "permission_filter_ms": round(filter_ms, 2),
             },
-            **_rebac_denial_stats(pre_filter_count, post_filter_count, limit + offset),
             # Codex review #3 finding #3: parallel zone disambiguation.
             # ``item_zones[i]`` is the zone id of ``items[i]`` (may be
             # ``None`` for root-zone paths). Multi-zone callers use this
@@ -1494,10 +1427,7 @@ async def search_grep(
 ) -> dict[str, Any]:
     """Search file contents via regex (#3701 Issue 1A).
 
-    Mirrors the ``nexus_grep`` MCP tool but routes through the HTTP
-    permission path (``_apply_rebac_filter``). Results are paginated via
-    offset/limit and include ``permission_denial_rate`` /
-    ``truncated_by_permissions`` when a permission enforcer is active.
+    The Search host authorizes matches; HTTP paginates the visible results.
 
     The ``files=[...]`` parameter (#3701 Issue 2A) lets agents pass a
     pre-narrowed working set so grep skips the tree walk. Repeat the
@@ -1647,7 +1577,7 @@ async def search_glob(
 ) -> dict[str, Any]:
     """Search file paths via glob pattern (#3701 Issue 1A).
 
-    Mirrors the ``nexus_glob`` MCP tool with HTTP-side ReBAC filtering.
+    The Search host authorizes paths before HTTP pagination.
     Supports the ``files=[...]`` stateless narrowing parameter.
 
     For very large ``files=[...]`` working sets that exceed the URL

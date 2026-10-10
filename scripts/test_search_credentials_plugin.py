@@ -26,7 +26,9 @@ from nexus.contracts.search_types import SearchRequest
 from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
 from nexus.lib.request_credentials import request_api_key
 from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
+from nexus.remote.rpc_transport import RPCTransport
 from nexus.runtime.zone_runner import ZoneRegistry
+from nexus.security.tls.config import ZoneTlsConfig
 from nexus.server.api.v2.routers.search import router
 from nexus.server.lifespan.vfs_grpc import VFSGrpcServicer
 from nexus.server.middleware.request_credentials import RequestCredentialsMiddleware
@@ -44,6 +46,15 @@ async def main() -> None:
         certificate_chain=Path(os.environ["NEXUS_SEARCH_PLUGIN_TLS_CERT"]).read_bytes(),
     )
     channel = grpc.aio.secure_channel(target, credentials)
+    transport = RPCTransport(
+        target,
+        tls_config=ZoneTlsConfig(
+            ca_cert_path=Path(os.environ["NEXUS_SEARCH_PLUGIN_TLS_CA"]),
+            node_cert_path=Path(os.environ["NEXUS_SEARCH_PLUGIN_TLS_CERT"]),
+            node_key_path=Path(os.environ["NEXUS_SEARCH_PLUGIN_TLS_KEY"]),
+            known_zones_path=Path("/tmp/search-known-zones"),
+        ),
+    )
     vfs = vfs_pb2_grpc.NexusVFSServiceStub(channel)
     suffix = uuid4().hex
     paths = {name: f"/docs/{name}-{suffix}.txt" for name in ("alice", "bob")}
@@ -116,8 +127,7 @@ async def main() -> None:
                     for name, key in keys.items()
                 }
             )
-            service = SearchService(metadata_store=None, enforce_permissions=False)
-            service._search_daemon = daemon
+            service = SearchService(metadata_store=transport)
 
             class Services:
                 def service(self, name):
@@ -165,6 +175,35 @@ async def main() -> None:
                     for result in batch.json()["queries"]
                 ), batch.text
 
+                class NoPythonPolicy:
+                    def __getattr__(self, name):
+                        raise AssertionError(f"HTTP discovery consulted Python policy: {name}")
+
+                app.state.permission_enforcer = NoPythonPolicy()
+                for operation, pattern in (("glob", "*.txt"), ("grep", needle)):
+                    response = await client.post(
+                        f"/api/v2/search/{operation}",
+                        headers={"Authorization": f"Bearer {keys['bob']}"},
+                        json={"pattern": pattern, "path": "/docs", "files": list(paths.values())},
+                    )
+                    assert response.is_success, response.text
+                    items = response.json()["items"]
+                    found = items if operation == "glob" else [hit["file"] for hit in items]
+                    assert found == [paths["bob"]], response.text
+                    empty = await client.post(
+                        f"/api/v2/search/{operation}",
+                        headers={"Authorization": f"Bearer {keys['bob']}"},
+                        json={"pattern": pattern, "path": "/docs", "files": []},
+                    )
+                    assert empty.is_success and empty.json()["items"] == [], empty.text
+                    denied = await client.post(
+                        f"/api/v2/search/{operation}",
+                        headers={"Authorization": f"Bearer {keys['bob']}"},
+                        json={"pattern": pattern, "path": "/docs"},
+                    )
+                    assert denied.status_code == 403, denied.text
+
+                app.state.permission_enforcer = None
                 from nexus.server.dependencies import _get_cached_auth
 
                 cached_identity = await _get_cached_auth(app.state.auth_cache_store, keys["alice"])
@@ -173,6 +212,40 @@ async def main() -> None:
 
                 # A real Python gRPC service dispatch shares the same daemon.
                 servicer = VFSGrpcServicer(app)
+                indexed_rpc = await servicer.Call(
+                    vfs_pb2.CallRequest(
+                        method="semantic_search_index",
+                        auth_token=admin,
+                        payload=encode_rpc_message(
+                            {
+                                "path": "/zone/sharedzone/docs",
+                                "recursive": False,
+                                "max_docs": 2,
+                            }
+                        ),
+                    ),
+                    SimpleNamespace(peer=lambda: "ipv4:127.0.0.1:1"),
+                )
+                assert not indexed_rpc.is_error, decode_rpc_message(indexed_rpc.payload)
+                assert decode_rpc_message(indexed_rpc.payload)["result"] == {
+                    "indexed_count": 2,
+                    "skipped_count": 0,
+                }
+                denied_index = await servicer.Call(
+                    vfs_pb2.CallRequest(
+                        method="semantic_search_index",
+                        auth_token=keys["bob"],
+                        payload=encode_rpc_message({"path": "/docs"}),
+                    ),
+                    SimpleNamespace(peer=lambda: "ipv4:127.0.0.1:1"),
+                )
+                from nexus.contracts.rpc_types import RPCErrorCode
+
+                assert denied_index.is_error
+                assert (
+                    decode_rpc_message(denied_index.payload)["code"]
+                    == RPCErrorCode.PERMISSION_ERROR.value
+                )
                 rpc = await servicer.Call(
                     vfs_pb2.CallRequest(
                         method="semantic_search",
@@ -185,6 +258,28 @@ async def main() -> None:
                 assert [
                     hit["path"] for hit in decode_rpc_message(rpc.payload)["result"]["results"]
                 ] == [paths["bob"]]
+                for operation, pattern, result_key in (
+                    ("glob", "*.txt", "matches"),
+                    ("grep", needle, "results"),
+                ):
+                    rpc = await servicer.Call(
+                        vfs_pb2.CallRequest(
+                            method=operation,
+                            auth_token=keys["bob"],
+                            payload=encode_rpc_message(
+                                {
+                                    "pattern": pattern,
+                                    "path": "/docs",
+                                    "files": list(paths.values()),
+                                }
+                            ),
+                        ),
+                        SimpleNamespace(peer=lambda: "ipv4:127.0.0.1:1"),
+                    )
+                    assert not rpc.is_error, decode_rpc_message(rpc.payload)
+                    items = decode_rpc_message(rpc.payload)["result"][result_key]
+                    found = items if operation == "glob" else [hit["file"] for hit in items]
+                    assert found == [paths["bob"]], items
 
                 from fastmcp import Client
 
@@ -290,6 +385,7 @@ async def main() -> None:
             await daemon.shutdown()
             await asyncio.to_thread(zones.stop_all)
             await channel.close()
+            transport.close()
 
 
 if __name__ == "__main__":

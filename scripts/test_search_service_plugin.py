@@ -28,9 +28,8 @@ async def main() -> None:
     transport = RPCTransport(target, timeout=15)
     daemon = SearchDaemon(target=target)
     service = SearchService(
-        metadata_store=None, record_store=NoSqlSearch(), enforce_permissions=False
+        metadata_store=transport, record_store=NoSqlSearch(), enforce_permissions=False
     )
-    service._search_daemon = daemon
     created = False
     try:
         await daemon.startup()
@@ -54,18 +53,7 @@ async def main() -> None:
         await daemon.notify_file_change(path, "delete")
         assert await service.semantic_search("marigold", path=path, search_mode="keyword") == []
 
-        service._search_daemon = None
-        for operation, kwargs in (
-            (service.semantic_search, {"query": "marigold", "search_mode": "keyword"}),
-            (service.semantic_search_stats, {}),
-        ):
-            try:
-                await operation(**kwargs)
-            except ValueError as exc:
-                assert "search-plugin" in str(exc), exc
-            else:
-                raise AssertionError("Missing plugin must report unavailable")
-        print("SearchService live contract passed: index/query/stats/delete/unavailable")
+        print("SearchService live contract passed: index/query/stats/delete")
     finally:
         if created:
             await asyncio.to_thread(transport.delete_file, path)

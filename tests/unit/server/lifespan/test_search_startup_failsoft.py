@@ -67,7 +67,7 @@ async def test_startup_failsoft_when_plugin_unreachable(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_startup_publishes_daemon_when_plugin_healthy(monkeypatch):
-    """Healthy probe ⇒ daemon published + wired into search service."""
+    """Healthy probe ⇒ HTTP search transport published."""
     monkeypatch.setenv("NEXUS_SEARCH_DAEMON", "true")
     monkeypatch.setenv("NEXUS_SEARCH_PLUGIN_TARGET", "127.0.0.1:2126")
 
@@ -75,14 +75,8 @@ async def test_startup_publishes_daemon_when_plugin_healthy(monkeypatch):
     fake.startup.return_value = None
     fake.get_health.return_value = {"status": "healthy", "detail": ""}
 
-    class _SearchSvcHolder:
-        def __init__(self) -> None:
-            self._search_daemon = None
-
-    holder = _SearchSvcHolder()
-
     app, svc = _FakeApp(), _FakeSvc()
-    svc.nexus_fs = SimpleNamespace(service=lambda name: holder if name == "search" else None)
+    svc.nexus_fs = SimpleNamespace()
 
     # _wire_notify_hooks + _init_zone_registry short-circuit on the
     # SimpleNamespace fake (no register_intercept_write / zone_manager).
@@ -92,7 +86,6 @@ async def test_startup_publishes_daemon_when_plugin_healthy(monkeypatch):
     assert tasks == []
     assert app.state.search_daemon is fake
     assert app.state.search_daemon_enabled is True
-    assert holder._search_daemon is fake, "SearchService got wired to the daemon"
 
 
 @pytest.mark.asyncio

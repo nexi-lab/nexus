@@ -15,7 +15,9 @@ import grpc
 import httpx
 
 from nexus.bricks.search.search_service import SearchService
+from nexus.contracts.types import OperationContext
 from nexus.lib.request_credentials import request_api_key
+from nexus.remote.kernel_client import KernelClient
 from nexus.remote.rpc_transport import RPCTransport
 from nexus.remote.service_proxy import RemoteServiceProxy
 from nexus.security.tls.config import ZoneTlsConfig
@@ -25,9 +27,19 @@ async def main() -> None:
     admin = Path(os.environ["NEXUS_SEARCH_TEST_ADMIN_KEY"]).read_text().strip()
     target = os.environ["NEXUS_SEARCH_PLUGIN_TARGET"]
     base = os.environ["NEXUS_SEARCH_TEST_HTTP"]
-    transport = RPCTransport(target, auth_token=admin, tls_config=ZoneTlsConfig.from_env())
+    tls = ZoneTlsConfig.from_env()
+    transport = RPCTransport(target, auth_token=admin, tls_config=tls)
     search = RemoteServiceProxy(transport.call_rpc, "search")
-    facade = SearchService(metadata_store=transport, enforce_permissions=False)
+    kernel = KernelClient(server_address=target)
+    kernel._transport = transport
+
+    class NoPythonPolicy:
+        def __getattr__(self, name):
+            raise AssertionError(f"Search attempted to use Python policy or SQL: {name}")
+
+    facade = SearchService(
+        metadata_store=kernel, permission_enforcer=NoPythonPolicy(), record_store=NoPythonPolicy()
+    )
     suffix = uuid4().hex[:8]
     needle = f"discovery{suffix}"
     subjects = {
@@ -98,6 +110,53 @@ async def main() -> None:
                 await asyncio.to_thread(transport.write_file, path, text.encode())
                 created.append(path)
                 await grant(name, "POST")
+                indexed = await request(
+                    "POST",
+                    "/v2/documents/batch",
+                    json={"zone_id": "sharedzone", "documents": [{"path": path, "text": text}]},
+                )
+                assert indexed["indexed_count"] == 1, indexed
+
+            indexed = await facade.semantic_search_index(
+                path="/docs",
+                recursive=False,
+                max_docs=2,
+                context=OperationContext(user_id="operator", groups=[], zone_id="sharedzone"),
+            )
+            assert indexed == {"indexed_count": 2, "skipped_count": 0}, indexed
+
+            async def query(name):
+                caller = request_api_key.set(keys[name])
+                try:
+                    hits = await asyncio.to_thread(
+                        search.semantic_search, query=needle, path="/docs", search_mode="keyword"
+                    )
+                    assert [hit["path"] for hit in hits] == [paths[name]], hits
+                    assert (
+                        await facade.semantic_search(needle, path="/docs", search_mode="keyword")
+                        == hits
+                    )
+                    claimed = OperationContext(
+                        user_id="claimed-admin", groups=[], zone_id="other-zone", is_admin=True
+                    )
+                    try:
+                        await facade.semantic_search(needle, search_mode="keyword", context=claimed)
+                    except grpc.RpcError as error:
+                        assert error.code() == grpc.StatusCode.PERMISSION_DENIED
+                    else:
+                        raise AssertionError("A Python context supplied cross-zone authority")
+                    try:
+                        await facade.semantic_search_stats()
+                    except grpc.RpcError as error:
+                        assert error.code() == grpc.StatusCode.PERMISSION_DENIED
+                    else:
+                        raise AssertionError("A user inherited node administrative authority")
+                finally:
+                    request_api_key.reset(caller)
+
+            await asyncio.gather(*(query(name) for name in ("alice", "bob") * 3))
+            stats = await facade.semantic_search_stats()
+            assert stats["engine"] == stats["backend"], stats
 
             for name in paths:
                 caller = request_api_key.set(keys[name])
@@ -135,6 +194,21 @@ async def main() -> None:
                 assert rows[0]["line"] == 3 and rows[0]["section"]["line_end"] == 4
                 await grant("alice", "DELETE")
                 assert await facade.grep(needle, path="/docs", files=[paths["alice"]]) == []
+                assert (
+                    await facade.semantic_search(needle, path="/docs", search_mode="keyword") == []
+                )
+            finally:
+                request_api_key.reset(caller)
+
+            await asyncio.to_thread(transport.delete_file, paths["bob"])
+            created.remove(paths["bob"])
+            caller = request_api_key.set(keys["bob"])
+            try:
+                # The warm index still contains this document. Only the owning
+                # kernel can decide that its namespace entry has been deleted.
+                assert (
+                    await facade.semantic_search(needle, path="/docs", search_mode="keyword") == []
+                )
             finally:
                 request_api_key.reset(caller)
 
@@ -142,6 +216,7 @@ async def main() -> None:
                 caller = request_api_key.set(invalid)
                 try:
                     await rejects(search.grep, needle, path="/docs", files=[])
+                    await rejects(search.semantic_search, query=needle, search_mode="keyword")
                 finally:
                     request_api_key.reset(caller)
                 await rejects(
@@ -150,8 +225,13 @@ async def main() -> None:
                     {"pattern": needle, "path": "/docs", "files": []},
                     auth_token=invalid,
                 )
+            explicit_empty = RPCTransport(target, auth_token="", tls_config=tls)
+            try:
+                await rejects(explicit_empty.call_rpc, "semantic_search_stats")
+            finally:
+                explicit_empty.close()
             print(
-                "PASS: SDK/facade discovery, working sets, Markdown, live edits, grants and credentials"
+                "PASS: SDK/facade discovery and indexed queries, live namespace, grants and credentials"
             )
         finally:
             for name in keys:
@@ -161,7 +241,7 @@ async def main() -> None:
             for key_hash in hashes.values():
                 await request("DELETE", f"/v2/auth/keys/{key_hash}")
             facade.close()
-            transport.close()
+            kernel.close()
 
 
 if __name__ == "__main__":

@@ -1038,7 +1038,8 @@ class TestSearchTools:
         search_tool = get_tool(server, "nexus_semantic_search")
         result = await search_tool.fn(query="test")
 
-        assert "Error in semantic search" in result
+        assert "Error semantic search" in result
+        assert "Search service down" in result
         assert "Search service down" in result
 
 

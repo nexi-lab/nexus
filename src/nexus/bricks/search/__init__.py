@@ -4,16 +4,13 @@ Discovery and indexed queries use the Rust Search plugin on the owning Kernel.
 """
 
 from nexus.bricks.search.config import SearchConfig, search_config_from_env
-from nexus.bricks.search.pg_fts_backend import PgFtsBackend
 from nexus.bricks.search.query_router import (
     QueryRouter,
     RoutedQuery,
     RoutingConfig,
 )
-from nexus.bricks.search.result_builders import build_result_from_row, build_semantic_result
-from nexus.bricks.search.results import BaseSearchResult, detect_matched_field
+from nexus.bricks.search.results import BaseSearchResult
 from nexus.bricks.search.search_service import SearchService
-from nexus.bricks.search.sqlite_fts_backend import SqliteFtsBackend
 from nexus.bricks.search.zoekt_client import (
     ZoektClient,
     ZoektIndexManager,
@@ -33,19 +30,14 @@ __all__ = [
     "COMPARISON_WORDS",
     "COMPLEX_PATTERNS",
     "MULTIHOP_PATTERNS",
-    "PgFtsBackend",
     "QueryRouter",
     "RoutedQuery",
     "RoutingConfig",
     "SearchConfig",
     "SearchService",
-    "SqliteFtsBackend",
     "TEMPORAL_WORDS",
     "ZoektClient",
     "ZoektIndexManager",
     "ZoektMatch",
-    "build_result_from_row",
-    "build_semantic_result",
-    "detect_matched_field",
     "search_config_from_env",
 ]

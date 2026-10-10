@@ -87,12 +87,6 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
         app.state.search_daemon = candidate
         app.state.search_daemon_enabled = True
 
-        # Publish the healthy plugin connection to service-layer callers.
-        with contextlib.suppress(AttributeError):
-            search_svc = svc.nexus_fs.service("search")
-            if search_svc is not None:
-                search_svc._search_daemon = app.state.search_daemon
-
         _wire_notify_hooks(app, svc)
         _init_zone_registry(app, svc)
 

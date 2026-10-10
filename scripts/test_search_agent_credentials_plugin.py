@@ -89,6 +89,50 @@ async def main() -> None:
                 timeout=15,
             )
             assert not written.is_error, written
+        # Admission must refuse before indexing any prefix of a mixed-zone batch.
+        before = await search.Stats(
+            search_pb2.StatsRequest(zone_id="sharedzone", auth_token=admin), timeout=15
+        )
+        for zone in ("../../agent-query-probe", "a/b", "a\\b", ".", "..", "C:escape"):
+            bad = search_pb2.QueryRequest(
+                q=needle, zone_id=zone, query_type=search_pb2.QUERY_TYPE_KEYWORD
+            )
+            await denied(agents["a"][2].Query(bad, timeout=15), grpc.StatusCode.INVALID_ARGUMENT)
+            await denied(
+                agents["a"][2].BatchQuery(search_pb2.BatchQueryRequest(queries=[bad]), timeout=15),
+                grpc.StatusCode.INVALID_ARGUMENT,
+            )
+            bad.auth_token = "sk-never-minted"
+            await denied(agents["a"][2].Query(bad, timeout=15), grpc.StatusCode.UNAUTHENTICATED)
+        await denied(
+            search.IndexDocuments(
+                search_pb2.IndexDocumentsRequest(
+                    zone_id="sharedzone",
+                    auth_token=admin,
+                    documents=[
+                        search_pb2.DocumentInput(path=paths["a"], text=needle),
+                        search_pb2.DocumentInput(
+                            path=paths["b"], text=needle, zone_id="../../agent-query-probe"
+                        ),
+                    ],
+                ),
+                timeout=15,
+            ),
+            grpc.StatusCode.INVALID_ARGUMENT,
+        )
+        after = await search.Stats(
+            search_pb2.StatsRequest(zone_id="sharedzone", auth_token=admin), timeout=15
+        )
+        assert after.last_index_seq == before.last_index_seq, (before, after)
+        assert after.fts_doc_count == before.fts_doc_count, (before, after)
+        assert after.pending == after.indexing_in_progress == 0, after
+        unknown = await agents["a"][2].Query(
+            search_pb2.QueryRequest(
+                q=needle, zone_id=f"unindexed-{suffix}", query_type=search_pb2.QUERY_TYPE_KEYWORD
+            ),
+            timeout=15,
+        )
+        assert not unknown.error and not unknown.results, unknown
         indexed = await search.IndexDocuments(
             search_pb2.IndexDocumentsRequest(
                 documents=[

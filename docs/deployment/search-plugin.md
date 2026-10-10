@@ -88,6 +88,21 @@ the local transport; it can remain true while the host reports `unavailable`.
 `backend` identifies the configured transport as `rust-plugin`. A disabled
 transport reports `status=disabled`, `initialized=false` and `backend=null`.
 
+## Index storage and read operations
+
+Indexed Search zone IDs must be single directory components. An omitted zone
+still resolves to `root`; existing logical zone names keep their meaning.
+Separators, parent paths, absolute paths, drive prefixes and NUL are rejected
+with `INVALID_ARGUMENT` before index work. Authentication runs before this
+admission check. Batch query and document indexing validate the entire request,
+including document zone overrides, before starting work.
+
+Query, Locate, Stats and metadata lists load existing state. An unindexed zone
+returns empty results or zero counts without creating an index, writer or zone
+directory. Missing corpora are not cached, so subsequent explicit indexing is
+visible. Committed FTS and ANN corpora reload from disk after daemon restart.
+Unsupported semantic modes still report their availability error.
+
 ## Runtime capability discovery
 
 The peer `ZoneApiService.GetSearchCapabilities` RPC queries the currently

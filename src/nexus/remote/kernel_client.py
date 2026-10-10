@@ -31,6 +31,7 @@ from types import SimpleNamespace
 from typing import IO, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.contracts.exceptions import AuthenticationError
 from nexus.contracts.rpc_types import RPCErrorCode
 from nexus.lib.rpc_codec import decode_rpc_message
 from nexus.lib.zone_revision import revision_fields as _revision_fields
@@ -355,15 +356,18 @@ class KernelClient:
 
     def open(self) -> None:
         """Start kernel subprocess (if local) and establish gRPC channel."""
-        if self._spawn_local and self._process is None:
-            self._spawn_kernel()
-        self._transport = RPCTransport(
-            server_address=self._server_address,
-            auth_token=self._auth_token,
-            timeout=self._timeout,
-        )
-        # Wait for kernel to be ready.
-        self._wait_ready()
+        try:
+            if self._spawn_local and self._process is None:
+                self._spawn_kernel()
+            self._transport = RPCTransport(
+                server_address=self._server_address,
+                auth_token=self._auth_token,
+                timeout=self._timeout,
+            )
+            self._wait_ready()
+        except BaseException:
+            self.close()
+            raise
 
     def close(self) -> None:
         """Shutdown kernel subprocess and close gRPC channel."""
@@ -483,6 +487,8 @@ class KernelClient:
             try:
                 self._transport.ping()
                 return
+            except AuthenticationError:
+                raise
             except Exception as e:
                 last_err = e
                 time.sleep(0.1)

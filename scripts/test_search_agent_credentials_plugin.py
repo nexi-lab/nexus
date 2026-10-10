@@ -20,6 +20,7 @@ import nexus
 from nexus.contracts.exceptions import NexusPermissionError
 from nexus.grpc.search.v1 import search_pb2, search_pb2_grpc
 from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
+from nexus.lib.request_credentials import request_api_key
 from nexus.remote.rpc_transport import RPCTransport
 
 
@@ -101,7 +102,9 @@ async def main() -> None:
             filesystems[name] = filesystem
             from nexus.bricks.mcp.server import create_mcp_server
 
-            mcp_servers[name] = await create_mcp_server(nx=filesystem)
+            mcp_servers[name] = await create_mcp_server(
+                nx=filesystem, remote_url=f"grpcs://{target}"
+            )
             transports[name] = filesystem._nexus_remote_call_rpc.__self__
             assert isinstance(transports[name], RPCTransport)
             written = await vfs.Write(
@@ -192,6 +195,21 @@ async def main() -> None:
             assert not response.error, response
             assert [hit.path for hit in response.results] == expected, response
 
+        async def mcp_call(name, method, params, credential=None):
+            from fastmcp import Client
+
+            scope = request_api_key.set(credential)
+            try:
+                with patch("nexus.connect", side_effect=AssertionError("unexpected connection")):
+                    async with Client(mcp_servers[name]) as client:
+                        result = await client.call_tool(f"nexus_{method}", params)
+                        return result.content[0].text
+            finally:
+                request_api_key.reset(scope)
+
+        async def mcp_read(name, path, credential=None):
+            return await mcp_call(name, "read_file", {"path": path}, credential)
+
         async def sdk(name, expected):
             filesystem = filesystems[name]
             response = await asyncio.to_thread(
@@ -236,6 +254,20 @@ async def main() -> None:
                         else [hit["file"] for hit in body["items"]]
                     )
                     assert found == expected, body
+            content = await mcp_read(name, paths[name])
+            if expected:
+                assert content == f"{needle} {name}", "MCP certificate file read failed"
+            else:
+                assert content.startswith("Error:"), "MCP file access ignored revocation"
+                assert "rebac:" not in content, "MCP exposed a policy diagnostic"
+            metadata = await mcp_call(name, "file_info", {"path": paths[name]})
+            if expected:
+                info = json.loads(metadata)
+                assert info["size"] == len(f"{needle} {name}".encode())
+                assert info["exists"] and not info["is_directory"]
+            else:
+                assert metadata.startswith("Error:"), "MCP stat ignored revocation"
+            assert not transports[name]._closed, "MCP closed its borrowed transport"
 
         async def sdk_denied(name, method, *args, **kwargs):
             try:
@@ -314,6 +346,15 @@ async def main() -> None:
                 assert sdk_range == read.content[1:6]
                 sdk_stat = await asyncio.to_thread(filesystems[name].sys_stat, paths[name])
                 assert sdk_stat["path"] == paths[name] and sdk_stat["size"] == len(read.content)
+                for credential in ("sk-invalid-fixture-key", ""):
+                    content = await mcp_read(name, paths[name], credential)
+                    assert content.startswith("Error:"), "Invalid bearer fell back to certificate"
+                other = "b" if name == "a" else "a"
+                content = await mcp_read(name, paths[other], admin)
+                assert content == f"{needle} {other}", "MCP did not forward the request bearer"
+                content = await mcp_read(name, paths[other])
+                assert content.startswith("Error:"), "Request bearer survived its scope"
+                assert request_api_key.get() is None
                 tagged = await vfs.SetXattr(
                     vfs_pb2.SetXattrRequest(
                         path=paths[name], key="r10_label", value=name, auth_token=admin

@@ -8,6 +8,7 @@ import grpc
 import pytest
 
 from nexus.bricks.search.search_service import SearchService
+from nexus.contracts.exceptions import AuthenticationError
 from nexus.contracts.types import OperationContext
 from nexus.grpc.search.v1 import search_pb2, search_pb2_grpc
 from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
@@ -179,6 +180,11 @@ def test_configured_credential_presence_is_preserved_on_the_wire(indexed, creden
     configured = client_type(server_address=transport.server_address, auth_token=credential)
     try:
         if isinstance(configured, KernelClient):
+            if credential == "":
+                with pytest.raises(AuthenticationError):
+                    configured.open()
+                assert configured._transport is None
+                return
             configured.open()
             assert configured._process is None
             configured.close()

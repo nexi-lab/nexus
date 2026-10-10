@@ -22,8 +22,8 @@
       "type": "string"
     },
     "status": {
-      "enum": ["creating", "active", "suspended", "deleting", "deleted"],
-      "description": "Lifecycle: creating (saga in flight, no receipt yet) -> active <-> suspended; active|suspended -> deleting -> deleted. deleted is unrecoverable as the same zone; root/control never enter deleting/deleted."
+      "enum": ["creating", "active", "suspended", "deleting", "deleted", "failed"],
+      "description": "Lifecycle: creating (saga in flight, no receipt yet) -> active <-> suspended; active|suspended -> deleting -> deleted; creating -> failed (create saga exhausted its outbox retries) and deleting -> failed (deprovision exhausted) both leave the row for later deprovision/rebuild. deleted is unrecoverable as the same zone; root/control never enter deleting/deleted."
     },
     "deployment": {
       "type": "object",

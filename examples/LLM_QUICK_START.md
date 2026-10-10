@@ -41,11 +41,11 @@ Available OpenRouter models (2025):
 - `openrouter/google/gemini-pro-1.5`
 - See all 100+ models: https://openrouter.ai/models
 
-### 3. Optional: Install Semantic Search (for better results)
-```bash
-pip install nexus-ai-fs[semantic-search-remote]
-export OPENAI_API_KEY="sk-..."  # For embeddings
-```
+### 3. Optional: Configure Semantic Search
+
+The core package includes the Search client. Configure embeddings on the Rust
+Search plugin host and connect using the caller's credential. See the
+[Search deployment guide](../docs/deployment/search-plugin.md).
 
 ## Quick Examples
 
@@ -290,12 +290,13 @@ export OPENAI_API_KEY="sk-..."
 export OPENROUTER_API_KEY="sk-or-..."
 ```
 
-### "Semantic search requires embedding provider"
-```bash
-# Install semantic search support
-pip install nexus-ai-fs[semantic-search-remote]
+### Semantic search is unavailable
 
-# Or use keyword search
+Check the Rust Search host's embedding configuration and capabilities using the
+[Search deployment guide](../docs/deployment/search-plugin.md).
+
+```bash
+# Use keyword search
 nexus llm read /doc.pdf "Question" --search-mode keyword
 
 # Or disable search for small files

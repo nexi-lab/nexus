@@ -143,9 +143,6 @@ dependencies = [
 
 [project.optional-dependencies]
 performance = [
-    # BLAKE3 hashing fallback when Rust extension unavailable (Issue #582)
-    # Local embeddings without API (fast ONNX inference)
-    "fastembed>=0.8.0",
     # Rust-backed markdown parser — 10x faster structure indexing (Issue #3718)
     # Optional: falls back to markdown-it-py (pure Python) when unavailable.
     "markdown-it-pyrs>=0.4.0",
@@ -161,36 +158,12 @@ monitoring = [
     "psutil>=7.2.2",
 ]
 
-mobile = [
-    # GGUF model support via llama.cpp (Issue #1214)
-    # For local embedding inference on mobile/edge devices
-    "llama-cpp-python>=0.3.22",
-]
-
 sandbox-monty = [
     # Pydantic Monty — lightweight in-process Python sandbox (Issue #1316)
     "pydantic-monty>=0.0.17",
 ]
 
-sandbox = [
-    # Issue #3778: SANDBOX profile — agent sandbox runtime (zero external services)
-    # pdf-inspector comes from core deps (see top of file) when Python 3.12
-    "bm25s>=0.3.8",
-    "cachetools>=7.1.1",
-    "tokenizers>=0.23.1",
-    # Local vector storage (sqlite-vec = SQLite extension, ~3 MB wheel).
-    # Loaded into the same nexus.db file via conn.enable_load_extension().
-    "sqlite-vec>=0.1.9",
-    # Remote embeddings via any provider (OpenAI / Cohere / Azure / etc.).
-    # BYO API key — picked up from the standard env vars by litellm.
-    "litellm>=1.83.0",
-    # Local ONNX embeddings — keeps SANDBOX's "zero external services"
-    # promise when no API key is available. Auto-selected by
-    # SqliteVecBackend when no embedding API key is in the environment;
-    # default model BAAI/bge-small-en-v1.5 (384 dim, ~30 MB ONNX, downloads
-    # on first use). Override via NEXUS_OFFLINE_EMBED=1 / NEXUS_EMBEDDER.
-    "fastembed>=0.8.0",
-]
+sandbox = []
 
 sentry = [
     # Sentry error tracking and performance monitoring (Issue #759)
@@ -334,23 +307,6 @@ cloud-sql = [
     "cloud-sql-python-connector[asyncpg]>=1.20.2",
 ]
 
-semantic-search = [
-    # Direct pgvector + pgtext SQL — no txtai (Issue #3699).
-    # torch / transformers / faiss-cpu are no longer pulled in.
-    # Keyword search support - uses existing SQLite/PostgreSQL FTS
-    # BM25S is now in core dependencies (Issue #796)
-    # Vector database extensions for semantic/hybrid search:
-    "sqlite-vec>=0.1.9",  # SQLite vector search (pip installable)
-    "pgvector>=0.4.2",    # PostgreSQL vector search (Python client - requires pgvector extension in database)
-]
-
-semantic-search-remote = [
-    # Remote embedding providers (lightweight, requires API keys)
-    # Recommended: OpenAI embeddings (default for semantic search)
-    "litellm>=1.83.0",
-    "openai>=2.36.0",
-]
-
 e2b = [
     # E2B cloud sandbox support (stateful Python execution via Jupyter kernel)
     "e2b-code-interpreter>=2.6.2",
@@ -389,15 +345,7 @@ event-streaming = [
 
 all = [
     # All optional features (plugins must be installed manually)
-    # Default embedding provider: OpenAI (lightweight, requires API key)
-    # Excludes: sentence-transformers (too heavy ~2GB), voyageai (specialized use case)
-    # Note: fusepy removed - Rust nexus-fuse binary is bundled in the package
-    # Note: bm25s is now in core dependencies (Issue #796)
-    # Note: txtai + faiss-cpu removed (Issue #3699) — direct pgvector path
     "psycopg2-binary>=2.9.12",
-    "sqlite-vec>=0.1.9",
-    "pgvector>=0.4.2",
-    "litellm>=1.83.0",
     "openai>=2.36.0",
     "e2b-code-interpreter>=2.6.2",
     "uvicorn[standard]>=0.46.0",
@@ -434,7 +382,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "nexus" = ["config/*.yaml"]
-"nexus.cli" = ["data/*.yml", "data/*.Dockerfile", "data/*.sql"]
+"nexus.cli" = ["data/*.yml", "data/*.sql"]
 "nexus.backends.connectors.gws" = ["configs/*.yaml"]
 "nexus.backends.connectors.github" = ["*.yaml"]
 "nexus.bricks.auth.daemon.templates" = ["*.plist.j2", "*.service.j2"]
@@ -817,7 +765,6 @@ module = [
     "nexus.core.nexus_fs_content",
     "nexus.core.nexus_fs_internal",
     "nexus.core.nexus_fs_metadata",
-    "nexus.core.nexus_fs_search",
     "nexus.bricks.versioning.version_service",
     "nexus.bricks.search.search_service",
     "nexus.services.gateway",

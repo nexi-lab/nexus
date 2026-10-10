@@ -62,8 +62,6 @@ ENV UV_HTTP_TIMEOUT=300
 # Select which pip extras to install at build time.
 # Default (full image): all,performance,monitoring,docker,event-streaming,sentry,pay
 # Lean sandbox image:   sandbox
-# Issue #3699: torch / txtai / sentence-transformers / faiss-cpu / hnswlib
-# all dropped — direct pgvector + pg_search path replaces them.
 ARG NEXUS_PROFILE_EXTRAS=all,performance,monitoring,docker,event-streaming,sentry,pay
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=cache,target=/root/.cache/pip \
@@ -192,12 +190,11 @@ RUN for b in nexusd-cluster nexus-cluster; do \
         command -v "$b" >/dev/null 2>&1 || { echo "missing cluster binary: $b" >&2; exit 1; }; \
     done && nexusd-cluster --version
 # Extras-gated imports.
-# SANDBOX profile deliberately excludes pgvector/docker/fastembed/psutil (Issue #3778).
 RUN set -eux; \
     case ",${NEXUS_PROFILE_EXTRAS}," in \
       *,all,*) \
-        python3 -c "import pgvector; import docker; import fastembed; import psutil; print('✓ all-extras imports passed')" ;; \
-      *) echo "Skipping pgvector/docker/fastembed/psutil smoke test for extras: ${NEXUS_PROFILE_EXTRAS}" ;; \
+        python3 -c "import openai; import psycopg2; print('✓ all-extras imports passed')" ;; \
+      *) echo "Skipping all-extras import check for extras: ${NEXUS_PROFILE_EXTRAS}" ;; \
     esac
 
 # ---------- Copy application files ----------

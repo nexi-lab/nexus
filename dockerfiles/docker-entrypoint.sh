@@ -6,10 +6,6 @@
 set -e
 set -o pipefail
 
-# Issue #3699: the faiss/torch/txtai LD_PRELOAD + GLIBC_TUNABLES + SIMD
-# clamps + jemalloc plumbing that used to live here are gone — direct
-# pgvector + pg_search no longer pulls those libraries in.
-
 # Load helpers (same directory as this script)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=dockerfiles/entrypoint-helpers.sh

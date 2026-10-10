@@ -26,6 +26,7 @@ from nexus.storage.models import (
     ZoneOperationModel,
     ZoneRuntimeOutboxModel,
 )
+from nexus.storage.models.auth import ZoneModel
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +156,17 @@ class ZoneOperationWorker:
                                 "retryable": False,
                             }
                             operation.completed_at = datetime.now(UTC)
+                            # The exhaustion is terminal (the row keeps its
+                            # processed_at, and reconciliation only re-drives
+                            # queued/running): a create/deprovision saga that
+                            # died here must not leave its zone row claiming
+                            # an in-flight "creating"/"deleting" forever —
+                            # the row stays for deprovision/rebuild, but its
+                            # status now tells the truth.
+                            if operation.action in ("create", "deprovision"):
+                                zone = session.get(ZoneModel, operation.zone_id)
+                                if zone is not None:
+                                    zone.canonical_status = "failed"
                 stmt = (
                     update(model)
                     .where(

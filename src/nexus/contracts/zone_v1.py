@@ -252,7 +252,7 @@ class Zone(BaseModel):
     zone_id: ExistingZoneIdRefStr
     display_name: str = Field(min_length=1)
     description: str | None = None
-    status: Literal["active", "suspended", "deleting", "deleted"]
+    status: Literal["active", "suspended", "deleting", "deleted", "failed"]
     deployment: ZoneDeployment
     labels: dict[str, str] | None = None
     revision: str = Field(min_length=1)

@@ -388,14 +388,6 @@ def build_v2_registry(
     except ImportError as e:
         logger.warning("Failed to import Search routes: %s", e)
 
-    # ---- Graph router (Issue #2056 — ported from v1) ----
-    try:
-        from nexus.server.api.v2.routers.graph import router as graph_router
-
-        registry.add(RouterEntry(router=graph_router, name="graph", endpoint_count=4))
-    except ImportError as e:
-        logger.warning("Failed to import Graph routes: %s", e)
-
     # ---- Cache router (Issue #2056 — ported from v1) ----
     try:
         from nexus.server.api.v2.routers.cache import router as cache_router

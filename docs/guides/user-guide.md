@@ -2096,18 +2096,7 @@ nexus plugins info some-plugin
 nexus plugins uninstall some-plugin
 ```
 
-### 12.4 Knowledge graph
-
-Use this when Nexus has already extracted or stored graph entities and you want
-to inspect relationships:
-
-```bash
-nexus graph search "alice"
-nexus graph entity ent_123
-nexus graph neighbors ent_123 --hops 2
-```
-
-### 12.5 Governance and fraud signals
+### 12.4 Governance and fraud signals
 
 These commands are mainly for operator or marketplace deployments, not for a
 single-user laptop setup:
@@ -2118,7 +2107,7 @@ nexus governance alerts --severity high
 nexus governance rings --json
 ```
 
-### 12.6 Exchange, payments, reputation, and audit
+### 12.5 Exchange, payments, reputation, and audit
 
 These features fit together as a marketplace flow:
 

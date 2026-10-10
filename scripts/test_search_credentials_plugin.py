@@ -9,12 +9,15 @@ from __future__ import annotations
 
 import asyncio
 import os
+import socket
+from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
 import grpc
 import httpx
+import uvicorn
 from fastapi import FastAPI
 
 from nexus.bricks.auth.providers.static_key import StaticAPIKeyAuth
@@ -32,6 +35,33 @@ from nexus.security.tls.config import ZoneTlsConfig
 from nexus.server.api.v2.routers.search import router
 from nexus.server.lifespan.vfs_grpc import VFSGrpcServicer
 from nexus.server.middleware.request_credentials import RequestCredentialsMiddleware
+
+
+@asynccontextmanager
+async def live_http_client(app):
+    """Exercise the HTTP middleware and zone runner through a real TCP listener."""
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        listener.setblocking(False)
+        server = uvicorn.Server(uvicorn.Config(app, log_level="warning", access_log=False))
+        task = asyncio.create_task(server.serve(sockets=[listener]))
+        try:
+            async with asyncio.timeout(10):
+                while not server.started:
+                    if task.done():
+                        await task
+                        raise AssertionError("HTTP listener exited before startup")
+                    await asyncio.sleep(0.01)
+            async with httpx.AsyncClient(
+                base_url=f"http://127.0.0.1:{listener.getsockname()[1]}",
+                timeout=20,
+                trust_env=False,
+            ) as client:
+                yield client
+        finally:
+            server.should_exit = True
+            await task
 
 
 async def main() -> None:
@@ -123,7 +153,11 @@ async def main() -> None:
 
             provider = StaticAPIKeyAuth(
                 {
-                    key: {"subject_id": f"{name}-{suffix}", "zone_id": "sharedzone"}
+                    key: {
+                        "subject_type": "user",
+                        "subject_id": f"{name}-{suffix}",
+                        "zone_id": "sharedzone",
+                    }
                     for name, key in keys.items()
                 }
             )
@@ -140,17 +174,20 @@ async def main() -> None:
             app.state.auth_provider = provider
             app.state.auth_cache_store = InMemoryCacheStore()
             app.state.search_daemon = daemon
-            app.state.record_store = object()
-            app.state.async_read_session_factory = object()
-            app.state.permission_enforcer = None
+            policy_calls = []
+
+            class NoPythonPolicy:
+                def __getattr__(self, name):
+                    policy_calls.append(name)
+                    raise AssertionError(f"HTTP Search consulted Python policy: {name}")
+
+            app.state.permission_enforcer = NoPythonPolicy()
             app.state.zone_registry = zones
             app.state.subscription_manager = None
             app.state.exposed_methods = {}
             app.state.nexus_fs = Services()
 
-            async with httpx.AsyncClient(
-                transport=httpx.ASGITransport(app), base_url="http://test"
-            ) as client:
+            async with live_http_client(app) as client:
 
                 async def query(name):
                     response = await client.get(
@@ -175,11 +212,6 @@ async def main() -> None:
                     for result in batch.json()["queries"]
                 ), batch.text
 
-                class NoPythonPolicy:
-                    def __getattr__(self, name):
-                        raise AssertionError(f"HTTP discovery consulted Python policy: {name}")
-
-                app.state.permission_enforcer = NoPythonPolicy()
                 for operation, pattern in (("glob", "*.txt"), ("grep", needle)):
                     response = await client.post(
                         f"/api/v2/search/{operation}",
@@ -203,7 +235,6 @@ async def main() -> None:
                     )
                     assert denied.status_code == 403, denied.text
 
-                app.state.permission_enforcer = None
                 from nexus.server.dependencies import _get_cached_auth
 
                 cached_identity = await _get_cached_auth(app.state.auth_cache_store, keys["alice"])
@@ -325,9 +356,43 @@ async def main() -> None:
                 async with mcp_app.router.lifespan_context(mcp_app):
                     await asyncio.gather(mcp_http_search("alice"), mcp_http_search("bob"))
 
-                class Zones:
+                class Zones(NoPythonPolicy):
                     async def list_accessible_zones(self, **_kwargs):
                         return ["sharedzone"]
+
+                app.state.rebac_service = Zones()
+                federated = await client.get(
+                    "/api/v2/search/query",
+                    params={"q": needle, "type": "keyword", "federated": True},
+                    headers={"Authorization": f"Bearer {keys['alice']}"},
+                )
+                assert federated.is_success, federated.text
+                assert [hit["path"] for hit in federated.json()["results"]] == [paths["alice"]]
+
+                for name in keys:
+                    located = await client.post(
+                        "/api/v2/search/locate",
+                        json={"path": paths[name]},
+                        headers={"Authorization": f"Bearer {keys[name]}"},
+                    )
+                    assert located.is_success and located.json()["indexed"], located.text
+                    assert located.json()["chunk_count"] > 0, located.text
+                    assert 0 <= located.json()["elapsed_ms"] < 2000, located.text
+                    other = "bob" if name == "alice" else "alice"
+                    denied = await client.post(
+                        "/api/v2/search/locate",
+                        json={"path": paths[other]},
+                        headers={"Authorization": f"Bearer {keys[name]}"},
+                    )
+                    assert denied.status_code == 403, denied.text
+
+                for mode in ("low", "high", "dual", "auto"):
+                    graph = await client.get(
+                        "/api/v2/search/query",
+                        params={"q": needle, "graph_mode": mode},
+                        headers={"Authorization": f"Bearer {keys['alice']}"},
+                    )
+                    assert graph.status_code == 501, graph.text
 
                 dispatcher = FederatedSearchDispatcher(daemon, Zones())
                 scope = request_api_key.set(keys["alice"])
@@ -351,6 +416,31 @@ async def main() -> None:
                         needle, ("user", f"alice-{suffix}"), search_type="keyword"
                     )
                     assert repeated.results == [], repeated
+                    for route, body in (
+                        (
+                            "/api/v2/search/query/batch",
+                            {"queries": [{"q": needle, "type": "keyword"}]},
+                        ),
+                        ("/api/v2/search/locate", {"path": paths["alice"]}),
+                    ):
+                        response = await client.post(
+                            route,
+                            json=body,
+                            headers={"Authorization": f"Bearer {keys['alice']}"},
+                        )
+                        if route.endswith("batch"):
+                            assert (
+                                response.is_success
+                                and response.json()["queries"][0]["results"] == []
+                            ), response.text
+                        else:
+                            assert response.status_code == 403, response.text
+                    response = await client.get(
+                        "/api/v2/search/query",
+                        params={"q": needle, "type": "keyword"},
+                        headers={"Authorization": f"Bearer {keys['alice']}"},
+                    )
+                    assert response.is_success and response.json()["results"] == [], response.text
                 finally:
                     request_api_key.reset(scope)
                 # Python can cache identity, but kernel key revocation remains authoritative.
@@ -360,7 +450,14 @@ async def main() -> None:
                     params={"q": needle, "type": "keyword"},
                     headers={"Authorization": f"Bearer {keys['bob']}"},
                 )
-                assert not revoked.is_success, revoked.text
+                assert revoked.status_code == 401, revoked.text
+                revoked_batch = await client.post(
+                    "/api/v2/search/query/batch",
+                    json={"queries": [{"q": needle, "type": "keyword"}]},
+                    headers={"Authorization": f"Bearer {keys['bob']}"},
+                )
+                assert revoked_batch.status_code == 401, revoked_batch.text
+                assert policy_calls == [], policy_calls
                 assert request_api_key.get() is None
                 await daemon.get_health()  # Internal boot probe still uses node mTLS.
                 for token in ("sk-never-minted", ""):
@@ -379,7 +476,7 @@ async def main() -> None:
                     finally:
                         request_api_key.reset(scope)
             print(
-                "Search credentials live contract passed: HTTP/concurrency/batch/RPC/MCP/admin/revocation"
+                "Search credentials live contract passed: TCP HTTP/user/concurrency/batch/locate/RPC/MCP/admin/revocation"
             )
         finally:
             await daemon.shutdown()

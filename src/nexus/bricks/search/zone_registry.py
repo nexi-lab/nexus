@@ -71,9 +71,8 @@ class ZoneSearchRegistry:
     ) -> None:
         """Register a remote zone with its gRPC transport.
 
-        Remote zones use RPCTransport.call_rpc("search", ...) instead of
-        daemon.search() directly. The SearchDelegation is sent as the
-        auth_token in the gRPC call.
+        The transport supports peer capability discovery. Query fan-out
+        uses the owning host's configured remote routes.
 
         Args:
             zone_id: Remote zone identifier.

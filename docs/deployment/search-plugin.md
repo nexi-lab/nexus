@@ -49,6 +49,24 @@ Rust HTTP discovery uses the canonical VFS `root_path` to select its mount
 and zone. An optional `zone_id` must match that mount; a mismatch returns
 HTTP 400. The revision fence uses the same zone as the gRPC host.
 
+Indexed Python HTTP query and batch routes forward the caller's credential and
+requested limits to SearchService. The host authorizes returned candidates;
+Python does not evaluate file grants again. These reads do not require a Python
+record store. Path-context ranking weights remain optional durable configuration.
+Responses report observed timings; permission-denial statistics are not exposed.
+The query limit bounds the host's ranked candidate window. Live authorization
+and VFS checks can leave fewer returned hits than that limit.
+
+`POST /api/v2/search/locate` accepts `{"path": "/docs/file.md", "zone_id": "team"}`
+(`zone_id` defaults to the caller's zone) and returns `indexed`, `chunk_count`,
+`mtime_ms`, `zone_id`, and `elapsed_ms`. It queries one path's index status.
+The host checks current read permission and VFS existence on each call.
+
+The current Search host reports `has_graph=false`. Explicit Python HTTP
+`graph_mode=low|high|dual|auto` requests return HTTP 501. `graph_mode=none`
+uses the ordinary keyword, semantic or hybrid pipeline. Batch entries requesting
+Graph search return a per-entry error.
+
 ## Runtime capability discovery
 
 The peer `ZoneApiService.GetSearchCapabilities` RPC queries the currently

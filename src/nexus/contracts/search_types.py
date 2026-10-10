@@ -1,15 +1,8 @@
-"""Shared indexed search requests and query analysis constants."""
+"""Shared indexed search requests."""
 
 from dataclasses import dataclass
 
 __all__ = [
-    # Query analysis patterns
-    "COMPARISON_WORDS",
-    "TEMPORAL_WORDS",
-    "RECENCY_WORDS",
-    "AGGREGATION_WORDS",
-    "MULTIHOP_PATTERNS",
-    "COMPLEX_PATTERNS",
     # SearchBrickProtocol.search bundled request (#4553 follow-up B)
     "SearchRequest",
     "split_path_scope",
@@ -112,62 +105,3 @@ class BatchQueryFailure:
     """
 
     error: str
-
-
-# =============================================================================
-# Query Analysis Patterns (Issue #1499)
-# =============================================================================
-# Shared constants for query complexity estimation and routing.
-# Used by query_router.py and ranking.py.  LLM-driven query expansion
-# has moved into the Rust nexus-search-plugin (its own query_expansion
-# module reads these directly if needed; there is no in-tree Python
-# expansion consumer any more).
-
-COMPARISON_WORDS: frozenset[str] = frozenset(
-    {"vs", "versus", "compare", "comparison", "difference", "between"}
-)
-
-TEMPORAL_WORDS: frozenset[str] = frozenset(
-    {"when", "before", "after", "history", "timeline", "since", "until"}
-)
-
-# Recency-intent words (Issue #4543). Deliberately distinct from
-# TEMPORAL_WORDS: that set signals temporal *complexity* for query routing
-# ("history", "before", "until" often want OLD documents), while these words
-# signal the caller wants NEW material — used to gate the recency=auto boost.
-RECENCY_WORDS: frozenset[str] = frozenset(
-    {
-        "latest",
-        "newest",
-        "recent",
-        "recently",
-        "current",
-        "currently",
-        "today",
-        "yesterday",
-        "now",
-        "new",
-    }
-)
-
-AGGREGATION_WORDS: frozenset[str] = frozenset(
-    {"all", "every", "summary", "overview", "list", "total"}
-)
-
-MULTIHOP_PATTERNS: tuple[str, ...] = (
-    "how does",
-    "how do",
-    "why does",
-    "why do",
-    "what happens when",
-    "relationship between",
-    "impact of",
-    "effect of",
-)
-
-COMPLEX_PATTERNS: tuple[str, ...] = (
-    "explain",
-    "analyze",
-    "evaluate",
-    "describe how",
-)

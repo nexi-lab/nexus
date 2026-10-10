@@ -67,8 +67,7 @@ def _zone_results_degraded(results: Any) -> bool:
     """True when a zone's results carry the #3778 degradation marker — either
     list-level (``SearchResultList.semantic_degraded``, which survives empty
     responses) or per-result (local result objects / remote result dicts).
-    Checked BEFORE ReBAC filtering so a fully-filtered response keeps the
-    signal (#4541 review round 9)."""
+    Empty degraded responses retain the signal on the result list."""
     if getattr(results, "semantic_degraded", False):
         return True
     for r in results:
@@ -106,14 +105,12 @@ class FederatedSearchDispatcher:
         config: FederatedSearchConfig | None = None,
         *,
         registry: Any | None = None,
-        enable_per_file_rebac: bool = False,
         path_prefix_boosts_resolver: Any | None = None,
     ):
         self._daemon = daemon  # Default/fallback daemon
         self._rebac = rebac
         self._config = config or FederatedSearchConfig()
         self._registry = registry  # Phase 2: ZoneSearchRegistry
-        self._enable_per_file_rebac = enable_per_file_rebac  # Phase 2: per-file filtering
         # #4620: async callable ``zone_id -> dict[prefix_key, weight]``
         # supplying each LOCAL leg's path-context tier weights (the
         # caller owns store access; the router passes
@@ -151,37 +148,16 @@ class FederatedSearchDispatcher:
         )
         return zones
 
-    def _get_effective_search_type(
-        self,
-        zone_id: str,
-        search_type: str,
-    ) -> tuple[str, float | None]:
-        """Determine effective search type for a zone based on capabilities.
-
-        Phase 3: Skips semantic queries to keyword-only zones.
-
-        Post-P12 the sole daemon shape is the Rust ``nexus-search-plugin``
-        proxy, which routes keyword through a zone-filtered tantivy index
-        — there's no cross-zone leak like the Python daemon's BM25S /
-        Zoekt in-memory indexes had.  So decision 13B (force keyword →
-        hybrid to avoid leak) no longer applies; return the requested
-        type unless the registry says the zone can't do semantic.
-
-        Returns:
-            (effective_search_type, alpha_override_or_None)
-        """
-        if self._registry is None:
-            return (search_type, None)
-
-        caps = self._registry.get_capabilities(zone_id)
-        if caps is None:
-            return (search_type, None)
-
-        # Phase 3: Route based on zone capabilities
-        if search_type in ("semantic", "hybrid") and not caps.supports_semantic:
-            return ("keyword", None)
-
-        return (search_type, None)
+    def _get_effective_search_type(self, zone_id: str, search_type: str) -> str:
+        """Use keyword search when the host reports no semantic lane."""
+        caps = self._registry.get_capabilities(zone_id) if self._registry is not None else None
+        if (
+            caps is not None
+            and search_type in ("semantic", "hybrid")
+            and not caps.supports_semantic
+        ):
+            return "keyword"
+        return search_type
 
     async def _search_zone(
         self,
@@ -198,17 +174,7 @@ class FederatedSearchDispatcher:
         rrf_k: int = 60,
     ) -> list[Any]:
         """Search one zone using its supported mode and the caller's credentials."""
-        effective_type, alpha_override = self._get_effective_search_type(zone_id, search_type)
-        effective_alpha = alpha_override if alpha_override is not None else alpha
-        # 13B safety promotion (keyword -> hybrid alpha=1.0 under leaky BM25S/
-        # Zoekt) must not run WEIGHTED fusion: the cross-zone merge guard only
-        # sees the original request type, and weighted scores are shard-local
-        # min-max normalized. rrf_weighted honours the alpha=1.0 override
-        # (semantic-only, preserving 13B) while producing reciprocal-rank
-        # scores that stay comparable across zones (#4541 review round 10).
-        effective_fusion = fusion_method
-        if effective_type != search_type and fusion_method == "weighted":
-            effective_fusion = "rrf_weighted"
+        effective_type = self._get_effective_search_type(zone_id, search_type)
 
         # Each local leg carries its zone's path-context weights.
         path_prefix_boosts: dict[str, float] | None = None
@@ -228,8 +194,8 @@ class FederatedSearchDispatcher:
             search_type=effective_type,
             limit=limit,
             path_filter=path_filter,
-            alpha=effective_alpha,
-            fusion_method=effective_fusion,
+            alpha=alpha,
+            fusion_method=fusion_method,
             rrf_k=rrf_k,
             recency=recency,
             recency_weight=recency_weight,
@@ -237,26 +203,9 @@ class FederatedSearchDispatcher:
             zone_id=zone_id,
             path_prefix_boosts=path_prefix_boosts,
         )
-        # Review R5: a backend failure on a local leg must land in
-        # zones_failed, not masquerade as a successfully searched
-        # empty zone.  ``search_with_error`` preserves the plugin's
-        # per-query error; raising here routes it through the
-        # dispatcher's existing exception→ZoneFailure plumbing.
-        # Bound-method guard: Magic/AsyncMock daemons fabricate this
-        # attribute (AsyncMock's even passes iscoroutinefunction) —
-        # only a real class-defined coroutine method (__func__) takes
-        # this path; mock daemons keep the plain search() seam.
-        import inspect as _inspect
-
-        search_with_error = getattr(daemon, "search_with_error", None)
-        if search_with_error is not None and _inspect.iscoroutinefunction(
-            getattr(search_with_error, "__func__", None)
-        ):
-            results, backend_error = await search_with_error(leg_request)
-            if backend_error:
-                raise RuntimeError(f"zone {zone_id!r} search backend failed: {backend_error}")
-        else:
-            results = await daemon.search(leg_request)
+        results, backend_error = await daemon.search_with_error(leg_request)
+        if backend_error:
+            raise RuntimeError(f"zone {zone_id!r} search backend failed: {backend_error}")
 
         # Tag results with zone provenance. Return the SearchResultList as-is
         # (it is a list subclass) rather than collapsing via list(), so its
@@ -443,7 +392,7 @@ class FederatedSearchDispatcher:
             """
             if pooling_cap is None:
                 return base
-            effective_type, _ = self._get_effective_search_type(zone_id, search_type)
+            effective_type = self._get_effective_search_type(zone_id, search_type)
             # Local HYBRID zones cap internally at the daemon (full-
             # union backfill) — widening them here would compound
             # multipliers into pathological retrieval windows
@@ -489,13 +438,6 @@ class FederatedSearchDispatcher:
                     [dict(getattr(results, "search_timing", {}) or {})]
                 )
                 zone_degraded = _zone_results_degraded(results)
-                # Per-file ReBAC post-filter (Phase 2+)
-                if self._enable_per_file_rebac:
-                    results = await filter_federated_results(
-                        results,
-                        subject=subject,
-                        rebac=self._rebac,
-                    )
                 result_dicts = [_result_to_dict(r) for r in results]
                 if pooling_cap is not None:
                     result_dicts = cap_chunks_per_page(result_dicts, chunks_per_page=pooling_cap)
@@ -576,19 +518,6 @@ class FederatedSearchDispatcher:
                     any_zone_degraded = True
                 if outcome:  # non-empty results
                     zone_result_lists.append((zone_id, outcome))
-
-        # 4. Per-file ReBAC post-filter before fusion (Phase 2+)
-        if self._enable_per_file_rebac:
-            filtered_lists: list[tuple[str, list[Any]]] = []
-            for zid, zone_results in zone_result_lists:
-                filtered = await filter_federated_results(
-                    zone_results,
-                    subject=subject,
-                    rebac=self._rebac,
-                )
-                if filtered:
-                    filtered_lists.append((zid, filtered))
-            zone_result_lists = filtered_lists
 
         # 5. Merge results across zones.
         #    Default: raw score merge-sort (all zones use identical scoring
@@ -825,67 +754,3 @@ def _result_to_dict(result: Any) -> dict[str, Any]:
             d["zone_qualified_path"] = zone_qp
         return _strip_none_context(d)
     return {"value": result}
-
-
-async def filter_federated_results(
-    results: list[Any],
-    subject: tuple[str, str],
-    rebac: Any,
-) -> list[Any]:
-    """Per-result zone-aware permission filter (Issue #3147).
-
-    Groups results by zone_id, then uses rebac_check_batch per zone
-    to check "viewer" permission on each result's file path. This is
-    a NEW permission-enforcer API — it does NOT modify the existing
-    single-zone filter at search.py.
-
-    Used when intra-zone file-level ACLs are enabled (Phase 2+).
-    In Phase 1 (zone-level auth only), this function is not called
-    by the dispatcher — zone membership is sufficient.
-
-    Args:
-        results: Search results with zone_id set (dataclass or dict).
-        subject: (subject_type, subject_id) for the requester.
-        rebac: ReBACService instance with rebac_check_batch().
-
-    Returns:
-        Filtered list containing only results the subject can read.
-    """
-    if not results:
-        return []
-
-    # Group results by zone_id for batched permission checks
-    by_zone: dict[str | None, list[tuple[int, Any]]] = {}
-    for idx, r in enumerate(results):
-        zone_id = r.zone_id if hasattr(r, "zone_id") else r.get("zone_id")
-        by_zone.setdefault(zone_id, []).append((idx, r))
-
-    allowed_indices: set[int] = set()
-
-    for zone_id, zone_items in by_zone.items():
-        # Build batch check: (subject, "viewer", ("file", path)) per result
-        checks = []
-        for _idx, r in zone_items:
-            path = r.path if hasattr(r, "path") else r.get("path", "")
-            checks.append((subject, "viewer", ("file", path)))
-
-        try:
-            batch_results = await rebac.rebac_check_batch(
-                checks=checks,
-                zone_id=zone_id,
-            )
-            for (idx, _r), allowed in zip(zone_items, batch_results, strict=True):
-                if allowed:
-                    allowed_indices.add(idx)
-        except Exception:
-            logger.warning(
-                "[FEDERATED] ReBAC batch check failed for zone %s, "
-                "allowing all results from this zone (fail-open for availability)",
-                zone_id,
-            )
-            # Fail-open: if ReBAC is unavailable, allow results
-            # (zone-level auth already passed in step 1)
-            for idx, _r in zone_items:
-                allowed_indices.add(idx)
-
-    return [results[i] for i in sorted(allowed_indices)]

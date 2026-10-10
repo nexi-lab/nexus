@@ -8,6 +8,7 @@ import grpc
 import pytest
 
 from nexus.bricks.search.search_service import SearchService
+from nexus.contracts.exceptions import AuthenticationError
 from nexus.contracts.types import OperationContext
 from nexus.grpc.search.v1 import search_pb2, search_pb2_grpc
 from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
@@ -179,6 +180,11 @@ def test_configured_credential_presence_is_preserved_on_the_wire(indexed, creden
     configured = client_type(server_address=transport.server_address, auth_token=credential)
     try:
         if isinstance(configured, KernelClient):
+            if credential == "":
+                with pytest.raises(AuthenticationError):
+                    configured.open()
+                assert configured._transport is None
+                return
             configured.open()
             assert configured._process is None
             configured.close()
@@ -233,6 +239,29 @@ async def test_indexing_reads_vfs_on_the_host_and_returns_its_counts(indexed):
         search.semantic_search_index(path="/docs")
     assert error.value.code() == grpc.StatusCode.PERMISSION_DENIED
     assert len(host.calls) == before + 1
+
+
+@pytest.mark.parametrize(
+    ("method", "arguments"),
+    [
+        ("semantic_search", {"query": "marigold"}),
+        ("semantic_search_index", {"path": "/docs"}),
+        ("semantic_search_stats", {}),
+    ],
+)
+def test_configured_search_zone_does_not_replace_the_transport_identity(indexed, method, arguments):
+    host, transport, _search, _service = indexed
+    proxy = RemoteServiceProxy(
+        transport.call_rpc,
+        default_context=OperationContext(
+            user_id="forged", groups=[], zone_id="workspace", is_admin=True
+        ),
+    )
+    getattr(proxy, method)(**arguments)
+    request, metadata = host.calls[-1]
+    assert request.zone_id == "workspace"
+    assert not request.auth_token
+    assert metadata["authorization"] == "Bearer operator-key"
 
 
 def test_transient_search_host_failures_still_retry(indexed):

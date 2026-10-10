@@ -5,75 +5,23 @@ served by the Rust ``nexus-search-plugin`` cdylib.  Underscore-prefixed
 because ``search.py`` includes this module's ``router`` via
 ``include_router``; no other caller should import this module directly.
 
-Shared helpers (``_get_search_daemon``) come from the parent module.
+The host authorizes directory and mode management with the caller's credential.
 """
 
-import asyncio
-import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 
+from nexus.server.api.v2.error_handling import api_error_handler
 from nexus.server.api.v2.routers._search_deps import _get_search_daemon
 from nexus.server.dependencies import require_auth
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["search"])
 
 
-async def _require_admin_or_path_write(
-    request: Request,
-    auth_result: dict[str, Any],
-    zone_id: str,
-    directory_path: str,
-) -> None:
-    """Admin bypass, otherwise require write on the target path via the
-    (sync) ``permission_enforcer`` wired onto ``app.state``.  No enforcer
-    ⇒ deny (fail-closed) so a deployment without one is admin-only for
-    mutation endpoints."""
-    if auth_result.get("is_admin", False):
-        return
-
-    enforcer = getattr(request.app.state, "permission_enforcer", None)
-    if enforcer is None:
-        raise HTTPException(
-            status_code=403,
-            detail="index scope mutation requires admin privileges in this deployment",
-        )
-
-    from nexus.contracts.constants import ROOT_ZONE_ID
-    from nexus.contracts.types import OperationContext, Permission
-
-    ctx = OperationContext(
-        user_id=auth_result.get("subject_id", ""),
-        groups=auth_result.get("groups", []),
-        zone_id=zone_id or ROOT_ZONE_ID,
-        is_admin=False,
-        subject_type=auth_result.get("subject_type", "user"),
-        subject_id=auth_result.get("subject_id"),
-    )
-    try:
-        # The enforcer is synchronous and may hit the database on a cache
-        # miss; keep it off the event loop (#4777) — ``/search/index`` runs
-        # this once per document.
-        allowed = bool(
-            await asyncio.to_thread(enforcer.check, directory_path, Permission.WRITE, ctx)
-        )
-    except Exception as exc:
-        logger.warning("ReBAC write check failed for %s: %s", directory_path, exc)
-        raise HTTPException(status_code=500, detail="permission check failed") from exc
-
-    if not allowed:
-        raise HTTPException(
-            status_code=403,
-            detail=f"write permission required on {directory_path}",
-        )
-
-
 @router.post("/index-directory")
+@api_error_handler(context="register Search directory")
 async def register_indexed_directory(
-    request: Request,
     payload: dict[str, Any],
     auth_result: dict[str, Any] = Depends(require_auth),
     search_daemon: Any = Depends(_get_search_daemon),
@@ -95,7 +43,6 @@ async def register_indexed_directory(
         raise HTTPException(status_code=400, detail="'path' field is required")
 
     zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
-    await _require_admin_or_path_write(request, auth_result, zone_id, directory_path)
 
     result = await search_daemon.add_indexed_directory(zone_id, directory_path)
     return {
@@ -106,8 +53,8 @@ async def register_indexed_directory(
 
 
 @router.delete("/index-directory")
+@api_error_handler(context="unregister Search directory")
 async def unregister_indexed_directory(
-    request: Request,
     payload: dict[str, Any],
     auth_result: dict[str, Any] = Depends(require_auth),
     search_daemon: Any = Depends(_get_search_daemon),
@@ -125,7 +72,6 @@ async def unregister_indexed_directory(
         raise HTTPException(status_code=400, detail="'path' field is required")
 
     zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
-    await _require_admin_or_path_write(request, auth_result, zone_id, directory_path)
 
     outcome = await search_daemon.remove_indexed_directory(zone_id, directory_path)
     if outcome == "not_found":
@@ -141,6 +87,7 @@ async def unregister_indexed_directory(
 
 
 @router.get("/indexed-dirs")
+@api_error_handler(context="list Search directories")
 async def list_indexed_dirs(
     auth_result: dict[str, Any] = Depends(require_auth),
     search_daemon: Any = Depends(_get_search_daemon),
@@ -152,13 +99,6 @@ async def list_indexed_dirs(
     caller has no need to see.
     """
     from nexus.contracts.constants import ROOT_ZONE_ID
-
-    if not auth_result.get("is_admin", False):
-        raise HTTPException(
-            status_code=403,
-            detail="indexed-dirs is admin-only (registered directory "
-            "names can encode sensitive metadata)",
-        )
 
     zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
     modes = await search_daemon.get_zone_indexing_modes()
@@ -172,6 +112,7 @@ async def list_indexed_dirs(
 
 
 @router.post("/indexing-mode")
+@api_error_handler(context="set Search indexing mode")
 async def set_indexing_mode(
     payload: dict[str, Any],
     auth_result: dict[str, Any] = Depends(require_auth),
@@ -182,9 +123,6 @@ async def set_indexing_mode(
     Body: ``{"mode": "on" | "off" | "sandbox", "zone_id": ...}``.
     """
     from nexus.contracts.constants import ROOT_ZONE_ID
-
-    if not auth_result.get("is_admin", False):
-        raise HTTPException(status_code=403, detail="set-indexing-mode is admin-only")
 
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="request body must be a JSON object")

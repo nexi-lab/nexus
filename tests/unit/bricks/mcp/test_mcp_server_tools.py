@@ -396,8 +396,7 @@ class TestFileOperationTools:
 
     async def test_file_info_exists(self, mock_nx_basic):
         """Test getting file info for existing file."""
-        mock_nx_basic.access.return_value = True
-        mock_nx_basic.is_directory.return_value = False
+        mock_nx_basic.sys_stat = Mock(return_value={"is_directory": False, "size": 1234})
         server = await create_mcp_server(nx=mock_nx_basic)
 
         info_tool = get_tool(server, "nexus_file_info")
@@ -407,10 +406,15 @@ class TestFileOperationTools:
         assert info["exists"] is True
         assert info["is_directory"] is False
         assert info["path"] == "/test.txt"
+        assert info["size"] == 1234
+        mock_nx_basic.sys_stat.assert_called_once_with("/test.txt")
+        mock_nx_basic.sys_read.assert_not_called()
+        mock_nx_basic.access.assert_not_called()
+        mock_nx_basic.is_directory.assert_not_called()
 
     async def test_file_info_not_found(self, mock_nx_basic):
         """Test getting file info for non-existent file."""
-        mock_nx_basic.access.return_value = False
+        mock_nx_basic.sys_stat = Mock(return_value=None)
         server = await create_mcp_server(nx=mock_nx_basic)
 
         info_tool = get_tool(server, "nexus_file_info")
@@ -421,8 +425,7 @@ class TestFileOperationTools:
 
     async def test_file_info_directory(self, mock_nx_basic):
         """Test getting file info for directory."""
-        mock_nx_basic.access.return_value = True
-        mock_nx_basic.is_directory.return_value = True
+        mock_nx_basic.sys_stat = Mock(return_value={"is_directory": True, "size": 0})
         server = await create_mcp_server(nx=mock_nx_basic)
 
         info_tool = get_tool(server, "nexus_file_info")
@@ -660,7 +663,7 @@ class TestSearchTools:
         server = await create_mcp_server(nx=mock_nx_basic)
 
         glob_tool = get_tool(server, "nexus_glob")
-        result = glob_tool.fn(pattern="*.py", path="/src")
+        result = await glob_tool.fn(pattern="*.py", path="/src")
 
         response = json.loads(result)
         assert isinstance(response, dict)
@@ -683,7 +686,7 @@ class TestSearchTools:
         server = await create_mcp_server(nx=mock_nx_basic)
 
         glob_tool = get_tool(server, "nexus_glob")
-        glob_tool.fn(pattern="*.txt")
+        await glob_tool.fn(pattern="*.txt")
 
         mock_nx_basic._mock_search.glob.assert_called_once_with(
             "*.txt", "/", files=None, context=ANY
@@ -695,7 +698,7 @@ class TestSearchTools:
         server = await create_mcp_server(nx=mock_nx_basic)
 
         glob_tool = get_tool(server, "nexus_glob")
-        result = glob_tool.fn(pattern="[invalid")
+        result = await glob_tool.fn(pattern="[invalid")
 
         assert "Error" in result
         assert "Invalid pattern" in result
@@ -850,7 +853,7 @@ class TestSearchTools:
         server = await create_mcp_server(nx=mock_nx_basic)
 
         glob_tool = get_tool(server, "nexus_glob")
-        glob_tool.fn(pattern="*.py", files=["/src/a.py", "/src/b.py"])
+        await glob_tool.fn(pattern="*.py", files=["/src/a.py", "/src/b.py"])
 
         mock_nx_basic._mock_search.glob.assert_called_once_with(
             "*.py", "/", files=["/src/a.py", "/src/b.py"], context=ANY
@@ -1183,7 +1186,7 @@ class TestSandboxAvailability:
     async def test_sandbox_available_from_service_registry(self):
         """Test sandbox tools register when sandbox_rpc service is available."""
         sandbox_rpc = Mock()
-        sandbox_rpc.available_providers.return_value = ["test"]
+        sandbox_rpc.available_providers = Mock(return_value=["test"])
         nx = Mock()
         del nx.sandbox_available
         nx.service.side_effect = lambda name: sandbox_rpc if name == "sandbox_rpc" else None
@@ -1195,6 +1198,20 @@ class TestSandboxAvailability:
         assert tool_exists(server, "nexus_sandbox_create")
         assert tool_exists(server, "nexus_sandbox_list")
         assert tool_exists(server, "nexus_sandbox_stop")
+
+    async def test_dynamic_service_proxy_does_not_advertise_sandbox_capability(self):
+        from nexus.remote.service_proxy import RemoteServiceProxy
+
+        call_rpc = Mock(side_effect=AssertionError("Capability discovery must not invoke RPC"))
+        nx = Mock()
+        del nx.sandbox_available
+        nx.service.return_value = RemoteServiceProxy(call_rpc)
+
+        server = await create_mcp_server(nx=nx)
+
+        assert not tool_exists(server, "nexus_python")
+        assert not tool_exists(server, "nexus_sandbox_create")
+        call_rpc.assert_not_called()
 
     async def test_sandbox_available_with_docker(self, mock_nx_with_sandbox):
         """Test sandbox tools registered when Docker provider available."""
@@ -1550,7 +1567,7 @@ class TestServerCreation:
 
     async def test_server_with_remote_url(self):
         """Test creating server with remote URL."""
-        with patch("nexus.connect", new_callable=AsyncMock) as mock_connect:
+        with patch("nexus.connect") as mock_connect:
             mock_instance = Mock()
             mock_instance.sys_read = Mock(return_value=b"test")
             mock_instance.sys_write = Mock()
@@ -1565,7 +1582,7 @@ class TestServerCreation:
 
     async def test_server_with_auto_connect(self):
         """Test creating server with auto-connect."""
-        with patch("nexus.connect", new_callable=AsyncMock) as mock_connect:
+        with patch("nexus.connect") as mock_connect:
             mock_nx = Mock()
             mock_nx.sys_read = Mock(return_value=b"test")
             mock_nx.sys_write = Mock()

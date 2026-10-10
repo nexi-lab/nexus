@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from nexus.bricks.search.results import SearchResultList
 from nexus.contracts.search_types import SearchRequest
 
 # =============================================================================
@@ -53,22 +54,18 @@ class TestSearchQueryEndpoint:
         mock_daemon.is_initialized = True
         mock_daemon.get_health.return_value = {"status": "ok"}
         mock_daemon.get_stats.return_value = {"queries": 0}
-        mock_daemon.last_search_timing = {
-            "backend_ms": 12.34,
-            "rerank_ms": 0.0,
-        }
 
-        async def mock_search(request: SearchRequest) -> list[_MockResult]:
-            return [
-                _MockResult(path="result.txt", chunk_text="found", score=0.9),
-            ]
+        async def mock_search(request: SearchRequest) -> tuple[list[_MockResult], str | None]:
+            return (
+                [
+                    _MockResult(path="result.txt", chunk_text="found", score=0.9),
+                ],
+                None,
+            )
 
-        mock_daemon.search = mock_search
+        mock_daemon.search_with_error = mock_search
         app.state.search_daemon = mock_daemon
         app.state.search_daemon_enabled = True
-        app.state.record_store = MagicMock()
-        app.state.async_session_factory = MagicMock()
-        app.state.async_read_session_factory = MagicMock()
 
         # Override auth dependency
         from nexus.server.dependencies import require_auth
@@ -123,17 +120,17 @@ class TestSearchQueryEndpoint:
         assert resp.status_code == 422
 
     def test_fusion_params_forwarded_to_daemon(self, client: "TestClient") -> None:
-        """Issue #4541: alpha / fusion / rrf_k must reach daemon.search, not
+        """Issue #4541: alpha / fusion / rrf_k must reach daemon.search_with_error, not
         be validated-then-dropped at the route."""
         app: Any = client.app
         seen: dict[str, Any] = {}
 
-        async def mock_search(request: SearchRequest) -> list[_MockResult]:
+        async def mock_search(request: SearchRequest) -> tuple[list[_MockResult], str | None]:
             seen.clear()
             seen.update(asdict(request))
-            return [_MockResult()]
+            return ([_MockResult()], None)
 
-        app.state.search_daemon.search = mock_search
+        app.state.search_daemon.search_with_error = mock_search
 
         resp = client.get("/api/v2/search/query?q=hello&fusion=weighted&alpha=0.9&rrf_k=30")
         assert resp.status_code == 200
@@ -154,12 +151,12 @@ class TestSearchQueryEndpoint:
 
         app: Any = client.app
 
-        async def mock_search(request: SearchRequest) -> SearchResultList:
+        async def mock_search(request: SearchRequest) -> tuple[SearchResultList, str | None]:
             degraded = SearchResultList([])
             degraded.semantic_degraded = True
-            return degraded
+            return (degraded, None)
 
-        app.state.search_daemon.search = mock_search
+        app.state.search_daemon.search_with_error = mock_search
         resp = client.get("/api/v2/search/query?q=hello&fusion=weighted&alpha=1.0")
         assert resp.status_code == 200
         data = resp.json()
@@ -184,8 +181,7 @@ class TestSearchQueryEndpoint:
         assert "score" in result
 
     def test_latency_breakdown_includes_backend_leg_timings(self, client: "TestClient") -> None:
-        app: Any = client.app
-        app.state.search_daemon.last_search_timing = {
+        timing = {
             "backend_ms": 42.567,
             "embed_ms": 3.214,
             "keyword_ms": 11.111,
@@ -195,8 +191,11 @@ class TestSearchQueryEndpoint:
             "rerank_ms": 0.0,
         }
 
-        resp = client.get("/api/v2/search/query?q=hello")
+        async def mock_search(request: SearchRequest) -> tuple[SearchResultList, None]:
+            return SearchResultList([_MockResult()], search_timing=timing), None
 
+        client.app.state.search_daemon.search_with_error = mock_search
+        resp = client.get("/api/v2/search/query?q=hello")
         assert resp.status_code == 200
         breakdown = resp.json()["latency_breakdown"]
         assert breakdown["backend_ms"] == 42.57
@@ -206,6 +205,11 @@ class TestSearchQueryEndpoint:
         assert breakdown["vector_ms"] == 20.0
         assert breakdown["fusion_ms"] == 1.0
         assert breakdown["rerank_ms"] == 0.0
+
+    def test_unreported_phase_timings_are_absent(self, client: "TestClient") -> None:
+        client.app.state.search_daemon.last_search_timing = {"backend_ms": 999}
+        response = client.get("/api/v2/search/query?q=hello")
+        assert set(response.json()["latency_breakdown"]) == {"total_ms"}
 
     def test_latency_breakdown_prefers_result_timing_snapshot(self, client: "TestClient") -> None:
         class _TimedResults(list[_MockResult]):
@@ -227,10 +231,10 @@ class TestSearchQueryEndpoint:
             "rerank_ms": 999.0,
         }
 
-        async def mock_search(request: SearchRequest) -> _TimedResults:
-            return timed_results
+        async def mock_search(request: SearchRequest) -> tuple[_TimedResults, str | None]:
+            return (timed_results, None)
 
-        app.state.search_daemon.search = mock_search
+        app.state.search_daemon.search_with_error = mock_search
 
         resp = client.get("/api/v2/search/query?q=hello")
 

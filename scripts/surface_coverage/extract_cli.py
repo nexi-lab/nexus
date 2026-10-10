@@ -20,7 +20,7 @@ from pathlib import Path
 class RawCliCommand:
     name: str  # e.g. "nexus fs read"
     module_file: Path
-    source: str  # "path:1" (module file; line approximate)
+    source: str  # decorator line, or module line 1 when no declaration is available
 
 
 def extract_cli_commands(init_py_path: Path) -> list[RawCliCommand]:
@@ -32,6 +32,7 @@ def extract_cli_commands(init_py_path: Path) -> list[RawCliCommand]:
         raise ValueError(f"_REGISTER_COMMANDS not found in {init_py_path}")
 
     out: list[RawCliCommand] = []
+    root_attributes: dict[Path, dict[str, str]] = {}
     commands_dir = init_py_path.parent
     for module_name, command_names in register_dict.items():
         module_file = commands_dir / f"{module_name}.py"
@@ -46,9 +47,10 @@ def extract_cli_commands(init_py_path: Path) -> list[RawCliCommand]:
             )
 
     if add_dict:
-        for module_name, (command_name, _attr_name) in add_dict.items():
+        for module_name, (command_name, attr_name) in add_dict.items():
             module_file = commands_dir / f"{module_name}.py"
             invocation = "nexus " + command_name.replace("_", " ")
+            root_attributes.setdefault(module_file, {})[attr_name] = invocation
             out.append(
                 RawCliCommand(
                     name=invocation,
@@ -57,12 +59,85 @@ def extract_cli_commands(init_py_path: Path) -> list[RawCliCommand]:
                 )
             )
 
-    # Dedupe (same command name from both dicts is unlikely but possible)
-    seen: dict[str, RawCliCommand] = {}
-    for entry in out:
-        if entry.name not in seen:
+    # Click registration replaces earlier commands with the same public name.
+    seen = {entry.name: entry for entry in out}
+    registered = list(seen.values())
+    for module_file in sorted({entry.module_file for entry in registered}):
+        attributes = {
+            function: name
+            for function, name in root_attributes.get(module_file, {}).items()
+            if any(entry.name == name and entry.module_file == module_file for entry in registered)
+        }
+        for entry in _nested_commands(module_file, registered, attributes):
             seen[entry.name] = entry
     return sorted(seen.values(), key=lambda r: r.name)
+
+
+def _nested_commands(
+    module_file: Path,
+    registered: list[RawCliCommand],
+    root_attributes: dict[str, str],
+) -> list[RawCliCommand]:
+    """Follow Click decorators from registered roots without importing the module."""
+    if not module_file.exists():
+        return []
+    module_tree = ast.parse(module_file.read_text(encoding="utf-8"))
+    commands: dict[str, tuple[str | None, str, int]] = {}
+    for node in module_tree.body:
+        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        for deco in node.decorator_list:
+            if not (
+                isinstance(deco, ast.Call)
+                and isinstance(deco.func, ast.Attribute)
+                and deco.func.attr in {"command", "group"}
+                and isinstance(deco.func.value, ast.Name)
+            ):
+                continue
+            name = node.name.replace("_", "-")
+            for keyword in deco.keywords:
+                if (
+                    keyword.arg == "name"
+                    and isinstance(keyword.value, ast.Constant)
+                    and isinstance(keyword.value.value, str)
+                ):
+                    name = keyword.value.value
+            if (
+                deco.args
+                and isinstance(deco.args[0], ast.Constant)
+                and isinstance(deco.args[0].value, str)
+            ):
+                name = deco.args[0].value
+            parent = deco.func.value.id
+            commands[node.name] = (None if parent == "click" else parent, name, deco.lineno)
+    roots = {
+        function: entry.name
+        for entry in registered
+        if entry.module_file == module_file
+        for function, (parent, name, _) in commands.items()
+        if parent is None and name == entry.name.removeprefix("nexus ")
+    }
+    roots.update(
+        {function: name for function, name in root_attributes.items() if function in commands}
+    )
+
+    def invocation(function: str, visiting: frozenset = frozenset()) -> str | None:
+        if function in visiting:
+            raise ValueError(f"Click command cycle at {module_file}:{function}")
+        if function in roots:
+            return roots[function]
+        parent, name, _ = commands[function]
+        if parent is None or parent not in commands:
+            return None
+        base = invocation(parent, visiting | {function})
+        return f"{base} {name}" if base else None
+
+    out: list[RawCliCommand] = []
+    for function, (_, _, line) in commands.items():
+        name = invocation(function)
+        if name is not None:
+            out.append(RawCliCommand(name, module_file, f"{module_file}:{line}"))
+    return out
 
 
 def _find_dict_assignment(

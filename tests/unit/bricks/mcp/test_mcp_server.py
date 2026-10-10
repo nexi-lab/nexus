@@ -1,9 +1,13 @@
 """Tests for MCP server implementation."""
 
-from unittest.mock import AsyncMock, Mock, patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
+
+import pytest
 
 from nexus.bricks.mcp.server import _resolve_mcp_operation_context, create_mcp_server
 from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.lib.request_credentials import request_api_key
 
 
 class TestCreateMCPServer:
@@ -33,7 +37,7 @@ class TestCreateMCPServer:
 
     async def test_create_server_with_remote_url(self):
         """Test creating MCP server with remote URL."""
-        with patch("nexus.connect", new_callable=AsyncMock) as mock_connect:
+        with patch("nexus.connect") as mock_connect:
             mock_instance = Mock()
             mock_connect.return_value = mock_instance
 
@@ -46,7 +50,7 @@ class TestCreateMCPServer:
 
     async def test_create_server_auto_connect(self):
         """Test creating MCP server with auto-connect when nx is None."""
-        with patch("nexus.connect", new_callable=AsyncMock) as mock_connect:
+        with patch("nexus.connect") as mock_connect:
             mock_nx = Mock()
             mock_connect.return_value = mock_nx
 
@@ -104,6 +108,19 @@ class TestResolveMCPOperationContext:
     default kicks in, and in remote mode the server-side auth
     layer re-validates permissions via the API key regardless).
     """
+
+    @pytest.mark.parametrize("remote", [False, True])
+    def test_unverified_request_key_needs_the_remote_host_or_a_local_provider(self, remote):
+        context = SimpleNamespace(zone_id="selected-zone", is_admin=True)
+        nx = SimpleNamespace(_init_cred=context)
+        if remote:
+            nx._nexus_remote_call_rpc = Mock()
+        scope = request_api_key.set("incoming-key")
+        try:
+            result = _resolve_mcp_operation_context(nx)
+            assert result is context if remote else result is None
+        finally:
+            request_api_key.reset(scope)
 
     def test_init_cred_is_preferred(self):
         """Priority (1): NexusFS kernel ``_init_cred`` wins over

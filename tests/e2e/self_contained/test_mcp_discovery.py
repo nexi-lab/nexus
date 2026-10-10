@@ -8,6 +8,7 @@ from typing import Any, cast
 
 import grpc
 import pytest
+from fastmcp import Client
 
 from nexus.bricks.mcp.server import (
     create_mcp_server,
@@ -136,16 +137,9 @@ def discovery():
 async def test_discovery_credentials_pagination_and_revocation(discovery, method):
     host, nx = discovery
     mcp = await create_mcp_server(nx=cast(NexusFS, nx), auth_provider=CachedIdentityProvider())
-    tool = await mcp.get_tool(f"nexus_{method}")
-    assert tool is not None
 
     async def invoke(token, **params):
-        scope = set_request_api_key(token)
-        try:
-            result = tool.fn(pattern="*" if method == "glob" else "orchid", path="/docs", **params)
-            return await result if method == "grep" else result
-        finally:
-            reset_request_api_key(scope)
+        return await _invoke(mcp, method, token, **params)
 
     def paths(body):
         return body["items"] if method == "glob" else [hit["file"] for hit in body["items"]]
@@ -196,14 +190,11 @@ async def test_discovery_credentials_pagination_and_revocation(discovery, method
 async def test_discovery_failures_and_filter_acknowledgment(discovery, method):
     host, nx = discovery
     mcp = await create_mcp_server(nx=cast(NexusFS, nx), auth_provider=CachedIdentityProvider())
-    tool = await mcp.get_tool(f"nexus_{method}")
-    assert tool is not None
     scope = set_request_api_key("bob-key")
     try:
 
         async def invoke():
-            result = tool.fn(pattern="orchid", path="/docs", files=["/docs/bob-0.md"])
-            return await result if method == "grep" else result
+            return await _invoke(mcp, method, "bob-key", files=["/docs/bob-0.md"])
 
         host.acknowledge_filters = False
         failure = await invoke()
@@ -225,5 +216,18 @@ async def test_discovery_failures_and_filter_acknowledgment(discovery, method):
             assert "internal fixture diagnostic" not in failure
             assert len(host.calls) == before + 1
         assert nx.policy_attempts == []
+    finally:
+        reset_request_api_key(scope)
+
+
+async def _invoke(mcp, method, token, **params):
+    scope = set_request_api_key(token)
+    try:
+        async with Client(mcp) as client:
+            result = await client.call_tool(
+                f"nexus_{method}",
+                {"pattern": "*" if method == "glob" else "orchid", "path": "/docs", **params},
+            )
+            return result.content[0].text
     finally:
         reset_request_api_key(scope)

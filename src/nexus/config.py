@@ -385,8 +385,8 @@ class NexusConfig(BaseModel):
         description="Refresh cache at this fraction of TTL (0.7 = refresh at 70% of TTL)",
     )
 
-    # Identity settings for memory API (v0.4.0)
-    zone_id: str | None = Field(default=None, description="Zone ID for memory operations")
+    # Service scope and memory identity settings
+    zone_id: str | None = Field(default=None, description="Default zone for service operations")
     user_id: str | None = Field(default=None, description="User ID for memory operations")
     agent_id: str | None = Field(default=None, description="Agent ID for memory operations")
 

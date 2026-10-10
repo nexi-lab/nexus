@@ -26,6 +26,7 @@ from nexus.bricks.mcp.auth_bridge import (
     resolve_mcp_operation_context as _resolve_mcp_operation_context,
 )
 from nexus.bricks.mcp.formatters import format_response
+from nexus.bricks.mcp.service_calls import call_service_method
 from nexus.bricks.mcp.tool_utils import handle_tool_errors, tool_error
 from nexus.lib.pagination import build_paginated_list_response
 from nexus.lib.request_credentials import api_key_from_authorization
@@ -309,14 +310,14 @@ async def create_mcp_server(
         if service is None:
             return False
 
-        providers_fn = getattr(service, "available_providers", None)
+        providers_fn = _declared_callable(service, "available_providers")
         if callable(providers_fn):
             providers = providers_fn()
             if isinstance(providers, list | tuple | set | frozenset):
                 return bool(providers)
             return False
 
-        is_available = getattr(service, "is_available", None)
+        is_available = _declared_callable(service, "is_available")
         if callable(is_available):
             available = is_available()
             if isinstance(available, bool):
@@ -989,7 +990,7 @@ async def create_mcp_server(
         }
     )
     @handle_tool_errors("searching files (glob)")
-    def nexus_glob(
+    async def nexus_glob(
         pattern: str,
         path: str = "/",
         limit: int = 100,
@@ -1040,7 +1041,9 @@ async def create_mcp_server(
                 "unauthorized",
                 "Per-request API key could not be verified; search denied.",
             )
-        all_matches = _search.glob(pattern, path, files=files, context=op_context)
+        all_matches = await call_service_method(
+            _search.glob, pattern, path, files=files, context=op_context
+        )
         total = len(all_matches)
         paginated_matches = all_matches[offset : offset + limit]
 
@@ -1189,12 +1192,7 @@ async def create_mcp_server(
         if section is not None:
             grep_kwargs["section"] = section
 
-        # SearchService.grep() is async in local mode but the
-        # RemoteServiceProxy returns a sync result. Handle both.
-        _grep_result = _search.grep(pattern, path, **grep_kwargs)
-        if inspect.isawaitable(_grep_result):
-            _grep_result = await _grep_result
-        all_results = _grep_result
+        all_results = await call_service_method(_search.grep, pattern, path, **grep_kwargs)
 
         total = len(all_results)
         has_more = total > window_size
@@ -1292,9 +1290,7 @@ async def create_mcp_server(
         """
         nx_instance = _get_nexus_instance(ctx)
 
-        # Resolve SearchService via the kernel service registry (Issue #3778).
-        # NexusFS does not expose ``semantic_search`` as a direct attribute —
-        # the method lives on SearchService, reached through ``nx.service("search")``.
+        # Resolve the Search service registered on this filesystem.
         search_service: Any = None
         try:
             svc_fn = getattr(nx_instance, "service", None)
@@ -1320,7 +1316,8 @@ async def create_mcp_server(
 
         # Over-fetch to detect another page without a second round-trip.
         fetch_limit = offset + limit * 2
-        all_results = await search_service.semantic_search(
+        all_results = await call_service_method(
+            search_service.semantic_search,
             query=query,
             path=path,
             search_mode=search_mode,
@@ -1519,8 +1516,7 @@ async def create_mcp_server(
             "\n\n".join(output_parts) if output_parts else "Code executed successfully (no output)"
         )
 
-    # Check if sandbox support is available
-    # First check the explicit sandbox_available property, then probe internals
+    # Register sandbox tools when a declared capability is available.
     sandbox_available = _sandbox_rpc_available(_default_nx)
 
     # Only register sandbox tools if available

@@ -94,11 +94,7 @@ def test_failed_remote_connect_releases_acquired_resources(
     else:
         import nexus.factory._remote as remote
 
-        name = (
-            "_boot_remote_services"
-            if phase == "services"
-            else "install_remote_kernel_rpc_overrides"
-        )
+        name = "_boot_remote_services" if phase == "services" else "wire_remote_filesystem"
         original = getattr(remote, name)
 
         def fail_after_wiring(*args, **kwargs):
@@ -141,10 +137,12 @@ def test_remote_connect_transfers_ownership_and_can_reconnect(
         transport, close = transports[attempt]
         try:
             close.assert_not_called()
+            assert not hasattr(filesystem, "parser_registry")
+            assert not hasattr(filesystem, "provider_registry")
             assert process is not None and process.poll() is None
             assert transport.health_check()
-            transport.write_file("/remote-ownership.txt", f"attempt {attempt}".encode())
-            assert transport.read_file("/remote-ownership.txt") == f"attempt {attempt}".encode()
+            filesystem.sys_write("/remote-ownership.txt", f"attempt {attempt}".encode())
+            assert filesystem.sys_read("/remote-ownership.txt") == f"attempt {attempt}".encode()
         finally:
             filesystem.close()
             filesystem.close()
@@ -184,3 +182,92 @@ def test_transport_construction_failure_closes_its_channel(
         assert remote_peer._transport.health_check()
     finally:
         channel.close()
+
+
+def test_remote_filesystem_journey_uses_the_shared_typed_transport(remote_peer: KernelClient):
+    filesystem = nexus.connect(remote_config(remote_peer))
+    try:
+        filesystem.mkdir("/remote-client/nested")
+        result = filesystem.write("/remote-client/nested/a.txt", "héllo needle")
+        content = "héllo needle".encode()
+        assert result["bytes_written"] == len(content)
+        assert result["content_id"]
+        assert result["revision"] == f"/remote-client/nested/a.txt@{result['gen']}"
+        assert filesystem.sys_read("/remote-client/nested/a.txt", offset=1, count=3) == content[1:4]
+        assert filesystem.sys_read("/remote-client/nested/a.txt", offset=1) == content[1:]
+        assert filesystem.sys_read("/remote-client/nested/a.txt", count=0) == b""
+        metadata = filesystem.sys_stat("/remote-client/nested/a.txt")
+        assert metadata["size"] == len(content)
+        assert metadata["content_id"] == result["content_id"]
+        assert filesystem.sys_stat("/remote-client/missing") is None
+        assert filesystem.sys_readdir("/remote-client", recursive=False) == [
+            "/remote-client/nested"
+        ]
+        page = filesystem.sys_readdir("/remote-client", limit=1, details=True)
+        assert page.has_more and page.next_cursor == "/remote-client/nested"
+        assert page.items[0]["is_directory"]
+        last = filesystem.sys_readdir(
+            "/remote-client", limit=1, cursor=page.next_cursor, details=True
+        )
+        assert not last.has_more and last.items[0]["content_id"] == result["content_id"]
+        assert filesystem.sys_rename("/remote-client/nested/a.txt", "/remote-client/b.txt") == {}
+        assert filesystem.sys_stat("/remote-client/nested/a.txt") is None
+        assert filesystem.sys_read("/remote-client/b.txt") == content
+        assert filesystem.sys_unlink("/remote-client/b.txt")["hit"]
+        filesystem.rmdir("/remote-client", recursive=True)
+        assert filesystem.sys_stat("/remote-client") is None
+    finally:
+        filesystem.close()
+    assert remote_peer._transport.health_check()
+
+
+@pytest.mark.parametrize(
+    "operation", ["offset", "ttl", "force", "read_range", "write_range", "page"]
+)
+def test_unrepresentable_file_options_fail_before_mutation(
+    remote_peer: KernelClient, operation: str
+):
+    filesystem = nexus.connect(remote_config(remote_peer))
+    try:
+        filesystem.write("/preserved.txt", b"durable original")
+        filesystem.write("/destination.txt", b"durable destination")
+        if operation == "offset":
+            with pytest.raises(NotImplementedError, match="offset"):
+                filesystem.sys_write("/preserved.txt", b"bad", offset=1)
+        elif operation == "ttl":
+            with pytest.raises(NotImplementedError, match="TTL"):
+                filesystem.write("/preserved.txt", b"bad", ttl=60)
+        elif operation == "force":
+            with pytest.raises(NotImplementedError, match="force"):
+                filesystem.sys_rename("/preserved.txt", "/destination.txt", force=True)
+        elif operation == "read_range":
+            with pytest.raises(ValueError, match="non-negative"):
+                filesystem.sys_read("/preserved.txt", offset=-1)
+        elif operation == "write_range":
+            with pytest.raises(ValueError, match="non-negative"):
+                filesystem.sys_write("/preserved.txt", b"bad", count=-1)
+        else:
+            with pytest.raises(ValueError, match="positive"):
+                filesystem.sys_readdir("/", limit=0)
+        assert filesystem.sys_read("/preserved.txt") == b"durable original"
+        assert filesystem.sys_read("/destination.txt") == b"durable destination"
+    finally:
+        filesystem.close()
+
+
+@pytest.mark.parametrize("entry_type", [3, 4])
+def test_single_batch_read_preserves_ipc_cursor_semantics(
+    remote_peer: KernelClient, entry_type: int
+):
+    transport = remote_peer._transport
+    path = "/range-ipc"
+    transport.setattr(path, entry_type=entry_type, capacity=4096, io_profile="memory")
+    if entry_type == 4:
+        transport.stream_write_nowait(path, b"first")
+        offset = transport.stream_write_nowait(path, b"complete second frame")
+    else:
+        transport.write_file(path, b"complete second frame")
+        offset = 1
+    response = transport.batch_read([(path, offset, None)])[0]
+    assert not response.is_error, response
+    assert response.content == b"complete second frame"

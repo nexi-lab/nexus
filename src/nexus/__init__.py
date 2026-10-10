@@ -312,7 +312,12 @@ def connect(
             nfs = _RemoteNexusFS(
                 metadata_store=remote_kernel,
                 permissions=_PermissionConfig(enforce=False),
-                init_cred=_RemoteOC(user_id="remote", groups=[], is_admin=False),
+                init_cred=_RemoteOC(
+                    user_id="remote",
+                    zone_id=cfg.zone_id,
+                    groups=[],
+                    is_admin=False,
+                ),
             )
             nfs._register_runtime_closeable(remote_kernel)
             nfs._register_runtime_closeable(transport)
@@ -351,11 +356,11 @@ def connect(
             # method calls to the server via gRPC.
             from nexus.factory._remote import (
                 _boot_remote_services,
-                install_remote_kernel_rpc_overrides,
+                wire_remote_filesystem,
             )
 
             _boot_remote_services(nfs, call_rpc=transport.call_rpc)
-            install_remote_kernel_rpc_overrides(nfs, transport)
+            wire_remote_filesystem(nfs, transport)
             cast(Any, nfs)._nexus_remote_call_rpc = transport.call_rpc
             nfs._remote_base_url = server_url
             nfs._remote_api_key = api_key or ""

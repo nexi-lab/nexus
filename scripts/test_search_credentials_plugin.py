@@ -8,6 +8,7 @@ in NEXUS_SEARCH_TEST_ADMIN_KEY. No test credentials are logged.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import socket
 from contextlib import asynccontextmanager
@@ -188,6 +189,81 @@ async def main() -> None:
             app.state.nexus_fs = Services()
 
             async with live_http_client(app) as client:
+                health = await client.get("/api/v2/search/health")
+                assert health.is_success, health.text
+                assert health.json()["status"] in ("healthy", "degraded"), health.text
+                assert health.json()["initialized"] is True, health.text
+                assert health.json()["fts_writer_faults"] == 0, health.text
+                assert health.json()["fts_writer_unavailable"] == 0, health.text
+
+                async def stats(credential, expected_status):
+                    headers = {"X-Nexus-Zone-ID": "sharedzone"}
+                    if credential is not None:
+                        headers["Authorization"] = f"Bearer {credential}"
+                    response = await client.get("/api/v2/search/stats", headers=headers)
+                    assert response.status_code == expected_status, response.text
+                    if expected_status == 200:
+                        assert response.json()["zone_id"] == "sharedzone", response.text
+                        assert response.json()["fts_path_count"] == 2, response.text
+
+                await asyncio.gather(
+                    *[
+                        stats(credential, status)
+                        for credential, status in (
+                            (admin, 200),
+                            (None, 401),
+                            (keys["alice"], 403),
+                            (keys["bob"], 403),
+                            ("sk-never-minted", 401),
+                        )
+                        * 3
+                    ]
+                )
+
+                scope_path = f"/docs/probe-{suffix}"
+                management = (
+                    (
+                        "POST",
+                        "/api/v2/search/index",
+                        {"json": {"documents": [{"path": paths["alice"], "text": text}]}},
+                    ),
+                    (
+                        "POST",
+                        "/api/v2/search/refresh",
+                        {"params": {"path": f"{scope_path}.txt", "change_type": "delete"}},
+                    ),
+                    ("POST", "/api/v2/search/index-directory", {"json": {"path": scope_path}}),
+                    ("GET", "/api/v2/search/indexed-dirs", {}),
+                    ("POST", "/api/v2/search/indexing-mode", {"json": {"mode": "on"}}),
+                    ("DELETE", "/api/v2/search/index-directory", {"json": {"path": scope_path}}),
+                )
+
+                async def manage(method, route, kwargs, credential, status):
+                    headers = {"X-Nexus-Zone-ID": "sharedzone"}
+                    if credential is not None:
+                        headers["Authorization"] = f"Bearer {credential}"
+                    response = await client.request(method, route, headers=headers, **kwargs)
+                    assert response.status_code == status, (method, route, response.text)
+                    if status == 200 and route.endswith("/index"):
+                        assert response.json()["count"] == 1, response.text
+                        assert response.json()["indexSeq"] > 0, response.text
+                    if status == 200 and route.endswith("/indexed-dirs"):
+                        assert scope_path in response.json()["directories"], response.text
+                        assert response.json()["zone_id"] == "sharedzone", response.text
+
+                for method, route, kwargs in management:
+                    await asyncio.gather(
+                        *[
+                            manage(method, route, kwargs, credential, status)
+                            for credential, status in (
+                                (admin, 200),
+                                (keys["alice"], 403),
+                                (keys["bob"], 403),
+                                (None, 401),
+                                ("sk-invalid", 401),
+                            )
+                        ]
+                    )
 
                 async def query(name):
                     response = await client.get(
@@ -321,6 +397,24 @@ async def main() -> None:
                 )
 
                 mcp = await create_mcp_server(nx=app.state.nexus_fs, auth_provider=provider)
+
+                async def mcp_discovery(mcp_client, name, *, allowed=True):
+                    for operation, pattern in (("glob", "*.txt"), ("grep", needle)):
+                        result = await mcp_client.call_tool(
+                            f"nexus_{operation}",
+                            {"pattern": pattern, "path": "/docs", "files": list(paths.values())},
+                        )
+                        body = json.loads(result.content[0].text)
+                        found = (
+                            body["items"]
+                            if operation == "glob"
+                            else [hit["file"] for hit in body["items"]]
+                        )
+                        assert found == ([paths[name]] if allowed else []), body
+                        assert {"permission_denial_rate", "truncated_by_permissions"}.isdisjoint(
+                            body
+                        )
+
                 scope = set_request_api_key(keys["alice"])
                 try:
                     async with Client(mcp) as mcp_client:
@@ -329,6 +423,7 @@ async def main() -> None:
                         )
                         assert paths["alice"] in str(result), result
                         assert paths["bob"] not in str(result), result
+                        await mcp_discovery(mcp_client, "alice")
                 finally:
                     reset_request_api_key(scope)
 
@@ -352,6 +447,7 @@ async def main() -> None:
                         assert paths[name] in str(result), result
                         other = "bob" if name == "alice" else "alice"
                         assert paths[other] not in str(result), result
+                        await mcp_discovery(mcp_client, name)
 
                 async with mcp_app.router.lifespan_context(mcp_app):
                     await asyncio.gather(mcp_http_search("alice"), mcp_http_search("bob"))
@@ -412,6 +508,8 @@ async def main() -> None:
                         else:
                             raise AssertionError("User inherited node administrative authority")
                     await grant("alice", "DELETE")
+                    async with Client(mcp) as mcp_client:
+                        await mcp_discovery(mcp_client, "alice", allowed=False)
                     repeated = await dispatcher.search(
                         needle, ("user", f"alice-{suffix}"), search_type="keyword"
                     )
@@ -457,6 +555,24 @@ async def main() -> None:
                     headers={"Authorization": f"Bearer {keys['bob']}"},
                 )
                 assert revoked_batch.status_code == 401, revoked_batch.text
+                await stats(keys["bob"], 401)
+                for method, route, kwargs in management:
+                    await manage(method, route, kwargs, keys["bob"], 401)
+                scope = set_request_api_key(keys["bob"])
+                try:
+                    async with Client(mcp) as mcp_client:
+                        for operation, pattern in (("glob", "*.txt"), ("grep", needle)):
+                            rejected = await mcp_client.call_tool(
+                                f"nexus_{operation}",
+                                {
+                                    "pattern": pattern,
+                                    "path": "/docs",
+                                    "files": list(paths.values()),
+                                },
+                            )
+                            assert "Authentication required" in rejected.content[0].text, rejected
+                finally:
+                    reset_request_api_key(scope)
                 assert policy_calls == [], policy_calls
                 assert request_api_key.get() is None
                 await daemon.get_health()  # Internal boot probe still uses node mTLS.
@@ -476,7 +592,7 @@ async def main() -> None:
                     finally:
                         request_api_key.reset(scope)
             print(
-                "Search credentials live contract passed: TCP HTTP/user/concurrency/batch/locate/RPC/MCP/admin/revocation"
+                "Search credentials live contract passed: TCP HTTP/user/concurrency/batch/locate/RPC/MCP/admin/management/revocation"
             )
         finally:
             await daemon.shutdown()

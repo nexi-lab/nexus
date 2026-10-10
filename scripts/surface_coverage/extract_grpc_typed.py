@@ -8,6 +8,7 @@ documentation don't terminate the service body prematurely.
 
 from __future__ import annotations
 
+import ast
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,6 +47,35 @@ def extract_grpc_typed_methods(proto_path: Path) -> list[RawGrpcTypedMethod]:
                 )
             )
     return sorted(out, key=lambda r: r.method)
+
+
+def extract_generated_grpc_methods(py_path: Path) -> list[RawGrpcTypedMethod]:
+    """Read checked-in client bindings for protos owned by another repository."""
+    tree = ast.parse(py_path.read_text(encoding="utf-8"))
+    methods: dict[str, RawGrpcTypedMethod] = {}
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef) or not node.name.endswith("Stub"):
+            continue
+        for call in ast.walk(node):
+            if not (
+                isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Attribute)
+                and isinstance(call.func.value, ast.Name)
+                and call.func.value.id == "channel"
+                and call.func.attr
+                in {"unary_unary", "unary_stream", "stream_unary", "stream_stream"}
+                and call.args
+                and isinstance(call.args[0], ast.Constant)
+                and isinstance(call.args[0].value, str)
+            ):
+                continue
+            match = re.fullmatch(r"/([\w.]+)/(\w+)", call.args[0].value)
+            if match is None:
+                continue
+            service = match[1].rsplit(".", 1)[-1]
+            method = f"{service}.{match[2]}"
+            methods[method] = RawGrpcTypedMethod(method, f"{py_path}:{call.lineno}")
+    return sorted(methods.values(), key=lambda r: r.method)
 
 
 def _scrub_comments_and_strings(text: str) -> str:

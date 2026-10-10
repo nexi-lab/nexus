@@ -36,7 +36,7 @@ from nexus.lib.pagination import build_paginated_list_response
 from nexus.runtime.zone_resolution import target_zone_for_context
 from nexus.server.api.v2._revision_fence import RevisionFence, get_revision_fence
 from nexus.server.api.v2._zone_scoped_fs import scope_rest_path
-from nexus.server.api.v2.error_handling import grpc_http_exception
+from nexus.server.api.v2.error_handling import api_error_handler, grpc_http_exception
 from nexus.server.api.v2.routers._index_on_write import (
     REASON_EMPTY,
     REASON_NON_TEXT,
@@ -53,7 +53,9 @@ from nexus.server.api.v2.routers._search_batch import (
     spec_query_text,
 )
 from nexus.server.api.v2.routers._search_deps import _get_search_daemon
-from nexus.server.dependencies import get_auth_result, get_operation_context, require_auth
+from nexus.server.api.v2.routers._search_indexed_dirs import router as _indexed_dirs_router
+from nexus.server.api.v2.routers._search_locate import router as _locate_router
+from nexus.server.dependencies import get_operation_context, require_auth
 from nexus.server.path_utils import unscope_internal_path
 from nexus.server.zone_execution import run_zone_scoped
 
@@ -123,76 +125,38 @@ from nexus.server.api.v2.routers._search_serialize import (  # noqa: E402
 
 @router.get("/health")
 async def search_daemon_health(
-    request: Request,
     search_daemon: Any = Depends(_get_optional_search_daemon),
 ) -> dict[str, Any]:
-    """Health check for the search daemon.
-
-    #4617: the P12 pivot reduced this to the plugin's raw
-    ``{status, detail}`` pair, breaking health pollers keyed on the
-    pre-pivot fields.  Restore the contract keys with honest post-P12
-    values — ``backend`` is now ``rust-plugin``, ``bm25_index_loaded``
-    means the plugin's FTS leg answers, ``db_pool_ready`` reports the
-    server's own async session factory (the daemon no longer owns a
-    pool), and ``zoekt_available`` is always False (retired from this
-    path).  Absent keys break consumers; changed values don't.
-    """
-    db_pool_ready = getattr(request.app.state, "async_session_factory", None) is not None
+    """Report host health and the local transport's initialization state."""
     if not search_daemon:
         return {
             "status": "disabled",
-            "daemon_enabled": False,
-            "message": "Search daemon unavailable (set NEXUS_SEARCH_DAEMON=false to disable)",
+            "detail": "Search daemon is not configured",
             "initialized": False,
-            "daemon_initialized": False,
             "backend": None,
-            "bm25_index_loaded": False,
-            "db_pool_ready": db_pool_ready,
-            "zoekt_available": False,
         }
     try:
         health: dict[str, Any] = await search_daemon.get_health()
     except Exception as exc:  # plugin died after the boot probe — health must not 500
         logger.warning("search health probe failed: %s", exc)
         health = {"status": "unavailable", "detail": f"{type(exc).__name__}: {exc}"}
-    status = health.get("status", "unavailable")
-    initialized = bool(getattr(search_daemon, "is_initialized", False))
-    health.update(
-        {
-            "initialized": initialized,
-            "daemon_initialized": initialized,
-            "backend": "rust-plugin",
-            # "degraded" = semantic leg missing, keyword still answers.
-            "bm25_index_loaded": status in ("healthy", "degraded"),
-            "db_pool_ready": db_pool_ready,
-            "zoekt_available": False,
-        }
-    )
-    return health
+    return {
+        **health,
+        "initialized": bool(search_daemon.is_initialized),
+        "backend": "rust-plugin",
+    }
 
 
 @router.get("/stats")
+@api_error_handler(context="read Search statistics")
 async def search_daemon_stats(
-    auth_result: dict[str, Any] | None = Depends(get_auth_result),
+    auth_result: dict[str, Any] = Depends(require_auth),
     search_daemon: Any = Depends(_get_search_daemon),
 ) -> dict[str, Any]:
-    """Get search daemon statistics.
-
-    #4617: on top of the plugin's counters (which carry the
-    ``backend`` / ``embedding_model`` / ``vector_backend`` (#4643)
-    identity fields and the #4623 ``indexing_in_progress`` build
-    signal), restore the pre-pivot ``initialized`` key stats
-    consumers gate on.
-
-    #4736: scoped to the caller's token zone — the zone ``/search/query``
-    reads and every indexing call writes — so a tenant's ``fts_doc_count``
-    / ``last_index_seq`` describe ITS index.  Auth stays optional
-    (token-less pollers keep the pre-existing root-zone view); the zone
-    served is echoed as ``zone_id``.
-    """
+    """Read zone counters under the Rust host's diagnostic access policy."""
     from nexus.contracts.constants import ROOT_ZONE_ID
 
-    zone_id = index_zone_for(auth_result) if (auth_result or {}).get("authenticated") else None
+    zone_id = index_zone_for(auth_result)
     stats: dict[str, Any] = await search_daemon.get_stats(zone_id=zone_id)
     stats["initialized"] = bool(getattr(search_daemon, "is_initialized", False))
     stats.setdefault("backend", "rust-plugin")
@@ -1439,6 +1403,7 @@ async def search_glob_post(
 
 
 @router.post("/index")
+@api_error_handler(context="index Search documents", error_map={ValueError: (400, "{error}")})
 async def search_index_documents(
     request: Request,
     auth_result: dict[str, Any] = Depends(require_auth),
@@ -1448,20 +1413,17 @@ async def search_index_documents(
 
     Request body: ``{"documents": [{"id": str, "text": str, "path": str, ...}]}``
 
-    Fails closed with HTTP 500 if the underlying backend cannot persist
-    (e.g., config path unwritable, PostgreSQL commit failed), so clients
-    can retry instead of silently losing data.
-
-    Issue #4566: documents whose ``file_paths`` projection row hasn't landed
-    yet (write-then-index races the operation-log consumer) get a bounded
-    server-side wait; anything still unresolved fails closed with HTTP 409
-    and ``detail.skipped`` listing the affected paths. Indexing is
-    idempotent, so retrying the whole batch after a 409 is safe — documents
-    indexed before the 409 stay indexed.
+    The host authorizes management requests and commits indexing synchronously.
+    Persistence failures return HTTP 500. Host-reported pending paths return
+    HTTP 409 with ``detail.skipped``; completed documents remain indexed.
     """
     zone_id = index_zone_for(auth_result)
     body = await request.json()
-    documents: list[dict[str, Any]] = body.get("documents", [])
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="request body must be a JSON object")
+    documents = body.get("documents", [])
+    if not isinstance(documents, list) or any(not isinstance(doc, dict) for doc in documents):
+        raise HTTPException(status_code=400, detail="'documents' must be a list of objects")
     if not documents:
         raise HTTPException(status_code=400, detail="No documents provided")
     # Tenant boundary (review R2, CRITICAL): the request is authorized
@@ -1472,7 +1434,10 @@ async def search_index_documents(
     # normalized to the authorized zone (the proxy also force-stamps
     # it as defense in depth).
     for doc in documents:
-        doc_zone = doc.get("zone_id") if isinstance(doc, dict) else None
+        for field in ("path", "text", "zone_id"):
+            if field in doc and not isinstance(doc[field], str):
+                raise HTTPException(status_code=400, detail=f"document '{field}' must be a string")
+        doc_zone = doc.get("zone_id")
         if doc_zone and doc_zone != zone_id:
             raise HTTPException(
                 status_code=403,
@@ -1487,19 +1452,6 @@ async def search_index_documents(
     # Retry-After so clients back off instead of deepening the queue.
     _admit_index_request(request.app.state)
     try:
-        # WRITE authorization (review R3): explicit indexing REPLACES the
-        # searchable content other readers see at these paths — a read-only
-        # principal must not be able to poison results.  Same
-        # admin-bypass / per-path ReBAC WRITE / fail-closed-without-enforcer
-        # gate the sibling index-directory mutation routes use.
-        from nexus.server.api.v2.routers._search_indexed_dirs import (
-            _require_admin_or_path_write,
-        )
-
-        for doc in documents:
-            doc_path = doc.get("path", "") if isinstance(doc, dict) else ""
-            await _require_admin_or_path_write(request, auth_result, zone_id, doc_path or "/")
-
         return await run_zone_scoped(
             _get_zone_registry(request),
             _auth_target_zone(auth_result),
@@ -1564,41 +1516,18 @@ def _release_index_request(state: Any) -> None:
 async def _index_documents_work(
     search_daemon: Any, documents: list[dict[str, Any]], zone_id: str
 ) -> dict[str, Any]:
-    """Body of ``POST /search/index`` once admitted and authorized."""
-    try:
-        result = await search_daemon.index_documents(documents, zone_id=zone_id)
-    except Exception as exc:
-        logger.error("index_documents failed: %s", exc, exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Index persistence failed: {type(exc).__name__}: {exc}",
-        ) from exc
-    # #4617: the P12 proxy returns a dict, the pre-P12 daemon
-    # returned an ExplicitIndexResult, and int-returning test
-    # doubles exist — normalize ALL of them so ``count`` stays the
-    # plain int the pre-pivot wire contract promised (the dict
-    # previously leaked whole into ``count`` because ``getattr``
-    # doesn't read dict keys).
-    if isinstance(result, dict):
-        count = result.get("indexed", 0)
-        skipped = list(result.get("skipped") or [])
-        skipped_count = int(result.get("skipped_count") or 0)
-        skipped_paths = list(result.get("skipped_paths") or [])
-        index_seq = result.get("index_seq")
-    else:
-        count = getattr(result, "indexed", result)
-        skipped = list(getattr(result, "skipped", []) or [])
-        skipped_count = int(getattr(result, "skipped_count", 0) or 0)
-        skipped_paths = list(getattr(result, "skipped_paths", []) or [])
-        index_seq = getattr(result, "index_seq", None)
+    """Index documents and preserve the host's commit result."""
+    result = await search_daemon.index_documents(documents, zone_id=zone_id)
+    count = result["indexed"]
+    skipped = list(result.get("skipped") or [])
+    skipped_count = int(result.get("skipped_count") or 0)
+    skipped_paths = list(result.get("skipped_paths") or [])
+    index_seq = result.get("index_seq")
     if skipped:
         raise HTTPException(
             status_code=409,
             detail={
-                "error": (
-                    "documents skipped: no live file_paths row after the bounded "
-                    "projection wait — retry once the write is visible"
-                ),
+                "error": "documents were not indexed; resolve the skipped paths before retrying",
                 "count": count,
                 "skipped": skipped,
                 "zone_id": zone_id,
@@ -1624,6 +1553,7 @@ async def _index_documents_work(
 
 
 @router.post("/refresh")
+@api_error_handler(context="refresh Search document")
 async def search_refresh_notify(
     request: Request,
     path: str = Query(..., description="Path of the changed file"),
@@ -1632,12 +1562,6 @@ async def search_refresh_notify(
     search_daemon: Any = Depends(_get_search_daemon),
 ) -> dict[str, Any]:
     """Make ONE path searchable, or evict it — synchronously (#4736).
-
-    Post-P12 a plain ``files/write`` does NOT index: the plugin's
-    ``NotifyFileChange`` carries no text and answers ``skipped`` for
-    ``create`` / ``update``.  This route used to relay that ack as
-    ``{"status": "accepted"}``, so a caller saw write 200 → refresh
-    "accepted" → query empty, with nothing telling it why.  Now:
 
     * ``create`` / ``update`` — the server reads ``path`` through the
       VFS with the caller's context and indexes the text via
@@ -1650,15 +1574,9 @@ async def search_refresh_notify(
     * ``delete`` — ``NotifyFileChange`` drops the path's chunks and
       records a tombstone; 200 ``{"status": "deleted", "index_seq": N}``.
 
-    ``delete`` is a real index MUTATION and ``update`` REPLACES the
-    searchable text other readers see, so both arms enforce the same
-    admin-or-path-WRITE gate as ``/search/index`` (review R4) — a
-    read-only principal must not evict or poison indexed paths.  Every
+    The Rust host requires management authority for index mutations. Every
     plugin call is stamped with the token's zone — the zone
-    ``/search/query`` reads and ``/search/index`` writes — so what
-    refresh indexes is what the caller's queries hit; pre-fix the zone
-    was dropped and every notification mutated the ROOT zone's index
-    regardless of the caller's zone.
+    ``/search/query`` reads and ``/search/index`` writes.
     """
     if change_type not in ("create", "update", "delete"):
         raise HTTPException(status_code=400, detail=f"invalid change_type {change_type!r}")
@@ -1669,10 +1587,6 @@ async def search_refresh_notify(
     # … vs the PLUGIN zone: the token's zone, shared with /search/index,
     # /search/query and write+index so the four surfaces cannot drift.
     index_zone = index_zone_for(auth_result)
-
-    from nexus.server.api.v2.routers._search_indexed_dirs import _require_admin_or_path_write
-
-    await _require_admin_or_path_write(request, auth_result, target_zone or "", path or "/")
 
     def _skipped(reason: str) -> HTTPException:
         # 409 rather than 200: "nothing to index" must be distinguishable
@@ -1689,15 +1603,8 @@ async def search_refresh_notify(
 
     async def _work() -> dict[str, Any]:
         if change_type == "delete":
-            try:
-                outcome = await search_daemon.notify_file_change(path, "delete", zone_id=index_zone)
-            except Exception as exc:
-                logger.error("notify_file_change failed: %s", exc, exc_info=True)
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Index refresh notification failed: {type(exc).__name__}: {exc}",
-                ) from exc
-            index_seq = outcome.get("index_seq") if isinstance(outcome, dict) else None
+            outcome = await search_daemon.notify_file_change(path, "delete", zone_id=index_zone)
+            index_seq = outcome.get("index_seq")
             return {
                 "status": "deleted",
                 "path": path,
@@ -1712,16 +1619,9 @@ async def search_refresh_notify(
         text = decode_index_text(content)
         if text is None:
             raise _skipped(REASON_NON_TEXT)
-        try:
-            result = await search_daemon.index_documents(
-                [build_document(path, text, mtime_ms=mtime_ms)], zone_id=index_zone
-            )
-        except Exception as exc:
-            logger.error("refresh index_documents failed: %s", exc, exc_info=True)
-            raise HTTPException(
-                status_code=500,
-                detail=f"Index refresh failed: {type(exc).__name__}: {exc}",
-            ) from exc
+        result = await search_daemon.index_documents(
+            [build_document(path, text, mtime_ms=mtime_ms)], zone_id=index_zone
+        )
         verdict = verdict_for_path(result, path)
         if verdict.status == STATUS_SKIPPED:
             raise _skipped(verdict.reason or REASON_EMPTY)
@@ -1734,22 +1634,6 @@ async def search_refresh_notify(
 
     return await run_zone_scoped(_get_zone_registry(request), target_zone, _work)
 
-
-# =============================================================================
-# Sub-router registrations (#4553 follow-up — 2000-line gate split)
-# =============================================================================
-#
-# ``_search_indexed_dirs`` and ``_search_locate`` are underscore-prefixed
-# concern-siblings that import shared helpers (``_get_search_daemon`` &c.)
-# from THIS module at their own module-load time.  These imports MUST stay
-# at the end of ``search.py`` so the parent's namespace is fully populated
-# before the sub-modules resolve their dependencies — moving them higher
-# would circular-fault the first import that reached ``search`` via a
-# sibling module.
-from nexus.server.api.v2.routers._search_indexed_dirs import (  # noqa: E402
-    router as _indexed_dirs_router,
-)
-from nexus.server.api.v2.routers._search_locate import router as _locate_router  # noqa: E402
 
 router.include_router(_indexed_dirs_router)
 router.include_router(_locate_router)

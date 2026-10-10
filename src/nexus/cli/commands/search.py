@@ -337,10 +337,7 @@ def glob(
     "section",
     type=str,
     default=None,
-    help=(
-        "Restrict matches to a markdown/parsed-content section heading "
-        "(#4186), e.g. 'API' or '## API'."
-    ),
+    help=("Restrict matches to a Markdown section heading (#4186), e.g. 'API' or '## API'."),
 )
 @add_output_options
 @add_backend_options
@@ -380,7 +377,7 @@ def grep(
         nexus grep "auth" -l | nexus grep "JWT" --files-from=-
 
     \b
-        nexus grep "revenue" -f "**/*.pdf" --search-mode=parsed
+        nexus grep "status" -f "**/*.md" --search-mode=raw
         nexus grep "status" /workspace/spec.md --in-section "## API"
     """
 

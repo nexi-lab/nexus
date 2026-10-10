@@ -10,6 +10,7 @@ import yaml
 
 from scripts.surface_coverage.paths import COVERAGE_YAML, REPO_ROOT
 from scripts.surface_coverage.schema import ProfileStatus, load_yaml
+from scripts.surface_coverage.validate import repo_references_exist
 
 _TOOL_PROFILES = REPO_ROOT / "src/nexus/config/tool_profiles.yaml"
 _USER_GUIDE = REPO_ROOT / "docs/guides/user-guide.md"
@@ -36,7 +37,7 @@ _RELATED_PROFILE_ROWS = {
     "discovery.list_servers",
     "discovery.load_tools",
     "discovery.search_tools",
-    "mcp.tool_profile_assign",
+    "mcp.profile_assign",
     "search.glob",
     "search.grep",
     "semantic.search",
@@ -67,12 +68,7 @@ def _operations_by_id():
 
 
 def _assert_linked_paths_exist(link_field: str) -> None:
-    for part in link_field.split(";"):
-        target = part.strip()
-        if not target or target.startswith("N/A") or target.startswith("setup/"):
-            continue
-        path_part = target.split("::", 1)[0].strip()
-        assert (REPO_ROOT / path_part).exists(), f"missing linked path: {path_part}"
+    assert repo_references_exist(link_field, REPO_ROOT), link_field
 
 
 def test_issue_4131_owned_mcp_rows_have_story_contract() -> None:
@@ -87,7 +83,7 @@ def test_issue_4131_owned_mcp_rows_have_story_contract() -> None:
         assert op.usage_example and "MCP:" in op.usage_example, op_id
         assert op.correctness_test, op_id
         _assert_linked_paths_exist(op.correctness_test)
-        assert "test_issue_4131_mcp_tool_profile_story.py" in op.correctness_test, op_id
+        assert "test_issue_4131_mcp_profile_story_e2e.py" in op.correctness_test, op_id
         assert op.perf_class is not None, op_id
         assert op.perf_link and op.perf_link.strip(), op_id
         assert op.gap_issue is None, op_id

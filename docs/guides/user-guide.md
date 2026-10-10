@@ -502,6 +502,10 @@ plugin is unavailable. `tests/e2e/self_contained/test_sandbox_mcp.py` covers
 MCP results and errors in sandbox and full profiles.
 `scripts/test_rust_http_search_cli.py` verifies the native CLI index/query/stats
 journey, credential isolation, zone/path limits, and permission revocation.
+It also runs `scripts/bench_gbrain_evals.py` as a real process: corpus files are
+written through gRPC, then indexed and queried through Rust HTTP. The benchmark
+uses the SDK's gRPC connection settings and the CLI Search client. Uploads require
+admin authority; `--skip-index` only queries with the caller's permissions.
 
 **Performance classification:** `glob`, `grep`, semantic query latency,
 and indexing throughput are hot or

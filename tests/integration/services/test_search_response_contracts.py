@@ -65,12 +65,9 @@ def _build_app(daemon, auth=None):
     app.state.async_session_factory = MagicMock()
     app.state.async_read_session_factory = MagicMock()
 
-    from nexus.server.dependencies import get_auth_result, require_auth
+    from nexus.server.dependencies import get_auth_result
 
     principal = dict(auth or _ADMIN_AUTH)
-    app.dependency_overrides[require_auth] = lambda: principal
-    # /search/stats takes OPTIONAL auth via get_auth_result directly
-    # (#4736 zone scoping), so override that dependency too.
     app.dependency_overrides[get_auth_result] = lambda: principal
     return app
 
@@ -636,8 +633,7 @@ class TestStatsStallDetectionContract:
         assert req.zone_id == "eng"
         assert body["zone_id"] == "eng"
 
-    def test_token_less_poller_keeps_root_zone_view(self):
-        from nexus.contracts.constants import ROOT_ZONE_ID
+    def test_unauthenticated_poller_does_not_read_root_counters(self):
         from nexus.grpc.search.v1 import search_pb2
 
         daemon, stub = _daemon_with_stub(
@@ -647,10 +643,8 @@ class TestStatsStallDetectionContract:
 
         resp = TestClient(app).get("/api/v2/search/stats")
 
-        assert resp.status_code == 200, "stats auth stays optional"
-        ((_, req),) = stub.requests
-        assert req.zone_id == "", "empty on the wire ⇒ plugin ROOT zone"
-        assert resp.json()["zone_id"] == ROOT_ZONE_ID
+        assert resp.status_code == 401
+        assert stub.requests == []
 
     def test_never_indexed_reports_zero_and_none_not_epoch(self):
         from nexus.grpc.search.v1 import search_pb2

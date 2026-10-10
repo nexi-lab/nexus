@@ -78,6 +78,7 @@ class TestSearchAuthEnforcement:
     @pytest.mark.parametrize(
         ("method", "path", "kwargs"),
         [
+            ("GET", "/api/v2/search/stats", {}),
             ("GET", "/api/v2/search/query", {"params": {"q": "needle"}}),
             ("POST", "/api/v2/search/grep", {"json": {"pattern": "needle"}}),
             ("POST", "/api/v2/search/glob", {"json": {"pattern": "**/*.md"}}),

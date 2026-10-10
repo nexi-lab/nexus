@@ -196,6 +196,30 @@ async def main() -> None:
                 assert health.json()["fts_writer_faults"] == 0, health.text
                 assert health.json()["fts_writer_unavailable"] == 0, health.text
 
+                async def stats(credential, expected_status):
+                    headers = {"X-Nexus-Zone-ID": "sharedzone"}
+                    if credential is not None:
+                        headers["Authorization"] = f"Bearer {credential}"
+                    response = await client.get("/api/v2/search/stats", headers=headers)
+                    assert response.status_code == expected_status, response.text
+                    if expected_status == 200:
+                        assert response.json()["zone_id"] == "sharedzone", response.text
+                        assert response.json()["fts_path_count"] == 2, response.text
+
+                await asyncio.gather(
+                    *[
+                        stats(credential, status)
+                        for credential, status in (
+                            (admin, 200),
+                            (None, 401),
+                            (keys["alice"], 403),
+                            (keys["bob"], 403),
+                            ("sk-never-minted", 401),
+                        )
+                        * 3
+                    ]
+                )
+
                 async def query(name):
                     response = await client.get(
                         "/api/v2/search/query",
@@ -486,6 +510,7 @@ async def main() -> None:
                     headers={"Authorization": f"Bearer {keys['bob']}"},
                 )
                 assert revoked_batch.status_code == 401, revoked_batch.text
+                await stats(keys["bob"], 401)
                 scope = set_request_api_key(keys["bob"])
                 try:
                     async with Client(mcp) as mcp_client:

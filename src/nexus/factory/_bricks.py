@@ -459,12 +459,11 @@ def _boot_dependent_bricks(
     Discovers ``brick_factory.py`` modules with ``TIER="dependent"`` and
     collects their handler callbacks into ``bricks["artifact_observers"]``.
 
-    Cross-brick factories (ToolInfo, GraphStore) are constructed here in the
+    Cross-brick factories (ToolInfo) are constructed here in the
     factory layer and injected into brick factories to respect LEGO Principle 3.
     """
     # Build cross-brick factories in the factory layer (not inside bricks)
     tool_info_factory: Callable[..., Any] | None = None
-    graph_store_factory: Callable[..., Any] | None = None
 
     try:
         from nexus.bricks.discovery.tool_index import ToolInfo
@@ -473,18 +472,12 @@ def _boot_dependent_bricks(
     except ImportError:
         logger.debug("[BOOT:BRICK:DEP] ToolInfo not available")
 
-    if ctx.record_store is not None:
-        # Removed: txtai handles this (Issue #2663)
-        # graph_store module was deleted; graph_store_factory stays None.
-        logger.debug("[BOOT:BRICK:DEP] GraphStore not available (deleted, Issue #2663)")
-
     def _create_dependent(descriptor: BrickFactoryDescriptor) -> Any:
         return descriptor.create_fn(
             ctx,
             system,
             bricks,
             tool_info_factory=tool_info_factory,
-            graph_store_factory=graph_store_factory,
         )
 
     artifact_observers: list[Any] = []

@@ -49,7 +49,7 @@ class BaseSearchResult:
     zone_id: str | None = None  # Source zone for cross-zone federated results
     # Issue #3773: admin-configured path description for LLM consumers
     context: str | None = None
-    semantic_degraded: bool | None = None  # Issue #3778: federation fell back to BM25S
+    semantic_degraded: bool | None = None
     # Issue #4398: macro-chunk expansion fields for hybrid search context
     macro_text: str | None = None
     macro_line_start: int | None = None

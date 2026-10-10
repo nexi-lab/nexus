@@ -32,6 +32,7 @@
 //!     mounted (e.g. `/mnt/nexus`).  Must exist and be empty.
 //!   * `NEXUS_FUSE_VFS_ROOT` — VFS path prefix to expose at the mount
 //!     point's root (defaults to `/`).
+//!   * `NEXUS_FUSE_MACOS_BACKEND` — `auto` (default) or `nfs` on macOS.
 //!
 //! Both default to placeholder values when the env vars are absent, so
 //! `--plugin-dir` scans don't fail on hosts that load the dylib for
@@ -97,8 +98,8 @@ struct FusePlugin {
     /// a free-form message.
     #[cfg(target_os = "macos")]
     prereq_missing: Mutex<Option<&'static str>>,
-    /// NFS localhost mount handle — populated when the fuser mount fails
-    /// on macOS and the NFS fallback succeeds.  Dropping the handle
+    /// NFS localhost mount handle — populated when NFS is selected or
+    /// the fuser mount fails on macOS. Dropping the handle
     /// unmounts and shuts down the NFS server.
     #[cfg(target_os = "macos")]
     nfs_handle: Mutex<Option<fs_nfs::NfsMountHandle>>,
@@ -123,22 +124,21 @@ impl FusePlugin {
     }
 }
 
-/// Try NFS localhost fallback — single implementation shared by all
-/// macOS fallback paths (FUSE-T missing, fuser error, fuser silent fail).
+/// Mount the macOS NFS backend for explicit selection or FUSE-T failure.
 #[cfg(target_os = "macos")]
-fn try_nfs_fallback(
+fn try_nfs_mount(
     plugin: &FusePlugin,
     kernel: &KernelHandle,
     mount_point: &str,
     vfs_root: &str,
     reason: &str,
 ) {
-    eprintln!("[nexus-fuse-plugin] {reason}, falling back to NFS localhost");
-    tracing::warn!(
+    eprintln!("[nexus-fuse-plugin] {reason}, mounting NFS localhost");
+    tracing::info!(
         target: "nexus::fuse",
         mount_point = %mount_point,
         reason = %reason,
-        "attempting NFS localhost fallback"
+        "mounting NFS localhost"
     );
     let kernel_nfs = unsafe { kernel_handle_clone(kernel) };
     let nfs_fs = fs_nfs::NexusNfs::new(kernel_nfs, vfs_root.to_string());
@@ -152,7 +152,7 @@ fn try_nfs_fallback(
                 target: "nexus::fuse",
                 mount_point = %mount_point,
                 port = handle.port(),
-                "NFS localhost fallback mounted"
+                "NFS localhost mounted"
             );
             *plugin.nfs_handle.lock().unwrap() = Some(handle);
         }
@@ -195,6 +195,26 @@ fn create_fuse_plugin(_kernel: &KernelHandle) -> Box<FusePlugin> {
     {
         let mount_point = std::env::var("NEXUS_FUSE_MOUNT_POINT").ok();
         if let Some(mount_point) = mount_point {
+            let vfs_root = std::env::var("NEXUS_FUSE_VFS_ROOT").unwrap_or_else(|_| "/".to_string());
+            #[cfg(target_os = "macos")]
+            match std::env::var("NEXUS_FUSE_MACOS_BACKEND") {
+                Ok(backend) if backend == "nfs" => {
+                    try_nfs_mount(
+                        &plugin,
+                        _kernel,
+                        &mount_point,
+                        &vfs_root,
+                        "NFS backend selected",
+                    );
+                    return Box::new(plugin);
+                }
+                Ok(backend) if backend == "auto" => {}
+                Err(std::env::VarError::NotPresent) => {}
+                _ => {
+                    eprintln!("[nexus-fuse-plugin] invalid NEXUS_FUSE_MACOS_BACKEND: expected auto or nfs");
+                    return Box::new(plugin);
+                }
+            }
             // macOS-only preflight: FUSE-T is a user-installed `.pkg`
             // shipping the kernel-side FUSE userspace driver. Without
             // it `fuser::spawn_mount2` fails with a low-level
@@ -209,9 +229,7 @@ fn create_fuse_plugin(_kernel: &KernelHandle) -> Box<FusePlugin> {
             {
                 use fuse_t_detect::{is_fuse_t_installed, DetectionResult};
                 if matches!(is_fuse_t_installed(), DetectionResult::NotFound) {
-                    let vfs_root =
-                        std::env::var("NEXUS_FUSE_VFS_ROOT").unwrap_or_else(|_| "/".to_string());
-                    try_nfs_fallback(
+                    try_nfs_mount(
                         &plugin,
                         _kernel,
                         &mount_point,
@@ -224,8 +242,6 @@ fn create_fuse_plugin(_kernel: &KernelHandle) -> Box<FusePlugin> {
                     return Box::new(plugin);
                 }
             }
-
-            let vfs_root = std::env::var("NEXUS_FUSE_VFS_ROOT").unwrap_or_else(|_| "/".to_string());
 
             // SAFETY: KernelHandle's function pointers and `kernel_ptr`
             // are documented to remain valid for the plugin's lifetime.
@@ -251,7 +267,7 @@ fn create_fuse_plugin(_kernel: &KernelHandle) -> Box<FusePlugin> {
                         std::thread::sleep(std::time::Duration::from_millis(500));
                         if !is_mount_live(&mount_point) {
                             drop(session);
-                            try_nfs_fallback(
+                            try_nfs_mount(
                                 &plugin,
                                 _kernel,
                                 &mount_point,
@@ -272,7 +288,7 @@ fn create_fuse_plugin(_kernel: &KernelHandle) -> Box<FusePlugin> {
                 Err(e) => {
                     #[cfg(target_os = "macos")]
                     {
-                        try_nfs_fallback(
+                        try_nfs_mount(
                             &plugin,
                             _kernel,
                             &mount_point,

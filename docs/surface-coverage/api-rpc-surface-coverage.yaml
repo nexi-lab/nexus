@@ -194,7 +194,7 @@ modules:
   depends_on: []
 - id: search
   name: Search
-  description: Zoekt / BM25 / semantic search daemon.
+  description: 'Rust Search plugin: live discovery and indexed keyword/semantic search.'
   layer: brick
   depends_on: []
 - id: secrets
@@ -7748,7 +7748,7 @@ operations:
       source: src/nexus/bricks/search/search_service.py:1503
     http:
       name: POST /api/v2/search/glob
-      source: src/nexus/server/api/v2/routers/search.py:1371
+      source: src/nexus/server/api/v2/routers/search.py:1345
     mcp:
       name: nexus_glob
       source: src/nexus/config/tool_profiles.yaml:1
@@ -7776,7 +7776,7 @@ operations:
       source: src/nexus/bricks/search/search_service.py:1515
     http:
       name: POST /api/v2/search/grep
-      source: src/nexus/server/api/v2/routers/search.py:1232
+      source: src/nexus/server/api/v2/routers/search.py:1206
     mcp:
       name: nexus_grep
       source: src/nexus/config/tool_profiles.yaml:1
@@ -7830,7 +7830,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/index
-      source: src/nexus/server/api/v2/routers/search.py:1441
+      source: src/nexus/server/api/v2/routers/search.py:1415
   profiles:
     lite: supported
     sandbox: supported
@@ -7847,7 +7847,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/search/query
-      source: src/nexus/server/api/v2/routers/search.py:203
+      source: src/nexus/server/api/v2/routers/search.py:177
   profiles:
     lite: supported
     sandbox: supported
@@ -7864,7 +7864,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/query/batch
-      source: src/nexus/server/api/v2/routers/search.py:649
+      source: src/nexus/server/api/v2/routers/search.py:623
   profiles:
     lite: supported
     sandbox: supported
@@ -7881,7 +7881,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/refresh
-      source: src/nexus/server/api/v2/routers/search.py:1626
+      source: src/nexus/server/api/v2/routers/search.py:1600
   profiles:
     lite: supported
     sandbox: supported
@@ -7915,7 +7915,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/search/stats
-      source: src/nexus/server/api/v2/routers/search.py:174
+      source: src/nexus/server/api/v2/routers/search.py:148
   profiles:
     lite: supported
     sandbox: supported

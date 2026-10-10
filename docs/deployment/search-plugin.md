@@ -92,9 +92,10 @@ transport reports `status=disabled`, `initialized=false` and `backend=null`.
 
 Indexed Search zone IDs must be single directory components. An omitted zone
 still resolves to `root`; existing logical zone names keep their meaning.
-Separators, parent paths, absolute paths, drive prefixes and NUL are rejected
-with `INVALID_ARGUMENT` before index work. Authentication runs before this
-admission check. Batch query and document indexing validate the entire request,
+Separators, parent paths, absolute paths, drive prefixes, NUL and trailing
+spaces or dots are rejected with `INVALID_ARGUMENT` before index work. The
+suffix check prevents Windows path normalization from aliasing zone directories.
+Authentication runs before this admission check. Batch query and document indexing validate the entire request,
 including document zone overrides, before starting work.
 
 Query, Locate, Stats and metadata lists load existing state. An unindexed zone

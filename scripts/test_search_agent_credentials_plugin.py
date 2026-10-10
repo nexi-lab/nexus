@@ -93,7 +93,17 @@ async def main() -> None:
         before = await search.Stats(
             search_pb2.StatsRequest(zone_id="sharedzone", auth_token=admin), timeout=15
         )
-        for zone in ("../../agent-query-probe", "a/b", "a\\b", ".", "..", "C:escape"):
+        for zone in (
+            "../../agent-query-probe",
+            "a/b",
+            "a\\b",
+            ".",
+            "..",
+            "C:escape",
+            ".. ",
+            "zone.",
+            "zone ",
+        ):
             bad = search_pb2.QueryRequest(
                 q=needle, zone_id=zone, query_type=search_pb2.QUERY_TYPE_KEYWORD
             )

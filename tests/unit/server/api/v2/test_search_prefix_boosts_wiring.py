@@ -66,12 +66,11 @@ def _make_daemon() -> MagicMock:
     daemon = MagicMock()
     daemon.is_initialized = True
     daemon.config = MagicMock()
-    daemon.config.txtai_graph = False
 
-    async def fake_search(*args: Any, **kwargs: Any) -> list[Any]:
-        return []
+    async def fake_search(*args: Any, **kwargs: Any) -> tuple[list[Any], str | None]:
+        return ([], None)
 
-    daemon.search = AsyncMock(side_effect=fake_search)
+    daemon.search_with_error = AsyncMock(side_effect=fake_search)
     return daemon
 
 
@@ -81,8 +80,6 @@ def _build_app(daemon: Any, store: PathContextStore | None) -> "FastAPI":
 
     app = FastAPI()
     app.state.search_daemon = daemon
-    app.state.record_store = object()
-    app.state.async_read_session_factory = object()
     app.state.permission_enforcer = None
     app.state.zone_registry = _Registry()
     if store is not None:
@@ -117,7 +114,7 @@ async def test_weighted_row_reaches_daemon_request(store: PathContextStore) -> N
     with TestClient(_build_app(daemon, store)) as client:
         response = client.get("/api/v2/search/query", params={"q": "needle"})
     assert response.status_code == 200, response.text
-    req = daemon.search.call_args.args[0]
+    req = daemon.search_with_error.call_args.args[0]
     assert req.path_prefix_boosts == {"/docs/": 5.0}
 
 
@@ -128,7 +125,7 @@ async def test_description_only_rows_leave_request_unboosted(store: PathContextS
     with TestClient(_build_app(daemon, store)) as client:
         response = client.get("/api/v2/search/query", params={"q": "needle"})
     assert response.status_code == 200, response.text
-    req = daemon.search.call_args.args[0]
+    req = daemon.search_with_error.call_args.args[0]
     assert not req.path_prefix_boosts
 
 
@@ -139,7 +136,7 @@ async def test_other_zone_rows_do_not_bleed(store: PathContextStore) -> None:
     with TestClient(_build_app(daemon, store)) as client:
         response = client.get("/api/v2/search/query", params={"q": "needle"})
     assert response.status_code == 200, response.text
-    req = daemon.search.call_args.args[0]
+    req = daemon.search_with_error.call_args.args[0]
     assert not req.path_prefix_boosts
 
 
@@ -150,7 +147,7 @@ def test_missing_store_fails_open_to_unboosted_search() -> None:
     with TestClient(_build_app(daemon, store=None)) as client:
         response = client.get("/api/v2/search/query", params={"q": "needle"})
     assert response.status_code == 200, response.text
-    req = daemon.search.call_args.args[0]
+    req = daemon.search_with_error.call_args.args[0]
     assert not req.path_prefix_boosts
 
 
@@ -162,17 +159,16 @@ async def test_federated_legs_carry_per_zone_boosts(store: PathContextStore) -> 
     daemon = _make_daemon()
     captured: dict[str, Any] = {}
 
-    async def capture_search(request: Any) -> list[Any]:
+    async def capture_search(request: Any) -> tuple[list[Any], str | None]:
         captured[request.zone_id] = request
-        return []
+        return ([], None)
 
-    daemon.search = capture_search
+    daemon.search_with_error = capture_search
 
     app = _build_app(daemon, store)
     rebac = MagicMock()
     rebac.list_accessible_zones = AsyncMock(return_value=["eng", "ops"])
     app.state.rebac_service = rebac
-    app.state.federated_per_file_rebac = False
 
     from nexus.server.dependencies import require_auth
 
@@ -204,7 +200,7 @@ async def test_weight_update_visible_on_next_query(
         client.get("/api/v2/search/query", params={"q": "needle"})
         await store.upsert("eng", "docs", "tier-1", weight=9.0)
         client.get("/api/v2/search/query", params={"q": "needle"})
-    req = daemon.search.call_args.args[0]
+    req = daemon.search_with_error.call_args.args[0]
     assert req.path_prefix_boosts == {"/docs/": 9.0}
 
 
@@ -223,10 +219,10 @@ async def test_out_of_band_write_is_seen_once_the_freshness_window_expires(
         client.get("/api/v2/search/query", params={"q": "needle"})
         await store.upsert("eng", "docs", "tier-1", weight=9.0)
         client.get("/api/v2/search/query", params={"q": "needle"})
-        assert daemon.search.call_args.args[0].path_prefix_boosts == {"/docs/": 2.0}
+        assert daemon.search_with_error.call_args.args[0].path_prefix_boosts == {"/docs/": 2.0}
         time.sleep(0.4)
         client.get("/api/v2/search/query", params={"q": "needle"})
-    assert daemon.search.call_args.args[0].path_prefix_boosts == {"/docs/": 9.0}
+    assert daemon.search_with_error.call_args.args[0].path_prefix_boosts == {"/docs/": 9.0}
 
 
 @pytest.mark.asyncio
@@ -252,10 +248,10 @@ async def test_route_upsert_is_visible_on_the_next_query_inside_the_window(
         )
         assert put.status_code == 200, put.text
         client.get("/api/v2/search/query", params={"q": "needle"})
-        assert daemon.search.call_args.args[0].path_prefix_boosts == {"/docs/": 9.0}
+        assert daemon.search_with_error.call_args.args[0].path_prefix_boosts == {"/docs/": 9.0}
         delete = client.delete(
             "/api/v2/path-contexts/", params={"zone_id": "eng", "path_prefix": "docs"}
         )
         assert delete.status_code == 200, delete.text
         client.get("/api/v2/search/query", params={"q": "needle"})
-    assert not daemon.search.call_args.args[0].path_prefix_boosts
+    assert not daemon.search_with_error.call_args.args[0].path_prefix_boosts

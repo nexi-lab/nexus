@@ -4,11 +4,11 @@ Idempotent: same inputs -> same output.
 
 Human-owned fields preserved from existing YAML:
     summary (if non-empty in existing), usage_example, correctness_test,
-    perf_class, perf_link, gap_issue, owning_issue
+    perf_class, perf_link, gap_issue, owning_issue, profiles
 
 Extractor-owned fields refreshed from fresh:
-    transports, module (if extractor reassigned). Default profile assignments
-    refresh from the extractor; non-default profile statuses are human-owned.
+    transports, module (if extractor reassigned). Discovery of a previously
+    missing surface resets its profile claims until they are reviewed.
 """
 
 from __future__ import annotations
@@ -22,8 +22,6 @@ from scripts.surface_coverage.schema import (
     SurfaceCoverage,
 )
 
-_DEFAULT_PROFILES = dict.fromkeys(("lite", "sandbox", "full"), ProfileStatus.SUPPORTED)
-
 
 def _all_missing_needed_profiles(op: Operation) -> bool:
     return bool(op.profiles) and all(
@@ -32,7 +30,7 @@ def _all_missing_needed_profiles(op: Operation) -> bool:
 
 
 def _merge_op(existing: Operation, fresh: Operation) -> Operation:
-    should_preserve_profiles = existing.profiles != _DEFAULT_PROFILES
+    should_preserve_profiles = True
     if _all_missing_needed_profiles(existing) and fresh.transports:
         should_preserve_profiles = False
 

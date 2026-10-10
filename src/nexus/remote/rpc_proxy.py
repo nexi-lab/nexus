@@ -156,9 +156,9 @@ class RPCProxyBase:
                 params[param_names[i]] = arg
         params.update(kwargs)
 
-        # Remove context param (handled server-side via auth headers)
-        params.pop("context", None)
-        params.pop("_context", None)
+        from nexus.remote.method_registry import strip_context
+
+        strip_context(params, spec)
 
         # Determine RPC method name and timeout
         rpc_name = spec.rpc_name if spec and spec.rpc_name else name

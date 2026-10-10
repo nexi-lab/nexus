@@ -83,6 +83,32 @@ class TestRemoteServiceProxy:
         with pytest.raises(AttributeError):
             proxy._internal_method()
 
+    @pytest.mark.parametrize(
+        ("method", "arguments"),
+        [
+            ("semantic_search", {"query": "needle"}),
+            ("semantic_search_index", {"path": "/docs"}),
+            ("semantic_search_stats", {}),
+        ],
+    )
+    def test_search_keeps_only_the_zone_and_respects_an_explicit_selector(self, method, arguments):
+        from types import SimpleNamespace
+
+        from nexus.remote.service_proxy import RemoteServiceProxy
+
+        calls, call_rpc = _make_recorder()
+        configured = SimpleNamespace(zone_id="configured", is_admin=True, user_id="ambient")
+        proxy = RemoteServiceProxy(call_rpc, default_context=configured)
+        context = SimpleNamespace(zone_id="workspace", is_admin=True, user_id="forged")
+        getattr(proxy, method)(**arguments)
+        assert calls[-1] == (method, {**arguments, "zone_id": "configured"})
+        getattr(proxy, method)(**arguments, context=context)
+        assert calls[-1] == (method, {**arguments, "zone_id": "workspace"})
+        getattr(proxy, method)(**arguments, zone_id=None, _context=context)
+        assert calls[-1] == (method, {**arguments, "zone_id": "workspace"})
+        getattr(proxy, method)(**arguments, zone_id="explicit", context=context)
+        assert calls[-1] == (method, {**arguments, "zone_id": "explicit"})
+
     def test_dunder_attr_raises(self):
         """Dunder attributes raise AttributeError (Python internals)."""
         from nexus.remote.service_proxy import RemoteServiceProxy
@@ -141,7 +167,7 @@ class TestBootRemoteServices:
         _, call_rpc = _make_recorder()
         with patch("nexus.factory.service_routing.enlist_wired_services") as mock_enlist:
             # enlist_wired_services is async — mock returns a coroutine
-            async def _fake_enlist(coordinator, wired_dict):
+            def _fake_enlist(coordinator, wired_dict):
                 return len(_CANONICAL_NAMES)
 
             mock_enlist.side_effect = _fake_enlist
@@ -174,7 +200,7 @@ class TestBootRemoteServices:
         _, call_rpc = _make_recorder()
         with patch("nexus.factory.service_routing.enlist_wired_services") as mock_enlist:
 
-            async def _fake_enlist(coordinator, wired_dict):
+            def _fake_enlist(coordinator, wired_dict):
                 return len(_CANONICAL_NAMES)
 
             mock_enlist.side_effect = _fake_enlist

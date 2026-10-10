@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import re as _re
+from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
 import grpc
@@ -31,6 +32,7 @@ from tenacity import (
 )
 
 from nexus.contracts.exceptions import (
+    AuthenticationError,
     BackendError,
     RemoteConnectionError,
     RemoteTimeoutError,
@@ -210,21 +212,36 @@ class RPCTransport:
                     "(docker-compose, k8s pod-local)."
                 )
             self._channel = grpc.insecure_channel(server_address, options=_CHANNEL_OPTIONS)
-        self._stub = vfs_pb2_grpc.NexusVFSServiceStub(self._channel)
-        from nexus.remote.search_client import SearchClient
+        self._closed = False
+        try:
+            self._stub = vfs_pb2_grpc.NexusVFSServiceStub(self._channel)
+            from nexus.remote.search_client import SearchClient
 
-        self._search = SearchClient(self._channel)
+            self._search = SearchClient(self._channel)
 
-        # Pre-warm: trigger eager TCP/TLS handshake so connection establishment
-        # overlaps with NexusFS construction instead of blocking on first RPC.
-        self._channel_ready = grpc.channel_ready_future(self._channel)
-
-        # Reuse BaseRemoteNexusFS error handling (static method access)
-        self._error_handler = BaseRemoteNexusFS()
+            self._error_handler = BaseRemoteNexusFS()
+        except BaseException:
+            with suppress(Exception):
+                self.close()
+            raise
 
     # ------------------------------------------------------------------
     # RPC call
     # ------------------------------------------------------------------
+
+    def _credential(self, override: str | None = None) -> str | None:
+        """Select one call's credential without changing the channel identity."""
+        caller = request_api_key.get()
+        if caller is not None:
+            return caller
+        return override if override is not None else self._auth_token
+
+    def _vfs_credential(self, override: str | None = None) -> str:
+        """VFS's string field cannot represent an explicitly empty bearer."""
+        credential = self._credential(override)
+        if credential == "":
+            raise AuthenticationError("Authentication required: empty request credential")
+        return credential or ""
 
     @retry(
         stop=stop_after_attempt(3),
@@ -257,7 +274,6 @@ class RPCTransport:
             RemoteTimeoutError: Call exceeded deadline.
             NexusError subclasses: Application-level errors from server.
         """
-        effective_token = auth_token if auth_token is not None else self._auth_token
         timeout = read_timeout if read_timeout is not None else self._timeout
         if method in (
             "glob",
@@ -266,17 +282,9 @@ class RPCTransport:
             "semantic_search_index",
             "semantic_search_stats",
         ):
-            caller = request_api_key.get()
-            credential: str | None
-            if caller is not None:
-                credential = caller
-            elif auth_token is not None:
-                credential = auth_token
-            else:
-                credential = self._auth_token
             try:
                 return self._search._call(
-                    method, params or {}, credential=credential, timeout=timeout
+                    method, params or {}, credential=self._credential(auth_token), timeout=timeout
                 )
             except grpc.RpcError as exc:
                 if exc.code() == grpc.StatusCode.INVALID_ARGUMENT:
@@ -287,7 +295,7 @@ class RPCTransport:
         request = vfs_pb2.CallRequest(
             method=method,
             payload=payload,
-            auth_token=effective_token or "",
+            auth_token=self._vfs_credential(auth_token),
         )
 
         logger.debug("RPCTransport.call_rpc: %s params=%s", method, _redact_params(params))
@@ -357,7 +365,7 @@ class RPCTransport:
         """
         request = vfs_pb2.ReadRequest(
             path=path,
-            auth_token=self._auth_token or "",
+            auth_token=self._vfs_credential(),
             content_id=content_id,
             timeout_ms=int(timeout_ms),
             offset=int(offset),
@@ -394,7 +402,7 @@ class RPCTransport:
         request = vfs_pb2.WriteRequest(
             path=path,
             content=content,
-            auth_token=self._auth_token or "",
+            auth_token=self._vfs_credential(),
             content_id=content_id or "",
         )
         timeout = read_timeout if read_timeout is not None else self._timeout
@@ -431,7 +439,7 @@ class RPCTransport:
         Raises on auth or transport failure.
         """
         request = vfs_pb2.DeleteRequest(
-            path=path, auth_token=self._auth_token or "", recursive=recursive
+            path=path, auth_token=self._vfs_credential(), recursive=recursive
         )
         timeout = read_timeout if read_timeout is not None else self._timeout
         try:
@@ -467,7 +475,7 @@ class RPCTransport:
     ) -> Any:
         """Mkdir via the typed Mkdir RPC. Returns the MkdirResponse."""
         request = vfs_pb2.MkdirRequest(
-            path=path, auth_token=self._auth_token or "", parents=parents, exist_ok=exist_ok
+            path=path, auth_token=self._vfs_credential(), parents=parents, exist_ok=exist_ok
         )
         timeout = read_timeout if read_timeout is not None else self._timeout
         try:
@@ -503,7 +511,7 @@ class RPCTransport:
             if length is not None:
                 item.length = length
             req_items.append(item)
-        request = vfs_pb2.BatchReadRequest(auth_token=self._auth_token or "", items=req_items)
+        request = vfs_pb2.BatchReadRequest(auth_token=self._vfs_credential(), items=req_items)
         timeout = read_timeout if read_timeout is not None else self._timeout
         try:
             response = self._stub.BatchRead(request, timeout=timeout)
@@ -531,7 +539,7 @@ class RPCTransport:
         responses in input order.
         """
         request = vfs_pb2.BatchWriteRequest(
-            auth_token=self._auth_token or "",
+            auth_token=self._vfs_credential(),
             items=[
                 vfs_pb2.BatchWriteItemRequest(path=path, content=content) for path, content in files
             ],
@@ -567,7 +575,7 @@ class RPCTransport:
         ctx-derived field, so it's not part of the request.
         """
         request = vfs_pb2.ReaddirRequest(
-            path=path, auth_token=self._auth_token or "", zone_id=zone_id
+            path=path, auth_token=self._vfs_credential(), zone_id=zone_id
         )
         timeout = read_timeout if read_timeout is not None else self._timeout
         try:
@@ -598,7 +606,7 @@ class RPCTransport:
         auth or transport failure.
         """
         request = vfs_pb2.BatchStatRequest(
-            auth_token=self._auth_token or "", zone_id=zone_id, paths=list(paths)
+            auth_token=self._vfs_credential(), zone_id=zone_id, paths=list(paths)
         )
         timeout = read_timeout if read_timeout is not None else self._timeout
         try:
@@ -620,7 +628,7 @@ class RPCTransport:
         does not exist (``found == false`` — not an error). Raises on
         auth / transport failure.
         """
-        request = vfs_pb2.StatRequest(path=path, auth_token=self._auth_token or "", zone_id=zone_id)
+        request = vfs_pb2.StatRequest(path=path, auth_token=self._vfs_credential(), zone_id=zone_id)
         timeout = read_timeout if read_timeout is not None else self._timeout
         try:
             response = self._stub.Stat(request, timeout=timeout)
@@ -655,7 +663,7 @@ class RPCTransport:
         """
         request = vfs_pb2.SetattrRequest(
             path=path,
-            auth_token=self._auth_token or "",
+            auth_token=self._vfs_credential(),
             entry_type=int(kwargs.get("entry_type", 0) or 0),
             zone_id=kwargs.get("zone_id", "") or "",
             backend_name=kwargs.get("backend_name", "") or "",
@@ -743,7 +751,7 @@ class RPCTransport:
     def rename(self, path: str, new_path: str, read_timeout: float | None = None) -> Any:
         """Rename via the typed Rename RPC. Returns the RenameResponse."""
         request = vfs_pb2.RenameRequest(
-            path=path, new_path=new_path, auth_token=self._auth_token or ""
+            path=path, new_path=new_path, auth_token=self._vfs_credential()
         )
         timeout = read_timeout if read_timeout is not None else self._timeout
         try:
@@ -762,7 +770,7 @@ class RPCTransport:
     )
     def copy(self, src: str, dst: str, read_timeout: float | None = None) -> Any:
         """Server-side copy via the typed Copy RPC. Returns the CopyResponse."""
-        request = vfs_pb2.CopyRequest(src=src, dst=dst, auth_token=self._auth_token or "")
+        request = vfs_pb2.CopyRequest(src=src, dst=dst, auth_token=self._vfs_credential())
         timeout = read_timeout if read_timeout is not None else self._timeout
         try:
             response = self._stub.Copy(request, timeout=timeout)
@@ -792,7 +800,7 @@ class RPCTransport:
         """
         request = vfs_pb2.LockRequest(
             path=path,
-            auth_token=self._auth_token or "",
+            auth_token=self._vfs_credential(),
             lock_id=lock_id,
             timeout_ms=timeout_ms,
         )
@@ -820,7 +828,7 @@ class RPCTransport:
     ) -> Any:
         """Release an advisory lock via the typed Unlock RPC."""
         request = vfs_pb2.UnlockRequest(
-            path=path, auth_token=self._auth_token or "", lock_id=lock_id, force=force
+            path=path, auth_token=self._vfs_credential(), lock_id=lock_id, force=force
         )
         timeout = read_timeout if read_timeout is not None else self._timeout
         try:
@@ -852,7 +860,7 @@ class RPCTransport:
         90 s aren't cut short.
         """
         request = vfs_pb2.WatchRequest(
-            path=path, auth_token=self._auth_token or "", timeout_ms=timeout_ms
+            path=path, auth_token=self._vfs_credential(), timeout_ms=timeout_ms
         )
         timeout = read_timeout if read_timeout is not None else max(timeout_ms / 1000.0 + 5.0, 5.0)
         try:
@@ -875,7 +883,7 @@ class RPCTransport:
         Returns the ``GetXattrResponse`` — ``found=false`` means the key
         is not set, not an error.
         """
-        request = vfs_pb2.GetXattrRequest(path=path, key=key, auth_token=self._auth_token or "")
+        request = vfs_pb2.GetXattrRequest(path=path, key=key, auth_token=self._vfs_credential())
         timeout = read_timeout if read_timeout is not None else self._timeout
         try:
             response = self._stub.GetXattr(request, timeout=timeout)
@@ -894,7 +902,7 @@ class RPCTransport:
     def set_xattr(self, path: str, key: str, value: str, read_timeout: float | None = None) -> None:
         """Set an xattr via the typed SetXattr RPC."""
         request = vfs_pb2.SetXattrRequest(
-            path=path, key=key, value=value, auth_token=self._auth_token
+            path=path, key=key, value=value, auth_token=self._vfs_credential()
         )
         timeout = read_timeout if read_timeout is not None else self._timeout
         try:
@@ -919,7 +927,7 @@ class RPCTransport:
         ``paths``).
         """
         request = vfs_pb2.GetXattrBulkRequest(
-            paths=list(paths), key=key, auth_token=self._auth_token
+            paths=list(paths), key=key, auth_token=self._vfs_credential()
         )
         timeout = read_timeout if read_timeout is not None else self._timeout
         try:
@@ -933,7 +941,7 @@ class RPCTransport:
     # ── Typed IPC pipe / stream ops ────────────────────────────────────
 
     def _ipc_path_request(self, path: str) -> Any:
-        return vfs_pb2.IpcPathRequest(path=path, auth_token=self._auth_token or "")
+        return vfs_pb2.IpcPathRequest(path=path, auth_token=self._vfs_credential())
 
     @retry(
         stop=stop_after_attempt(3),
@@ -979,7 +987,7 @@ class RPCTransport:
         timeout = read_timeout if read_timeout is not None else self._timeout
         try:
             resp = self._stub.CloseAllPipes(
-                vfs_pb2.IpcEmpty(auth_token=self._auth_token or ""), timeout=timeout
+                vfs_pb2.IpcEmpty(auth_token=self._vfs_credential()), timeout=timeout
             )
         except grpc.RpcError as exc:
             self._raise_transport_error(exc, timeout, "CloseAllPipes")
@@ -1031,7 +1039,7 @@ class RPCTransport:
         Returns the offset where the data landed (native bytes — no base64).
         """
         request = vfs_pb2.StreamWriteRequest(
-            path=path, data=data, auth_token=self._auth_token or ""
+            path=path, data=data, auth_token=self._vfs_credential()
         )
         timeout = read_timeout if read_timeout is not None else self._timeout
         try:
@@ -1068,7 +1076,7 @@ class RPCTransport:
             offset=offset,
             blocking=blocking,
             timeout_ms=timeout_ms,
-            auth_token=self._auth_token or "",
+            auth_token=self._vfs_credential(),
         )
         if read_timeout is not None:
             timeout = read_timeout
@@ -1109,7 +1117,7 @@ class RPCTransport:
     )
     def ping(self) -> dict[str, Any]:
         """Ping server — returns version, zone_id, uptime."""
-        request = vfs_pb2.PingRequest(auth_token=self._auth_token or "")
+        request = vfs_pb2.PingRequest(auth_token=self._vfs_credential())
         try:
             response = self._stub.Ping(request, timeout=self._connect_timeout)
         except grpc.RpcError as exc:
@@ -1165,7 +1173,10 @@ class RPCTransport:
             ) from exc
 
     def close(self) -> None:
-        """Close the gRPC channel."""
+        """Close the owned gRPC channel once."""
+        if self._closed:
+            return
+        self._closed = True
         self._channel.close()
 
 

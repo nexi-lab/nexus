@@ -70,11 +70,11 @@ class SearchClient:
                 "skipped_count": index_response.skipped_count,
             }
         if method == "semantic_search_stats":
-            if params:
-                raise TypeError(f"Unsupported {method} arguments: {', '.join(sorted(params))}")
-            stats_response = self._stub.Stats(
-                search_pb2.StatsRequest(), metadata=metadata, timeout=timeout
-            )
+            args = dict(params)
+            stats_request = search_pb2.StatsRequest(zone_id=args.pop("zone_id", None) or "")
+            if args:
+                raise TypeError(f"Unsupported {method} arguments: {', '.join(sorted(args))}")
+            stats_response = self._stub.Stats(stats_request, metadata=metadata, timeout=timeout)
             if stats_response.error:
                 raise RuntimeError(f"Search plugin statistics failed: {stats_response.error}")
             stats = search_stats(stats_response)

@@ -36,18 +36,117 @@ workspace belongs to its own Kernel; a VM broker does not gain access to that
 workspace by hosting Search. Preserve the existing agent or delegated user
 identity and pass its credential at each request boundary.
 
+Remote SDK files and Search share the filesystem's authenticated gRPC channel.
+File operations use typed VFS RPCs; range reads use BatchRead. Directory pages
+walk only as far as the page window plus one entry and fetch detailed metadata
+in one BatchStat call. Their `total_count` remains unknown rather than requiring
+a complete namespace scan.
+
+MCP Search tools support both local async services and the remote SDK's sync
+proxy. Sync calls run outside the MCP event loop with the request credential
+preserved. Set `zone_id` in `nexus.connect()` configuration to select the
+default indexed Search zone. An explicit zone selector takes precedence;
+the daemon still determines identity and permissions from the credential.
+
+Directory enumeration requires read permission on the directory and each
+returned child. Stat and BatchStat use the same installed file policy; a mixed
+BatchStat request is rejected before reading metadata. Xattr reads follow that
+policy too; xattr support still depends on the selected metastore. Xattr writes,
+locks and IPC close operations require write permission. Force unlock and
+closing all pipes require administrative authority. A wildcard watch needs
+read permission on its fixed parent, and every returned event is checked
+again after the wait.
+
+The current typed Write contract represents complete file replacement. Offset
+writes and TTL requests return `NotImplementedError` before writing. The typed
+Rename contract also rejects `force=True` before changing either path.
+
+Certificate agents use SearchService on the same mTLS channel as VFS. Their
+certificate establishes identity without a zone grant; the Kernel's installed
+file policy, including containment and ReBAC, determines access. A requested
+Search zone does not grant access to its files. User and service API keys still
+require a read grant for that zone. An explicit invalid bearer token fails
+authentication even when the channel carries a valid agent certificate.
+
 An omitted `files` selection permits directory traversal and requires root
 read access. A supplied selection is bounded, validated and authorized per
 file; `files=[]` returns no results. Search rechecks live permissions on the
 host, and SDK clients reject hosts that do not acknowledge requested filters.
 
-HTTP discovery paginates the host's authorized results. Grep requests the
-page window plus one match to detect `has_more`. The response includes
-observed latency and counts; the host does not expose a per-file denial rate.
+HTTP and MCP discovery paginate the host's authorized results. Grep requests the
+page window plus one match to detect `has_more`. Responses report observed
+counts; HTTP also reports latency. The host does not expose a per-file denial rate.
 
 Rust HTTP discovery uses the canonical VFS `root_path` to select its mount
 and zone. An optional `zone_id` must match that mount; a mismatch returns
 HTTP 400. The revision fence uses the same zone as the gRPC host.
+
+Indexed Python HTTP query and batch routes forward the caller's credential and
+requested limits to SearchService. The host authorizes returned candidates;
+Python does not evaluate file grants again. These reads do not require a Python
+record store. Path-context ranking weights remain optional durable configuration.
+Responses report observed timings; permission-denial statistics are not exposed.
+The query limit bounds the host's ranked candidate window. Live authorization
+and VFS checks can leave fewer returned hits than that limit.
+
+The Rust host also authorizes index mutations, directory/mode management and
+statistics. These operations require management authority; ordinary callers
+receive HTTP 403. Invalid or revoked caller credentials return HTTP 401.
+Python forwards the original credential and preserves the host's RPC error
+category. Refresh reads workspace bytes using the caller's VFS context before
+submitting them for indexing.
+
+`POST /api/v2/search/locate` accepts `{"path": "/docs/file.md", "zone_id": "team"}`
+(`zone_id` defaults to the caller's zone) and returns `indexed`, `chunk_count`,
+`mtime_ms`, `zone_id`, and `elapsed_ms`. It queries one path's index status.
+The host checks current read permission and VFS existence on each call.
+
+The current Search host reports `has_graph=false`. Explicit Python HTTP
+`graph_mode=low|high|dual|auto` requests return HTTP 501. `graph_mode=none`
+uses the ordinary keyword, semantic or hybrid pipeline. Batch entries requesting
+Graph search return a per-entry error.
+
+`GET /api/v2/search/health` returns the host's `status`, `detail` and writer
+liveness fields: `fts_writer_faults`, `fts_writer_unavailable`,
+`last_verified_commit_age_ms` and `dispatch_panics`. `initialized` describes
+the local transport; it can remain true while the host reports `unavailable`.
+`backend` identifies the configured transport as `rust-plugin`. A disabled
+transport reports `status=disabled`, `initialized=false` and `backend=null`.
+
+## Index storage and read operations
+
+Indexed Search zone IDs must be single directory components. An omitted zone
+still resolves to `root`; existing logical zone names keep their meaning.
+Separators, parent paths, absolute paths, drive prefixes, NUL and trailing
+spaces or dots are rejected with `INVALID_ARGUMENT` before index work. The
+suffix check prevents Windows path normalization from aliasing zone directories.
+Authentication runs before this admission check. Batch query and document indexing validate the entire request,
+including document zone overrides, before starting work.
+
+Query, Locate, Stats and metadata lists load existing state. An unindexed zone
+returns empty results or zero counts without creating an index, writer or zone
+directory. Missing corpora are not cached, so subsequent explicit indexing is
+visible. Committed FTS and ANN corpora reload from disk after daemon restart.
+Unsupported semantic modes still report their availability error.
+
+## Runtime capability discovery
+
+The peer `ZoneApiService.GetSearchCapabilities` RPC queries the currently
+loaded Search plugin. It reports configured search modes and the embedding
+vector-space tag and dimension without opening indices, loading a model or
+calling an embedding endpoint. A local model's dimension remains zero until
+its first inference probe; remote configuration supplies an explicit dimension.
+Use Search `Health` to check readiness separately.
+
+The host checks its zone catalog without materializing a Raft replica. An
+unknown zone returns `NOT_FOUND`; an absent Search plugin returns
+`UNIMPLEMENTED`. An embedding dimension beyond the existing RPC's int32
+range returns `FAILED_PRECONDITION`. Incomplete or invalid remote embedding
+configuration advertises keyword search only.
+
+Capabilities are runtime state and have no persistent store.
+Python zone routes start with unknown capabilities; failed peer discovery
+clears any previous snapshot and propagates the error.
 
 ## Required processes for the Python server
 
@@ -166,9 +265,9 @@ that made the batch visible. `GET /api/v2/search/stats` reports:
 |---|---|
 | `last_index_seq` | Sequence of the last committed index mutation. `last_index_seq >= <your index_seq>` means your batch is served. |
 | `pending` | Documents accepted by in-flight `search/index` / write+index calls and not yet returned. |
-| `last_successful_index_at` | ISO-8601 UTC instant of the last committed mutation (`null` = never). `last_index_refresh` carries the same instant as float epoch seconds for pre-P12 pollers. |
+| `last_successful_index_at` | ISO-8601 UTC instant of the last committed mutation (`null` = never). `last_index_refresh` carries the same instant as float epoch seconds. |
 | `indexing_in_progress` | In-flight `Index` / `IndexDocuments` / `Refresh` operations (#4623). |
-| `zone_id` | The zone these counters describe: the caller's token zone, or the root zone for a token-less poller. |
+| `zone_id` | The zone these counters describe, selected for the authenticated caller. Statistics require management authority. |
 
 Stall signature — the #4725 class, index acknowledged but nothing
 served: `pending > 0` or `indexing_in_progress > 0` for longer than one

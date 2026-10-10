@@ -896,6 +896,17 @@ jobs:
           test -x "$NEXUS_KERNEL_BINARY" || { echo "::error::nexusd-cluster missing at $NEXUS_KERNEL_BINARY"; exit 1; }
           uv run --no-sync python -m pytest tests/integration/test_kernel_restart_survival.py -v -o "addopts="
 
+      - name: SDK kernel and transport ownership E2E
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        timeout-minutes: 5
+        run: |
+          export NEXUS_KERNEL_BINARY="/home/runner/.cargo/bin/nexusd-cluster"
+          test -x "$NEXUS_KERNEL_BINARY"
+          uv run --no-sync python -m pytest \
+            tests/integration/core/test_kernel_client_ownership.py \
+            tests/integration/core/test_remote_connect_ownership.py \
+            -v -o "addopts=" -W error::pytest.PytestUnhandledThreadExceptionWarning
+
       - name: Managed-agent session mailbox E2E
         if: needs.detect-changes.outputs.code_changed == 'true'
         timeout-minutes: 10

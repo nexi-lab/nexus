@@ -185,7 +185,7 @@ class DeploymentProfile(StrEnum):
     - cluster: Minimal multi-node — Raft + federation, no auth/PostgreSQL
     - embedded: MCU / WASM (<1 MB) — eventlog only
     - lite: Pi, Jetson, mobile (512 MB–4 GB) — core services, no LLM/Pay
-    - sandbox: Agent sandbox (zero external services; SQLite + in-mem cache + BM25S; #3778)
+    - sandbox: Agent sandbox (local record store and cache; Search uses the Rust host)
     - full: Desktop, laptop (4–32 GB) — all bricks, local inference
     - cloud: k8s, serverless (unlimited) — all + federation + multi-tenant
     - remote: Client-side proxy — zero local bricks, NFS-client model (Issue #844)

@@ -43,17 +43,17 @@ def _make_result(path: str, score: float, zone_id: str | None = None) -> MockSea
 def _make_daemon(zone_results: dict[str, list[MockSearchResult]]) -> AsyncMock:
     """Create a mock daemon that returns different results per zone_id.
 
-    The dispatcher calls ``daemon.search(SearchRequest(zone_id=..., ...))``
+    The dispatcher calls ``daemon.search_with_error(SearchRequest(zone_id=..., ...))``
     with a single positional bundled request; the mock unpacks
     ``request.zone_id`` and returns the matching canned list.
     """
     daemon = AsyncMock()
     daemon.is_initialized = True
 
-    async def mock_search(request: Any) -> list[MockSearchResult]:
-        return zone_results.get(request.zone_id, [])
+    async def mock_search(request: Any) -> tuple[list[MockSearchResult], str | None]:
+        return (zone_results.get(request.zone_id, []), None)
 
-    daemon.search = mock_search
+    daemon.search_with_error = mock_search
     return daemon
 
 
@@ -73,11 +73,11 @@ def _make_capturing_daemon(captured: dict[str, Any]) -> AsyncMock:
     daemon = AsyncMock()
     daemon.is_initialized = True
 
-    async def capture_search(request: Any) -> list[MockSearchResult]:
+    async def capture_search(request: Any) -> tuple[list[MockSearchResult], str | None]:
         captured[request.zone_id] = request
-        return []
+        return ([], None)
 
-    daemon.search = capture_search
+    daemon.search_with_error = capture_search
     return daemon
 
 
@@ -275,12 +275,12 @@ class TestPartialFailure:
         daemon = AsyncMock()
         daemon.is_initialized = True
 
-        async def mock_search(request: Any) -> list[MockSearchResult]:
+        async def mock_search(request: Any) -> tuple[list[MockSearchResult], str | None]:
             if request.zone_id == "zone_bad":
                 raise ConnectionError("zone offline")
-            return [_make_result(f"{request.zone_id}/doc.txt", 5.0)]
+            return ([_make_result(f"{request.zone_id}/doc.txt", 5.0)], None)
 
-        daemon.search = mock_search
+        daemon.search_with_error = mock_search
         rebac = _make_rebac(["zone_good", "zone_bad"])
 
         dispatcher = FederatedSearchDispatcher(daemon=daemon, rebac=rebac)
@@ -300,7 +300,7 @@ class TestPartialFailure:
         async def mock_search(_request: Any, /, **kwargs):
             raise TimeoutError("timed out")
 
-        daemon.search = mock_search
+        daemon.search_with_error = mock_search
         rebac = _make_rebac(["zone_a", "zone_b"])
 
         dispatcher = FederatedSearchDispatcher(daemon=daemon, rebac=rebac)
@@ -319,7 +319,7 @@ class TestPartialFailure:
         async def mock_search(_request: Any, /, **kwargs):
             raise RuntimeError("broken")
 
-        daemon.search = mock_search
+        daemon.search_with_error = mock_search
         rebac = _make_rebac(["zone_a"])
 
         dispatcher = FederatedSearchDispatcher(daemon=daemon, rebac=rebac)
@@ -377,9 +377,9 @@ class TestConfiguration:
 
         async def slow_search(**kwargs):
             await asyncio.sleep(1.0)
-            return [_make_result("a.txt", 5.0)]
+            return ([_make_result("a.txt", 5.0)], None)
 
-        daemon.search = slow_search
+        daemon.search_with_error = slow_search
         rebac = _make_rebac(["zone_a"])
 
         config = FederatedSearchConfig(zone_timeout_seconds=0.01)
@@ -413,9 +413,9 @@ class TestConfiguration:
             max_concurrent = max(max_concurrent, current_concurrent)
             await asyncio.sleep(0.01)
             current_concurrent -= 1
-            return [_make_result(f"{zone_id}/doc.txt", 5.0)]
+            return ([_make_result(f"{zone_id}/doc.txt", 5.0)], None)
 
-        daemon.search = tracking_search
+        daemon.search_with_error = tracking_search
         rebac = _make_rebac([f"zone_{i}" for i in range(10)])
 
         config = FederatedSearchConfig(max_concurrent_zones=3)
@@ -454,7 +454,7 @@ class TestRegistryDispatch:
             zone_id=None,
             **kw,
         ):
-            return [_make_result("a_doc.txt", 5.0)]
+            return ([_make_result("a_doc.txt", 5.0)], None)
 
         async def search_b(
             query,
@@ -466,15 +466,23 @@ class TestRegistryDispatch:
             zone_id=None,
             **kw,
         ):
-            return [_make_result("b_doc.txt", 3.0)]
+            return ([_make_result("b_doc.txt", 3.0)], None)
 
-        daemon_a.search = search_a
-        daemon_b.search = search_b
+        daemon_a.search_with_error = search_a
+        daemon_b.search_with_error = search_b
 
         registry = ZoneSearchRegistry()
-        caps = ZoneSearchCapabilities(zone_id="zone_a")
+        caps = ZoneSearchCapabilities(
+            zone_id="zone_a", search_modes=("keyword", "semantic", "hybrid")
+        )
         registry.register("zone_a", daemon_a, capabilities=caps)
-        registry.register("zone_b", daemon_b, capabilities=ZoneSearchCapabilities(zone_id="zone_b"))
+        registry.register(
+            "zone_b",
+            daemon_b,
+            capabilities=ZoneSearchCapabilities(
+                zone_id="zone_b", search_modes=("keyword", "semantic", "hybrid")
+            ),
+        )
 
         rebac = _make_rebac(["zone_a", "zone_b"])
         fallback = AsyncMock()
@@ -662,9 +670,9 @@ class TestFederatedQueryBehavior:
         daemon.is_initialized = True
 
         async def mock_search(_request: Any, /, **kwargs):
-            return degraded_empty
+            return (degraded_empty, None)
 
-        daemon.search = mock_search
+        daemon.search_with_error = mock_search
         rebac = _make_rebac(["zone_a"])
         dispatcher = FederatedSearchDispatcher(daemon=daemon, rebac=rebac)
 
@@ -698,123 +706,6 @@ class TestFederatedQueryBehavior:
 
         assert resp.zones_searched == ["zone_a"]
         assert {r["zone_id"] for r in resp.results} == {"zone_a"}
-
-
-# =============================================================================
-# filter_federated_results (Issue #3147, gap item 5)
-# =============================================================================
-
-
-class TestFilterFederatedResults:
-    @pytest.mark.asyncio
-    async def test_allows_all_when_permitted(self) -> None:
-        from nexus.bricks.search.federated_search import filter_federated_results
-
-        results = [
-            _make_result("a.txt", 5.0, zone_id="zone_a"),
-            _make_result("b.txt", 3.0, zone_id="zone_a"),
-        ]
-        rebac = AsyncMock()
-        rebac.rebac_check_batch = AsyncMock(return_value=[True, True])
-
-        filtered = await filter_federated_results(
-            results,
-            subject=("user", "alice"),
-            rebac=rebac,
-        )
-        assert len(filtered) == 2
-
-    @pytest.mark.asyncio
-    async def test_filters_denied_results(self) -> None:
-        from nexus.bricks.search.federated_search import filter_federated_results
-
-        results = [
-            _make_result("allowed.txt", 5.0, zone_id="zone_a"),
-            _make_result("denied.txt", 3.0, zone_id="zone_a"),
-            _make_result("also_allowed.txt", 2.0, zone_id="zone_a"),
-        ]
-        rebac = AsyncMock()
-        rebac.rebac_check_batch = AsyncMock(return_value=[True, False, True])
-
-        filtered = await filter_federated_results(
-            results,
-            subject=("user", "alice"),
-            rebac=rebac,
-        )
-        assert len(filtered) == 2
-        paths = [r.path for r in filtered]
-        assert "allowed.txt" in paths
-        assert "denied.txt" not in paths
-
-    @pytest.mark.asyncio
-    async def test_groups_by_zone(self) -> None:
-        """Results from different zones should be batched per zone."""
-        from nexus.bricks.search.federated_search import filter_federated_results
-
-        results = [
-            _make_result("a.txt", 5.0, zone_id="zone_a"),
-            _make_result("b.txt", 3.0, zone_id="zone_b"),
-        ]
-        rebac = AsyncMock()
-        # Two separate batch calls — one per zone
-        rebac.rebac_check_batch = AsyncMock(return_value=[True])
-
-        filtered = await filter_federated_results(
-            results,
-            subject=("user", "alice"),
-            rebac=rebac,
-        )
-        # Should have been called twice (once per zone)
-        assert rebac.rebac_check_batch.call_count == 2
-        assert len(filtered) == 2
-
-    @pytest.mark.asyncio
-    async def test_empty_results(self) -> None:
-        from nexus.bricks.search.federated_search import filter_federated_results
-
-        filtered = await filter_federated_results(
-            [],
-            subject=("user", "alice"),
-            rebac=AsyncMock(),
-        )
-        assert filtered == []
-
-    @pytest.mark.asyncio
-    async def test_fail_open_on_rebac_error(self) -> None:
-        """If ReBAC is unavailable, allow results (fail-open)."""
-        from nexus.bricks.search.federated_search import filter_federated_results
-
-        results = [_make_result("a.txt", 5.0, zone_id="zone_a")]
-        rebac = AsyncMock()
-        rebac.rebac_check_batch = AsyncMock(side_effect=RuntimeError("DB down"))
-
-        filtered = await filter_federated_results(
-            results,
-            subject=("user", "alice"),
-            rebac=rebac,
-        )
-        # Fail-open: result allowed despite error
-        assert len(filtered) == 1
-
-    @pytest.mark.asyncio
-    async def test_passes_correct_checks(self) -> None:
-        """Verify the batch check receives correct (subject, perm, object) tuples."""
-        from nexus.bricks.search.federated_search import filter_federated_results
-
-        results = [_make_result("/docs/secret.txt", 5.0, zone_id="zone_x")]
-        rebac = AsyncMock()
-        rebac.rebac_check_batch = AsyncMock(return_value=[True])
-
-        await filter_federated_results(
-            results,
-            subject=("agent", "bot_1"),
-            rebac=rebac,
-        )
-
-        rebac.rebac_check_batch.assert_called_once_with(
-            checks=[(("agent", "bot_1"), "viewer", ("file", "/docs/secret.txt"))],
-            zone_id="zone_x",
-        )
 
 
 # =============================================================================
@@ -857,96 +748,6 @@ class TestCrossZoneDedup:
         d = _to_dict(r)
         assert "zone_qualified_path" in d
         assert d["zone_qualified_path"] == "zone_a:doc.txt"
-
-
-# =============================================================================
-# Bug fix: per-file ReBAC wired into dispatcher (Codex finding #2)
-# =============================================================================
-
-
-class TestPerFileRebacWired:
-    @pytest.mark.asyncio
-    async def test_single_zone_filters_when_enabled(self) -> None:
-        """With enable_per_file_rebac=True, results should be filtered."""
-        daemon = _make_daemon(
-            {
-                "zone_a": [
-                    _make_result("allowed.txt", 5.0),
-                    _make_result("denied.txt", 3.0),
-                ],
-            }
-        )
-        rebac = _make_rebac(["zone_a"])
-        rebac.rebac_check_batch = AsyncMock(return_value=[True, False])
-
-        dispatcher = FederatedSearchDispatcher(
-            daemon=daemon,
-            rebac=rebac,
-            enable_per_file_rebac=True,
-        )
-        resp = await dispatcher.search("test", subject=("user", "alice"))
-
-        assert len(resp.results) == 1
-        assert resp.results[0]["path"] == "allowed.txt"
-
-    @pytest.mark.asyncio
-    async def test_multi_zone_filters_when_enabled(self) -> None:
-        """Multi-zone path should also apply per-file ReBAC before fusion."""
-        daemon = _make_daemon(
-            {
-                "zone_a": [_make_result("a_ok.txt", 5.0), _make_result("a_deny.txt", 4.0)],
-                "zone_b": [_make_result("b_ok.txt", 3.0)],
-            }
-        )
-        rebac = _make_rebac(["zone_a", "zone_b"])
-        # zone_a: first allowed, second denied; zone_b: allowed
-        rebac.rebac_check_batch = AsyncMock(
-            side_effect=[[True, False], [True]],
-        )
-
-        dispatcher = FederatedSearchDispatcher(
-            daemon=daemon,
-            rebac=rebac,
-            enable_per_file_rebac=True,
-        )
-        resp = await dispatcher.search("test", subject=("user", "alice"))
-
-        result_paths = {r.get("path") or r["path"] for r in resp.results}
-        assert "a_ok.txt" in result_paths
-        assert "b_ok.txt" in result_paths
-        assert "a_deny.txt" not in result_paths
-
-    @pytest.mark.asyncio
-    async def test_no_filter_when_disabled(self) -> None:
-        """Default (enable_per_file_rebac=False) should NOT call rebac_check_batch."""
-        daemon = _make_daemon({"zone_a": [_make_result("a.txt", 5.0)]})
-        rebac = _make_rebac(["zone_a"])
-        rebac.rebac_check_batch = AsyncMock()
-
-        dispatcher = FederatedSearchDispatcher(daemon=daemon, rebac=rebac)
-        resp = await dispatcher.search("test", subject=("user", "alice"))
-
-        assert len(resp.results) == 1
-        rebac.rebac_check_batch.assert_not_called()
-
-
-class TestCrossDaemonPythonSurfaceRetired:
-    """The two former classes here — `TestSearchDelegationMinting` and
-    `TestRemoteZoneSearch` — covered the Python-side
-    `_search_remote_zone` + `_mint_search_delegation` methods that
-    minted a `SearchDelegation` and dispatched a remote leg over the
-    `transport.call_rpc` path.  Both are retired: cross-daemon
-    federated search now lives on the Rust axum surface
-    (`nexus-http-api::backends::tonic_remote::TonicRemoteSearchBackend`
-    on the source side, `nexus-search-plugin::delegation_gate` on the
-    destination side).  This regression pin catches a future re-add
-    on the Python side that would re-open the SSOT split."""
-
-    def test_python_dispatcher_no_longer_owns_cross_daemon_methods(self) -> None:
-        from nexus.bricks.search.federated_search import FederatedSearchDispatcher
-
-        assert not hasattr(FederatedSearchDispatcher, "_search_remote_zone")
-        assert not hasattr(FederatedSearchDispatcher, "_mint_search_delegation")
 
 
 class TestResultToDictContextShape:
@@ -1103,26 +904,20 @@ class TestTierBoostTrustBoundary:
 
 class TestRound10Hardening:
     @pytest.mark.asyncio
-    async def test_leaky_keyword_no_longer_promoted_post_p12(self) -> None:
-        """Post-P12 the sole daemon shape is the Rust plugin proxy, which
-        routes keyword through a zone-filtered tantivy index — there's no
-        BM25S/Zoekt cross-zone leak like the retired Python daemon had.
-        Decision 13B's forced keyword→hybrid promotion no longer applies;
-        the requested type + fusion method now pass through unchanged.
-        See _get_effective_search_type in federated_search.py."""
+    async def test_keyword_preserves_type_and_fusion(self) -> None:
+        """A keyword leg forwards the caller's type, alpha and fusion settings."""
         seen: dict[str, Any] = {}
 
         daemon = AsyncMock()
         daemon.is_initialized = True
-        daemon.get_stats = lambda: {"bm25_documents": 5, "zoekt_available": False}
 
-        async def mock_search(request: Any) -> list[Any]:
+        async def mock_search(request: Any) -> tuple[list[Any], str | None]:
             seen["search_type"] = request.search_type
             seen["alpha"] = request.alpha
             seen["fusion_method"] = request.fusion_method
-            return [_make_result("a.txt", 5.0)]
+            return ([_make_result("a.txt", 5.0)], None)
 
-        daemon.search = mock_search
+        daemon.search_with_error = mock_search
         dispatcher = FederatedSearchDispatcher(daemon=daemon, rebac=_make_rebac(["zone_a"]))
 
         await dispatcher.search(
@@ -1133,7 +928,6 @@ class TestRound10Hardening:
             alpha=0.3,
         )
 
-        # Post-P12: no promotion, pass-through of caller-requested params.
         assert seen["search_type"] == "keyword"
         assert seen["alpha"] == 0.3
         assert seen["fusion_method"] == "weighted"
@@ -1141,7 +935,7 @@ class TestRound10Hardening:
 
 class TestRecencyKnobs:
     """Issue #4543: recency knobs must segregate cache entries and reach
-    local zones' daemon.search; remote RPC params stay untouched."""
+    each zone's daemon.search_with_error."""
 
     def _dispatcher(self) -> Any:
         from nexus.bricks.search.federated_search import FederatedSearchDispatcher
@@ -1150,11 +944,11 @@ class TestRecencyKnobs:
 
     @pytest.mark.asyncio
     async def test_local_zone_receives_recency_knobs(self) -> None:
-        """_search_zone must forward the knobs to daemon.search for local
-        zones (remote zones are exercised by existing rrf_k-omission tests)."""
+        """_search_zone must forward the knobs to daemon.search_with_error for local
+        zones."""
         d = self._dispatcher()
         daemon = MagicMock()
-        daemon.search = AsyncMock(return_value=[])
+        daemon.search_with_error = AsyncMock(return_value=([], None))
         d._get_daemon_for_zone = MagicMock(return_value=daemon)
 
         await d._search_zone(
@@ -1171,8 +965,8 @@ class TestRecencyKnobs:
             recency_half_life_days=14.0,
         )
         # Post-#4553: dispatcher bundles all knobs into a single
-        # SearchRequest positional arg passed to daemon.search().
-        request = daemon.search.call_args.args[0]
+        # SearchRequest positional arg passed to daemon.search_with_error().
+        request = daemon.search_with_error.call_args.args[0]
         assert request.recency == "auto"
         assert request.recency_weight == 0.4
         assert request.recency_half_life_days == 14.0

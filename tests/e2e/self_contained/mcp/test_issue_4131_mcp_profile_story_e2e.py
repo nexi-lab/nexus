@@ -234,7 +234,6 @@ async def test_issue_4131_mcp_profiles_real_protocol_and_perf(
     monkeypatch.setenv("NEXUS_ENABLE_WRITE_BUFFER", "false")
     monkeypatch.setenv("NEXUS_ACTIVITY_ENABLED", "0")
     monkeypatch.setenv("NEXUS_ACTIVITY_DB_PATH", str(tmp_path / "activity.db"))
-    monkeypatch.setenv("NEXUS_TXTAI_USE_API_EMBEDDINGS", "false")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
 

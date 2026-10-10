@@ -8,7 +8,6 @@ silent ``count=0`` the client cannot distinguish from success.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -24,10 +23,6 @@ except ImportError:
 
 pytestmark = pytest.mark.skipif(not _HAS_FASTAPI, reason="fastapi test client unavailable")
 
-# Admin principal: /search/index now enforces the same
-# admin-or-path-WRITE gate as the index-directory mutation routes
-# (review R3); these tests pin the RESPONSE contract, so they run as
-# admin.  The gate itself is pinned in test_search_response_contracts.
 _AUTH = {
     "authenticated": True,
     "subject_type": "user",
@@ -75,7 +70,7 @@ _DOCS = {
 
 
 def test_all_indexed_returns_200_with_count() -> None:
-    daemon = _make_daemon(SimpleNamespace(indexed=2, skipped=[]))
+    daemon = _make_daemon({"indexed": 2, "skipped": []})
     with TestClient(_build_app(daemon)) as client:
         response = client.post("/api/v2/search/index", json=_DOCS)
     assert response.status_code == 200, response.text
@@ -89,7 +84,7 @@ def test_all_indexed_returns_200_with_count() -> None:
 
 
 def test_skipped_documents_return_409_with_paths() -> None:
-    daemon = _make_daemon(SimpleNamespace(indexed=1, skipped=["/b.md"]))
+    daemon = _make_daemon({"indexed": 1, "skipped": ["/b.md"]})
     with TestClient(_build_app(daemon)) as client:
         response = client.post("/api/v2/search/index", json=_DOCS)
     assert response.status_code == 409, response.text
@@ -99,13 +94,17 @@ def test_skipped_documents_return_409_with_paths() -> None:
     assert detail["zone_id"] == "eng"
 
 
-def test_int_returning_daemon_double_still_gets_200() -> None:
-    """Legacy/mocked daemons that return a bare int keep the old contract."""
-    daemon = _make_daemon(2)
+def test_content_skips_preserve_paths_and_sequence() -> None:
+    daemon = _make_daemon(
+        {"indexed": 1, "skipped_count": 1, "skipped_paths": ["/b.md"], "index_seq": 27}
+    )
     with TestClient(_build_app(daemon)) as client:
         response = client.post("/api/v2/search/index", json=_DOCS)
     assert response.status_code == 200, response.text
-    assert response.json()["count"] == 2
+    assert response.json()["count"] == 1
+    assert response.json()["skippedCount"] == 1
+    assert response.json()["skippedPaths"] == ["/b.md"]
+    assert response.json()["indexSeq"] == 27
 
 
 def test_daemon_error_returns_500() -> None:
@@ -114,4 +113,23 @@ def test_daemon_error_returns_500() -> None:
     with TestClient(_build_app(daemon)) as client:
         response = client.post("/api/v2/search/index", json=_DOCS)
     assert response.status_code == 500, response.text
-    assert "pipeline failed" in response.json()["detail"]
+    assert response.json()["detail"] == "Failed to index Search documents"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        [],
+        {"documents": "a"},
+        {"documents": ["a"]},
+        {"documents": [{"path": None}]},
+        {"documents": [{"text": 1}]},
+        {"documents": [{"zone_id": True}]},
+    ],
+)
+def test_invalid_document_shape_rejects_before_rpc(body: Any) -> None:
+    daemon = _make_daemon({"indexed": 0})
+    with TestClient(_build_app(daemon)) as client:
+        response = client.post("/api/v2/search/index", json=body)
+    assert response.status_code == 400, response.text
+    daemon.index_documents.assert_not_awaited()

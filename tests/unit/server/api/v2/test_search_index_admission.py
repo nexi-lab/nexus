@@ -9,7 +9,6 @@ route now sheds above ``NEXUS_SEARCH_INDEX_MAX_INFLIGHT`` with 503 +
 from __future__ import annotations
 
 import asyncio
-from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -61,7 +60,7 @@ def _build_app(daemon: Any) -> FastAPI:
 
 def _make_daemon() -> MagicMock:
     daemon = MagicMock()
-    daemon.index_documents = AsyncMock(return_value=SimpleNamespace(indexed=1, skipped=[]))
+    daemon.index_documents = AsyncMock(return_value={"indexed": 1, "skipped": []})
     return daemon
 
 
@@ -140,7 +139,7 @@ def test_counter_tracks_concurrent_inflight_requests(monkeypatch: pytest.MonkeyP
     async def _slow_index(documents: Any, *, zone_id: str) -> Any:
         observed.append(app_holder["app"].state.search_index_inflight)
         await asyncio.sleep(0)
-        return SimpleNamespace(indexed=len(documents), skipped=[])
+        return {"indexed": len(documents), "skipped": []}
 
     daemon = MagicMock()
     daemon.index_documents = _slow_index

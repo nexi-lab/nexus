@@ -57,6 +57,13 @@ Responses report observed timings; permission-denial statistics are not exposed.
 The query limit bounds the host's ranked candidate window. Live authorization
 and VFS checks can leave fewer returned hits than that limit.
 
+The Rust host also authorizes index mutations, directory/mode management and
+statistics. These operations require management authority; ordinary callers
+receive HTTP 403. Invalid or revoked caller credentials return HTTP 401.
+Python forwards the original credential and preserves the host's RPC error
+category. Refresh reads workspace bytes using the caller's VFS context before
+submitting them for indexing.
+
 `POST /api/v2/search/locate` accepts `{"path": "/docs/file.md", "zone_id": "team"}`
 (`zone_id` defaults to the caller's zone) and returns `indexed`, `chunk_count`,
 `mtime_ms`, `zone_id`, and `elapsed_ms`. It queries one path's index status.

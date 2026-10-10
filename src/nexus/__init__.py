@@ -192,7 +192,11 @@ def _open_local_kernel(metadata_path: str, kernel: object = None) -> Any:
         client = KernelClient(ephemeral=True)
     else:
         client = KernelClient(metadata_path=metadata_path)
-    client.open()
+    try:
+        client.open()
+    except BaseException:
+        client.close()
+        raise
     return client
 
 
@@ -305,6 +309,7 @@ def connect(
             permissions=_PermissionConfig(enforce=False),
             init_cred=_RemoteOC(user_id="remote", groups=[], is_admin=False),
         )
+        nfs._register_runtime_closeable(remote_kernel)
 
         nfs.sys_setattr(
             "/",
@@ -483,6 +488,9 @@ def connect(
     for _k, _v in _env_to_propagate.items():
         os.environ[_k] = _v
 
+    from contextlib import ExitStack
+
+    startup_resources = ExitStack()
     try:
         # Apply FeaturesConfig overrides (Issue #1389)
         overrides = cfg.features.to_overrides() if cfg.features else {}
@@ -507,6 +515,7 @@ def connect(
         # annotation is now ``Any`` (kernel-shape) per the W3 SSOT
         # cleanup.
         metadata_store: Any = _open_local_kernel(metadata_path, kernel=_early_kernel)
+        startup_resources.callback(metadata_store.close)
         # Python no longer owns a FederationService object. `federation=None`
         # below just drops a dead kwarg into the orchestrator; _lifecycle.py
         # handles the None path. ``metadata_store`` here is a ``PyKernel`` —
@@ -545,6 +554,8 @@ def connect(
             record_store = SQLAlchemyRecordStore(db_url=_database_url)
         else:
             record_store = None
+        if record_store is not None:
+            startup_resources.callback(record_store.close)
 
         # Build config objects from NexusConfig fields (Issue #1391)
         from nexus.core.config import (
@@ -622,6 +633,9 @@ def connect(
             security=getattr(cfg, "security", None),
         )
 
+        nx_fs._register_runtime_closeable(metadata_store)
+        startup_resources.callback(nx_fs.close)
+
         # Set memory config for Memory API
         if cfg.zone_id or cfg.user_id or cfg.agent_id:
             nx_fs._memory_config = {
@@ -645,22 +659,26 @@ def connect(
         # Start audit hook if federation is active (requires a loaded Raft zone).
         _init_audit_hook(nx_fs)
 
+        startup_resources.pop_all()
         return nx_fs
     finally:
-        # Codex review R4 (high): restore env so successive
-        # ``connect()`` calls (and any subprocess spawned later) do
-        # NOT inherit the synthetic NEXUS_PROFILE /
-        # NEXUS_ENABLE_VECTOR_SEARCH this call wrote. Without this,
-        # call N+1 sees call N's value as "operator env" and refuses
-        # to overwrite, leaking sandbox/false through into a later
-        # full/true boot. Always restore in finally so a raised
-        # exception during boot doesn't leave sticky env either.
-        for _k, _prev in _env_saved.items():
-            if _prev is None:
-                os.environ.pop(_k, None)
-            else:
-                os.environ[_k] = _prev
-        _CONNECT_ENV_LOCK.release()
+        try:
+            startup_resources.close()
+        finally:
+            # Codex review R4 (high): restore env so successive
+            # ``connect()`` calls (and any subprocess spawned later) do
+            # NOT inherit the synthetic NEXUS_PROFILE /
+            # NEXUS_ENABLE_VECTOR_SEARCH this call wrote. Without this,
+            # call N+1 sees call N's value as "operator env" and refuses
+            # to overwrite, leaking sandbox/false through into a later
+            # full/true boot. Always restore in finally so a raised
+            # exception during boot doesn't leave sticky env either.
+            for _k, _prev in _env_saved.items():
+                if _prev is None:
+                    os.environ.pop(_k, None)
+                else:
+                    os.environ[_k] = _prev
+            _CONNECT_ENV_LOCK.release()
 
 
 def _register_federation_resolver(nx_fs: "NexusFS", federation: Any, backend: Any) -> None:

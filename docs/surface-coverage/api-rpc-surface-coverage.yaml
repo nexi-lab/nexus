@@ -4524,7 +4524,7 @@ operations:
   transports:
     cli:
       name: nexus append
-      source: src/nexus/cli/commands/file_ops.py:895
+      source: src/nexus/cli/commands/file_ops.py:846
     grpc_expose:
       name: append
       source: src/nexus/core/nexus_fs_content.py:1096
@@ -4562,7 +4562,7 @@ operations:
   transports:
     cli:
       name: nexus cat
-      source: src/nexus/cli/commands/file_ops.py:94
+      source: src/nexus/cli/commands/file_ops.py:45
   profiles:
     lite: supported
     sandbox: supported
@@ -4596,7 +4596,7 @@ operations:
   transports:
     cli:
       name: nexus copy
-      source: src/nexus/cli/commands/file_ops.py:1200
+      source: src/nexus/cli/commands/file_ops.py:1151
   profiles:
     lite: supported
     sandbox: supported
@@ -4613,7 +4613,7 @@ operations:
   transports:
     cli:
       name: nexus cp
-      source: src/nexus/cli/commands/file_ops.py:1156
+      source: src/nexus/cli/commands/file_ops.py:1107
   profiles:
     lite: supported
     sandbox: supported
@@ -4665,7 +4665,7 @@ operations:
   transports:
     cli:
       name: nexus exists
-      source: src/nexus/cli/commands/file_ops.py:536
+      source: src/nexus/cli/commands/file_ops.py:487
     grpc_call:
       name: exists
       source: src/nexus/server/_kernel_syscall_dispatch.py:50
@@ -4775,7 +4775,7 @@ operations:
   transports:
     cli:
       name: nexus metadata
-      source: src/nexus/cli/commands/file_ops.py:495
+      source: src/nexus/cli/commands/file_ops.py:446
   profiles:
     lite: supported
     sandbox: supported
@@ -4816,7 +4816,7 @@ operations:
   transports:
     cli:
       name: nexus move
-      source: src/nexus/cli/commands/file_ops.py:1300
+      source: src/nexus/cli/commands/file_ops.py:1251
   profiles:
     lite: supported
     sandbox: supported
@@ -4885,7 +4885,7 @@ operations:
   transports:
     cli:
       name: nexus read-bulk
-      source: src/nexus/cli/commands/file_ops.py:598
+      source: src/nexus/cli/commands/file_ops.py:549
   profiles:
     lite: supported
     sandbox: supported
@@ -4938,7 +4938,7 @@ operations:
   transports:
     cli:
       name: nexus rename-batch
-      source: src/nexus/cli/commands/file_ops.py:651
+      source: src/nexus/cli/commands/file_ops.py:602
   profiles:
     lite: supported
     sandbox: supported
@@ -4956,7 +4956,7 @@ operations:
   transports:
     cli:
       name: nexus rm
-      source: src/nexus/cli/commands/file_ops.py:1464
+      source: src/nexus/cli/commands/file_ops.py:1415
   profiles:
     lite: supported
     sandbox: supported
@@ -4973,7 +4973,7 @@ operations:
   transports:
     cli:
       name: nexus rm-batch
-      source: src/nexus/cli/commands/file_ops.py:698
+      source: src/nexus/cli/commands/file_ops.py:649
   profiles:
     lite: supported
     sandbox: supported
@@ -5032,7 +5032,7 @@ operations:
   transports:
     cli:
       name: nexus stat
-      source: src/nexus/cli/commands/file_ops.py:447
+      source: src/nexus/cli/commands/file_ops.py:398
     grpc_expose:
       name: stat
       source: src/nexus/core/nexus_fs_metadata.py:1160
@@ -5087,7 +5087,7 @@ operations:
   transports:
     cli:
       name: nexus sync
-      source: src/nexus/cli/commands/file_ops.py:1363
+      source: src/nexus/cli/commands/file_ops.py:1314
   profiles:
     lite: supported
     sandbox: supported
@@ -5122,7 +5122,7 @@ operations:
   transports:
     cli:
       name: nexus write
-      source: src/nexus/cli/commands/file_ops.py:741
+      source: src/nexus/cli/commands/file_ops.py:692
     grpc_call:
       name: write
       source: src/nexus/server/_kernel_syscall_dispatch.py:70
@@ -5145,7 +5145,7 @@ operations:
   transports:
     cli:
       name: nexus write-batch
-      source: src/nexus/cli/commands/file_ops.py:974
+      source: src/nexus/cli/commands/file_ops.py:925
   profiles:
     lite: supported
     sandbox: supported

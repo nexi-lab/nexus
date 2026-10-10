@@ -134,25 +134,16 @@ def resolve_mcp_operation_context(
     # When auth_provider is available, use it to verify the key.
     # If verification fails, fail closed (return None).
     #
-    # When auth_provider is NOT available but a per-request key is set,
-    # _get_nexus_instance already created a remote NexusFS scoped to
-    # that key — its _init_cred IS the per-request identity (not
-    # ambient). So we allow steps 1-3 to proceed.
+    # Remote transports verify the request key at the owning host. The
+    # borrowed filesystem context supplies routing defaults only. Local
+    # services require a provider to resolve a presented request key.
     request_key = request_api_key.get()
-    if request_key is not None and auth_provider is None:
-        # Per-request key set but no auth_provider to verify it.
-        # Fall through to NexusFS-based identity (steps 1-3).
-        # In remote mode, _get_nexus_instance already created a
-        # connection scoped to this key — _init_cred is that identity.
-        # In local mode, _init_cred is the process identity (single
-        # user, no multi-tenancy concern).
-        #
-        # NOTE: callers (e.g. CLI) should thread auth_provider for
-        # full verification. This fallback is safe but less strict.
-        logger.info(
-            "Per-request API key set but no auth_provider available; "
-            "using NexusFS-based identity (steps 1-3)."
-        )
+    if (
+        request_key is not None
+        and auth_provider is None
+        and not callable(getattr(nx_instance, "_nexus_remote_call_rpc", None))
+    ):
+        return None
     if request_key is not None and auth_provider is not None:
         auth_result = authenticate_api_key(auth_provider, request_key)
         if auth_result is not None:

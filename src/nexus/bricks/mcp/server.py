@@ -18,7 +18,6 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
-from cachetools import LRUCache
 from fastmcp import Context, FastMCP
 from fastmcp.server.dependencies import get_http_request
 
@@ -160,11 +159,11 @@ async def create_mcp_server(
         >>> server = create_mcp_server(nx)
         >>>
         >>> # Remote filesystem
-        >>> server = create_mcp_server(remote_url="http://localhost:2026")
+        >>> server = create_mcp_server(remote_url="grpc://localhost:2028")
         >>>
         >>> # Remote filesystem with API key
         >>> server = create_mcp_server(
-        ...     remote_url="http://localhost:2026",
+        ...     remote_url="grpc://localhost:2028",
         ...     api_key="your-api-key"
         ... )
     """
@@ -194,67 +193,12 @@ async def create_mcp_server(
             except Exception:
                 pass  # Graceful degradation — tool returns "unavailable"
 
-    # Store default connection and config for per-request API key support
     assert nx is not None  # guaranteed by the if-block above
     _default_nx: NexusFS = nx
-    _remote_url = remote_url
-
-    # Connection pool for per-request API keys (bounded LRU, cached by API key)
-    _connection_cache: LRUCache[str, NexusFS] = LRUCache(maxsize=256)
 
     def _get_nexus_instance(_ctx: Context | None = None) -> NexusFS:
-        """Get Nexus instance for current request using context API key.
-
-        This function checks if infrastructure has set a per-request API key
-        in the request context variable. If so, it creates/retrieves
-        a connection with that API key. Otherwise, it returns the default connection.
-
-        Args:
-            ctx: Optional FastMCP Context object (if available from tool)
-
-        Returns:
-            NexusFS instance (default or per-request based on context)
-
-        Note:
-            Per-request API keys are only supported when remote_url is configured.
-            For local connections, the default connection is always used.
-        """
-
-        # Get API key from context variable (set by Starlette middleware or
-        # APIKeyExtractionMiddleware). Context.get_state() is async in fastmcp
-        # 3.x and cannot be called from sync tool functions, so we rely solely
-        # on the sync contextvars path.
-        request_api_key: str | None = _request_api_key.get()
-
-        # If no API key in context, use default connection
-        if request_api_key is None:
-            return _default_nx
-
-        # If remote_url not configured, can't use per-request API keys
-        if not _remote_url:
-            return _default_nx
-
-        # Check cache for existing connection
-        if request_api_key in _connection_cache:
-            return _connection_cache[request_api_key]
-
-        # Create new remote connection with API key from context.
-        # nexus.connect() is async, so run it via a background thread
-        # to avoid blocking the current event loop.
-        import concurrent.futures
-
-        import nexus as _nexus
-
-        def _connect_sync() -> NexusFS:
-            return _nexus.connect(
-                config={"profile": "remote", "url": _remote_url, "api_key": request_api_key}
-            )
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            new_nx = pool.submit(_connect_sync).result()
-
-        _connection_cache[request_api_key] = new_nx
-        return new_nx
+        """Borrow the filesystem; its transport reads the request credential."""
+        return _default_nx
 
     def _service(nx_instance: Any, name: str) -> Any | None:
         service_fn = getattr(nx_instance, "service", None)
@@ -685,7 +629,7 @@ async def create_mcp_server(
         """
         nx_instance = _get_nexus_instance(ctx)
         content_bytes = content.encode("utf-8") if isinstance(content, str) else content
-        nx_instance.write(path, content_bytes)
+        await call_service_method(nx_instance.write, path, content_bytes)
         return f"Successfully wrote {len(content_bytes)} bytes to {path}"
 
     @mcp.tool(
@@ -862,27 +806,22 @@ async def create_mcp_server(
             JSON string with file metadata
         """
         nx_instance = _get_nexus_instance(ctx)
-        if not nx_instance.access(path):
+        metadata = await call_service_method(nx_instance.sys_stat, path)
+        if metadata is None:
             return tool_error(
                 "not_found",
                 f"File not found at '{path}'. Use nexus_list_files to check available files.",
             )
 
-        is_dir = nx_instance.is_directory(path)
+        is_dir = bool(metadata.get("is_directory", False))
         info_dict: dict[str, Any] = {
             "path": path,
             "exists": True,
             "is_directory": is_dir,
         }
 
-        # Try to get size if it's a file
         if not is_dir:
-            try:
-                content = await asyncio.to_thread(nx_instance.sys_read, path)
-                if isinstance(content, bytes):
-                    info_dict["size"] = len(content)
-            except Exception as e:
-                logger.debug("Failed to read file size for %s: %s", path, e)
+            info_dict["size"] = metadata["size"]
 
         return json.dumps(info_dict, indent=2)
 
@@ -910,7 +849,7 @@ async def create_mcp_server(
         """
         nx_instance = _get_nexus_instance(ctx)
         try:
-            nx_instance.mkdir(path)
+            await call_service_method(nx_instance.mkdir, path)
         except FileExistsError:
             return f"Directory already exists at '{path}'."
         return f"Successfully created directory {path}"
@@ -936,7 +875,7 @@ async def create_mcp_server(
         """
         nx_instance = _get_nexus_instance(ctx)
         try:
-            nx_instance.rmdir(path, recursive=recursive)
+            await call_service_method(nx_instance.rmdir, path, recursive=recursive)
         except OSError as e:
             if "not empty" in str(e).lower():
                 return tool_error(

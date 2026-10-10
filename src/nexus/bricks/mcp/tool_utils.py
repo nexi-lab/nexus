@@ -25,7 +25,12 @@ from typing import Any
 
 import grpc
 
-from nexus.contracts.exceptions import RemoteConnectionError, RemoteTimeoutError
+from nexus.contracts.exceptions import (
+    AuthenticationError,
+    NexusPermissionError,
+    RemoteConnectionError,
+    RemoteTimeoutError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +113,8 @@ def handle_tool_errors(operation: str) -> Any:
 
     def _handle_error(args: tuple[Any, ...], kwargs: dict[str, Any], exc: Exception) -> str:
         """Shared error handling for both sync and async wrappers."""
+        if isinstance(exc, AuthenticationError):
+            return tool_error("unauthorized", f"Authentication required for {operation}.")
         if isinstance(exc, (grpc.RpcError, RemoteConnectionError, RemoteTimeoutError)):
             if isinstance(exc, grpc.RpcError):
                 status = exc.code()
@@ -150,7 +157,7 @@ def handle_tool_errors(operation: str) -> Any:
                 f"File not found{hint}. Use nexus_list_files to check available files.",
                 str(exc),
             )
-        elif isinstance(exc, PermissionError):
+        elif isinstance(exc, (PermissionError, NexusPermissionError)):
             path = _extract_path_hint(args, kwargs)
             hint = f" for '{path}'" if path else ""
             return tool_error(

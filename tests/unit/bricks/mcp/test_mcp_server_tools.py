@@ -396,8 +396,7 @@ class TestFileOperationTools:
 
     async def test_file_info_exists(self, mock_nx_basic):
         """Test getting file info for existing file."""
-        mock_nx_basic.access.return_value = True
-        mock_nx_basic.is_directory.return_value = False
+        mock_nx_basic.sys_stat = Mock(return_value={"is_directory": False, "size": 1234})
         server = await create_mcp_server(nx=mock_nx_basic)
 
         info_tool = get_tool(server, "nexus_file_info")
@@ -407,10 +406,15 @@ class TestFileOperationTools:
         assert info["exists"] is True
         assert info["is_directory"] is False
         assert info["path"] == "/test.txt"
+        assert info["size"] == 1234
+        mock_nx_basic.sys_stat.assert_called_once_with("/test.txt")
+        mock_nx_basic.sys_read.assert_not_called()
+        mock_nx_basic.access.assert_not_called()
+        mock_nx_basic.is_directory.assert_not_called()
 
     async def test_file_info_not_found(self, mock_nx_basic):
         """Test getting file info for non-existent file."""
-        mock_nx_basic.access.return_value = False
+        mock_nx_basic.sys_stat = Mock(return_value=None)
         server = await create_mcp_server(nx=mock_nx_basic)
 
         info_tool = get_tool(server, "nexus_file_info")
@@ -421,8 +425,7 @@ class TestFileOperationTools:
 
     async def test_file_info_directory(self, mock_nx_basic):
         """Test getting file info for directory."""
-        mock_nx_basic.access.return_value = True
-        mock_nx_basic.is_directory.return_value = True
+        mock_nx_basic.sys_stat = Mock(return_value={"is_directory": True, "size": 0})
         server = await create_mcp_server(nx=mock_nx_basic)
 
         info_tool = get_tool(server, "nexus_file_info")
@@ -1564,7 +1567,7 @@ class TestServerCreation:
 
     async def test_server_with_remote_url(self):
         """Test creating server with remote URL."""
-        with patch("nexus.connect", new_callable=AsyncMock) as mock_connect:
+        with patch("nexus.connect") as mock_connect:
             mock_instance = Mock()
             mock_instance.sys_read = Mock(return_value=b"test")
             mock_instance.sys_write = Mock()
@@ -1579,7 +1582,7 @@ class TestServerCreation:
 
     async def test_server_with_auto_connect(self):
         """Test creating server with auto-connect."""
-        with patch("nexus.connect", new_callable=AsyncMock) as mock_connect:
+        with patch("nexus.connect") as mock_connect:
             mock_nx = Mock()
             mock_nx.sys_read = Mock(return_value=b"test")
             mock_nx.sys_write = Mock()

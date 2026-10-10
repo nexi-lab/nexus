@@ -272,6 +272,9 @@ class NexusFS(  # type: ignore[misc]
                 self._kernel = KernelClient(metadata_path=_meta)
                 self._kernel.open()
         except Exception as exc:
+            if _provided_kernel is None and self._kernel is not None:
+                with contextlib.suppress(Exception):
+                    self._kernel.close()
             logger.warning("Kernel init failed — falling back to kernel=None: %s", exc)
             self._kernel = None
 
@@ -314,6 +317,9 @@ class NexusFS(  # type: ignore[misc]
             Callable[[], None]
         ] = []  # Issue #1793: factory-registered service close
         self._runtime_closeables: list[Any] = []
+        if _provided_kernel is None and self._kernel is not None:
+            self._runtime_closeables.append(self._kernel)
+        self._closed = False
 
     # =====================================================================
     # Lifecycle methods: link() → initialize() → bootstrap()
@@ -898,69 +904,39 @@ class NexusFS(  # type: ignore[misc]
         return {}
 
     def close(self) -> None:
-        """Close the filesystem and release resources."""
-        # Issue #1793/#1789/#1792: Service close via factory-registered callbacks.
-        # Runs BEFORE pipe/IPC close so callbacks can drain pipe buffers
-        # (Issue #3399: piped write observer needs to flush before buffers clear).
-        for _close_cb in self._close_callbacks:
-            try:
-                _close_cb()
-            except Exception as exc:
-                logger.debug("close: callback failed (best-effort): %s", exc)
+        """Close owned resources, attempting every cleanup even after a failure."""
+        if self._closed:
+            return
+        self._closed = True
 
-        # Auto-close all enlisted services that have a close() method
-        # (rebac_manager, audit_store, etc.). Reverse registration order.
+        # Services drain before IPC and the kernel transport are closed.
+        callbacks: list[Callable[[], Any]] = list(self._close_callbacks)
+        self._close_callbacks.clear()
         if self._kernel is not None:
-            self._kernel.service_close_all()
-
-        # Close IPC primitives — Rust kernel (§4.2)
-        # _kernel is None in remote connection mode (no local kernel)
-        if self._kernel is not None:
-            self._kernel.close_all_pipes()
-            self._kernel.close_all_streams()
-        # Close transport pool (persistent gRPC connections)
-        if hasattr(self, "_transport_pool") and self._transport_pool is not None:
-            self._transport_pool.close_all()
-
-        # Metadata store close is a no-op — kernel manages the redb
-        # lifecycle via ``release_metastores`` below.
-
-        # Release Rust-owned redb/SQLite file handles. Without this call the
-        # Rust kernel keeps the metastore Box alive until Python GC runs —
-        # process-lifetime tests that open the same redb path in a second
-        # NexusFS hit ``Database already open. Cannot acquire lock.`` (Issue
-        # #3765 Cat-5/6). ``release_metastores`` is idempotent.
-        if self._kernel is not None:
-            try:
-                _release = getattr(self._kernel, "release_metastores", None)
-                if _release is not None:
-                    _release()
-            except Exception as exc:  # pragma: no cover - best-effort teardown
-                logger.debug("kernel.release_metastores failed: %s", exc)
-            # Drop this kernel from the shared create_kernel cache so the
-            # next ``create_kernel(path)`` in this process gets a fresh
-            # kernel with its own metastore wired up (Issue #3765 Cat-5/6).
-            try:
-                from nexus.fs._kernel_factory import _evict_kernel_cache
-
-                _evict_kernel_cache(self._kernel)
-            except Exception as exc:  # pragma: no cover - best-effort
-                logger.debug("_evict_kernel_cache failed: %s", exc)
-
-        # Close record store (Services layer SQL connections)
+            callbacks.extend(
+                (
+                    self._kernel.service_close_all,
+                    self._kernel.close_all_pipes,
+                    self._kernel.close_all_streams,
+                )
+            )
+        if self._transport_pool is not None:
+            callbacks.append(self._transport_pool.close_all)
         if self._record_store is not None:
-            self._record_store.close()
-
-        # Close process-local runtime resources owned by this NexusFS.
+            callbacks.append(self._record_store.close)
+        # Runtime resources close in reverse acquisition order. The kernel
+        # client created by this filesystem was acquired first and closes last.
         while self._runtime_closeables:
             resource = self._runtime_closeables.pop()
             close_fn = getattr(resource, "close", None)
-            if not callable(close_fn):
-                continue
+            if callable(close_fn):
+                callbacks.append(close_fn)
+
+        for callback in callbacks:
             try:
-                close_fn()
-            except Exception as e:
-                logger.debug("Failed to close runtime resource %s: %s", type(resource).__name__, e)
+                callback()
+            except Exception as exc:
+                logger.warning("Filesystem cleanup failed (%s): %s", callback, exc)
 
     def __enter__(self) -> "NexusFS":
         """Context manager entry."""

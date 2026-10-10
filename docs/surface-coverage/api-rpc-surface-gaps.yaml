@@ -6,13 +6,6 @@
 # with all profiles set to missing_needed and a brief `wanted_why` line.
 schema_version: 1
 missing_operations:
-  - id: search.grep_section
-    module: search
-    summary: "Section-aware grep: `nexus grep PATTERN /file.md --in-section '## API'`. Lets users target markdown / code section without piping cat -> head -> grep."
-    wanted_why: "Users commonly want to grep within a heading scope; current grep is whole-file only."
-    gap_issue: 4186
-    owning_issue: 4135
-
   - id: raft.cluster_status
     module: raft
     summary: "Inspect raft cluster: leader, members, term, replication lag."
@@ -48,13 +41,6 @@ missing_operations:
     gap_issue: 4206
     owning_issue: 4138
 
-  - id: archive.restore
-    module: archive
-    summary: "Restore a signed archive into a zone."
-    wanted_why: "We can create archives (1 op) but no documented restore path."
-    gap_issue: 4207
-    owning_issue: 4138
-
   - id: parsers.list
     module: parsers
     summary: "Enumerate registered parsers + their detected formats."
@@ -68,13 +54,6 @@ missing_operations:
     wanted_why: "Useful for parser debugging; currently requires Python REPL."
     gap_issue: 4187
     owning_issue: 4135
-
-  - id: upload.cancel
-    module: upload
-    summary: "Cancel an in-flight TUS upload."
-    wanted_why: "Pause/resume covered, cancellation isn't."
-    gap_issue: 4208
-    owning_issue: 4138
 
   - id: portability.profile_export
     module: portability

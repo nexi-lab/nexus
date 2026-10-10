@@ -124,11 +124,7 @@ class FileMetadataModel(Base):
 
 
 class DocumentChunkModel(Base):
-    """Document chunks for semantic search.
-
-    Stores document chunks with embeddings for semantic search.
-    Supports both SQLite (with sqlite-vec) and PostgreSQL (with pgvector).
-    """
+    """Document chunk records referenced by knowledge relationships."""
 
     __tablename__ = "document_chunks"
 

@@ -1,8 +1,7 @@
 """DT_PIPE-backed dispatch consumer for task lifecycle signals.
 
 Produces task signals into a kernel ring buffer pipe and consumes them
-in a background asyncio task, following the same pattern as
-``ZoektWriteObserver``.
+in a background asyncio task.
 
 Flow::
 

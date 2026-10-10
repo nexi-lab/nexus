@@ -94,13 +94,9 @@ def build_v2_registry(
 
     # ---- Core v2 routers ----
     try:
-        from nexus.server.api.v2.routers import (
-            mobile_search,
-            operations,
-        )
+        from nexus.server.api.v2.routers import operations
 
         _core_routers: list[RouterEntry] = [
-            RouterEntry(router=mobile_search.router, name="mobile_search", endpoint_count=2),
             RouterEntry(router=operations.router, name="operations", endpoint_count=2),
         ]
         for entry in _core_routers:

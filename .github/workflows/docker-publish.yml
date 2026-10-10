@@ -816,6 +816,11 @@ jobs:
             docker cp "nexus-search-credentials-node:/app/data/tls/$file" /tmp/search-credentials/tls/
           done
           docker cp nexus-search-credentials-node:/tmp/search-admin-key /tmp/search-credentials/
+          for label in a b; do
+            bundle=$(docker exec nexus-search-credentials-node nexusd-cluster auth mint \
+              --subject-type agent --subject-id "search-cert-${label}")
+            docker cp "nexus-search-credentials-node:${bundle}" "/tmp/search-credentials/agent-${label}"
+          done
           docker cp /tmp/search-credentials nexus-e2e:/tmp/search-credentials
           docker exec -u 0 nexus-e2e chown -R nexus:nexus /tmp/search-credentials
           docker cp scripts/test_search_credentials_plugin.py nexus-e2e:/tmp/test_search_credentials_plugin.py
@@ -851,6 +856,19 @@ jobs:
             -e NEXUS_SEARCH_PLUGIN_TLS_KEY=/tmp/search-credentials/tls/node-key.pem \
             -e NEXUS_SEARCH_TEST_ADMIN_KEY=/tmp/search-credentials/search-admin-key \
             nexus-e2e python /tmp/test_rust_http_search_cli.py
+
+      - name: Verify certificate-agent Search with kernel authorization
+        run: |
+          docker cp scripts/test_search_agent_credentials_plugin.py nexus-e2e:/tmp/test_search_agent_credentials_plugin.py
+          docker exec \
+            -e NEXUS_SEARCH_PLUGIN_TARGET=127.0.0.1:2326 \
+            -e NEXUS_SEARCH_PLUGIN_TLS_CA=/tmp/search-credentials/tls/ca.pem \
+            -e NEXUS_SEARCH_PLUGIN_TLS_CERT=/tmp/search-credentials/tls/node.pem \
+            -e NEXUS_SEARCH_PLUGIN_TLS_KEY=/tmp/search-credentials/tls/node-key.pem \
+            -e NEXUS_SEARCH_TEST_ADMIN_KEY=/tmp/search-credentials/search-admin-key \
+            -e NEXUS_SEARCH_TEST_AGENT_A=/tmp/search-credentials/agent-a \
+            -e NEXUS_SEARCH_TEST_AGENT_B=/tmp/search-credentials/agent-b \
+            nexus-e2e python /tmp/test_search_agent_credentials_plugin.py
 
       - name: Run build perf e2e
         if: steps.vfs_grpc.outputs.available == 'true'

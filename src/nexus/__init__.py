@@ -248,6 +248,7 @@ def connect(
             >>> nx = nexus.connect(config={"profile": "cloud"})
     """
     import os
+    from contextlib import ExitStack
     from pathlib import Path
 
     from nexus.config import NexusConfig, load_config
@@ -284,76 +285,83 @@ def connect(
             trust_local_project=False,
         )
 
-        transport = RPCTransport(
-            server_address=grpc_address,
-            auth_token=api_key,
-            timeout=float(timeout),
-            connect_timeout=float(connect_timeout),
-            tls_config=_tls_config,
-        )
+        with ExitStack() as startup_resources:
+            transport = RPCTransport(
+                server_address=grpc_address,
+                auth_token=api_key,
+                timeout=float(timeout),
+                connect_timeout=float(connect_timeout),
+                tls_config=_tls_config,
+            )
 
-        # Rust-native remote wiring (Issue #1134 Phase 4, a803a9d63):
-        # the root mount carries backend_type="remote" + connection params,
-        # and PyKernel::sys_setattr constructs both the Rust RemoteBackend
-        # and the Rust RemoteMetastore from those params — no Python shim.
-        # The metastore handle is a bare ``PyKernel``: the kernel routes
-        # per-mount reads/writes to the remote backend it built.
-        from nexus.contracts.metadata import DT_MOUNT
-        from nexus.contracts.types import OperationContext as _RemoteOC
-        from nexus.core.config import PermissionConfig as _PermissionConfig
-        from nexus.core.nexus_fs import NexusFS as _RemoteNexusFS
+            startup_resources.callback(transport.close)
 
-        remote_kernel = _open_local_kernel(":memory:")
-        nfs = _RemoteNexusFS(
-            metadata_store=remote_kernel,
-            permissions=_PermissionConfig(enforce=False),
-            init_cred=_RemoteOC(user_id="remote", groups=[], is_admin=False),
-        )
-        nfs._register_runtime_closeable(remote_kernel)
+            # Rust-native remote wiring (Issue #1134 Phase 4, a803a9d63):
+            # the root mount carries backend_type="remote" + connection params,
+            # and PyKernel::sys_setattr constructs both the Rust RemoteBackend
+            # and the Rust RemoteMetastore from those params — no Python shim.
+            # The metastore handle is a bare ``PyKernel``: the kernel routes
+            # per-mount reads/writes to the remote backend it built.
+            from nexus.contracts.metadata import DT_MOUNT
+            from nexus.contracts.types import OperationContext as _RemoteOC
+            from nexus.core.config import PermissionConfig as _PermissionConfig
+            from nexus.core.nexus_fs import NexusFS as _RemoteNexusFS
 
-        nfs.sys_setattr(
-            "/",
-            entry_type=DT_MOUNT,
-            backend_type="remote",
-            backend_name="remote",
-            server_address=grpc_address,
-            remote_auth_token=api_key,
-            remote_ca_pem=(_tls_config.ca_pem.decode() if _tls_config else None),
-            remote_cert_pem=(_tls_config.node_cert_pem.decode() if _tls_config else None),
-            remote_key_pem=(_tls_config.node_key_pem.decode() if _tls_config else None),
-            remote_timeout=float(timeout),
-        )
+            remote_kernel = _open_local_kernel(":memory:")
+            startup_resources.callback(remote_kernel.close)
+            nfs = _RemoteNexusFS(
+                metadata_store=remote_kernel,
+                permissions=_PermissionConfig(enforce=False),
+                init_cred=_RemoteOC(user_id="remote", groups=[], is_admin=False),
+            )
+            nfs._register_runtime_closeable(remote_kernel)
+            nfs._register_runtime_closeable(transport)
+            startup_resources.pop_all()
+            startup_resources.callback(nfs.close)
 
-        # Issue #4055: expose HTTP URL + API key so NexusFUSEOperations(use_rust=True)
-        # can spawn the Rust nexus-fuse daemon (it talks to /api/nfs/* HTTP
-        # endpoints, not gRPC).
-        #
-        # The original cross-tenant cache-sharing concern that motivated an
-        # opt-in env gate was addressed in cache.rs by namespacing the foyer
-        # directory with `principal_hash(server_url, api_key)` — different
-        # API keys never share a cache directory, so exposing the credentials
-        # here is safe for unscoped remote mounts. Scoped/agent mounts are
-        # blocked from constructing the Rust daemon entirely in
-        # NexusFUSEOperations (see operations.py: `context is not None`).
-        nfs._base_url = server_url  # noqa: SLF001
-        nfs._api_key = api_key  # noqa: SLF001
+            nfs.sys_setattr(
+                "/",
+                entry_type=DT_MOUNT,
+                backend_type="remote",
+                backend_name="remote",
+                server_address=grpc_address,
+                remote_auth_token=api_key,
+                remote_ca_pem=(_tls_config.ca_pem.decode() if _tls_config else None),
+                remote_cert_pem=(_tls_config.node_cert_pem.decode() if _tls_config else None),
+                remote_key_pem=(_tls_config.node_key_pem.decode() if _tls_config else None),
+                remote_timeout=float(timeout),
+            )
 
-        # Wire service proxies for REMOTE profile (Issue #1171).
-        # Fills all 25+ service slots with RemoteServiceProxy — forwards
-        # method calls to the server via gRPC.
-        from nexus.factory._remote import (
-            _boot_remote_services,
-            install_remote_kernel_rpc_overrides,
-        )
+            # Issue #4055: expose HTTP URL + API key so NexusFUSEOperations(use_rust=True)
+            # can spawn the Rust nexus-fuse daemon (it talks to /api/nfs/* HTTP
+            # endpoints, not gRPC).
+            #
+            # The original cross-tenant cache-sharing concern that motivated an
+            # opt-in env gate was addressed in cache.rs by namespacing the foyer
+            # directory with `principal_hash(server_url, api_key)` — different
+            # API keys never share a cache directory, so exposing the credentials
+            # here is safe for unscoped remote mounts. Scoped/agent mounts are
+            # blocked from constructing the Rust daemon entirely in
+            # NexusFUSEOperations (see operations.py: `context is not None`).
+            nfs._base_url = server_url  # noqa: SLF001
+            nfs._api_key = api_key  # noqa: SLF001
 
-        _boot_remote_services(nfs, call_rpc=transport.call_rpc)
-        install_remote_kernel_rpc_overrides(nfs, transport)
-        cast(Any, nfs)._nexus_remote_call_rpc = transport.call_rpc
-        nfs._register_runtime_closeable(transport)
-        nfs._remote_base_url = server_url
-        nfs._remote_api_key = api_key or ""
+            # Wire service proxies for REMOTE profile (Issue #1171).
+            # Fills all 25+ service slots with RemoteServiceProxy — forwards
+            # method calls to the server via gRPC.
+            from nexus.factory._remote import (
+                _boot_remote_services,
+                install_remote_kernel_rpc_overrides,
+            )
 
-        return nfs
+            _boot_remote_services(nfs, call_rpc=transport.call_rpc)
+            install_remote_kernel_rpc_overrides(nfs, transport)
+            cast(Any, nfs)._nexus_remote_call_rpc = transport.call_rpc
+            nfs._remote_base_url = server_url
+            nfs._remote_api_key = api_key or ""
+
+            startup_resources.pop_all()
+            return nfs
 
     # ── Local node (single-node or federated, auto-detected) ────────
     # Heavy imports for local profiles
@@ -487,8 +495,6 @@ def connect(
     _env_saved = {k: os.environ.get(k) for k in _env_to_propagate}
     for _k, _v in _env_to_propagate.items():
         os.environ[_k] = _v
-
-    from contextlib import ExitStack
 
     startup_resources = ExitStack()
     try:
@@ -634,6 +640,7 @@ def connect(
         )
 
         nx_fs._register_runtime_closeable(metadata_store)
+        startup_resources.pop_all()
         startup_resources.callback(nx_fs.close)
 
         # Set memory config for Memory API

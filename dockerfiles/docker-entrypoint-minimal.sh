@@ -1,7 +1,6 @@
 #!/bin/bash
 # docker-entrypoint-minimal.sh - Nexus Minimal Docker container entrypoint
-# Lightweight standalone server: storage only, no Zoekt, no semantic search,
-# no cluster join, no saved mounts.
+# Lightweight standalone server for storage with a fresh local runtime.
 
 set -e
 set -o pipefail

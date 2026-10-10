@@ -3,7 +3,7 @@
 # Scenario 06: File Discovery & Catalog
 # ============================================================================
 # Commands: glob, grep (-i, -n, -C, -f, -l, -c), reindex, catalog,
-#           aspects, lineage, graph
+#           aspects, lineage
 # TUI Tab: 7 (Search)
 #
 # Story: Use glob/grep to explore demo data and the HERB corpus, then
@@ -181,12 +181,6 @@ echo "$OUT" | head -10 | sed 's/^/    /'
 header "19. lineage"
 run_cli OUT nexus lineage 2>&1 || true
 info "Lineage output:"
-echo "$OUT" | head -10 | sed 's/^/    /'
-
-# ── 20. graph ────────────────────────────────────────────────────────────
-header "20. graph"
-run_cli OUT nexus graph 2>&1 || true
-info "Graph output:"
 echo "$OUT" | head -10 | sed 's/^/    /'
 
 # ── TUI Verification ────────────────────────────────────────────────────

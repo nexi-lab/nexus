@@ -1,12 +1,9 @@
 """E2E auth enforcement tests for Issues #2048 + #2136.
 
-Validates that ALL newly-protected endpoints reject unauthenticated requests
-when api_key is configured. Uses create_app() with static API key (no database
-auth needed) to exercise the full auth middleware chain.
+Validates router authentication dependencies with a static API key.
 
 Covers:
-- governance (require_admin) → 401 without auth
-- mobile_search (require_auth) → 401 without auth
+- Search (require_auth) → 401 without valid auth, before backend configuration
 - tus_uploads (require_auth) → 401 for PATCH/POST/DELETE, OPTIONS stays public
 - x402 topup/config (require_auth) → 401, webhook stays public
 - RPC dispatch method name validation (#2136)
@@ -18,7 +15,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from nexus.server.api.v2.routers import mobile_search
+from nexus.server.api.v2.routers import search
 from nexus.server.api.v2.routers.tus_uploads import create_tus_uploads_router
 from nexus.server.api.v2.routers.x402 import router as x402_router
 from nexus.server.api.v2.routers.x402 import webhook_router as x402_webhook_router
@@ -33,8 +30,7 @@ def secured_app() -> FastAPI:
     """FastAPI app with api_key set — triggers real auth checks."""
     app = FastAPI()
 
-    # Register all routers we protect (governance deleted — gRPC-only #1529)
-    app.include_router(mobile_search.router)
+    app.include_router(search.router)
 
     tus_public, tus_auth = create_tus_uploads_router(get_upload_service=lambda: MagicMock())
     app.include_router(tus_public, prefix="/api/v2/uploads")
@@ -73,28 +69,34 @@ def authed(secured_app: FastAPI) -> TestClient:
 
 
 # ===========================================================================
-# Governance — require_admin
+# Search — require_auth
 # ===========================================================================
 
 
-# ===========================================================================
-# Mobile Search — require_auth
-# ===========================================================================
+class TestSearchAuthEnforcement:
+    @pytest.mark.parametrize("authorization", [None, "Bearer invalid-key"])
+    @pytest.mark.parametrize(
+        ("method", "path", "kwargs"),
+        [
+            ("GET", "/api/v2/search/stats", {}),
+            ("GET", "/api/v2/search/query", {"params": {"q": "needle"}}),
+            ("POST", "/api/v2/search/grep", {"json": {"pattern": "needle"}}),
+            ("POST", "/api/v2/search/glob", {"json": {"pattern": "**/*.md"}}),
+            ("POST", "/api/v2/search/locate", {"json": {"path": "/docs/a.md"}}),
+            ("POST", "/api/v2/search/query/batch", {"json": {"queries": [{"query": "needle"}]}}),
+        ],
+    )
+    def test_invalid_auth_precedes_backend_configuration(
+        self, unauthed: TestClient, authorization, method, path, kwargs
+    ) -> None:
+        headers = {"Authorization": authorization} if authorization is not None else {}
+        response = unauthed.request(method, path, headers=headers, **kwargs)
+        assert response.status_code == 401
 
-
-class TestMobileSearchAuthEnforcement:
-    """mobile_search endpoints must reject unauthenticated requests."""
-
-    def test_detect_returns_401(self, unauthed: TestClient) -> None:
-        resp = unauthed.get("/api/v2/mobile/detect")
-        assert resp.status_code == 401
-
-    def test_download_returns_401(self, unauthed: TestClient) -> None:
-        resp = unauthed.post(
-            "/api/v2/mobile/download",
-            json={"model_name": "test"},
-        )
-        assert resp.status_code == 401
+    def test_valid_auth_reaches_the_search_configuration_error(self, authed: TestClient) -> None:
+        response = authed.get("/api/v2/search/query", params={"q": "needle"})
+        assert response.status_code == 503
+        assert "NEXUS_SEARCH_PLUGIN_TARGET" in response.json()["detail"]
 
 
 # ===========================================================================

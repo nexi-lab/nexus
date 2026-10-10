@@ -95,7 +95,7 @@ class FakeRebac:
 
 class FakeSearchDaemon:
     def get_stats(self) -> dict[str, Any]:
-        return {"bm25_documents": 0, "zoekt_available": False}
+        return {"fts_doc_count": 0}
 
     async def search(
         self,

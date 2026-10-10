@@ -14,7 +14,7 @@ features (batch reads, signed URLs, versioning).
 
 Feature DI (optional optimizations):
     meta_cache    — LRU cache for _read_meta() hot path (e.g. cachetools.LRUCache)
-    on_write_callback — Write notification (e.g. Zoekt reindex)
+    on_write_callback — Write notification
     cdc_engine    — ChunkingStrategy for large file chunking (CDC)
 
 Storage layout (in transport key-space):
@@ -254,7 +254,7 @@ class CASAddressingEngine(Backend):
 
             # No .meta for non-CDC content — ref_count eliminated.
 
-            # Feature DI: Write callback (e.g. Zoekt reindex)
+            # Feature DI: Write callback
             if is_new and self._on_write_callback is not None:
                 self._on_write_callback(key)
 

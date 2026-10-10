@@ -66,8 +66,6 @@ class LifespanServices:
     delivery_worker: Any = None
     event_signal: Any = None
 
-    # --- OBSERVE-phase Zoekt observer (Issue #810) -------------------------
-    zoekt_write_observer: Any = None
     task_dispatch_consumer: Any = None  # Task Manager DT_PIPE consumer
 
     # --- NexusFS internals (extracted once, never re-probed) --------------
@@ -131,7 +129,6 @@ class LifespanServices:
             event_signal=None,
             eviction_manager=_svc("eviction_manager"),
             write_observer=_svc("write_observer"),
-            zoekt_write_observer=_svc("zoekt_write_observer"),
             task_dispatch_consumer=_svc("task_dispatch_consumer"),
             scheduler_service=_svc("scheduler_service"),
             # NexusFS internals

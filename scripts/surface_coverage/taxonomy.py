@@ -251,7 +251,7 @@ MODULES: list[CuratedModule] = [
     CuratedModule(
         "search",
         "Search",
-        "Zoekt / BM25 / semantic search daemon.",
+        "Rust Search plugin: live discovery and indexed keyword/semantic search.",
         layer="brick",
         category="Discovery",
         brick_gate="BRICK_SEARCH",

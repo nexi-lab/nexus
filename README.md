@@ -146,7 +146,7 @@ graph TD
 | **Storage** | PathLocal (filesystem), CAS-Local (content-addressed), S3, GCS, Remote (gRPC proxy) |
 | **Database** | PostgreSQL (pgvector), redb (embedded ordered KV) |
 | **Cache** | Dragonfly / Redis |
-| **Search** | BM25S (keyword), Zoekt (code search, optional) |
+| **Search** | Rust Search plugin: Tantivy keywords, HNSW vectors, live workspace grep |
 | **Connectors** | Gmail, Google Drive, Slack, X/Twitter, Hacker News, Nostr, CLI |
 | **LLM** | SudoRouter (unified: Claude, GPT, Gemini, local models) |
 

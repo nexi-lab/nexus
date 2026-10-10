@@ -710,8 +710,8 @@ jobs:
           st, health = http("GET", "/api/v2/search/health")
           if health.get("status") not in ("healthy", "degraded"):
               failures.append(f"plugin link not healthy: {health}")
-          for k in ("initialized", "daemon_initialized", "backend",
-                    "bm25_index_loaded", "db_pool_ready", "zoekt_available"):
+          for k in ("initialized", "backend", "detail", "fts_writer_faults",
+                    "fts_writer_unavailable", "last_verified_commit_age_ms", "dispatch_panics"):
               if k not in health:
                   failures.append(f"health missing contract key {k!r}: {health}")
 

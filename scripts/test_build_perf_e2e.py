@@ -530,18 +530,19 @@ def main() -> None:
         check("index: count is a plain int", False, str(e)[:200])
         check("index: zoneId key casing", False, "request failed")
 
-    step("GET /api/v2/search/health (#4617 contract keys)")
+    step("GET /api/v2/search/health (host state and writer liveness)")
     try:
         status_code, body = _http("GET", f"{NEXUS_URL}/api/v2/search/health")
         print(f"    response: {json.dumps(body)[:300]}", file=sys.stderr, flush=True)
         health_keys = (
             "status",
             "initialized",
-            "daemon_initialized",
             "backend",
-            "bm25_index_loaded",
-            "db_pool_ready",
-            "zoekt_available",
+            "detail",
+            "fts_writer_faults",
+            "fts_writer_unavailable",
+            "last_verified_commit_age_ms",
+            "dispatch_panics",
         )
         missing = [k for k in health_keys if k not in body]
         check(

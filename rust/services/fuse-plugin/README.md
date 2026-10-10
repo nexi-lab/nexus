@@ -80,12 +80,13 @@ at startup with no escape hatch.
 
 ## Configuration
 
-The plugin reads two env vars at `create` time:
+The plugin reads its configuration at `create` time:
 
 | Var                       | Required | Default | Meaning                                                                 |
 |---------------------------|----------|---------|-------------------------------------------------------------------------|
 | `NEXUS_FUSE_MOUNT_POINT`  | Yes      | —       | Mount target.  Linux / macOS: absolute path (`/mnt/cc-tasks`).  Windows: drive letter (`Z:`) or directory path; the runner reserves the letter for the lifetime of the cluster process. |
 | `NEXUS_FUSE_VFS_ROOT`     | No       | `/`     | VFS-path prefix that maps to the FUSE mount root.  Joined with child names to produce kernel-side paths. |
+| `NEXUS_FUSE_MACOS_BACKEND` | No      | `auto`  | macOS backend: `auto` tries FUSE-T and falls back to NFS; `nfs` directly mounts the in-process NFSv3 server. Invalid values leave the plugin unmounted. |
 
 Without `NEXUS_FUSE_MOUNT_POINT` the plugin loads but performs no
 mount — useful for the kernel's `--plugin-dir` scanning to validate

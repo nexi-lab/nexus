@@ -94,6 +94,18 @@ class TestSanity:
             f"Mount at {topology.mount_point} is not reachable. "
             f"Plugin may not have loaded or mount failed."
         )
+        assert os.path.ismount(topology.mount_point), (
+            f"{topology.mount_point} is a local directory without a filesystem mount"
+        )
+
+    def test_selected_nfs_backend_is_mounted(self, topology: Topology) -> None:
+        if os.environ.get("NEXUS_FUSE_MACOS_BACKEND") != "nfs":
+            pytest.skip("requires the explicit macOS NFS backend")
+        mounts = _sh(["/sbin/mount"], timeout=5).stdout.splitlines()
+        target = os.path.realpath(topology.mount_point)
+        entry = next((line for line in mounts if f" on {target} (" in line), None)
+        assert entry is not None, f"No mount registered at {target}: {mounts}"
+        assert "(nfs" in entry, f"Expected an NFS mount: {entry}"
 
     def test_mount_is_listable(self, topology: Topology) -> None:
         """``ls`` fires readdir through the plugin."""

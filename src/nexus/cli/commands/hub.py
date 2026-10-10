@@ -10,8 +10,7 @@ from __future__ import annotations
 import os
 import time
 from contextlib import suppress
-from datetime import UTC, datetime
-from pathlib import Path
+from datetime import datetime
 from typing import Any
 
 import click
@@ -419,7 +418,7 @@ def _read_redis_stats() -> dict[str, Any]:
 @click.option(
     "--detail",
     is_flag=True,
-    help="Include per-zone, per-token, rate-limit, and search detail.",
+    help="Include per-zone, per-token, and rate-limit detail.",
 )
 @click.option("--remote", default=None, help="Remote hub base URL or MCP URL.")
 @click.option("--admin-token", default=None, help="Admin token for --remote.")
@@ -444,9 +443,7 @@ def hub_status(
         zone_ids = postgres_status["zone_ids"]
         redis_detail = _read_redis_detail_stats(zone_ids)
         payload["detail"] = True
-        payload.update(
-            _collect_status_detail(zone_ids, postgres_status["tokens_detail"], redis_detail)
-        )
+        payload.update(_collect_status_detail(postgres_status["tokens_detail"], redis_detail))
 
     _render_status(payload, as_json=as_json, detail=detail)
 
@@ -660,7 +657,6 @@ def _read_redis_detail_stats(zone_ids: list[str]) -> dict[str, Any]:
 
 
 def _collect_status_detail(
-    zone_ids: list[str],
     tokens_detail: list[dict[str, Any]],
     redis_detail: dict[str, Any],
 ) -> dict[str, Any]:
@@ -668,108 +664,7 @@ def _collect_status_detail(
         "zones": redis_detail["zones"],
         "tokens_detail": tokens_detail,
         "rate_limits": redis_detail["rate_limits"],
-        "search": _collect_search_detail(zone_ids),
     }
-
-
-def _format_bytes(num_bytes: int | None) -> str | None:
-    if num_bytes is None:
-        return None
-    if num_bytes < 1024:
-        return f"{num_bytes} B"
-    value = float(num_bytes)
-    for unit in ("KiB", "MiB", "GiB"):
-        value /= 1024.0
-        if value < 1024.0 or unit == "GiB":
-            return f"{value:.1f} {unit}"
-    return None
-
-
-def _zone_index_path(base: Path, zone_id: str) -> Path | None:
-    direct = base / zone_id
-    try:
-        if direct.exists():
-            return direct
-        if not base.is_dir():
-            return None
-        matches = [
-            child
-            for child in base.iterdir()
-            if child.name.startswith(f"{zone_id}.") or child.name.startswith(f"{zone_id}-")
-        ]
-    except OSError:
-        return None
-    return matches[0] if len(matches) == 1 else None
-
-
-def _index_path_stats(path: Path) -> tuple[int | None, str | None]:
-    try:
-        if path.is_file():
-            stat = path.stat()
-            return stat.st_size, datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat()
-
-        total_size = 0
-        latest_mtime: float | None = None
-        for child in path.rglob("*"):
-            if not child.is_file():
-                continue
-            stat = child.stat()
-            total_size += stat.st_size
-            latest_mtime = (
-                stat.st_mtime if latest_mtime is None else max(latest_mtime, stat.st_mtime)
-            )
-    except OSError:
-        return None, None
-
-    last_indexed = (
-        datetime.fromtimestamp(latest_mtime, tz=UTC).isoformat()
-        if latest_mtime is not None
-        else None
-    )
-    return total_size, last_indexed
-
-
-def _zoekt_index_base() -> Path:
-    raw = (
-        os.environ.get("NEXUS_ZOEKT_INDEX_DIR")
-        or os.environ.get("ZOEKT_INDEX_DIR")
-        or "/app/data/.zoekt-index"
-    )
-    return Path(raw)
-
-
-def _search_detail_row(
-    zone_id: str,
-    size_bytes: int | None,
-    last_indexed: str | None,
-) -> dict[str, Any]:
-    return {
-        "zone_id": zone_id,
-        "zoekt_index_size_bytes": size_bytes,
-        "zoekt_index_size_display": _format_bytes(size_bytes),
-        "zoekt_last_indexed": last_indexed,
-        "txtai_queue_depth": None,
-        "last_indexed": last_indexed,
-    }
-
-
-def _collect_search_detail(zone_ids: list[str]) -> dict[str, Any]:
-    base = _zoekt_index_base()
-    zones = []
-    matched_zone_index = False
-    for zone_id in zone_ids:
-        index_path = _zone_index_path(base, zone_id)
-        size_bytes: int | None = None
-        last_indexed: str | None = None
-        if index_path is not None:
-            matched_zone_index = True
-            size_bytes, last_indexed = _index_path_stats(index_path)
-        zones.append(_search_detail_row(zone_id, size_bytes, last_indexed))
-    if not matched_zone_index and base.exists():
-        size_bytes, last_indexed = _index_path_stats(base)
-        if size_bytes is not None:
-            zones.append(_search_detail_row("all", size_bytes, last_indexed))
-    return {"zones": zones}
 
 
 def _emit_detail_status_text(payload: dict[str, Any]) -> None:
@@ -812,29 +707,6 @@ def _emit_detail_status_text(payload: dict[str, Any]) -> None:
         format_table(
             headers=["tier", "hits_5m"],
             rows=[[tier, _display_status_value(hits[tier])] for tier in sorted(hits)],
-        )
-    )
-    click.echo("")
-    click.echo("search:")
-    click.echo(
-        format_table(
-            headers=[
-                "zone",
-                "zoekt_size",
-                "zoekt_last_indexed",
-                "txtai_queue_depth",
-                "last_indexed",
-            ],
-            rows=[
-                [
-                    row["zone_id"],
-                    _display_status_value(row.get("zoekt_index_size_display")),
-                    _display_status_value(row.get("zoekt_last_indexed")),
-                    _display_status_value(row.get("txtai_queue_depth")),
-                    _display_status_value(row.get("last_indexed")),
-                ]
-                for row in payload.get("search", {}).get("zones", [])
-            ],
         )
     )
 

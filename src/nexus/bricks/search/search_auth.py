@@ -1,21 +1,7 @@
-"""Read-authorisation helpers for the search HTTP surface.
+"""Derive readable zone scopes for the HTTP query and batch adapters.
 
-These helpers derive the "zones this token / credential is allowed to
-READ" allow-list that the server's `/query` and `/query/batch` HTTP
-routes intersect with the caller's request BEFORE dispatching to the
-search plugin.
-
-They previously lived in `nexus.bricks.search.federated_search` — a
-misleading home, since they have nothing to do with cross-daemon
-fan-out (that concept died when the Python `SearchDaemon` was retired
-in Issue #4598 and the Rust `nexus-search-plugin` cdylib took over as
-the sole search backend, doing its own peer fan-out in the plugin's
-gRPC handler).  Grouping the pure read-auth helpers here keeps the
-surface honest: it's about authZ, not about federation.
-
-Issue references retained verbatim from the original docstrings; they
-document the round-by-round semantics and are still load-bearing for
-reviewer context.
+The adapters intersect credential grants with requested zones before sending
+queries to the Search host, which enforces zone and file permissions.
 """
 
 from typing import Any

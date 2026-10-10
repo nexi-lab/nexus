@@ -170,10 +170,10 @@ graph TD
 
     sw -->|"gRPC &lpar;VFS port&rpar;"| grpc
 
-    subgraph host["nexusd-cluster — one process per host (kernel + agent control plane)"]
+    subgraph host["nexusd-cluster — shared broker per OS user (kernel + agent control plane)"]
         grpc["gRPC server &lpar;VFS port&rpar;<br/>NexusVFSService.Call routes managed_agent<br/>+ ACP methods + sys_* for external clients"]
 
-        subgraph kernel["Embedded Rust Kernel &lpar;one kernel::Kernel per host&rpar;"]
+        subgraph kernel["Broker's embedded Rust Kernel"]
             vfs["VFSRouter · DCache · Metastore&lpar;redb&rpar; · LockManager"]
             pipes["PipeManager&lpar;DT_PIPE&rpar; · StreamManager&lpar;DT_STREAM&rpar;"]
             watch["FileWatchRegistry&lpar;sys_watch&rpar; · KernelDispatch&lpar;hooks&rpar;"]
@@ -211,12 +211,12 @@ graph TD
 
 <h3>Constraints</h3>
 <ul>
-  <li><strong>One nexus per host.</strong> A host runs one <code>nexusd-cluster</code> process (the cluster profile + the <code>managed_agent</code> control plane, both built in nexus-vfs); its embedded <code>kernel::Kernel</code> is that host's nexus. That stock binary already hosts agents as ACP subprocesses. Whether it <em>also</em> hosts in-process sudocode agents is a build-time choice &mdash; the <code>cohost-sudocode</code> build (<code>rust/nexusd</code>) compiles the <code>SpawnTask</code> adapter in, the only spot that links sudocode. The <code>nexus-bootstrap</code> launcher protocol owns discover-or-launch, so there is one kernel per host (&sect;8).</li>
+  <li><strong>One shared broker per OS user.</strong> The Agent Move target is one managed <code>nexusd-cluster</code> per OS user on each device, shared by standalone scode and Sudowork (&sect;8.3). The stock cluster binary includes the <code>managed_agent</code> control plane and already hosts ACP subprocesses. In-process sudocode hosting is a build-time choice: <code>cohost-sudocode</code> (<code>rust/nexusd</code>) links the <code>SpawnTask</code> adapter. Sharing the broker does not imply removing a standalone session's embedded workspace kernel (&sect;2.3).</li>
   <li><strong>Pure-infra nexus.</strong> The kernel and the service-tier crates (<code>services</code>, <code>raft</code>, <code>lib</code>, <code>contracts</code>) compile with zero knowledge of any agent runtime &mdash; they know only the <code>SpawnTask</code> DI trait. The single <code>nexus &rarr; sudocode</code> edge is the binary edge <code>nexusd-cluster</code> (<code>rust/nexusd</code>), where both source trees link and <code>SpawnTask&lt;Kernel&gt;</code> monomorphises (&sect;2.3). Because that edge is a binary leaf (nothing imports a <code>[[bin]]</code>) and <code>sudocode</code> only depends downward on <code>kernel</code>, there is no dependency cycle.</li>
   <li><strong>State SSOT.</strong> Agent runtime state (<code>pid &rarr; AgentState</code>, condvar wakeup, signal semantics, parent/child links, transition validation) lives in <code>kernel::core::agents::registry::AgentRegistry</code>. In-process Rust callers reach it directly; external callers reach it through the gRPC surface.</li>
   <li><strong>gRPC is the external surface.</strong> External clients (sudowork UI, orchestrator) reach the kernel over the VFS gRPC port; the agent&harr;kernel hot path stays in-process Rust.</li>
   <li><strong>Cluster profile.</strong> <code>nexusd-cluster</code> runs Nexus's cluster profile &mdash; bricks: IPC, FEDERATION &mdash; whether or not the sudocode agent adapter is compiled in.</li>
-  <li><strong>Zone = VFS path mount point.</strong> A zone's visibility boundary is its mount path. ReBAC governs sub-path access within a zone.</li>
+  <li><strong>Zone = authorized replication boundary.</strong> Mounts project a zone into the VFS namespace; a subtree mount does not narrow the records replicated from that zone. Agent Move uses zone admission to separate private Agent data, public discovery, and conversations with different authorized readers. Path filtering cannot remove private metadata or message frames from a replica's WAL. The zone composition and admission checks still require end-to-end acceptance (&sect;3.1).</li>
 </ul>
 
 <hr>
@@ -344,19 +344,28 @@ sequenceDiagram
 
 /conversations/{cid}/transcript        DT_STREAM  &mdash; append-only; both participants append and read
 /conversations/{cid}/readers/{agent}   register   &mdash; {holder, lease_expires_at, read_offset}
-/agents/{name}/conversations/{peer}    entry      &mdash; {name}'s chat list, one entry per correspondent</code></pre>
+/agents/{name}/conversations/{peer}    DT_LINK    &mdash; index into /conversations/{cid}/</code></pre>
 
 <p>The id is <strong>derived, not allocated</strong>. Both sides compute it from the two names alone, so <code>send(to = "bob")</code> resolves to a conversation with no coordination, no registry lookup, and no requirement that either party ran first &mdash; whoever writes first creates it, idempotently. Sorting the pair makes it order-free (<code>f(a,b) == f(b,a)</code>), which is what yields chat-app semantics: exactly <em>one</em> thread per pair. The two names are separated by a NUL because agent names are user-chosen &mdash; under a <code>-</code> separator the pairs <code>("a-b", "c")</code> and <code>("a", "b-c")</code> hash identically, silently merging two conversations.</p>
 
 <p><strong>Why per-pair and not per-agent.</strong> A per-agent inbox interleaves every correspondent into one log, and a reader holds one offset into it. That single offset cannot express "caught up with A, still behind on B": draining the inbox to answer A also marks B's messages read. Ordering is global where the meaningful order is per-conversation. Splitting by pair gives each thread its own order and its own position &mdash; and makes the object one a chat client already knows how to render.</p>
 
-<p><strong>A read position is a register, not a frame.</strong> A position is mutable state with one current value; a transcript is an append-only log. Welding them would mean recovering a position by scanning <em>backward</em> for your own last receipt, and a DT_STREAM is forward offset-addressed &mdash; O(tail scan) where a register is O(1). The three fields are stored as <strong>one</strong> value, so a reader always observes a consistent triple rather than a position from one moment and a lease from another. The register lives beside the transcript rather than on the reader's machine, which makes the position a property of the <em>agent</em>: a peer can observe readiness directly, and a lost client config home is a non-event instead of an agent that looks brand new.</p>
+<p><strong>A read position is a register, not a frame.</strong> A position is mutable state with one current value; a transcript is an append-only log. Welding them would mean recovering a position by scanning <em>backward</em> for your own last receipt, and a DT_STREAM is forward offset-addressed &mdash; O(tail scan) where a register is O(1). The current implementation stores the three fields as <strong>one</strong> value beside the transcript, so the consumed position follows the <em>agent</em> across devices. That single value does not make the read/write/read lease acquisition atomic. Reader position is a durable fact; lease ownership and runtime presence are transient coordination state, not proof that a runtime is ready. Multi-runtime ownership still needs atomic acquisition, renewal during long turns, and fencing of an old holder after handoff; see the <a href="https://s.shareone.vip/s/agent-context-storage-matrix#agent-delivery-contract">consumer audit</a>.</p>
 
 <p><strong>A first read starts at offset 0.</strong> There is deliberately no seek-to-tail: a transcript carries one pair's conversation, so its backlog is the context a joining reader needs, not noise to skip past.</p>
 
-<p>The chat list under <code>/agents/{name}/conversations/</code> is the discovery index &mdash; listing it answers "who am I talking to" without scanning conversation ids. Each entry is a <strong>plain write</strong> holding the conversation root, not a DT_LINK: the gRPC <code>SetattrRequest</code> carries no link target, so a standalone client cannot create a link, and an index only one backend can write is not an index.</p>
+<p>The chat list under <code>/agents/{name}/conversations/</code> is the discovery index &mdash; listing it answers "who am I talking to" without scanning conversation ids. Each entry uses the shared <code>FsBackend::link/read_link</code> contract. Nexus creates a DT_LINK through both the in-process and gRPC backends; the gRPC request carries <code>link_target</code>, and the client verifies the target after creation. The local filesystem backend uses a symlink or junction, with a pointer-file fallback. Each representation stores the conversation root, never a second transcript.</p>
 
-<p>Transcripts and registers are ordinary VFS objects, so the usual machinery applies unchanged: ReBAC governs access, <code>sys_watch</code> wakes a tailing reader, and federation raft replicates them across zone members (&sect;4.1). <code>REPLICATED_PREFIXES</code> is the contract naming which prefixes must arrive already replicated.</p>
+<pre><code>/agents/A/conversations/B ─┐
+                          ├─&rarr; /conversations/{cid}/
+/agents/B/conversations/A ─┘       transcript
+                                 readers/{agent}</code></pre>
+
+<p><strong>Confirmed 2026-10-10:</strong> retain these two indexes and the single canonical conversation; do not add <code>chat-with-me</code>. Both participants compute the same CID, and either can find the existing pair through its own index. The links address the same conversation directory; they do not select a target based on the caller. Session history remains separately flat at <code>/sessions/{session-id}/</code>, with the existing per-Agent session links. Hosted ACP continues to use <code>acp-mailbox/1</code> over this transport.</p>
+
+<p><strong>Delivery without a runtime.</strong> An authorized sender can persist a message while the recipient has no PID, including before its first start. The next receiver discovers unread conversations through its own index and feeds them into its A2A queue. A successful send requires durable storage; entering a process-local queue alone must not advance the durable read position. Sudocode's standalone REPL acknowledges after the persisted turn or explicit cancellation, and leaves interrupted work pending on shutdown. A crash between turn persistence and cursor commit can cause replay. This is at-least-once delivery; the remaining consumer and cross-host acceptance gaps are recorded in the <a href="https://s.shareone.vip/s/agent-context-storage-matrix#agent-delivery-contract">storage matrix</a>.</p>
+
+<p><strong>Visibility and provisioning.</strong> <code>sys_watch</code> wakes a tailing reader; Raft replicates transcripts and registers to members of their owning zone (&sect;4.1). Shared namespace paths do not imply shared replication membership. Public discovery must not admit a peer to private Agent data or another pair's conversation zone, and following a link must authorize the target. The current conversation opener writes both participant indexes; when those indexes occupy private zones, an authorized provisioning service must arrange them without giving the sender general write access to the recipient's private directory. Sender stamping authenticates origin; it does not isolate readers. Zone composition, scoped admission and a third-node inspection proving the absence of another pair's metadata and message bytes remain acceptance work for Agent Move.</p>
 
 <h3>3.2 Sender identity</h3>
 
@@ -437,7 +446,7 @@ sequenceDiagram
 <!-- ================================================================ -->
 <h2 id="transport">4. Cross-instance Transport</h2>
 
-<p>Two layers compose. <strong>Within</strong> a federation, raft replicates the conversation transcript across every nexus instance. <strong>Outside</strong> the federation, a Matrix Client-Server adapter is how unmodified third-party clients (Element, FluffyChat, Cinny) are meant to reach those same conversations.</p>
+<p>Two layers compose. <strong>Within</strong> a federation, Raft replicates the conversation transcript among members of its owning zone. <strong>Outside</strong> the federation, a Matrix Client-Server adapter is how unmodified third-party clients (Element, FluffyChat, Cinny) are meant to reach those same conversations.</p>
 
 <h3>4.1 Federation-internal &mdash; raft replication</h3>
 
@@ -622,9 +631,13 @@ graph TB
 
 <p>Agent loops share <code>nexusd-cluster</code>'s address space as in-process loops. Isolation floor is <code>catch_unwind</code> per loop plus <code>SpawnHandle::abort</code> on reap. Workers are cattle: persistent state lives in <code>/agents/{name}/</code>, so a host that dies is restarted and each worker resumes from its <code>--session-id</code> transcript.</p>
 
-<h3>8.3 One nexus per host</h3>
+<h3>8.3 Shared broker and AgentHome</h3>
 
-<p>A host runs exactly one kernel. The <code>nexus-bootstrap</code> launcher protocol owns discover-or-launch (PID file, ready file, socket path, health check).</p>
+<p><strong>Agreed target; end-to-end integration pending.</strong> Each OS user on a device shares one managed <code>nexusd-cluster</code>. Sudowork and standalone scode must use the same discovery and coordinated startup path, reusing the <code>nexus-bootstrap</code> launcher facilities. Concurrent clients must converge on one healthy broker, validate its identity and protocol compatibility, and recover stale discovery state without launching competing daemons. Runtime discovery records belong to local transient state.</p>
+
+<p><strong>AgentHome</strong> names the shared durable layout for cohost and standalone: <code>/agents/{name}/</code> contains the Agent's profile, memory and indexes; session and conversation bodies remain at their canonical flat paths, with links preserved. Recovery includes referenced durable attachments. The standalone filesystem layout described in &sect;2.3 has not yet been unified with this target. Per-runtime PID, live status and queues remain separate from the durable Agent data.</p>
+
+<p><strong>Move readiness:</strong> metadata replication and on-demand content fetching remain the normal storage contract. Before an Agent can be declared usable on another device with the source offline, explicit content replication must confirm that all required durable content has arrived. This must be verified separately from runtime ownership handoff. Zone admission, replica isolation, consumer ownership and the shared AgentHome/broker path are prerequisites; the complete Agent Move workflow is not yet accepted.</p>
 
 <h3>8.4 Binary-edge placement</h3>
 

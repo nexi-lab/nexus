@@ -710,8 +710,8 @@ jobs:
           st, health = http("GET", "/api/v2/search/health")
           if health.get("status") not in ("healthy", "degraded"):
               failures.append(f"plugin link not healthy: {health}")
-          for k in ("initialized", "daemon_initialized", "backend",
-                    "bm25_index_loaded", "db_pool_ready", "zoekt_available"):
+          for k in ("initialized", "backend", "detail", "fts_writer_faults",
+                    "fts_writer_unavailable", "last_verified_commit_age_ms", "dispatch_panics"):
               if k not in health:
                   failures.append(f"health missing contract key {k!r}: {health}")
 
@@ -843,6 +843,7 @@ jobs:
       - name: Verify Search CLI against Rust HTTP
         run: |
           docker cp scripts/test_rust_http_search_cli.py nexus-e2e:/tmp/test_rust_http_search_cli.py
+          docker cp scripts/bench_gbrain_evals.py nexus-e2e:/tmp/bench_gbrain_evals.py
           docker exec \
             -e NEXUS_SEARCH_PLUGIN_TARGET=127.0.0.1:2326 \
             -e NEXUS_SEARCH_PLUGIN_TLS_CA=/tmp/search-credentials/tls/ca.pem \

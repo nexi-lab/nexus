@@ -201,7 +201,7 @@ def _validate_missing_needed_backlog(
 
 def _validate_references(op: Operation, *, repo_root: Path) -> list[ValidationFinding]:
     findings: list[ValidationFinding] = []
-    if op.correctness_test and not _repo_references_exist(op.correctness_test, repo_root):
+    if op.correctness_test and not repo_references_exist(op.correctness_test, repo_root):
         findings.append(
             ValidationFinding(
                 code="invalid_test_reference",
@@ -215,7 +215,7 @@ def _validate_references(op: Operation, *, repo_root: Path) -> list[ValidationFi
     if (
         op.perf_class in {PerfClass.HOT, PerfClass.HOT_PATH}
         and op.perf_link
-        and not _repo_references_exist(op.perf_link, repo_root)
+        and not repo_references_exist(op.perf_link, repo_root)
     ):
         findings.append(
             ValidationFinding(
@@ -232,7 +232,8 @@ def _validate_references(op: Operation, *, repo_root: Path) -> list[ValidationFi
     return findings
 
 
-def _repo_references_exist(reference: str, repo_root: Path) -> bool:
+def repo_references_exist(reference: str, repo_root: Path) -> bool:
+    """Check every repo path in prose, pytest node ids, or line-number links."""
     paths = _extract_repo_references(reference)
     return bool(paths) and all((repo_root / path).exists() for path in paths)
 

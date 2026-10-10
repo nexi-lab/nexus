@@ -422,13 +422,14 @@ def test_live_search_http_surface_correctness_and_latency(live_search_app: LiveS
             live,
             "post",
             "/api/v2/search/locate",
-            json={"q": "main", "limit": 5},
+            json={"path": "/workspace/src/main.py"},
         )
         assert locate_response.status_code == 200
-        if any(c["path"] == "/workspace/src/main.py" for c in locate_body["candidates"]):
+        if locate_body["indexed"]:
             break
         time.sleep(0.1)
-    assert any(c["path"] == "/workspace/src/main.py" for c in locate_body["candidates"])
+    assert locate_body["indexed"]
+    assert locate_body["chunk_count"] > 0
     _assert_endpoint_latency(locate_body, key="elapsed_ms")
 
 

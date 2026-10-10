@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from scripts.surface_coverage.paths import COVERAGE_YAML, REPO_ROOT
 from scripts.surface_coverage.schema import load_yaml
+from scripts.surface_coverage.validate import repo_references_exist
 
 _USER_GUIDE = REPO_ROOT / "docs/guides/user-guide.md"
 _REAL_E2E_TEST = "tests/e2e/server/test_issue_4136_api_surface_e2e.py"
@@ -55,12 +56,7 @@ def _coverage_ops():
 
 
 def _assert_test_links_exist(link_field: str) -> None:
-    for part in link_field.split(";"):
-        target = part.strip()
-        if not target or target.startswith("N/A") or target.startswith("setup/"):
-            continue
-        path_part = target.split("::", 1)[0].strip()
-        assert (REPO_ROOT / path_part).exists(), f"missing linked test path: {path_part}"
+    assert repo_references_exist(link_field, REPO_ROOT), link_field
 
 
 def test_issue_4136_rows_have_full_story_contract() -> None:

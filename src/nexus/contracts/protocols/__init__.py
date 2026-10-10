@@ -20,6 +20,7 @@ References:
 
 from nexus.contracts.protocols.auth import APIKeyCreatorProtocol
 from nexus.contracts.protocols.chunked_upload import ChunkedUploadProtocol
+from nexus.contracts.protocols.delegation import DelegationProtocol
 from nexus.contracts.protocols.entity_registry import EntityRegistryProtocol
 from nexus.contracts.protocols.file_reader import FileReaderProtocol
 from nexus.contracts.protocols.lease import LeaseManagerProtocol, LeaseState
@@ -47,6 +48,7 @@ __all__ = [
     "AgentRequest",
     "BackgroundService",
     "ChunkedUploadProtocol",
+    "DelegationProtocol",
     "EntityRegistryProtocol",
     "FileReaderProtocol",
     "LeaseManagerProtocol",

@@ -41,9 +41,9 @@ read access. A supplied selection is bounded, validated and authorized per
 file; `files=[]` returns no results. Search rechecks live permissions on the
 host, and SDK clients reject hosts that do not acknowledge requested filters.
 
-HTTP discovery paginates the host's authorized results. Grep requests the
-page window plus one match to detect `has_more`. The response includes
-observed latency and counts; the host does not expose a per-file denial rate.
+HTTP and MCP discovery paginate the host's authorized results. Grep requests the
+page window plus one match to detect `has_more`. Responses report observed
+counts; HTTP also reports latency. The host does not expose a per-file denial rate.
 
 Rust HTTP discovery uses the canonical VFS `root_path` to select its mount
 and zone. An optional `zone_id` must match that mount; a mismatch returns
@@ -66,6 +66,13 @@ The current Search host reports `has_graph=false`. Explicit Python HTTP
 `graph_mode=low|high|dual|auto` requests return HTTP 501. `graph_mode=none`
 uses the ordinary keyword, semantic or hybrid pipeline. Batch entries requesting
 Graph search return a per-entry error.
+
+`GET /api/v2/search/health` returns the host's `status`, `detail` and writer
+liveness fields: `fts_writer_faults`, `fts_writer_unavailable`,
+`last_verified_commit_age_ms` and `dispatch_panics`. `initialized` describes
+the local transport; it can remain true while the host reports `unavailable`.
+`backend` identifies the configured transport as `rust-plugin`. A disabled
+transport reports `status=disabled`, `initialized=false` and `backend=null`.
 
 ## Runtime capability discovery
 

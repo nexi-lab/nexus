@@ -48,6 +48,13 @@ async def host_client(monkeypatch):
         async def Health(self, request, context):
             return search_pb2.HealthResponse()
 
+        async def Stats(self, request, context):
+            user = await self.authorize(context)
+            if user == "bob":
+                await context.abort(grpc.StatusCode.PERMISSION_DENIED, "Diagnostic access denied")
+            calls.append(("Stats", user, request))
+            return search_pb2.StatsResponse(fts_doc_count=7, fts_path_count=3)
+
         async def Query(self, request, context):
             user = await self.authorize(context)
             calls.append(("Query", user, request))
@@ -214,6 +221,7 @@ async def test_host_rpc_failures_keep_their_http_category(host_client, code, sta
     client, _, state, _ = host_client
     state.error = code
     responses = [
+        await client.get("/api/v2/search/stats", headers={"Authorization": "sk-alice"}),
         await client.get("/api/v2/search/query?q=needle", headers={"Authorization": "sk-alice"}),
         await client.post(
             "/api/v2/search/query/batch",
@@ -226,7 +234,7 @@ async def test_host_rpc_failures_keep_their_http_category(host_client, code, sta
             headers={"Authorization": "sk-alice"},
         ),
     ]
-    assert [response.status_code for response in responses] == [status] * 3
+    assert [response.status_code for response in responses] == [status] * 4
 
 
 @pytest.mark.asyncio
@@ -234,12 +242,47 @@ async def test_revoked_host_key_rejects_cached_python_identity(host_client):
     client, _, state, _ = host_client
     headers = {"Authorization": "Bearer sk-alice"}
     assert (await client.get("/api/v2/search/query?q=needle", headers=headers)).status_code == 200
+    assert (await client.get("/api/v2/search/stats", headers=headers)).status_code == 200
     state.revoked = True
     assert (await client.get("/api/v2/search/query?q=needle", headers=headers)).status_code == 401
+    assert (await client.get("/api/v2/search/stats", headers=headers)).status_code == 401
     batch = await client.post(
         "/api/v2/search/query/batch", json={"queries": [{"q": "needle"}]}, headers=headers
     )
     assert batch.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_stats_keeps_host_authority_and_concurrent_caller_credentials(host_client):
+    client, calls, _, _ = host_client
+    responses = await asyncio.gather(
+        *[
+            client.get("/api/v2/search/stats", headers={"Authorization": f"Bearer sk-{name}"})
+            for name in ("alice", "bob") * 3
+        ]
+    )
+    for name, response in zip(("alice", "bob") * 3, responses, strict=True):
+        if name == "bob":
+            assert response.status_code == 403, response.text
+        else:
+            assert response.status_code == 200, response.text
+            assert response.json()["fts_doc_count"] == 7
+            assert response.json()["zone_id"] == "sharedzone"
+    assert [(method, user, request.zone_id) for method, user, request in calls] == [
+        ("Stats", "alice", "sharedzone")
+    ] * 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("authorization", [None, "Bearer invalid-key"])
+async def test_stats_rejects_invalid_auth_before_using_the_node_connection(
+    host_client, authorization
+):
+    client, calls, _, _ = host_client
+    headers = {} if authorization is None else {"Authorization": authorization}
+    response = await client.get("/api/v2/search/stats", headers=headers)
+    assert response.status_code == 401
+    assert calls == []
 
 
 @pytest.mark.asyncio

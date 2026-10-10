@@ -36,7 +36,7 @@ from nexus.lib.pagination import build_paginated_list_response
 from nexus.runtime.zone_resolution import target_zone_for_context
 from nexus.server.api.v2._revision_fence import RevisionFence, get_revision_fence
 from nexus.server.api.v2._zone_scoped_fs import scope_rest_path
-from nexus.server.api.v2.error_handling import grpc_http_exception
+from nexus.server.api.v2.error_handling import api_error_handler, grpc_http_exception
 from nexus.server.api.v2.routers._index_on_write import (
     REASON_EMPTY,
     REASON_NON_TEXT,
@@ -53,7 +53,7 @@ from nexus.server.api.v2.routers._search_batch import (
     spec_query_text,
 )
 from nexus.server.api.v2.routers._search_deps import _get_search_daemon
-from nexus.server.dependencies import get_auth_result, get_operation_context, require_auth
+from nexus.server.dependencies import get_operation_context, require_auth
 from nexus.server.path_utils import unscope_internal_path
 from nexus.server.zone_execution import run_zone_scoped
 
@@ -123,76 +123,38 @@ from nexus.server.api.v2.routers._search_serialize import (  # noqa: E402
 
 @router.get("/health")
 async def search_daemon_health(
-    request: Request,
     search_daemon: Any = Depends(_get_optional_search_daemon),
 ) -> dict[str, Any]:
-    """Health check for the search daemon.
-
-    #4617: the P12 pivot reduced this to the plugin's raw
-    ``{status, detail}`` pair, breaking health pollers keyed on the
-    pre-pivot fields.  Restore the contract keys with honest post-P12
-    values — ``backend`` is now ``rust-plugin``, ``bm25_index_loaded``
-    means the plugin's FTS leg answers, ``db_pool_ready`` reports the
-    server's own async session factory (the daemon no longer owns a
-    pool), and ``zoekt_available`` is always False (retired from this
-    path).  Absent keys break consumers; changed values don't.
-    """
-    db_pool_ready = getattr(request.app.state, "async_session_factory", None) is not None
+    """Report host health and the local transport's initialization state."""
     if not search_daemon:
         return {
             "status": "disabled",
-            "daemon_enabled": False,
-            "message": "Search daemon unavailable (set NEXUS_SEARCH_DAEMON=false to disable)",
+            "detail": "Search daemon is not configured",
             "initialized": False,
-            "daemon_initialized": False,
             "backend": None,
-            "bm25_index_loaded": False,
-            "db_pool_ready": db_pool_ready,
-            "zoekt_available": False,
         }
     try:
         health: dict[str, Any] = await search_daemon.get_health()
     except Exception as exc:  # plugin died after the boot probe — health must not 500
         logger.warning("search health probe failed: %s", exc)
         health = {"status": "unavailable", "detail": f"{type(exc).__name__}: {exc}"}
-    status = health.get("status", "unavailable")
-    initialized = bool(getattr(search_daemon, "is_initialized", False))
-    health.update(
-        {
-            "initialized": initialized,
-            "daemon_initialized": initialized,
-            "backend": "rust-plugin",
-            # "degraded" = semantic leg missing, keyword still answers.
-            "bm25_index_loaded": status in ("healthy", "degraded"),
-            "db_pool_ready": db_pool_ready,
-            "zoekt_available": False,
-        }
-    )
-    return health
+    return {
+        **health,
+        "initialized": bool(search_daemon.is_initialized),
+        "backend": "rust-plugin",
+    }
 
 
 @router.get("/stats")
+@api_error_handler(context="read Search statistics")
 async def search_daemon_stats(
-    auth_result: dict[str, Any] | None = Depends(get_auth_result),
+    auth_result: dict[str, Any] = Depends(require_auth),
     search_daemon: Any = Depends(_get_search_daemon),
 ) -> dict[str, Any]:
-    """Get search daemon statistics.
-
-    #4617: on top of the plugin's counters (which carry the
-    ``backend`` / ``embedding_model`` / ``vector_backend`` (#4643)
-    identity fields and the #4623 ``indexing_in_progress`` build
-    signal), restore the pre-pivot ``initialized`` key stats
-    consumers gate on.
-
-    #4736: scoped to the caller's token zone — the zone ``/search/query``
-    reads and every indexing call writes — so a tenant's ``fts_doc_count``
-    / ``last_index_seq`` describe ITS index.  Auth stays optional
-    (token-less pollers keep the pre-existing root-zone view); the zone
-    served is echoed as ``zone_id``.
-    """
+    """Read zone counters under the Rust host's diagnostic access policy."""
     from nexus.contracts.constants import ROOT_ZONE_ID
 
-    zone_id = index_zone_for(auth_result) if (auth_result or {}).get("authenticated") else None
+    zone_id = index_zone_for(auth_result)
     stats: dict[str, Any] = await search_daemon.get_stats(zone_id=zone_id)
     stats["initialized"] = bool(getattr(search_daemon, "is_initialized", False))
     stats.setdefault("backend", "rust-plugin")

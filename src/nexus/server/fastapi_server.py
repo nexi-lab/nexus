@@ -925,7 +925,7 @@ def _register_routes(app: FastAPI) -> None:
     except ImportError as e:
         logger.debug(f"Pay router unavailable: {e}")
 
-    # Catalog, Aspects, Lineage, Graph endpoints (Issue #3250: TUI Search/Knowledge)
+    # Catalog, Aspects and Lineage endpoints (Issue #3250: TUI Search/Knowledge)
     try:
         from nexus.server.api.v2.routers.catalog import router as catalog_router
 
@@ -949,14 +949,6 @@ def _register_routes(app: FastAPI) -> None:
         logger.info("Lineage endpoints registered (/api/v2/lineage/*)")
     except ImportError as e:
         logger.debug(f"Lineage router unavailable: {e}")
-
-    try:
-        from nexus.server.api.v2.routers.graph import router as graph_router
-
-        app.include_router(graph_router)
-        logger.info("Graph endpoints registered (/api/v2/graph/*)")
-    except ImportError as e:
-        logger.debug(f"Graph router unavailable: {e}")
 
     # Locks endpoints (Issue #3250: TUI Locks tab)
     try:

@@ -2,7 +2,8 @@
 
 Nexus's `sandbox` profile is the lightweight runtime for running one Nexus
 inside each AI-agent sandbox. It boots with **zero external services**
-(SQLite + in-process LRU + BM25S; no PostgreSQL, Dragonfly, or Zoekt).
+(SQLite + in-process LRU). Indexed search requires a Rust Search host
+configured as described in the [Search deployment contract](search-plugin.md).
 
 Target: ~300-400 MB RSS, <5 s warm boot.
 
@@ -25,8 +26,8 @@ per-sandbox clients that talk to it.
 |---|---|---|
 | Storage (metastore + records) | SQLite | PostgreSQL |
 | Cache | In-process LRU | Dragonfly / Redis |
-| Keyword search | BM25S mmap | BM25S + Zoekt |
-| Semantic search | Local (sqlite-vec) or federated (peers); BM25S fallback | Local txtai + federation |
+| Keyword search | Tantivy in the configured Rust Search host | Tantivy in the configured Rust Search host |
+| Semantic search | HNSW in the Search host, with a configured embedder | HNSW in the Search host, with a configured embedder |
 | HTTP surface | `/health`, `/api/v2/features` | Full `/api/v2/*` |
 | MCP | Yes | Yes |
 | Target RSS | <400 MB | Multi-GB |
@@ -65,8 +66,6 @@ profile: sandbox
 #   data_dir: ~/.nexus/sandbox
 #   db_path: ~/.nexus/sandbox/nexus.db
 #   cache_size_mb: 64
-# Opt in to local vector search (requires an embedding API key, see below):
-# enable_vector_search: true
 
 features:
   # Everything off by default except SANDBOX's required set.
@@ -74,70 +73,25 @@ features:
   # workflows: true
 ```
 
-## Local vector search (opt-in)
+## Indexed search
 
-SANDBOX can do real vector search locally, without federation, using:
+Load the Rust Search plugin in the Kernel that owns the sandbox's workspace
+mounts. Configure a local or API embedder on that host to enable semantic
+and hybrid search. The [Search deployment contract](search-plugin.md) covers
+the host process, embedding model and index configuration.
 
-* **`sqlite-vec`** — a tiny (~3 MB) SQLite extension that adds a `vec0`
-  virtual table with KNN. The vector data lives in the same `nexus.db`
-  file as the rest of SANDBOX state; nothing new to operate.
-* **`litellm`** — provider-agnostic embeddings. Bring your own API key
-  for OpenAI / Cohere / Anthropic / Azure / etc. Default model is
-  `text-embedding-3-small` (1536 dim). Override with
-  `NEXUS_EMBEDDING_MODEL`.
-
-Both are bundled with the `[sandbox]` extra:
-
-```bash
-pip install 'nexus-ai-fs[sandbox]'
-```
-
-It's **off by default** so SANDBOX still boots without an embedding
-key. To enable, opt in via the config or env:
-
-```yaml
-profile: sandbox
-enable_vector_search: true
-```
-
-```bash
-# any provider supported by litellm
-export OPENAI_API_KEY=sk-...
-# (optional) override the embedding model
-# export NEXUS_EMBEDDING_MODEL=text-embedding-3-large
-NEXUS_ENABLE_VECTOR_SEARCH=true nexusd --profile sandbox \
-  --data-dir ~/.nexus/sandbox --port 8000 --host 127.0.0.1
-```
-
-When enabled, the SANDBOX semantic search path becomes:
-
-1. **Primary** — local sqlite-vec KNN inside the active zone. Hits
-   come back without any degraded flag.
-2. **Secondary** — federation to configured peer zones (if any).
-3. **Tertiary** — BM25S keyword search with `semantic_degraded=true`
-   stamped on every result.
-
-When the `[sandbox]` extra isn't installed (or no API key is set), the
-factory logs a single WARNING naming the missing package and falls
-through to steps 2 and 3 transparently — boot does not fail.
+The Python server connects to that host through `NEXUS_SEARCH_PLUGIN_TARGET`.
+`/api/v2/search/health` reports `disabled` if no host is connected. The host's
+runtime capabilities report which query modes are configured; they do not
+persist temporary model or index readiness.
 
 ## Federation
 
-SANDBOX delegates semantic search to configured peer zones. Point it at
-a hub zone via the federation config:
-
-```yaml
-federation:
-  peers:
-    - zone_id: main-hub
-      url: https://nexus.example.com
-      token: ${NEXUS_HUB_TOKEN}
-```
-
-When all peers are unreachable, search returns BM25S keyword results
-stamped with `semantic_degraded=true` on each result. The MCP client
-can surface this to the agent so it knows the results are keyword-only
-for that request.
+Federated queries use accessible zones and each peer's current Search
+capabilities. Credentials and file permissions remain scoped to the owning
+host. Configure peer routes on the cluster that owns the workspace and verify
+zone permissions before enabling fanout. Backend failures are reported for
+the affected zones; they do not establish that those zones contain no matches.
 
 ## What's off by default in SANDBOX
 
@@ -164,12 +118,12 @@ does not require a brick flag.
   with `maturin develop -m rust/nexus-cdylib/Cargo.toml --features full`
   (running from a fresh `git pull` on `main` requires this when the kernel
   ABI moves).
-- **Boot fails with `ModuleNotFoundError: bm25s`**: install the extras
-  with `pip install 'nexus-ai-fs[sandbox]'`.
 - **Boot tries to connect to Postgres/Redis**: you have a leftover
   `NEXUS_DATABASE_URL` or `NEXUS_DRAGONFLY_URL` in your env. Unset them
   or explicitly set `NEXUS_CACHE_BACKEND=inmem`.
-- **Semantic search returns `semantic_degraded=true`**: no peer is
-  reachable. Check `federation.peers` in your config + network access.
+- **Search is disabled**: check `NEXUS_SEARCH_PLUGIN_TARGET`, the host's
+  credentials and whether its Search plugin is loaded.
+- **Semantic search returns `semantic_degraded=true`**: check the host's
+  embedding configuration and the query's backend error.
 - **Boot slower than 5 s**: Python interpreter cold-start on first run.
   Subsequent boots (warm) should hit target.

@@ -85,7 +85,7 @@ def _boot_independent_bricks(
 ) -> dict[str, Any]:
     """Boot Tier 2 (BRICK) — optional, silent on failure.
 
-    Creates Search/Zoekt wiring, Wallet, Manifest, ToolNamespace,
+    Creates Wallet, Manifest, ToolNamespace,
     ChunkedUpload, Distributed infra, Workflow engine, API key creator.
     On failure: logs DEBUG, sets that service to None.
 
@@ -149,45 +149,7 @@ def _boot_independent_bricks(
 
     # === Manually-wired bricks (complex conditional logic) ===
 
-    zoekt_write_observer: Any = None  # Issue #810: OBSERVE-phase Zoekt observer
     task_dispatch_consumer: Any = None  # Task Manager: DT_PIPE lifecycle consumer
-
-    if _on("search"):
-        # Wire zoekt callbacks into backends (Issue #1520, #2188: DI via factory)
-        # Issue #810: Route through ZoektWriteObserver (OBSERVE phase, non-blocking).
-        try:
-            from nexus.bricks.search.config import search_config_from_env
-            from nexus.bricks.search.zoekt_client import ZoektIndexManager
-
-            _search_cfg = search_config_from_env()
-            if _search_cfg.zoekt_enabled:
-                _zoekt_index_mgr = ZoektIndexManager(
-                    index_dir=_search_cfg.zoekt_index_dir,
-                    data_dir=_search_cfg.zoekt_data_dir,
-                    debounce_seconds=_search_cfg.zoekt_debounce_seconds,
-                    enabled=True,
-                    index_binary=_search_cfg.zoekt_index_binary,
-                )
-                # Wrap in ZoektWriteObserver for OBSERVE-phase dispatch (#810)
-                from nexus.factory.zoekt_observer import ZoektWriteObserver
-
-                _zoekt_observer = ZoektWriteObserver(_zoekt_index_mgr)
-                zoekt_write_observer = _zoekt_observer
-
-                if (
-                    hasattr(ctx.backend, "on_write_callback")
-                    and ctx.backend.on_write_callback is None
-                ):
-                    ctx.backend.on_write_callback = _zoekt_observer.notify_write
-                if (
-                    hasattr(ctx.backend, "on_sync_callback")
-                    and ctx.backend.on_sync_callback is None
-                ):
-                    ctx.backend.on_sync_callback = _zoekt_observer.notify_sync_complete
-        except ImportError:
-            logger.debug("[BOOT:BRICK] Zoekt not available, skipping callback wiring")
-    else:
-        logger.debug("[BOOT:BRICK] Search brick disabled by profile")
 
     # --- Task Manager Brick ---
     if _on("task_manager"):
@@ -472,8 +434,6 @@ def _boot_independent_bricks(
         "governance_collusion_service": governance_collusion_service,
         "governance_graph_service": governance_graph_service,
         "governance_response_service": governance_response_service,
-        # OBSERVE-phase Zoekt observer (Issue #810)
-        "zoekt_write_observer": zoekt_write_observer,
         # Task Manager Brick
         "task_dispatch_consumer": task_dispatch_consumer,
     }
@@ -499,12 +459,11 @@ def _boot_dependent_bricks(
     Discovers ``brick_factory.py`` modules with ``TIER="dependent"`` and
     collects their handler callbacks into ``bricks["artifact_observers"]``.
 
-    Cross-brick factories (ToolInfo, GraphStore) are constructed here in the
+    Cross-brick factories (ToolInfo) are constructed here in the
     factory layer and injected into brick factories to respect LEGO Principle 3.
     """
     # Build cross-brick factories in the factory layer (not inside bricks)
     tool_info_factory: Callable[..., Any] | None = None
-    graph_store_factory: Callable[..., Any] | None = None
 
     try:
         from nexus.bricks.discovery.tool_index import ToolInfo
@@ -513,18 +472,12 @@ def _boot_dependent_bricks(
     except ImportError:
         logger.debug("[BOOT:BRICK:DEP] ToolInfo not available")
 
-    if ctx.record_store is not None:
-        # Removed: txtai handles this (Issue #2663)
-        # graph_store module was deleted; graph_store_factory stays None.
-        logger.debug("[BOOT:BRICK:DEP] GraphStore not available (deleted, Issue #2663)")
-
     def _create_dependent(descriptor: BrickFactoryDescriptor) -> Any:
         return descriptor.create_fn(
             ctx,
             system,
             bricks,
             tool_info_factory=tool_info_factory,
-            graph_store_factory=graph_store_factory,
         )
 
     artifact_observers: list[Any] = []

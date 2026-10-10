@@ -165,7 +165,6 @@ async def test_sandbox_http_surface_is_restricted(
                 "/api/v2/skills/list",
                 "/api/v2/locks/list",
                 "/api/v2/catalog/list",
-                "/api/v2/graph/nodes",
             ):
                 r = await client.get(blocked_path)
                 assert r.status_code == 404, (

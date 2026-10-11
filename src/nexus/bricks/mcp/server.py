@@ -988,7 +988,7 @@ async def create_mcp_server(
 
         # #3731: Zone unscoping — convert internal zone-prefixed paths
         # to user-facing paths and build parallel zone list for
-        # round-trip disambiguation (mirrors HTTP _do_glob_operation).
+        # round-trip disambiguation.
         item_zones: list[str | None] = []
         unscoped_items: list[str] = []
         for p in paginated_matches:
@@ -1004,8 +1004,7 @@ async def create_mcp_server(
                 f"(offset={offset}, limit={limit})"
             )
 
-        # #3731: Detect multi-zone ambiguity (parity with HTTP
-        # _do_glob_operation).
+        # #3731: Detect multi-zone ambiguity.
         _keys = list(zip(paginated_matches, item_zones, strict=False))
         glob_multi_zone_ambiguous = len(set(_keys)) < len(_keys)
 
@@ -1139,7 +1138,7 @@ async def create_mcp_server(
 
         # #3731: Zone unscoping — convert internal zone-prefixed paths
         # to user-facing paths and annotate with zone_id for round-trip
-        # disambiguation (mirrors HTTP _do_grep_operation).
+        # disambiguation.
         annotated: list[dict[str, Any]] = []
         for r in paginated_results:
             out = dict(r)
@@ -1158,8 +1157,7 @@ async def create_mcp_server(
                 f"{len(paginated_results)} results (offset={offset}, limit={limit})"
             )
 
-        # #3731: Detect multi-zone ambiguity (parity with HTTP
-        # _do_grep_operation). Two distinct raw paths that collapse to
+        # #3731: Two distinct raw paths that collapse to
         # the same (file, zone_id) tuple degrade round-trip safety.
         _keys = [(it["file"], it.get("zone_id")) for it in paginated_results]
         multi_zone_ambiguous = len(set(_keys)) < len(_keys)

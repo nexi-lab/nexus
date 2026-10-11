@@ -1101,8 +1101,8 @@ Search surface coverage matrix:
 
 | Task | CLI | HTTP/RPC surface | Use when |
 |------|-----|------------------|----------|
-| Find paths | `nexus glob "**/*.py" /workspace` | `POST /api/v2/search/glob`, RPC `SearchService.glob`, MCP `nexus_glob` | You need file names, not file contents. |
-| Find exact text | `nexus grep "TODO" /workspace` | `POST /api/v2/search/grep`, RPC `SearchService.grep`, MCP `nexus_grep` | You know the token or regex to match. |
+| Find paths | `nexus glob "**/*.py" /workspace` | `POST /v2/search/glob`, RPC `SearchService.glob`, MCP `nexus_glob` | You need file names, not file contents. |
+| Find exact text | `nexus grep "TODO" /workspace` | `POST /v2/search/grep`, RPC `SearchService.grep`, MCP `nexus_grep` | You know the token or regex to match. |
 | Query retrieved chunks | `nexus --profile cluster search query "auth flow" --mode hybrid` | Rust HTTP: `POST /v2/search/query`; Python integration: `GET /api/v2/search/query`, RPC `SearchService.semantic_search`, MCP `nexus_semantic_search` | You need ranked chunks. |
 | Build or refresh indexes | `nexus --profile cluster search index`; `nexus reindex` for Python MCL replay | Rust HTTP: `POST /v2/documents/index`; Python integration: `POST /api/v2/admin/reindex`, `POST /api/v2/search/index`, `/refresh`, `/index-directory`, `/indexing-mode` | You are preparing a corpus or changing indexing scope. |
 | Make a written file searchable | `nexus --profile cluster search index <path>` for the native VFS | Rust HTTP: `POST /v2/documents/index`; Python integration: `POST /api/v2/files/write` with `"index": true`, `POST /api/v2/search/index` | Index the VFS that owns the written file. Python write+index returns an `index_seq` for confirmation through `/api/v2/search/stats`. |

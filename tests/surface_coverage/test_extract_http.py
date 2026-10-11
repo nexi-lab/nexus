@@ -4,7 +4,32 @@ from pathlib import Path
 
 import pytest
 
-from scripts.surface_coverage.extract_http import extract_http_routes
+from scripts.surface_coverage.extract_http import (
+    extract_http_routes,
+    extract_typescript_http_client_routes,
+)
+from scripts.surface_coverage.normalize import normalize_http
+
+
+def test_native_client_routes_keep_their_canonical_operations(tmp_path: Path):
+    client = tmp_path / "search-client.ts"
+    client.write_text(
+        '// return this.transport.post("/v2/search/fake", {});\n'
+        'return this.transport.post("/v2/search/glob", body, this.options);\n'
+        'return this.transport.post("/v2/search/grep", body, this.options);\n'
+    )
+    routes = extract_typescript_http_client_routes(client)
+    assert [(route.method, route.path, route.source) for route in routes] == [
+        ("POST", "/v2/search/glob", f"{client}:2"),
+        ("POST", "/v2/search/grep", f"{client}:3"),
+    ]
+    assert [normalize_http(route.method, route.path) for route in routes] == [
+        "search.glob",
+        "search.grep",
+    ]
+    assert normalize_http("POST", "/api/v2/search/glob") == "search.glob"
+    with pytest.raises(ValueError, match="unrecognized HTTP path"):
+        normalize_http("GET", "/v1/.well-known/jwks.json")
 
 
 def test_included_router_prefixes_aliases_and_multiple_mounts(tmp_path: Path):

@@ -104,7 +104,7 @@ def test_user_guide_contains_search_story_inventory_and_quality_claims() -> None
     for needle in [
         "Search surface coverage matrix",
         "/api/v2/search/query",
-        "/api/v2/search/grep",
+        "/v2/search/grep",
         "nexus path-context",
         "RRF",
         "docs/benchmarks/2026-04-18-sandbox-vs-gbrain.md",

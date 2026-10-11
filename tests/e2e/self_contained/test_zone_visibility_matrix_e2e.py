@@ -216,22 +216,6 @@ def _rest_list(s: Stack, key: str, zone: str | None = None, **params: Any):
     )
 
 
-def _glob(s: Stack, key: str, zone: str | None = None):
-    return s.client.get(
-        "/api/v2/search/glob",
-        params={"pattern": "**/*.txt", "path": "/"},
-        headers=_headers(key, zone),
-    )
-
-
-def _grep(s: Stack, key: str, zone: str | None = None):
-    return s.client.get(
-        "/api/v2/search/grep",
-        params={"pattern": "secret|rootword", "path": "/"},
-        headers=_headers(key, zone),
-    )
-
-
 def _seed(s: Stack) -> None:
     _rpc_result(_rpc(s, s.key_a, "write", {"path": FILE_A, "content": WORD_A}))
     _rpc_result(_rpc(s, s.key_b, "write", {"path": FILE_B, "content": WORD_B}))
@@ -465,25 +449,3 @@ def test_admin_all_zones_is_the_anti_vacuity_control_and_is_audited(stack: Stack
     rest = _rest_list(stack, stack.key_admin, all_zones="true")
     assert rest.status_code == 200, rest.text
     assert FILE_ROOT in _collect_paths(rest.json())
-
-
-@pytest.mark.parametrize(
-    "key_name,zone",
-    [
-        ("key_a", None),
-        ("key_a", ZONE_A),
-        ("key_b", ZONE_B),
-        ("key_admin", None),
-        ("key_admin", ZONE_A),
-        ("key_admin", ZONE_B),
-        ("key_zoneless", None),
-    ],
-)
-@pytest.mark.parametrize("operation", [_glob, _grep], ids=["glob", "grep"])
-def test_search_without_a_plugin_returns_unavailable(
-    stack: Stack, key_name: str, zone: str | None, operation: Any
-) -> None:
-    response = operation(stack, getattr(stack, key_name), zone)
-    assert response.status_code == 501, response.text
-    assert response.json() == {"detail": "Upstream RPC failed"}
-    assert all(word not in response.text for word in (WORD_A, WORD_B, WORD_ROOT))

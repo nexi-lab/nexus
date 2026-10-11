@@ -296,28 +296,75 @@ async def main() -> None:
                     for result in batch.json()["queries"]
                 ), batch.text
 
-                for operation, pattern in (("glob", "*.txt"), ("grep", needle)):
-                    response = await client.post(
-                        f"/api/v2/search/{operation}",
-                        headers={"Authorization": f"Bearer {keys['bob']}"},
-                        json={"pattern": pattern, "path": "/docs", "files": list(paths.values())},
+                async def discover(name, operation, pattern, *, allowed=True):
+                    response = await rust.post(
+                        f"/v2/search/{operation}",
+                        headers={"Authorization": f"Bearer {keys[name]}"},
+                        json={
+                            "pattern": pattern,
+                            "root_path": "/docs",
+                            "files": list(paths.values()),
+                        },
                     )
                     assert response.is_success, response.text
-                    items = response.json()["items"]
-                    found = items if operation == "glob" else [hit["file"] for hit in items]
-                    assert found == [paths["bob"]], response.text
-                    empty = await client.post(
-                        f"/api/v2/search/{operation}",
-                        headers={"Authorization": f"Bearer {keys['bob']}"},
-                        json={"pattern": pattern, "path": "/docs", "files": []},
+                    body = response.json()
+                    assert not body.get("error"), response.text
+                    found = (
+                        body["paths"]
+                        if operation == "glob"
+                        else [hit["path"] for hit in body["matches"]]
                     )
-                    assert empty.is_success and empty.json()["items"] == [], empty.text
-                    denied = await client.post(
-                        f"/api/v2/search/{operation}",
+                    assert found == ([paths[name]] if allowed else []), response.text
+
+                await asyncio.gather(
+                    *[
+                        discover(name, operation, pattern)
+                        for name in ("alice", "bob") * 3
+                        for operation, pattern in (("glob", "*.txt"), ("grep", needle))
+                    ]
+                )
+                for operation, pattern in (("glob", "*.txt"), ("grep", needle)):
+                    result_field = "paths" if operation == "glob" else "matches"
+                    empty = await rust.post(
+                        f"/v2/search/{operation}",
                         headers={"Authorization": f"Bearer {keys['bob']}"},
-                        json={"pattern": pattern, "path": "/docs"},
+                        json={"pattern": pattern, "root_path": "/docs", "files": []},
                     )
-                    assert denied.status_code == 403, denied.text
+                    assert empty.is_success and empty.json()[result_field] == [], empty.text
+                    for method in ("GET", "POST"):
+                        kwargs = {
+                            "params" if method == "GET" else "json": {
+                                "pattern": pattern,
+                                "root_path": "/docs",
+                            }
+                        }
+                        denied = await rust.request(
+                            method,
+                            f"/v2/search/{operation}",
+                            headers={"Authorization": f"Bearer {keys['bob']}"},
+                            **kwargs,
+                        )
+                        assert denied.status_code == 403, denied.text
+                        walked = await rust.request(
+                            method,
+                            f"/v2/search/{operation}",
+                            headers={"Authorization": f"Bearer {admin}"},
+                            **kwargs,
+                        )
+                        assert walked.is_success, walked.text
+                        assert not walked.json().get("error"), walked.text
+                        visible = (
+                            walked.json()["paths"]
+                            if operation == "glob"
+                            else [hit["path"] for hit in walked.json()["matches"]]
+                        )
+                        assert set(paths.values()) <= set(visible), walked.text
+                        for invalid in (None, "sk-never-minted"):
+                            headers = {"Authorization": f"Bearer {invalid}"} if invalid else {}
+                            rejected = await rust.request(
+                                method, f"/v2/search/{operation}", headers=headers, **kwargs
+                            )
+                            assert rejected.status_code == 401, rejected.text
 
                 from nexus.server.dependencies import _get_cached_auth
 
@@ -516,6 +563,8 @@ async def main() -> None:
                         else:
                             raise AssertionError("User inherited node administrative authority")
                     await grant("alice", "DELETE")
+                    await discover("alice", "glob", "*.txt", allowed=False)
+                    await discover("alice", "grep", needle, allowed=False)
                     async with Client(mcp) as mcp_client:
                         await mcp_discovery(mcp_client, "alice", allowed=False)
                     repeated = await dispatcher.search(
@@ -551,6 +600,13 @@ async def main() -> None:
                     request_api_key.reset(scope)
                 # Python can cache identity, but kernel key revocation remains authoritative.
                 await admin_request("DELETE", f"/v2/auth/keys/{key_hashes['bob']}")
+                for operation, pattern in (("glob", "*.txt"), ("grep", needle)):
+                    rejected = await rust.post(
+                        f"/v2/search/{operation}",
+                        headers={"Authorization": f"Bearer {keys['bob']}"},
+                        json={"pattern": pattern, "root_path": "/docs", "files": []},
+                    )
+                    assert rejected.status_code == 401, rejected.text
                 key_hashes.pop("bob")
                 revoked = await client.get(
                     "/api/v2/search/query",

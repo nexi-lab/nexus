@@ -11431,13 +11431,13 @@ operations:
       source: src/nexus/cli/commands/search.py:76
     grpc_expose:
       name: glob
-      source: src/nexus/bricks/search/search_service.py:1246
+      source: src/nexus/bricks/search/search_service.py:1245
     grpc_typed:
       name: SearchService.Glob
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:37
     http:
-      name: POST /api/v2/search/glob
-      source: src/nexus/server/api/v2/routers/search.py:1335
+      name: POST /v2/search/glob
+      source: packages/nexus-api-client/src/search-client.ts:85
     mcp:
       name: nexus_glob
       source: src/nexus/config/tool_profiles.yaml:1
@@ -11445,9 +11445,9 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: nexus glob "**/*.py" /workspace --plain; POST /api/v2/search/glob
+  usage_example: nexus glob "**/*.py" /workspace --plain; POST /v2/search/glob
   correctness_test: tests/integration/search/test_discovery_client.py::test_sdk_refinement_preserves_scope_context_and_live_responses;
-    tests/integration/search/test_discovery_http.py; scripts/test_search_credentials_plugin.py
+    scripts/test_search_credentials_plugin.py
   perf_class: hot
   perf_link: scripts/test_discovery_service_plugin.py guards bounded selections and result caps; traversal I/O budgets are
     enforced by the pinned VFS discovery journeys
@@ -11462,13 +11462,13 @@ operations:
       source: src/nexus/cli/commands/search.py:267
     grpc_expose:
       name: grep
-      source: src/nexus/bricks/search/search_service.py:1258
+      source: src/nexus/bricks/search/search_service.py:1257
     grpc_typed:
       name: SearchService.Grep
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:42
     http:
-      name: POST /api/v2/search/grep
-      source: src/nexus/server/api/v2/routers/search.py:1196
+      name: POST /v2/search/grep
+      source: packages/nexus-api-client/src/search-client.ts:89
     mcp:
       name: nexus_grep
       source: src/nexus/config/tool_profiles.yaml:1
@@ -11476,9 +11476,9 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: nexus grep "token" /docs/api.md --in-section "## API"; POST /api/v2/search/grep
+  usage_example: nexus grep "token" /docs/api.md --in-section "## API"; POST /v2/search/grep
   correctness_test: tests/integration/search/test_discovery_client.py::test_sdk_refinement_preserves_scope_context_and_live_responses;
-    tests/integration/search/test_discovery_http.py; scripts/test_search_credentials_plugin.py; tests/e2e/self_contained/test_mcp_discovery.py
+    scripts/test_search_credentials_plugin.py; tests/e2e/self_contained/test_mcp_discovery.py; scripts/test_discovery_service_plugin.py
   perf_class: hot
   perf_link: scripts/test_discovery_service_plugin.py guards bounded selections and result caps; traversal I/O budgets are
     enforced by the pinned VFS discovery journeys
@@ -11493,7 +11493,7 @@ operations:
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:122
     http:
       name: GET /api/v2/search/health
-      source: src/nexus/server/api/v2/routers/search.py:126
+      source: src/nexus/server/api/v2/routers/search.py:118
   profiles:
     lite: supported
     sandbox: supported
@@ -11516,7 +11516,7 @@ operations:
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:52
     http:
       name: POST /api/v2/search/index
-      source: src/nexus/server/api/v2/routers/search.py:1405
+      source: src/nexus/server/api/v2/routers/search.py:765
   profiles:
     lite: supported
     sandbox: supported
@@ -11719,7 +11719,7 @@ operations:
   owning_issue: null
 - id: search.query
   module: search
-  summary: HTTP query endpoint for keyword, semantic, hybrid and federated retrieval; Graph requests return 501.
+  summary: HTTP query endpoint for keyword, semantic, hybrid and readable-zone federated retrieval.
   transports:
     cli:
       name: nexus search query
@@ -11728,14 +11728,15 @@ operations:
       name: SearchService.Query
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:47
     http:
-      name: GET /api/v2/search/query
-      source: src/nexus/server/api/v2/routers/search.py:167
+      name: POST /v2/search/query
+      source: packages/nexus-api-client/src/search-client.ts:71
   profiles:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: GET /api/v2/search/query?q=database%20migration&type=hybrid&limit=5
-  correctness_test: tests/integration/services/test_search_host_authority.py; scripts/test_search_credentials_plugin.py; tests/integration/services/test_search_query_batch.py
+  usage_example: POST /v2/search/query {"q":"database migration","query_type":"hybrid","limit":5}
+  correctness_test: tests/integration/services/test_search_host_authority.py; scripts/test_search_credentials_plugin.py; tests/integration/services/test_search_query_batch.py;
+    packages/nexus-tui/tests/e2e/native-search.test.tsx; scripts/test_rust_http_search_cli.py
   perf_class: hot
   perf_link: tests/benchmarks/test_search_protocol_benchmark.py; docs/benchmarks/2026-04-18-sandbox-vs-gbrain.md; tests/e2e/self_contained/test_search_surface_live_e2e.py
   gap_issue: null
@@ -11746,7 +11747,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/query/batch
-      source: src/nexus/server/api/v2/routers/search.py:613
+      source: src/nexus/server/api/v2/routers/search.py:605
   profiles:
     lite: supported
     sandbox: supported
@@ -11766,7 +11767,7 @@ operations:
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:57
     http:
       name: POST /api/v2/search/refresh
-      source: src/nexus/server/api/v2/routers/search.py:1555
+      source: src/nexus/server/api/v2/routers/search.py:915
   profiles:
     lite: supported
     sandbox: supported
@@ -11840,7 +11841,7 @@ operations:
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:127
     http:
       name: GET /api/v2/search/stats
-      source: src/nexus/server/api/v2/routers/search.py:150
+      source: src/nexus/server/api/v2/routers/search.py:142
   profiles:
     lite: supported
     sandbox: supported
@@ -11942,7 +11943,7 @@ operations:
   transports:
     grpc_expose:
       name: semantic_search
-      source: src/nexus/bricks/search/search_service.py:1426
+      source: src/nexus/bricks/search/search_service.py:1425
     mcp:
       name: nexus_semantic_search
       source: src/nexus/config/tool_profiles.yaml:1
@@ -11963,7 +11964,7 @@ operations:
   transports:
     grpc_expose:
       name: semantic_search_index
-      source: src/nexus/bricks/search/search_service.py:1505
+      source: src/nexus/bricks/search/search_service.py:1504
   profiles:
     lite: supported
     sandbox: supported
@@ -11980,7 +11981,7 @@ operations:
   transports:
     grpc_expose:
       name: semantic_search_stats
-      source: src/nexus/bricks/search/search_service.py:1528
+      source: src/nexus/bricks/search/search_service.py:1527
   profiles:
     lite: supported
     sandbox: supported

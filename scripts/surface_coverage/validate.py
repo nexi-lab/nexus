@@ -44,7 +44,7 @@ _CODE_SORT_ORDER = {
 }
 
 _REPO_REFERENCE_RE = re.compile(
-    r"(?P<path>(?:tests|src|scripts|docs|benchmarks|proto|rust)/[A-Za-z0-9_./-]+)(?::\d+)?"
+    r"(?P<path>(?:tests|src|scripts|docs|benchmarks|proto|rust|packages)/[A-Za-z0-9_./-]+)(?::\d+)?"
 )
 
 

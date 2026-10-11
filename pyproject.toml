@@ -369,7 +369,7 @@ Repository = "https://github.com/nexi-lab/nexus"
 Issues = "https://github.com/nexi-lab/nexus/issues"
 
 [project.scripts]
-nexus = "nexus.cli:main"
+nexus = "nexus.cli.main:entrypoint"
 nexusd = "nexus.daemon:main"
 nexus-extensions-index = "nexus.extensions.index:_cli_entry"
 

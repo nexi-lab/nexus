@@ -391,7 +391,16 @@ metadata and message bytes a peer replicates (&sect;8.3).</p>
 
 <p>The rewrite happens at the origin write, before Raft replication (&sect;4). Every replica and every reader then sees the same stamped <code>from</code> without re-verifying, so a message's origin travels intact to another machine: agent A on one node writes <code>from:A</code> locally, the bytes replicate, and a reader on another node reads <code>from:A</code> as authored.</p>
 
-<p>Cross-machine, <code>from:A</code> is unambiguous because agent names are unique across the cluster &mdash; but the mechanism is two-part, since the credential store is <strong>per-node</strong> (it lives in the root zone, which is per-node SOLO, never federated; each node mints and validates its own agents). <em>Within</em> a node, minting refuses a second credential for an existing <code>(subject_type, subject_id)</code> unless <code>--allow-existing</code> is passed (rotation). <em>Across</em> nodes, uniqueness is a naming convention: agent names are machine-anchored (a per-node identifier plus the agent's workspace), so two nodes cannot mint the same name. Either way an agent keeps <em>one</em> identity across every zone it belongs to (one actor, not one-per-zone &mdash; a node can be in many zones). See <a href="https://s.shareone.vip/s/nexus-auth-architecture">nexus-auth-architecture &sect;4.1</a>.</p>
+<p><strong>Identity across devices.</strong> The
+<a href="https://s.shareone.vip/s/agent-context-storage-matrix#agent-delivery-contract">Agent
+identity contract</a> keeps the same durable principal across runtime starts,
+devices and authorized zones. Credential issuance and rotation bind that
+principal to each authenticated caller; changing its runtime box preserves
+the Agent name used for conversation addressing. The per-node SOLO root
+contains local trust and credential state. Its placement is distinct from
+the Agent's durable identity and execution placement. Issuer trust, foreign
+CA validation and credential lifecycle belong to
+<a href="https://s.shareone.vip/s/nexus-auth-architecture">the authentication architecture</a>.</p>
 
 <p>An agent authenticates with a CA-signed identity certificate and connects to its node over the required-mTLS bind (<code>--bind-addr</code>) &mdash; the same surface the peer plane uses. The certificate's subject type distinguishes an agent identity from a node identity, so one bind serves both. The certificate resolves to the agent's <code>agent_id</code>, the stamp binds that identity onto the write, and Raft carries the stamped <code>from</code>. See <a href="https://s.shareone.vip/s/nexus-auth-architecture">nexus-auth-architecture &sect;4.1</a>.</p>
 

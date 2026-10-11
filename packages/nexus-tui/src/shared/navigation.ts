@@ -60,7 +60,6 @@ export const AGENT_TABS: readonly TabDef<AgentTab>[] = [
 
 export const SEARCH_TABS: readonly TabDef<SearchTab>[] = [
   { id: "search", label: "Search", brick: "search" },
-  { id: "knowledge", label: "Knowledge", brick: "catalog" },
   { id: "memories", label: "Memories", brick: "memory" },
   { id: "playbooks", label: "Playbooks", brick: null },
   { id: "ask", label: "Ask", brick: "rlm" },

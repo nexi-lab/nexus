@@ -444,3 +444,17 @@ produce a nonzero exit code.
 Stats show the Rust counters separately: indexed files (`fts_path_count`),
 keyword chunks (`fts_doc_count`), vector chunks (`ann_chunk_count`), and
 pending documents (`pending`).
+
+## TUI on a Rust Search host
+
+The Search panel and file explorer use the Rust HTTP query, glob and grep
+routes. `--search-url`, `NEXUS_SEARCH_URL`, or `search_url` in `nexus.yaml`
+selects the owning host's listener or TLS proxy; omission uses the configured
+server URL. File access and Search must share workspace ownership and the
+credential's authorization source. The existing API worker carries the bearer
+credential through both listeners.
+
+The terminal displays native chunk text, zone attribution, discovery limits
+and request errors. An explicit configured zone pins the query; otherwise
+the Rust host selects readable zones. A directory walk requires access to
+its root. An explicit discovery working set is checked per file.

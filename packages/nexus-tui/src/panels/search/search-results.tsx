@@ -1,6 +1,6 @@
 import type { JSX } from "solid-js";
 /**
- * Search results list: path, chunk_text (truncated), score, line range.
+ * Search results list with scores, zone and chunk text.
  */
 
 import type { SearchResult } from "../../stores/search-store.js";
@@ -16,6 +16,7 @@ interface SearchResultsProps {
   readonly total: number;
   readonly selectedIndex: number;
   readonly loading: boolean;
+  readonly error?: string | null;
 }
 
 function formatScore(score: number): string {
@@ -28,17 +29,10 @@ function scoreColor(score: number): string {
   return statusColor.dim;
 }
 
-function formatLineRange(start: number | null, end: number | null): string {
-  if (start == null) return "—";
-  if (start === end || end == null) return `L${start}`;
-  return `L${start}-${end}`;
-}
-
 function formatScoreBreakdown(result: SearchResult): string {
   const parts: string[] = [];
   if (result.keyword_score != null) parts.push(`bm25:${result.keyword_score.toFixed(2)}`);
   if (result.vector_score != null) parts.push(`vec:${result.vector_score.toFixed(2)}`);
-  if (result.reranker_score != null) parts.push(`rerank:${result.reranker_score.toFixed(2)}`);
   return parts.length > 0 ? parts.join(" ") : "";
 }
 
@@ -47,17 +41,16 @@ export function SearchResults(props: SearchResultsProps): JSX.Element {
     const isSelected = i === props.selectedIndex;
     const prefix = isSelected ? "> " : "  ";
     const score = formatScore(result.score).padEnd(5);
-    const lines = formatLineRange(result.line_start, result.line_end).padEnd(9);
     const path = truncateText(result.path, 29).padEnd(29);
     const breakdown = formatScoreBreakdown(result);
     const chunk = truncateText(result.chunk_text.replace(/\n/g, " "), 30);
 
     return (
-      <box key={`${result.path}:${result.chunk_index}`} height={1} width="100%">
+      <box key={`${result.zone_id}:${result.path}:${result.chunk_index}`} height={1} width="100%">
         <text>
           <span>{prefix}</span>
           <span style={textStyle({ fg: scoreColor(result.score) })}>{score}</span>
-          <span>{`  ${lines}  ${path}  `}</span>
+          <span>{`  ${result.zone_id}  ${path}  `}</span>
           <span style={textStyle({ dim: true })}>{breakdown ? `[${breakdown}]  ` : ""}</span>
           <span>{chunk}</span>
         </text>
@@ -70,6 +63,8 @@ export function SearchResults(props: SearchResultsProps): JSX.Element {
       <text>
         {props.loading
           ? "Searching..."
+          : props.error && props.results.length === 0
+            ? "Search failed"
           : props.results.length === 0
             ? "No results. Try a different query or search mode (m to cycle: KW -> SEM -> HYB)."
             : `Results: ${props.total} found`}
@@ -77,10 +72,10 @@ export function SearchResults(props: SearchResultsProps): JSX.Element {
 
       {/* Header */}
       <box height={1} width="100%">
-        <text>{"  SCORE  LINES      PATH                           CHUNK"}</text>
+        <text>{"  SCORE  ZONE  PATH                           CHUNK"}</text>
       </box>
       <box height={1} width="100%">
-        <text>{"  -----  ---------  -----------------------------  --------------------------------"}</text>
+        <text>{"  -----  ----  -----------------------------  --------------------------------"}</text>
       </box>
 
       {/* Result rows */}

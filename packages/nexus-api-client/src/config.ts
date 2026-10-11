@@ -34,6 +34,7 @@ export function resolveConfig(
   return {
     apiKey: overrides?.apiKey ?? yamlConfig.apiKey ?? envApiKey ?? "",
     baseUrl: overrides?.baseUrl ?? yamlConfig.url ?? envUrl ?? DEFAULT_BASE_URL,
+    searchUrl: overrides?.searchUrl ?? yamlConfig.searchUrl ?? readEnv("NEXUS_SEARCH_URL"),
     timeout: overrides?.timeout,
     maxRetries: overrides?.maxRetries,
     fetch: overrides?.fetch,
@@ -59,6 +60,7 @@ function readEnv(name: string): string | undefined {
 
 interface YamlConfig {
   url?: string;
+  searchUrl?: string;
   apiKey?: string;
   agentId?: string;
   zoneId?: string;
@@ -127,6 +129,7 @@ function readYamlConfig(): YamlConfig {
 
         return {
           url: url ?? undefined,
+          searchUrl: extractYamlValue(content, "search_url") ?? undefined,
           apiKey: apiKey ?? undefined,
           agentId: agentId ?? undefined,
           zoneId: zoneId ?? undefined,

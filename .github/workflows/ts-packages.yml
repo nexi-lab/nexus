@@ -5,10 +5,12 @@ on:
     branches: [main, develop]
     paths:
       - 'packages/**'
+      - '.github/workflows/ts-packages.yml'
   pull_request:
     branches: [main, develop]
     paths:
       - 'packages/**'
+      - '.github/workflows/ts-packages.yml'
 
 jobs:
   api-client:
@@ -60,10 +62,13 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.14
 
       # Build api-client first
       - run: cd ../nexus-api-client && npm install && npm run build
 
-      - run: bun install
+      - run: bun install --frozen-lockfile
+      - name: Install the terminal E2E dependency
+        run: sudo apt-get update && sudo apt-get install -y tmux
       - run: bun test
+      - run: bun run lint

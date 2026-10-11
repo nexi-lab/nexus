@@ -24,6 +24,7 @@ import {
   type FileItem,
   getEffectiveSelection,
 } from "../../stores/files-store.js";
+import { searchFiles, type FileSearchHit } from "./file-search.js";
 import { useGlobalStore } from "../../stores/global-store.js";
 import { useShareLinkStore } from "../../stores/share-link-store.js";
 import { useUploadStore } from "../../stores/upload-store.js";
@@ -279,7 +280,7 @@ export default function FileExplorerPanel(): JSX.Element {
   // Filter & search state
   const [filterQuery, setFilterQuery] = createSignal("");
   const [searchQuery, setSearchQuery] = createSignal("");
-  const [searchResults, setSearchResults] = createSignal<readonly { path: string; line?: number; content?: string }[] | null>(null);
+  const [searchResults, setSearchResults] = createSignal<readonly FileSearchHit[] | null>(null);
 
   // Effective selection count for display
   const effectiveSelection = createMemo(() => {
@@ -297,37 +298,26 @@ export default function FileExplorerPanel(): JSX.Element {
     if (activeTab() === "shareLinks") fetchLinks(client);
   });
 
+  const [searchError, setSearchError] = createSignal<string | null>(null);
+  const [searchTruncated, setSearchTruncated] = createSignal(false);
+
   // Search execution
   const executeSearch = async (query: string) => {
     const client = getClient();
     if (!client) return;
     setSearchResults(null);
-
+    setSearchError(null);
+    setSearchTruncated(false);
+    const config = useGlobalStore.getState().config;
     try {
-      if (query.startsWith("g:")) {
-        // Glob search
-        const pattern = query.slice(2).trim();
-        if (!pattern) return;
-        const res = await client.get<{ matches: string[]; total: number; truncated: boolean }>(
-          `/api/v2/files/glob?pattern=${encodeURIComponent(pattern)}&path=${encodeURIComponent(currentPath)}&limit=100`,
-        );
-        setSearchResults(res.matches.map((p: string) => ({ path: p })));
-      } else if (query.startsWith("r:")) {
-        // Grep search
-        const pattern = query.slice(2).trim();
-        if (!pattern) return;
-        const res = await client.get<{ matches: { file: string; line: number; content: string }[]; total: number; truncated: boolean }>(
-          `/api/v2/files/grep?pattern=${encodeURIComponent(pattern)}&path=${encodeURIComponent(currentPath)}&limit=100`,
-        );
-        setSearchResults(res.matches.map((m: { file: string; line: number; content: string }) => ({ path: m.file, line: m.line, content: m.content })));
-      } else {
-        // Deep search via search API
-        const res = await client.get<{ results: { path: string }[] }>(
-          `/api/v2/search/query?q=${encodeURIComponent(query)}&path=${encodeURIComponent(currentPath)}&limit=100`,
-        );
-        setSearchResults(res.results.map((r: { path: string }) => ({ path: r.path })));
-      }
-    } catch {
+      const result = await searchFiles(query, useFilesStore.getState().currentPath, client, {
+        url: config.searchUrl, zoneId: config.zoneId,
+      });
+      setSearchResults(result.hits);
+      setSearchError(result.error ?? null);
+      setSearchTruncated(result.truncated);
+    } catch (err) {
+      setSearchError(err instanceof Error ? err.message : "Search failed");
       setSearchResults([]);
     }
   };
@@ -475,10 +465,12 @@ export default function FileExplorerPanel(): JSX.Element {
           {searchResults() !== null ? (
             <box flexGrow={1} borderStyle="single">
               <scrollbox height="100%" width="100%">
+                {searchError() && <text fg={statusColor.error}>{searchError()}</text>}
+                {searchTruncated() && <text>Result limit reached; narrow the search.</text>}
                 {(searchResults()?.length ?? 0) === 0
-                  ? <text>No results found</text>
+                  ? <text>{searchError() ? "Search failed" : "No results found"}</text>
                   : searchResults()!.map((result, i) => (
-                    <box key={`${result.path}:${result.line ?? i}`} height={1} width="100%">
+                    <box key={`${result.zoneId ?? ""}:${result.path}:${result.line ?? i}`} height={1} width="100%">
                       <text>
                         {result.line !== undefined
                           ? `${result.path}:${result.line}  ${result.content ?? ""}`

@@ -17,6 +17,8 @@ import type { NexusClientOptions } from "@nexus-ai-fs/api-client";
 
 /** Request options that are safe to send across the message channel. */
 export interface SerializableRequestOptions {
+  readonly baseUrl?: string;
+  readonly transformKeys?: boolean;
   readonly timeout?: number;
   readonly idempotencyKey?: string;
   readonly headers?: Readonly<Record<string, string>>;

@@ -535,6 +535,54 @@ jobs:
             -e NEXUS_SEARCH_TEST_AGENT_B=/tmp/search-credentials/agent-b \
             nexus-e2e python /tmp/test_search_agent_credentials_plugin.py
 
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Build the TypeScript transport and install the TUI
+        run: |
+          cd packages/nexus-api-client
+          npm ci
+          npm run build
+          cd ../nexus-tui
+          bun install --frozen-lockfile
+
+      - name: Prepare native TypeScript Search facts and credentials
+        run: |
+          docker exec \
+            -e NEXUS_TS_SEARCH_FIXTURE=/tmp/ts-search-fixture.json \
+            -e NEXUS_SEARCH_TEST_HTTP=http://127.0.0.1:2327 \
+            -e NEXUS_SEARCH_PLUGIN_TARGET=127.0.0.1:2326 \
+            -e NEXUS_SEARCH_PLUGIN_TLS_CA=/tmp/search-credentials/tls/ca.pem \
+            -e NEXUS_SEARCH_PLUGIN_TLS_CERT=/tmp/search-credentials/tls/node.pem \
+            -e NEXUS_SEARCH_PLUGIN_TLS_KEY=/tmp/search-credentials/tls/node-key.pem \
+            -e NEXUS_SEARCH_TEST_ADMIN_KEY=/tmp/search-credentials/search-admin-key \
+            nexus-e2e python /tests/scripts/ts_search_fixture.py prepare
+          docker cp nexus-e2e:/tmp/ts-search-fixture.json /tmp/ts-search-fixture.json
+
+      - name: Verify Search through the real TUI worker and terminal renderer
+        working-directory: packages/nexus-tui
+        env:
+          NEXUS_TS_SEARCH_FIXTURE: /tmp/ts-search-fixture.json
+        run: |
+          test -s "$NEXUS_TS_SEARCH_FIXTURE"
+          bun test --timeout 30000 tests/e2e/native-search.test.tsx
+
+      - name: Clean up TypeScript Search facts and credentials
+        if: always()
+        run: |
+          if docker exec nexus-e2e test -s /tmp/ts-search-fixture.json; then
+            docker exec \
+              -e NEXUS_TS_SEARCH_FIXTURE=/tmp/ts-search-fixture.json \
+              -e NEXUS_SEARCH_TEST_HTTP=http://127.0.0.1:2327 \
+              -e NEXUS_SEARCH_PLUGIN_TARGET=127.0.0.1:2326 \
+              -e NEXUS_SEARCH_PLUGIN_TLS_CA=/tmp/search-credentials/tls/ca.pem \
+              -e NEXUS_SEARCH_PLUGIN_TLS_CERT=/tmp/search-credentials/tls/node.pem \
+              -e NEXUS_SEARCH_PLUGIN_TLS_KEY=/tmp/search-credentials/tls/node-key.pem \
+              -e NEXUS_SEARCH_TEST_ADMIN_KEY=/tmp/search-credentials/search-admin-key \
+              nexus-e2e python /tests/scripts/ts_search_fixture.py cleanup
+          fi
+
       - name: Collect container logs on failure
         if: failure() || cancelled()
         run: |

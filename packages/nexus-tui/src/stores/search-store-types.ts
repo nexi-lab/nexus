@@ -9,28 +9,7 @@
 // Public types (snake_case matching API wire format)
 // =============================================================================
 
-export interface SearchResult {
-  readonly path: string;
-  readonly chunk_text: string;
-  readonly score: number;
-  readonly chunk_index: number;
-  readonly line_start: number | null;
-  readonly line_end: number | null;
-  readonly keyword_score: number | null;
-  readonly vector_score: number | null;
-  readonly splade_score?: number | null;
-  readonly reranker_score?: number | null;
-}
-
-export interface KnowledgeEntity {
-  readonly [key: string]: unknown;
-}
-
-export interface NeighborEntry {
-  readonly entity: KnowledgeEntity;
-  readonly depth: number;
-  readonly path: readonly string[];
-}
+export type { SearchHit as SearchResult } from "@nexus-ai-fs/api-client";
 
 export interface Memory {
   readonly [key: string]: unknown;
@@ -91,33 +70,12 @@ export interface RlmAnswer {
   readonly model: string | null;
 }
 
-export type SearchTab = "search" | "knowledge" | "memories" | "playbooks" | "ask" | "columns";
+export type SearchTab = "search" | "memories" | "playbooks" | "ask" | "columns";
 export type SearchMode = "keyword" | "semantic" | "hybrid";
 
 // =============================================================================
 // Internal response types (used only by the store implementation)
 // =============================================================================
-
-export interface SearchQueryResponse {
-  readonly query: string;
-  readonly search_type: string;
-  readonly graph_mode: string;
-  readonly results: readonly SearchResult[];
-  readonly total: number;
-  readonly latency_ms: number;
-}
-
-export interface EntityResponse {
-  readonly entity: KnowledgeEntity | null;
-}
-
-export interface NeighborsResponse {
-  readonly neighbors: readonly NeighborEntry[];
-}
-
-export interface KnowledgeSearchResponse {
-  readonly entity: KnowledgeEntity | null;
-}
 
 export interface MemorySearchResponse {
   readonly memories: readonly Memory[];

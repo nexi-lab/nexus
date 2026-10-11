@@ -1,7 +1,6 @@
 import type { JSX } from "solid-js";
 /**
- * Search & Knowledge panel: tabbed layout with search, knowledge graph,
- * and memories views.
+ * Search panel with indexed retrieval, memories and document questions.
  *
  * Press / to enter search input mode, type query, Enter to submit, Escape to cancel.
  */
@@ -20,7 +19,6 @@ import { SubTabBar } from "../../shared/components/sub-tab-bar.js";
 import { subTabCycleBindings } from "../../shared/components/sub-tab-bar-utils.js";
 import { useTabFallback } from "../../shared/hooks/use-tab-fallback.js";
 import { SearchResults } from "./search-results.js";
-import { KnowledgeView } from "./knowledge-view.js";
 import { MemoryList } from "./memory-list.js";
 import { PlaybookList } from "./playbook-list.js";
 import { RlmAnswerView } from "./rlm-answer-view.js";
@@ -37,7 +35,6 @@ const MODE_LABELS: Readonly<Record<SearchMode, string>> = {
 
 const HELP_TEXT: Readonly<Record<string, string>> = {
   search: "j/k:navigate  a:add to context  /:search  m:mode  Enter:select  Tab:tab  r:refresh  q:quit",
-  knowledge: "j/k:navigate  Tab:switch tab  /:search  m:mode  Enter:select  d:delete  r:refresh  q:quit",
   memories: "j/k:navigate  Tab:tab  /:search  Enter:history  v:diff  n:create  u:update  d:delete  Esc:close  r:refresh  q:quit",
   playbooks: "j/k:navigate  Tab:switch tab  /:search  m:mode  Enter:select  d:delete  r:refresh  q:quit",
   ask: "/:ask  a:clear context  Tab:switch tab  r:refresh  q:quit",
@@ -46,6 +43,10 @@ const HELP_TEXT: Readonly<Record<string, string>> = {
 
 export default function SearchPanel(): JSX.Element {
   const client = useApi();
+  const searchConnection = () => {
+    const config = useGlobalStore.getState().config;
+    return { url: config.searchUrl, zoneId: config.zoneId };
+  };
   const confirm = useConfirmStore((s) => s.confirm);
   const overlayActive = useUiStore((s) => s.overlayActive);
   const visibleTabs = useVisibleTabs(SEARCH_TABS);
@@ -61,10 +62,6 @@ export default function SearchPanel(): JSX.Element {
   const searchTotal = () => useSearchStore((s) => s.searchTotal);
   const selectedResultIndex = () => useSearchStore((s) => s.selectedResultIndex);
   const searchLoading = () => useSearchStore((s) => s.searchLoading);
-  const selectedEntity = () => useSearchStore((s) => s.selectedEntity);
-  const neighbors = () => useSearchStore((s) => s.neighbors);
-  const knowledgeSearchResult = () => useSearchStore((s) => s.knowledgeSearchResult);
-  const knowledgeLoading = () => useSearchStore((s) => s.knowledgeLoading);
   const memories = () => useSearchStore((s) => s.memories);
   const selectedMemoryIndex = () => useSearchStore((s) => s.selectedMemoryIndex);
   const memoriesLoading = () => useSearchStore((s) => s.memoriesLoading);
@@ -90,9 +87,6 @@ export default function SearchPanel(): JSX.Element {
   const cycleSearchMode = useSearchStore((s) => s.cycleSearchMode);
 
   const search = useSearchStore((s) => s.search);
-  const fetchEntity = useSearchStore((s) => s.fetchEntity);
-  const fetchNeighbors = useSearchStore((s) => s.fetchNeighbors);
-  const searchKnowledge = useSearchStore((s) => s.searchKnowledge);
   const fetchMemories = useSearchStore((s) => s.fetchMemories);
   const fetchPlaybooks = useSearchStore((s) => s.fetchPlaybooks);
   const deletePlaybook = useSearchStore((s) => s.deletePlaybook);
@@ -120,9 +114,7 @@ export default function SearchPanel(): JSX.Element {
 
       setSearchQuery(query.trim());
       if (tab === "search") {
-        search(query.trim(), client);
-      } else if (tab === "knowledge") {
-        searchKnowledge(query.trim(), client);
+        search(query.trim(), client, searchConnection());
       } else if (tab === "memories") {
         fetchMemories(query.trim(), client);
       } else if (tab === "playbooks") {
@@ -140,9 +132,7 @@ export default function SearchPanel(): JSX.Element {
     const s = useSearchStore.getState();
 
     if (s.activeTab === "search" && s.searchQuery) {
-      search(s.searchQuery, client);
-    } else if (s.activeTab === "knowledge" && s.searchQuery) {
-      searchKnowledge(s.searchQuery, client);
+      search(s.searchQuery, client, searchConnection());
     } else if (s.activeTab === "memories") {
       fetchMemories("", client);
     } else if (s.activeTab === "playbooks") {
@@ -211,11 +201,6 @@ export default function SearchPanel(): JSX.Element {
                 client.get<{ content: string }>(`/api/v2/files/read?path=${encodeURIComponent(result.path)}`)
                   .then((r) => { useSearchStore.setState({ expandedContent: r.content, expandedPath: result.path }); })
                   .catch(() => {});
-              }
-            } else if (tab === "knowledge") {
-              if (ss.selectedEntity) {
-                const entityId = String((ss.selectedEntity as Record<string, unknown>).entity_id ?? "");
-                if (entityId) fetchNeighbors(entityId, client);
               }
             } else if (tab === "memories") {
               const memory = ss.memories[ss.selectedMemoryIndex];
@@ -298,14 +283,7 @@ export default function SearchPanel(): JSX.Element {
             total={searchTotal()}
             selectedIndex={selectedResultIndex()}
             loading={searchLoading()}
-          />
-        )}
-        {activeTab() === "knowledge" && (
-          <KnowledgeView
-            entity={selectedEntity()}
-            neighbors={neighbors()}
-            knowledgeSearchResult={knowledgeSearchResult()}
-            loading={knowledgeLoading()}
+            error={error()}
           />
         )}
         {activeTab() === "memories" && (

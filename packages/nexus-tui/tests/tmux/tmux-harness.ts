@@ -24,6 +24,8 @@
  * @see Issue #3250, Issue 3A (tmux test harness)
  */
 
+import { fileURLToPath } from "node:url";
+
 // Uses Bun.spawn directly for tmux commands (shell $ helper doesn't handle tmux args well)
 
 const DEFAULT_WIDTH = 120;
@@ -35,7 +37,7 @@ const TMUX_SESSION_PREFIX = "nexus-tui-test";
  * specified -x / -y values are respected exactly, which is critical for
  * tests that need a full-width terminal (≥ 80 cols) to render correctly.
  */
-const TMUX_SOCKET = "/tmp/nexus-tui-test.sock";
+const TMUX_SOCKET = `/tmp/nexus-tui-test-${process.pid}.sock`;
 
 let sessionCounter = 0;
 
@@ -70,8 +72,8 @@ export class TmuxSession {
 
     // Build TUI command — needs to cd into the package directory first
     const tuiCmd = options.command ?? buildTuiCommand(options);
-    const pkgDir = new URL("../../", import.meta.url).pathname.replace(/\/$/, "");
-    const fullCmd = `cd ${pkgDir} && ${tuiCmd}`;
+    const pkgDir = fileURLToPath(new URL("../../", import.meta.url));
+    const fullCmd = `cd ${shellQuote(pkgDir)} && ${tuiCmd}`;
 
     // Create detached tmux session with fixed dimensions.
     // Use a dedicated socket (-S) so this session is not constrained by the
@@ -88,8 +90,11 @@ export class TmuxSession {
 
     const session = new TmuxSession(sessionName);
 
-    // Wait for TUI to initialize
-    await sleep(1000);
+    const retain = Bun.spawn(["tmux", "-S", TMUX_SOCKET, "set-window-option", "-t", sessionName, "remain-on-exit", "on"], { stdout: "pipe", stderr: "pipe" });
+    if (await retain.exited !== 0) {
+      await session.destroy();
+      throw new Error("Could not retain terminal exit status");
+    }
 
     return session;
   }
@@ -210,6 +215,19 @@ export class TmuxSession {
     }
   }
 
+  async waitForExit(timeoutMs: number): Promise<number> {
+    const deadline = performance.now() + timeoutMs;
+    while (performance.now() < deadline) {
+      const proc = Bun.spawn(["tmux", "-S", TMUX_SOCKET, "display-message", "-p", "-t", this.sessionName, "#{pane_dead} #{pane_dead_status}"], { stdout: "pipe", stderr: "pipe" });
+      const status = await new Response(proc.stdout).text();
+      if (await proc.exited !== 0) throw new Error("Could not read terminal exit status");
+      const [dead, code] = status.trim().split(/\s+/);
+      if (dead === "1") return Number(code);
+      await sleep(50);
+    }
+    throw new Error(`Terminal did not exit within ${timeoutMs}ms`);
+  }
+
   /**
    * Destroy the tmux session and clean up.
    */
@@ -232,7 +250,11 @@ function buildTuiCommand(options: TmuxSessionOptions): string {
   const parts = ["bun", "run", "src/index.tsx"];
   if (options.url) parts.push("--url", options.url);
   if (options.apiKey) parts.push("--api-key", options.apiKey);
-  return parts.join(" ");
+  return parts.map(shellQuote).join(" ");
+}
+
+function shellQuote(value: string): string {
+  return "'" + value.replaceAll("'", "'\"'\"'") + "'";
 }
 
 function sleep(ms: number): Promise<void> {

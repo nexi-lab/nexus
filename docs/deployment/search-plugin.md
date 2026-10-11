@@ -148,19 +148,22 @@ Capabilities are runtime state and have no persistent store.
 Python zone routes start with unknown capabilities; failed peer discovery
 clears any previous snapshot and propagates the error.
 
-## Required processes for the Python server
+## Published images and acceptance
 
 | Process | Image | Role |
 |---|---|---|
-| Nexus server | `ghcr.io/nexi-lab/nexus` | FastAPI/gRPC server; proxies search calls to the plugin |
-| Plugin host | `ghcr.io/nexi-lab/nexusd-cluster` | `nexusd-cluster` with the signed `nexus-search-plugin` cdylib in `/plugins`; owns FTS + ANN indices and embeddings |
+| SDK and compatibility APIs | `ghcr.io/nexi-lab/nexus` | Python SDK/CLI and API adapters that send requests to the workspace daemon |
+| Workspace daemon | `ghcr.io/nexi-lab/nexusd-cluster` | Typed VFS, Rust HTTP and the signed Search plugin; owns workspace metadata, authorization, indices and embeddings |
 
 Both images are published from the **same commit** with the **same
 tag set** (`edge` on develop/main, `stable`/`latest`/semver on version
 tags, plus the commit SHA), so a deployable pairing is pinnable by
 digest. Publishing is done by `.github/workflows/docker-publish.yml`
-(#4613); the `e2e-edge` smoke job runs the exact published plugin-host
-image, not an in-CI build.
+(#4613). The `e2e-edge` smoke runs the published SDK image as a client of the
+published workspace daemon. Internal PRs run this acceptance before merge;
+mutable release tags require the smoke to pass. It covers file operations,
+caller credentials, ReBAC grants and revocation, MCP, indexing visibility,
+deletion and the HERB hybrid retrieval gate with the local ONNX model.
 
 The plugin-host image is reproducible locally from a nexus + nexus-vfs
 checkout (the nexus-vfs rev is pinned in the workspace `Cargo.toml`):
@@ -201,13 +204,13 @@ docker build \
    the whole server lifetime with a loud warning; fix the wiring and
    restart the server.
 
-3. **Shared filesystem**: on `Index` / `Refresh` (directory walks) the
-   plugin reads files **by absolute path through its own VFS/filesystem**
-   — the server and the plugin host must see the same bytes at the same
-   paths (shared volume in Docker, same host mount, or the kernel VFS
-   in federated topologies). `IndexDocuments` (what `files/write`
-   `index: true`, `search/refresh` and `search/index` use) carries the
-   text inline and needs no shared filesystem.
+3. **Workspace ownership**: route file writes and Search requests to the
+   same owning VFS. `Index` / `Refresh` read files through that VFS;
+   `IndexDocuments` accepts inline text. Query and Locate check current
+   VFS existence and permissions for each indexed path, including cached
+   hits. Register workspace mounts in this namespace. A shared filesystem
+   volume supplies bytes; the owning VFS supplies the path metadata and
+   authorization facts. Compatibility API writes must reach this same owner.
 
 ## Write-to-searchable contract (#4736)
 

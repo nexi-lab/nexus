@@ -18,6 +18,7 @@ import httpx
 
 import nexus
 from nexus.contracts.exceptions import NexusPermissionError
+from nexus.contracts.rpc_types import RPCErrorCode
 from nexus.grpc.search.v1 import search_pb2, search_pb2_grpc
 from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
 from nexus.lib.request_credentials import request_api_key
@@ -40,6 +41,8 @@ async def main() -> None:
     suffix = uuid4().hex
     needle = f"gentian{suffix}"
     paths = {name: f"/docs/cert-{name}-{suffix}.txt" for name in ("a", "b")}
+    directory = f"/docs/{suffix}-crud"
+    grants = set()
     channels = []
     agents = {}
     transports = {}
@@ -325,6 +328,56 @@ async def main() -> None:
                     },
                 )
                 assert response.is_success, response.status_code
+                grant_key = (name, path or paths[name], relation)
+                if method == "POST":
+                    grants.add(grant_key)
+                else:
+                    grants.discard(grant_key)
+
+            # Exercise the public SDK's complete file journey on the Rust host.
+            created = await vfs.Mkdir(
+                vfs_pb2.MkdirRequest(path=directory, parents=True, auth_token=admin), timeout=15
+            )
+            assert not created.is_error, created
+            nested = f"{directory}/nested"
+            original = f"{nested}/original.txt"
+            renamed = f"{nested}/renamed.txt"
+            for path in (directory, nested, original, renamed):
+                await grant("a", "POST", path, relation="writer")
+                await grant("b", "POST", path)
+            writer, viewer = filesystems["a"], filesystems["b"]
+            await asyncio.to_thread(writer.mkdir, nested, parents=True, exist_ok=False)
+            for content in (b"first version", b"second version"):
+                written = await asyncio.to_thread(writer.sys_write, original, content)
+                assert written["bytes_written"] == len(content), written
+                assert await asyncio.to_thread(viewer.sys_read, original) == content
+                metadata = await asyncio.to_thread(viewer.sys_stat, original)
+                assert metadata["size"] == len(content) and metadata["path"] == original, metadata
+            await sdk_denied("b", "sys_write", original, b"forbidden")
+            await sdk_denied("b", "mkdir", f"{directory}/forbidden")
+            await sdk_denied("b", "sys_rename", original, renamed)
+            await sdk_denied("b", "sys_unlink", original)
+            assert await asyncio.to_thread(writer.sys_read, original) == b"second version"
+            await asyncio.to_thread(writer.sys_rename, original, renamed)
+            assert await asyncio.to_thread(viewer.sys_stat, original) is None
+            assert await asyncio.to_thread(viewer.sys_read, renamed) == b"second version"
+            assert await asyncio.to_thread(viewer.sys_readdir, nested, recursive=False) == [renamed]
+            page = await asyncio.to_thread(viewer.sys_readdir, nested, details=True, limit=1)
+            assert [item["path"] for item in page.items] == [renamed] and not page.has_more
+            for path in (directory, nested, original, renamed):
+                await grant("b", "DELETE", path)
+            await sdk_denied("b", "sys_read", renamed)
+            await sdk_denied("b", "sys_stat", renamed)
+            await sdk_denied("b", "sys_readdir", nested)
+            await asyncio.to_thread(writer.sys_unlink, renamed)
+            assert await asyncio.to_thread(writer.sys_stat, renamed) is None
+            await asyncio.to_thread(writer.rmdir, nested, recursive=False)
+            for path in (directory, nested, original, renamed):
+                await grant("a", "DELETE", path, relation="writer")
+            removed = await vfs.Delete(
+                vfs_pb2.DeleteRequest(path=directory, auth_token=admin), timeout=15
+            )
+            assert not removed.is_error, removed
 
             # A valid certificate authenticates; file access still needs the kernel's policy.
             for name in paths:
@@ -561,10 +614,36 @@ async def main() -> None:
             "Agent certificate Search passed: Query/Batch/Glob/Grep/Locate/SDK/isolation/ReBAC/revocation/VFS/admin"
         )
     finally:
-        for filesystem in filesystems.values():
-            await asyncio.to_thread(filesystem.close)
-        for channel in channels:
-            await channel.close()
+        try:
+            async with httpx.AsyncClient(base_url=base, timeout=15, trust_env=False) as http:
+                for name, path, relation in grants:
+                    response = await http.request(
+                        "DELETE",
+                        "/v2/rebac/tuples",
+                        headers={"Authorization": f"Bearer {admin}"},
+                        json={
+                            "zone": "sharedzone",
+                            "object_type": "file",
+                            "object_id": path,
+                            "relation": relation,
+                            "subject_type": "agent",
+                            "subject_id": agents[name][0],
+                        },
+                    )
+                    response.raise_for_status()
+            for path in (*paths.values(), directory):
+                removed = await vfs.Delete(
+                    vfs_pb2.DeleteRequest(path=path, recursive=True, auth_token=admin), timeout=15
+                )
+                if removed.is_error:
+                    assert (
+                        json.loads(removed.error_payload)["code"] == RPCErrorCode.FILE_NOT_FOUND
+                    ), removed
+        finally:
+            for filesystem in filesystems.values():
+                await asyncio.to_thread(filesystem.close)
+            for channel in channels:
+                await channel.close()
 
 
 if __name__ == "__main__":

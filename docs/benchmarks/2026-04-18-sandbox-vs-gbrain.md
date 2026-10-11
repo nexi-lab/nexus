@@ -14,7 +14,7 @@ We pick two independent comparisons:
    20 graded-relevance queries). Measures the same "is the right page /
    chunk returned?" question as gbrain's PR #64 published numbers.
 2. **HERB QA** — the 8-question enterprise QA set that Nexus's
-   `scripts/test_build_perf_e2e.py` uses as a CI quality gate (target
+   `scripts/test_published_search_quality.py` uses as a CI quality gate (target
    `hits >= 7/8`).
 
 Both runs use OpenAI `text-embedding-3-small` (1536 dim) embeddings, the
@@ -114,7 +114,7 @@ compute.
 
 ## Benchmark 2 — HERB QA (E2E test equivalent)
 
-`scripts/test_build_perf_e2e.py` asserts `hits >= 7/8` (87.5%) on an 8-
+`scripts/test_published_search_quality.py` asserts `hits >= 7/8` (87.5%) on an 8-
 question enterprise-context QA set drawn from `demo_data.py`'s
 `HERB_CORPUS` (11 markdown files: 5 customers, 3 employees, 3 products).
 

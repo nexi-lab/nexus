@@ -18,7 +18,8 @@ def test_readiness_consumes_verbose_logs_without_a_broken_pipe(tmp_path):
     docker = tmp_path / "docker"
     docker.write_text(
         f"#!{sys.executable}\n"
-        "import sys\n"
+        "import signal, sys\n"
+        "signal.signal(signal.SIGPIPE, signal.SIG_DFL)\n"
         "command = sys.argv[1]\n"
         "if command == 'logs':\n"
         "    sys.stdout.write('VFS data plane ready\\n' + 'startup log\\n' * 100000)\n"

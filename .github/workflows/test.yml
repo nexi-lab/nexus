@@ -111,16 +111,16 @@ jobs:
           start=$(date +%s)
           # A crashed worker or a hung process fails this job, even if pytest
           # printed a passing summary. Keep test names and timeout stacks visible.
-          WATCHDOG=""
+          WATCHDOG=()
           if command -v timeout >/dev/null 2>&1; then
-            WATCHDOG="timeout -s TERM --kill-after=60s 15m"
+            WATCHDOG=(timeout -s TERM --kill-after=60s 15m)
           elif command -v gtimeout >/dev/null 2>&1; then
-            WATCHDOG="gtimeout -s TERM --kill-after=60s 15m"
+            WATCHDOG=(gtimeout -s TERM --kill-after=60s 15m)
           else
             echo "::warning::no GNU timeout on this runner — the unit-test watchdog is inactive here, only the step's 30m limit applies"
           fi
           set +e
-          $WATCHDOG \
+          "${WATCHDOG[@]}" \
             uv run --no-sync python -Xfaulthandler -m pytest tests/unit -v -o addopts= --strict-markers --strict-config \
             --durations=10 -n auto --dist loadgroup --max-worker-restart=0 -o faulthandler_timeout=60 \
             --timeout=60 --timeout-method=signal -p no:cacheprovider \
@@ -128,7 +128,7 @@ jobs:
           status=${PIPESTATUS[0]}
           set -e
           echo $(( $(date +%s) - start )) > unit_test_duration_sec.txt
-          exit $status
+          exit "$status"
         shell: bash
 
       - name: Unit test duration (target <3min; fail if >8min)

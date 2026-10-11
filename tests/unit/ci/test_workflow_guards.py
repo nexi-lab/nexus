@@ -132,6 +132,51 @@ def test_unit_workflow_preserves_process_failure_after_a_passing_summary(tmp_pat
     assert result.returncode == status, result.stdout + result.stderr
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="unit-test workflow uses Unix bash")
+def test_unit_workflow_reports_a_real_worker_crash_without_restarting_it(tmp_path) -> None:
+    step = _step_by_name(_job(_load_workflow("test.yml"), "test"), "Run unit tests")
+    bash = shutil.which("bash")
+    assert bash is not None
+    cases = tmp_path / "test_worker.py"
+    cases.write_text(
+        "def test_before(): pass\n"
+        "def test_crash():\n"
+        "    import os\n"
+        "    os._exit(23)\n"
+        "def test_after(): pass\n",
+        encoding="utf-8",
+    )
+    uv = tmp_path / "uv"
+    uv.write_text(
+        f"#!{sys.executable}\n"
+        "import os, sys\n"
+        "args = sys.argv[4:]\n"
+        "args = [arg for arg in args if not arg.startswith('--cov')]\n"
+        f"args[args.index('tests/unit')] = {str(cases)!r}\n"
+        "args[args.index('auto')] = '2'\n"
+        "args.extend(['-p', 'xdist.plugin', '-p', 'pytest_timeout'])\n"
+        "os.execv(sys.executable, [sys.executable, *args])\n",
+        encoding="utf-8",
+    )
+    uv.chmod(0o755)
+    result = subprocess.run(
+        [bash, "-e", "-o", "pipefail", "-c", step["run"]],
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}",
+            "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+        },
+        capture_output=True,
+        text=True,
+        timeout=45,
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode != 0, output
+    assert "crashed while running" in output and "test_crash" in output, output
+    assert "replacing crashed worker" not in output, output
+
+
 # ---------------------------------------------------------------------------
 # docs.yml
 # ---------------------------------------------------------------------------

@@ -19,21 +19,6 @@ import nexus
 from nexus.cli.commands import LazyCommandGroup, register_all_commands
 from nexus.core import setup_uvloop
 
-# Suppress pydub warning about missing ffmpeg/avconv
-warnings.filterwarnings("ignore", message="Couldn't find ffmpeg or avconv", category=RuntimeWarning)
-
-# Restore Unix default SIGPIPE handling so `nexus cat --stream /big | head -c …`
-# exits cleanly when the downstream pipe closes, instead of raising
-# BrokenPipeError and emitting a Python traceback to stderr.
-if hasattr(signal, "SIGPIPE"):
-    signal.signal(signal.SIGPIPE, signal.SIG_DFL)
-
-# Install uvloop early for better async performance in all CLI commands
-# This affects all asyncio.run() calls throughout the CLI
-# Can be disabled with NEXUS_USE_UVLOOP=false
-setup_uvloop()
-
-
 # ---------------------------------------------------------------------------
 # TUI launcher helpers
 # ---------------------------------------------------------------------------
@@ -196,6 +181,17 @@ def tui_cmd(
 # Register all commands from the modular structure
 register_all_commands(main)
 
-# For backwards compatibility and direct execution
-if __name__ == "__main__":
+
+def entrypoint() -> None:
+    """Configure the CLI process and invoke the command group."""
+    warnings.filterwarnings(
+        "ignore", message="Couldn't find ffmpeg or avconv", category=RuntimeWarning
+    )
+    if hasattr(signal, "SIGPIPE"):
+        signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+    setup_uvloop()
     main()
+
+
+if __name__ == "__main__":
+    entrypoint()

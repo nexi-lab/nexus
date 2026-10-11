@@ -293,7 +293,7 @@ def test_cat_stream_survives_broken_pipe(patched_fs):
     # close after a few KB so the writer hits EPIPE mid-stream.
     driver = textwrap.dedent("""
         import os, sys, contextlib, asyncio
-        import nexus.cli.main  # noqa: F401  installs SIGPIPE = SIG_DFL
+        from nexus.cli.main import entrypoint
         from nexus.backends.storage.path_local import PathLocalBackend
         from nexus.core.config import ParseConfig, PermissionConfig
         from nexus.factory import create_nexus_fs
@@ -320,11 +320,8 @@ def test_cat_stream_survives_broken_pipe(patched_fs):
         fo.open_filesystem = _open
         fo.get_filesystem = lambda *a, **k: nx
 
-        from nexus.cli.commands.file_ops import cat
-        # Direct call writes to real sys.stdout.buffer (the pipe).
-        ctx = cat.make_context("cat", ["/big.bin", "--stream", "--chunk-size", "4096"])
-        cat.invoke(ctx)
-        sys.exit(0)
+        sys.argv = ["nexus", "cat", "/big.bin", "--stream", "--chunk-size", "4096"]
+        entrypoint()
     """)
 
     import tempfile

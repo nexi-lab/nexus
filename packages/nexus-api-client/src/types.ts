@@ -9,6 +9,9 @@ export interface NexusClientOptions {
   /** Base URL of the Nexus API server. Default: "http://localhost:2026" */
   readonly baseUrl?: string;
 
+  /** Owning Rust Search host's HTTP URL. Defaults to baseUrl. */
+  readonly searchUrl?: string;
+
   /** Request timeout in milliseconds. Default: 30000 */
   readonly timeout?: number;
 
@@ -32,6 +35,10 @@ export interface NexusClientOptions {
 }
 
 export interface RequestOptions {
+  /** Explicit destination override for a co-owned API listener. */
+  readonly baseUrl?: string;
+  /** Override key transformation for an API whose wire types are used directly. */
+  readonly transformKeys?: boolean;
   /** Per-request timeout override in milliseconds. */
   readonly timeout?: number;
 
@@ -46,7 +53,8 @@ export interface RequestOptions {
 }
 
 export interface ApiErrorResponse {
-  readonly detail: string;
+  readonly detail?: string;
+  readonly error?: string;
   readonly error_code?: string;
 }
 

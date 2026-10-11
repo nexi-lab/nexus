@@ -49,6 +49,8 @@ function serializeOptions(
   if (options.timeout !== undefined) out.timeout = options.timeout;
   if (options.idempotencyKey !== undefined) out.idempotencyKey = options.idempotencyKey;
   if (options.headers !== undefined) out.headers = options.headers;
+  if (options.transformKeys !== undefined) out.transformKeys = options.transformKeys;
+  if (options.baseUrl !== undefined) out.baseUrl = options.baseUrl;
   return Object.keys(out).length > 0 ? (out as SerializableRequestOptions) : undefined;
 }
 

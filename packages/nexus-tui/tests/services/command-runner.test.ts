@@ -171,35 +171,47 @@ describe("CommandRunner", () => {
   // =========================================================================
   describe("integration: real process spawn", () => {
     it("captures output from a real command", async () => {
-      // Use echo which is guaranteed to exist
-      const proc = Bun.spawn(["echo", "hello world"], { stdout: "pipe" });
+      const proc = Bun.spawn([process.execPath, "-e", "console.log('hello world')"], { stdout: "pipe" });
       const output = await new Response(proc.stdout).text();
       expect(output.trim()).toBe("hello world");
       await proc.exited;
     });
 
     it("captures exit code from failing command", async () => {
-      const proc = Bun.spawn(["false"], { stdout: "pipe", stderr: "pipe" });
+      const proc = Bun.spawn([process.execPath, "-e", "process.exit(23)"], { stdout: "pipe", stderr: "pipe" });
       const exitCode = await proc.exited;
-      expect(exitCode).not.toBe(0);
+      expect(exitCode).toBe(23);
     });
 
     it("streams output incrementally", async () => {
-      // Spawn a process that produces output over time
-      const proc = Bun.spawn(["printf", "line1\\nline2\\nline3\\n"], {
-        stdout: "pipe",
-      });
-
+      const proc = Bun.spawn([process.execPath, "-e", `
+        process.stdout.write("line1\\n");
+        process.stdin.once("data", () => {
+          process.stdout.write("line2\\nline3\\n");
+          process.stdin.destroy();
+        });
+      `], { stdin: "pipe", stdout: "pipe" });
       const chunks: string[] = [];
       const reader = proc.stdout.getReader();
       const decoder = new TextDecoder();
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(decoder.decode(value, { stream: true }));
+      try {
+        const first = await reader.read();
+        expect(first.done).toBe(false);
+        const initial = decoder.decode(first.value, { stream: true });
+        expect(initial).toContain("line1");
+        expect(initial).not.toContain("line2");
+        chunks.push(initial);
+        proc.stdin.write("continue\n");
+        proc.stdin.end();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(decoder.decode(value, { stream: true }));
+        }
+      } finally {
+        reader.releaseLock();
+        if (proc.exitCode === null) proc.kill();
       }
-
       await proc.exited;
       const fullOutput = chunks.join("");
       expect(fullOutput).toContain("line1");

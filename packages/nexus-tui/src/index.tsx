@@ -20,6 +20,7 @@ import { resetTerminal } from "./utils/terminal.js";
 
 interface CliArgs {
   url?: string;
+  searchUrl?: string;
   apiKey?: string;
   agentId?: string;
   subject?: string;
@@ -37,6 +38,9 @@ function parseArgs(): CliArgs {
 
     if ((arg === "--url" || arg === "-u") && next) {
       result.url = next;
+      i++;
+    } else if (arg === "--search-url" && next) {
+      result.searchUrl = next;
       i++;
     } else if ((arg === "--api-key" || arg === "-k") && next) {
       result.apiKey = next;
@@ -62,6 +66,7 @@ Published package:
 
 Options:
   --url, -u <url>        Nexus server URL (default: NEXUS_URL or http://localhost:2026)
+  --search-url <url>    Owning Rust Search HTTP URL (default: NEXUS_SEARCH_URL or --url)
   --api-key, -k <key>    API key (default: NEXUS_API_KEY env var)
   --agent-id <id>        Agent identity (X-Agent-ID header)
   --subject <subject>    Subject override (X-Nexus-Subject header)
@@ -70,6 +75,7 @@ Options:
 
 Environment Variables:
   NEXUS_URL              Server URL
+  NEXUS_SEARCH_URL       Owning Rust Search HTTP URL
   NEXUS_API_KEY          API key
   NEXUS_AGENT_ID         Agent identity
   NEXUS_SUBJECT          Subject override
@@ -96,6 +102,7 @@ async function main(): Promise<void> {
   // Disable key transformation — all TUI store types use snake_case matching the API wire format
   const config = resolveConfig({
     baseUrl: cliArgs.url,
+    searchUrl: cliArgs.searchUrl,
     apiKey: cliArgs.apiKey,
     agentId: cliArgs.agentId,
     subject: cliArgs.subject,

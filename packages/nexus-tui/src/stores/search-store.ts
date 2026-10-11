@@ -1,29 +1,27 @@
 /**
  * Zustand store for Search & Knowledge panel.
  *
- * Manages unified search, knowledge graph exploration,
- * and agent memories.
+ * Manages indexed search and agent memories.
  */
 
 import { createStore as create } from "./create-store.js";
-import type { FetchClient } from "@nexus-ai-fs/api-client";
+import { SearchClient, type FetchClient, type SearchConnection } from "@nexus-ai-fs/api-client";
 import { createApiAction, categorizeError } from "./create-api-action.js";
 import { useErrorStore } from "./error-store.js";
 import { useUiStore } from "./ui-store.js";
 
 // Re-export all public types for backward compatibility
 export type {
-  SearchResult, KnowledgeEntity, NeighborEntry, Memory,
+  SearchResult, Memory,
   PlaybookRecord, MemoryVersion, MemoryHistory, MemoryDiff,
   RlmStep, RlmAnswer, SearchTab, SearchMode,
 } from "./search-store-types.js";
 
 import type {
-  SearchResult, KnowledgeEntity, NeighborEntry, Memory,
+  SearchResult, Memory,
   PlaybookRecord, MemoryVersion, MemoryHistory, MemoryDiff,
   RlmStep, RlmAnswer, SearchTab, SearchMode,
-  SearchQueryResponse, EntityResponse, NeighborsResponse,
-  KnowledgeSearchResponse, MemorySearchResponse, MemoryDetailResponse,
+  MemorySearchResponse, MemoryDetailResponse,
   PlaybooksListResponse, MemoryHistoryResponse, MemoryDiffResponse,
   MemoryRollbackResponse,
 } from "./search-store-types.js";
@@ -44,12 +42,6 @@ export interface SearchState {
   // Expanded file content (Enter on search result)
   readonly expandedContent: string | null;
   readonly expandedPath: string | null;
-
-  // Knowledge graph
-  readonly selectedEntity: KnowledgeEntity | null;
-  readonly neighbors: readonly NeighborEntry[];
-  readonly knowledgeSearchResult: KnowledgeEntity | null;
-  readonly knowledgeLoading: boolean;
 
   // Memories
   readonly memories: readonly Memory[];
@@ -83,10 +75,7 @@ export interface SearchState {
   readonly error: string | null;
 
   // Actions
-  readonly search: (query: string, client: FetchClient) => Promise<void>;
-  readonly fetchEntity: (id: string, client: FetchClient) => Promise<void>;
-  readonly fetchNeighbors: (id: string, client: FetchClient) => Promise<void>;
-  readonly searchKnowledge: (name: string, client: FetchClient) => Promise<void>;
+  readonly search: (query: string, client: FetchClient, connection?: SearchConnection) => Promise<void>;
   readonly fetchMemories: (query: string, client: FetchClient) => Promise<void>;
   readonly fetchMemoryDetail: (id: string, client: FetchClient) => Promise<void>;
   readonly setActiveTab: (tab: SearchTab) => void;
@@ -128,10 +117,6 @@ export const useSearchStore = create<SearchState>((set, get) => ({
   selectedResultIndex: 0,
   searchLoading: false,
 
-  selectedEntity: null,
-  neighbors: [],
-  knowledgeSearchResult: null,
-  knowledgeLoading: false,
 
   memories: [],
   selectedMemoryIndex: 0,
@@ -161,89 +146,24 @@ export const useSearchStore = create<SearchState>((set, get) => ({
   // Actions migrated to createApiAction (Decision 6A)
   // =========================================================================
 
-  search: async (query, client) => {
-    set({ searchLoading: true, error: null, searchQuery: query });
-
+  search: async (query, client, connection) => {
+    set({ searchLoading: true, error: null, searchQuery: query, searchResults: [], searchTotal: 0 });
     try {
-      const { searchMode } = get();
-      const params = new URLSearchParams({
-        q: query,
-        type: searchMode,
-        limit: "10",
-      });
-      const response = await client.get<SearchQueryResponse>(
-        `/api/v2/search/query?${params.toString()}`,
-      );
-
-      const results = response.results ?? [];
+      const response = await new SearchClient(client, connection).query(query, get().searchMode);
       set({
-        searchResults: results,
-        searchTotal: response.total ?? results.length,
+        searchResults: response.results,
+        searchTotal: response.results.length,
         selectedResultIndex: 0,
         searchLoading: false,
+        error: response.error ?? null,
       });
+      if (response.error) {
+        useErrorStore.getState().pushError({ message: response.error, category: categorizeError(response.error), source: SOURCE });
+      }
       useUiStore.getState().markDataUpdated("search");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to search";
       set({ searchLoading: false, error: message });
-      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
-    }
-  },
-
-  fetchEntity: createApiAction<SearchState, [string, FetchClient]>(set, {
-    loadingKey: "knowledgeLoading",
-    source: SOURCE,
-    action: async (id, client) => {
-      const response = await client.get<EntityResponse>(
-        `/api/v2/graph/entity/${encodeURIComponent(id)}`,
-      );
-      return { selectedEntity: response.entity ?? null };
-    },
-  }),
-
-  fetchNeighbors: async (id, client) => {
-    set({ knowledgeLoading: true, error: null });
-
-    try {
-      const response = await client.get<NeighborsResponse>(
-        `/api/v2/graph/entity/${encodeURIComponent(id)}/neighbors?hops=1&direction=both`,
-      );
-      set({
-        neighbors: response.neighbors ?? [],
-        knowledgeLoading: false,
-      });
-      useUiStore.getState().markDataUpdated("search");
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to fetch neighbors";
-      set({
-        neighbors: [],
-        knowledgeLoading: false,
-        error: message,
-      });
-      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
-    }
-  },
-
-  searchKnowledge: async (name, client) => {
-    set({ knowledgeLoading: true, error: null });
-
-    try {
-      const params = new URLSearchParams({ name, fuzzy: "false" });
-      const response = await client.get<KnowledgeSearchResponse>(
-        `/api/v2/graph/search?${params.toString()}`,
-      );
-      set({
-        knowledgeSearchResult: response.entity ?? null,
-        knowledgeLoading: false,
-      });
-      useUiStore.getState().markDataUpdated("search");
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to search knowledge graph";
-      set({
-        knowledgeSearchResult: null,
-        knowledgeLoading: false,
-        error: message,
-      });
       useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },

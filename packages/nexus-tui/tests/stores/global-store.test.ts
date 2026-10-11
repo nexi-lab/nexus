@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, mock } from "bun:test";
+import { describe, it, expect, beforeEach, mock, spyOn } from "bun:test";
 import { useGlobalStore } from "../../src/stores/global-store.js";
 import type { FetchClient } from "@nexus-ai-fs/api-client";
 
@@ -147,6 +147,45 @@ describe("GlobalStore", () => {
       const state = useGlobalStore.getState();
       expect(state.client).not.toBeNull();
       expect(state.connectionStatus).toBe("connecting");
+    });
+  });
+
+  describe("testConnection", () => {
+    it("keeps the configured host and identity when an interactive connection fails", async () => {
+      const configured = {
+        baseUrl: "http://127.0.0.1:19999",
+        searchUrl: "http://127.0.0.1:2127",
+        apiKey: "configured-reader",
+        agentId: "scode",
+        subject: "agent:scode",
+        zoneId: "workspace",
+      };
+      const requests: string[] = [];
+      const client = {
+        get: async (path: string) => {
+          requests.push(path);
+          throw new Error("Connection refused");
+        },
+      } as unknown as FetchClient;
+      const descriptor = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+      Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+      const unexpectedFetch = spyOn(globalThis, "fetch").mockImplementation(async () => {
+        throw new Error("Unexpected port probe");
+      });
+      try {
+        useGlobalStore.setState({ config: configured, client });
+        const activeClient = useGlobalStore.getState().client;
+        await useGlobalStore.getState().testConnection();
+        expect(requests).toEqual(["/healthz/ready", "/api/v2/features"]);
+        expect(unexpectedFetch).not.toHaveBeenCalled();
+        expect(useGlobalStore.getState().config).toEqual(configured);
+        expect(useGlobalStore.getState().client).toBe(activeClient);
+        expect(useGlobalStore.getState().connectionStatus).toBe("error");
+      } finally {
+        unexpectedFetch.mockRestore();
+        if (descriptor) Object.defineProperty(process.stdout, "isTTY", descriptor);
+        else Reflect.deleteProperty(process.stdout, "isTTY");
+      }
     });
   });
 

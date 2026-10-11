@@ -204,6 +204,22 @@ describe("WorkerFetchClient", () => {
     expect(await p2).toBe("B");
   });
 
+  it("same-path GET requests to different hosts retain separate destinations", async () => {
+    const p1 = client.get("/v2/search/glob", { baseUrl: "http://host-a", transformKeys: false });
+    const p2 = client.get("/v2/search/glob", { baseUrl: "http://host-b", transformKeys: false });
+    await tick();
+    const requests = worker.sent.filter(m => m.type === "request");
+    expect(requests).toHaveLength(2);
+    const [first, second] = requests;
+    if (first.type !== "request" || second.type !== "request") throw new Error("Missing requests");
+    expect(first.options).toEqual({ baseUrl: "http://host-a", transformKeys: false });
+    expect(second.options).toEqual({ baseUrl: "http://host-b", transformKeys: false });
+    worker.reply({ type: "response", id: second.id, result: "B" });
+    worker.reply({ type: "response", id: first.id, result: "A" });
+    expect(await p1).toBe("A");
+    expect(await p2).toBe("B");
+  });
+
   it("sequential GET requests (after first resolves) are not deduplicated", async () => {
     const p1 = client.get("/api/v2/same");
     await tick();

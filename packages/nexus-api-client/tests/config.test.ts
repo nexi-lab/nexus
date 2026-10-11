@@ -28,6 +28,12 @@ describe("resolveConfig", () => {
     expect(config.apiKey).toBe("nx_live_agent1");
   });
 
+  it("resolves the owning Search host separately and keeps override precedence", () => {
+    process.env["NEXUS_SEARCH_URL"] = "http://search-env:2027";
+    expect(resolveConfig().searchUrl).toBe("http://search-env:2027");
+    expect(resolveConfig({ searchUrl: "http://search-explicit:2027" }).searchUrl).toBe("http://search-explicit:2027");
+  });
+
   it("overrides win over env vars", () => {
     process.env["NEXUS_URL"] = "http://env:3000";
     process.env["NEXUS_API_KEY"] = "env-key";

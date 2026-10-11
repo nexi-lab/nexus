@@ -105,7 +105,7 @@ export class FetchClient {
     body?: string,
     options?: RequestOptions,
   ): Promise<Response> {
-    const url = `${this.baseUrl}${path}`;
+    const url = this.resolveUrl(path, options);
     const headers = this.buildHeaders(method, options);
     const effectiveTimeout = options?.timeout ?? this.timeout;
 
@@ -162,7 +162,7 @@ export class FetchClient {
     }
 
     const json: unknown = await response.json();
-    return this.transformEnabled ? snakeToCamelKeys<T>(json) : (json as T);
+    return (options?.transformKeys ?? this.transformEnabled) ? snakeToCamelKeys<T>(json) : (json as T);
   }
 
   private async requestRaw(
@@ -172,14 +172,14 @@ export class FetchClient {
     options?: RequestOptions,
   ): Promise<Response> {
     const normalizedMethod = method.toUpperCase();
-    const url = `${this.baseUrl}${path}`;
+    const url = this.resolveUrl(path, options);
     const headers = this.buildHeaders(method, options);
     const effectiveTimeout = options?.timeout ?? this.timeout;
     const retryableRequest = this.isRetryableRequest(normalizedMethod, options);
 
     // Transform request body keys to snake_case
     const transformedBody =
-      body !== undefined && this.transformEnabled ? camelToSnakeKeys(body) : body;
+      body !== undefined && (options?.transformKeys ?? this.transformEnabled) ? camelToSnakeKeys(body) : body;
 
     let lastError: Error | undefined;
 
@@ -316,6 +316,11 @@ export class FetchClient {
     return headers;
   }
 
+  private resolveUrl(path: string, options?: RequestOptions): string {
+    const base = options?.baseUrl?.replace(/\/+$/, "") ?? this.baseUrl;
+    return `${base}${path}`;
+  }
+
   /**
    * Map HTTP response to a typed error.
    *
@@ -326,7 +331,7 @@ export class FetchClient {
     let message: string;
     try {
       const body = (await response.json()) as ApiErrorResponse;
-      message = body.detail ?? `HTTP ${response.status}`;
+      message = body.detail ?? body.error ?? `HTTP ${response.status}`;
     } catch {
       message = `HTTP ${response.status}`;
     }

@@ -453,12 +453,13 @@ flowchart TB
   <li>Production cluster composition sharing auth, ReBAC, TLS channels, and readiness across HTTP and gRPC.</li>
   <li>SANDBOX in-process indexing-chain removal; the Rust plugin owns indexed query and stats.</li>
   <li>Indexed Search CLI on Rust HTTP, verified with the published signed-plugin image, real credentials, isolation, and revocation.</li>
+  <li>TUI indexed queries and file discovery on Rust HTTP, using the configured owning host and existing worker credentials. Native daemon E2E covers terminal rendering, path grants, working sets, limits and revocation.</li>
+  <li>Graph HTTP callers and Zoekt integrations removed from the Python Search chain and TUI.</li>
 </ul>
 
 <h3>Remaining work</h3>
 <ul>
-  <li>Migrate and verify remaining Python callers, including CLI glob/grep and the Python HTTP query/federation paths, before deleting <code>SearchService</code> and its adapters.</li>
-  <li>Resolve Graph and Zoekt feature coverage before removing their Python integrations.</li>
+  <li>Remove the Python HTTP query/federation path and complete local listing migration before deleting <code>SearchService</code> and its adapters. Remote CLI glob/grep already use typed Rust RPCs.</li>
   <li>Resolve the epic's session-cookie requirement before retiring Python auth routes; the Rust HTTP middleware currently accepts bearer credentials.</li>
   <li>Prove the Rust deployment in a real production tenant before retiring <code>nexus-server</code>, as required by the epic.</li>
 </ul>

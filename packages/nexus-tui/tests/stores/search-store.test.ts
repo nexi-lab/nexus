@@ -28,14 +28,11 @@ function mockClient(responses: Record<string, unknown>): FetchClient {
 function resetStore(): void {
   useSearchStore.setState({
     searchQuery: "",
+    searchMode: "hybrid",
     searchResults: [],
     searchTotal: 0,
     selectedResultIndex: 0,
     searchLoading: false,
-    selectedEntity: null,
-    neighbors: [],
-    knowledgeSearchResult: null,
-    knowledgeLoading: false,
     memories: [],
     selectedMemoryIndex: 0,
     memoriesLoading: false,
@@ -62,8 +59,8 @@ describe("SearchStore", () => {
   describe("setActiveTab", () => {
     it("switches between tabs and clears error", () => {
       useSearchStore.setState({ error: "old error" });
-      useSearchStore.getState().setActiveTab("knowledge");
-      expect(useSearchStore.getState().activeTab).toBe("knowledge");
+      useSearchStore.getState().setActiveTab("memories");
+      expect(useSearchStore.getState().activeTab).toBe("memories");
       expect(useSearchStore.getState().error).toBeNull();
     });
 
@@ -104,261 +101,46 @@ describe("SearchStore", () => {
   });
 
   describe("search", () => {
-    it("uses GET with query string and stores results", async () => {
-      const client = mockClient({
-        "/api/v2/search/query": {
-          query: "test",
-          search_type: "hybrid",
-          graph_mode: "none",
-          results: [
-            {
-              path: "/data/test.txt",
-              chunk_text: "This is a test file content",
-              score: 0.95,
-              chunk_index: 0,
-              line_start: 1,
-              line_end: 10,
-              keyword_score: 0.8,
-              vector_score: 0.9,
-            },
-            {
-              path: "/data/another.py",
-              chunk_text: "Another matching chunk",
-              score: 0.82,
-              chunk_index: 2,
-              line_start: 15,
-              line_end: 25,
-              keyword_score: null,
-              vector_score: 0.82,
-            },
-          ],
-          total: 2,
-          latency_ms: 42,
-        },
-      });
+    it("uses the Rust envelope and preserves chunk attribution without line fields", async () => {
+      const hit = { path: "/docs/test.txt", zone_id: "sharedzone", chunk_text: "native chunk", chunk_index: 0, score: 0.95, keyword_score: 0.8 };
+      const client = mockClient({ "/v2/search/query": { results: [hit] } });
+      await useSearchStore.getState().search("test & more", client, { url: "http://search", zoneId: "sharedzone" });
+      expect(client.get).not.toHaveBeenCalled();
+      expect(client.post).toHaveBeenCalledWith("/v2/search/query", {
+        q: "test & more", query_type: "hybrid", path_filter: "/", limit: 10, zone_id: "sharedzone",
+      }, { transformKeys: false, baseUrl: "http://search" });
+      const state = useSearchStore.getState();
+      expect(state.searchResults).toEqual([hit]);
+      expect(state.searchTotal).toBe(1);
+      expect(state.searchLoading).toBe(false);
+      expect(state.error).toBeNull();
+    });
 
+    it("uses the selected search mode and leaves unpinned zone discovery to the host", async () => {
+      useSearchStore.setState({ searchMode: "keyword" });
+      const client = mockClient({ "/v2/search/query": { results: [] } });
       await useSearchStore.getState().search("test", client);
-      const state = useSearchStore.getState();
-
-      // Verify GET was called (not POST)
-      expect(client.get).toHaveBeenCalled();
-      expect(client.post).not.toHaveBeenCalled();
-
-      expect(state.searchResults).toHaveLength(2);
-      expect(state.searchResults[0]!.path).toBe("/data/test.txt");
-      expect(state.searchResults[0]!.chunk_text).toBe("This is a test file content");
-      expect(state.searchResults[0]!.score).toBe(0.95);
-      expect(state.searchResults[0]!.line_start).toBe(1);
-      expect(state.searchResults[0]!.line_end).toBe(10);
-      expect(state.searchResults[0]!.keyword_score).toBe(0.8);
-      expect(state.searchResults[1]!.path).toBe("/data/another.py");
-      expect(state.searchResults[1]!.chunk_index).toBe(2);
-      expect(state.searchTotal).toBe(2);
-      expect(state.selectedResultIndex).toBe(0);
-      expect(state.searchQuery).toBe("test");
-      expect(state.searchLoading).toBe(false);
-      expect(state.error).toBeNull();
+      expect(client.post).toHaveBeenCalledWith("/v2/search/query", {
+        q: "test", query_type: "keyword", path_filter: "/", limit: 10, zone_id: "",
+      }, { transformKeys: false });
     });
 
-    it("includes q, type, and limit params in GET url", async () => {
-      const client = mockClient({
-        "/api/v2/search/query": {
-          query: "hello",
-          search_type: "hybrid",
-          graph_mode: "none",
-          results: [],
-          total: 0,
-          latency_ms: 5,
-        },
-      });
-
-      await useSearchStore.getState().search("hello", client);
-
-      const calledUrl = (client.get as ReturnType<typeof mock>).mock.calls[0]![0] as string;
-      expect(calledUrl).toContain("q=hello");
-      expect(calledUrl).toContain("type=hybrid");
-      expect(calledUrl).toContain("limit=10");
+    it("retains partial hits and reports the host's failed-zone error", async () => {
+      const hit = { path: "/docs/test.txt", zone_id: "sharedzone", chunk_text: "native chunk", chunk_index: 0, score: 0.95 };
+      const client = mockClient({ "/v2/search/query": { results: [hit], error: "1 zone(s) failed" } });
+      await useSearchStore.getState().search("test", client);
+      expect(useSearchStore.getState().searchResults).toEqual([hit]);
+      expect(useSearchStore.getState().error).toBe("1 zone(s) failed");
     });
 
-    it("sets error on failure", async () => {
-      const client = {
-        get: mock(async () => { throw new Error("Search service unavailable"); }),
-        post: mock(async () => { throw new Error("unexpected"); }),
-      } as unknown as FetchClient;
-
-      await useSearchStore.getState().search("fail", client);
-      const state = useSearchStore.getState();
-      expect(state.searchLoading).toBe(false);
-      expect(state.error).toBe("Search service unavailable");
-    });
-  });
-
-  describe("fetchEntity", () => {
-    it("fetches from /api/v2/graph/entity/ and unwraps entity field", async () => {
-      const client = mockClient({
-        "/api/v2/graph/entity/ent-1": {
-          entity: {
-            entity_id: "ent-1",
-            type: "concept",
-            name: "Machine Learning",
-            properties: { domain: "AI", level: "advanced" },
-          },
-        },
-      });
-
-      await useSearchStore.getState().fetchEntity("ent-1", client);
-      const state = useSearchStore.getState();
-
-      expect(state.selectedEntity).not.toBeNull();
-      expect((state.selectedEntity as Record<string, unknown>).entity_id).toBe("ent-1");
-      expect((state.selectedEntity as Record<string, unknown>).name).toBe("Machine Learning");
-      expect(state.knowledgeLoading).toBe(false);
-      expect(state.error).toBeNull();
-    });
-
-    it("stores null when entity is null in response", async () => {
-      const client = mockClient({
-        "/api/v2/graph/entity/missing": {
-          entity: null,
-        },
-      });
-
-      await useSearchStore.getState().fetchEntity("missing", client);
-      const state = useSearchStore.getState();
-      expect(state.selectedEntity).toBeNull();
-      expect(state.knowledgeLoading).toBe(false);
-    });
-
-    it("sets error on failure", async () => {
-      const client = {
-        get: mock(async () => { throw new Error("Entity not found"); }),
-      } as unknown as FetchClient;
-
-      await useSearchStore.getState().fetchEntity("missing", client);
-      const state = useSearchStore.getState();
-      expect(state.knowledgeLoading).toBe(false);
-      expect(state.error).toBe("Entity not found");
-    });
-  });
-
-  describe("fetchNeighbors", () => {
-    it("fetches from /api/v2/graph/entity/{id}/neighbors with depth info", async () => {
-      const client = mockClient({
-        "/api/v2/graph/entity/ent-1/neighbors": {
-          neighbors: [
-            {
-              entity: { entity_id: "ent-2", type: "concept", name: "Deep Learning" },
-              depth: 1,
-              path: ["ent-1", "ent-2"],
-            },
-            {
-              entity: { entity_id: "ent-3", type: "tool", name: "TensorFlow" },
-              depth: 1,
-              path: ["ent-1", "ent-3"],
-            },
-          ],
-        },
-      });
-
-      await useSearchStore.getState().fetchNeighbors("ent-1", client);
-      const state = useSearchStore.getState();
-
-      expect(state.neighbors).toHaveLength(2);
-      expect(state.neighbors[0]!.entity.entity_id).toBe("ent-2");
-      expect(state.neighbors[0]!.depth).toBe(1);
-      expect(state.neighbors[0]!.path).toEqual(["ent-1", "ent-2"]);
-      expect(state.neighbors[1]!.entity.name).toBe("TensorFlow");
-      expect(state.knowledgeLoading).toBe(false);
-      expect(state.error).toBeNull();
-    });
-
-    it("includes hops and direction params in url", async () => {
-      const client = mockClient({
-        "/api/v2/graph/entity/ent-1/neighbors": {
-          neighbors: [],
-        },
-      });
-
-      await useSearchStore.getState().fetchNeighbors("ent-1", client);
-
-      const calledUrl = (client.get as ReturnType<typeof mock>).mock.calls[0]![0] as string;
-      expect(calledUrl).toContain("hops=1");
-      expect(calledUrl).toContain("direction=both");
-    });
-
-    it("sets error on failure", async () => {
-      const client = {
-        get: mock(async () => { throw new Error("Graph unavailable"); }),
-      } as unknown as FetchClient;
-
-      await useSearchStore.getState().fetchNeighbors("ent-1", client);
-      const state = useSearchStore.getState();
-      expect(state.neighbors).toEqual([]);
-      expect(state.knowledgeLoading).toBe(false);
-      expect(state.error).toBe("Graph unavailable");
-    });
-  });
-
-  describe("searchKnowledge", () => {
-    it("uses GET on /api/v2/graph/search and returns single entity", async () => {
-      const client = mockClient({
-        "/api/v2/graph/search": {
-          entity: {
-            entity_id: "ent-10",
-            type: "service",
-            name: "Auth Service",
-            properties: { port: 8080 },
-          },
-        },
-      });
-
-      await useSearchStore.getState().searchKnowledge("Auth Service", client);
-      const state = useSearchStore.getState();
-
-      // Verify GET was called (not POST)
-      expect(client.get).toHaveBeenCalled();
-      expect(client.post).not.toHaveBeenCalled();
-
-      expect(state.knowledgeSearchResult).not.toBeNull();
-      expect((state.knowledgeSearchResult as Record<string, unknown>).entity_id).toBe("ent-10");
-      expect((state.knowledgeSearchResult as Record<string, unknown>).name).toBe("Auth Service");
-      expect(state.knowledgeLoading).toBe(false);
-      expect(state.error).toBeNull();
-    });
-
-    it("includes name and fuzzy params in GET url", async () => {
-      const client = mockClient({
-        "/api/v2/graph/search": { entity: null },
-      });
-
-      await useSearchStore.getState().searchKnowledge("test", client);
-
-      const calledUrl = (client.get as ReturnType<typeof mock>).mock.calls[0]![0] as string;
-      expect(calledUrl).toContain("name=test");
-      expect(calledUrl).toContain("fuzzy=false");
-    });
-
-    it("stores null when entity not found", async () => {
-      const client = mockClient({
-        "/api/v2/graph/search": { entity: null },
-      });
-
-      await useSearchStore.getState().searchKnowledge("nonexistent", client);
-      const state = useSearchStore.getState();
-      expect(state.knowledgeSearchResult).toBeNull();
-      expect(state.knowledgeLoading).toBe(false);
-    });
-
-    it("sets error on failure", async () => {
-      const client = {
-        get: mock(async () => { throw new Error("Knowledge search failed"); }),
-      } as unknown as FetchClient;
-
-      await useSearchStore.getState().searchKnowledge("fail", client);
-      const state = useSearchStore.getState();
-      expect(state.knowledgeSearchResult).toBeNull();
-      expect(state.knowledgeLoading).toBe(false);
-      expect(state.error).toBe("Knowledge search failed");
+    it("clears stale hits and surfaces transport failures", async () => {
+      useSearchStore.setState({ searchResults: [{ path: "/old", zone_id: "old", chunk_text: "old", chunk_index: 0, score: 1 }], searchTotal: 1 });
+      const client = { post: mock(async () => { throw new Error("Search host unavailable"); }) } as unknown as FetchClient;
+      await useSearchStore.getState().search("test", client);
+      expect(useSearchStore.getState().searchResults).toEqual([]);
+      expect(useSearchStore.getState().searchTotal).toBe(0);
+      expect(useSearchStore.getState().searchLoading).toBe(false);
+      expect(useSearchStore.getState().error).toBe("Search host unavailable");
     });
   });
 
@@ -1049,7 +831,7 @@ describe("SearchStore", () => {
       useSearchStore.setState({ error: "old error" });
 
       const client = mockClient({
-        "/api/v2/search/query": {
+        "/v2/search/query": {
           query: "test",
           search_type: "hybrid",
           graph_mode: "none",
@@ -1063,21 +845,6 @@ describe("SearchStore", () => {
       expect(useSearchStore.getState().error).toBeNull();
     });
 
-    it("fetchEntity clears previous error on success", async () => {
-      useSearchStore.setState({ error: "stale error" });
-
-      const client = mockClient({
-        "/api/v2/graph/entity/ent-1": {
-          entity: {
-            entity_id: "ent-1",
-            type: "concept",
-            name: "Test",
-          },
-        },
-      });
-
-      await useSearchStore.getState().fetchEntity("ent-1", client);
-      expect(useSearchStore.getState().error).toBeNull();
-    });
   });
+
 });

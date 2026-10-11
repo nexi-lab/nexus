@@ -5,10 +5,12 @@ on:
     branches: [main, develop]
     paths:
       - 'packages/**'
+      - '.github/workflows/ts-packages.yml'
   pull_request:
     branches: [main, develop]
     paths:
       - 'packages/**'
+      - '.github/workflows/ts-packages.yml'
 
 jobs:
   api-client:
@@ -60,10 +62,27 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.14
 
       # Build api-client first
       - run: cd ../nexus-api-client && npm install && npm run build
 
-      - run: bun install
+      - run: bun install --frozen-lockfile
+      - name: Install the terminal E2E dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential bison pkg-config libevent-dev libncurses-dev libutempter-dev
+          # tmux 3.4 can lose SIGCHLD during utmp cleanup, leaving exited panes
+          # as zombies with no exit status: https://github.com/tmux/tmux/issues/4559.
+          build_dir=$(mktemp -d "${RUNNER_TEMP}/nexus-tmux.XXXXXX")
+          curl --fail --location https://github.com/tmux/tmux/releases/download/3.6b/tmux-3.6b.tar.gz --output "$build_dir/tmux.tar.gz"
+          echo "390759d25fdba016887ec982b808927e637070fd7d03a8021f8ef3102b9ae3c7  $build_dir/tmux.tar.gz" | sha256sum --check
+          tar -xzf "$build_dir/tmux.tar.gz" --directory "$build_dir"
+          cd "$build_dir/tmux-3.6b"
+          ./configure --prefix="$build_dir/install" --enable-utempter
+          make -j2
+          make install
+          echo "$build_dir/install/bin" >> "$GITHUB_PATH"
+          "$build_dir/install/bin/tmux" -V
       - run: bun test
+      - run: bun run lint

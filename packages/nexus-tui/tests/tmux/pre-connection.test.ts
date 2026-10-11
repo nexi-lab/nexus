@@ -14,7 +14,7 @@ afterAll(async () => {
   await cleanupTestSessions();
 });
 
-describe("Pre-connection screen", () => {
+describe.skipIf(process.platform === "win32")("Pre-connection screen", () => {
   test("renders NEXUS logo and connection menu on startup", async () => {
     const session = await TmuxSession.create({
       width: 120,
@@ -72,15 +72,7 @@ describe("Pre-connection screen", () => {
       // Send 'q' to quit
       await session.sendKeys("q");
 
-      // Wait a moment for process to exit
-      await new Promise((r) => setTimeout(r, 1000));
-
-      // Session should be gone or pane should show shell
-      const content = await session.capturePane();
-      // After exit, the pane should no longer show the NEXUS UI
-      // (it might show the shell prompt instead, or tmux session might be dead)
-      // We just verify it doesn't crash
-      expect(typeof content).toBe("string");
+      expect(await session.waitForExit(5000)).toBe(0);
     } finally {
       await session.destroy();
     }

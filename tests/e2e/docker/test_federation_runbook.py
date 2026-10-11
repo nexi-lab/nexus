@@ -699,11 +699,13 @@ class TestRestartReplay:
             f"{payload!r}; restart-replay corruption"
         )
 
+    @pytest.mark.parametrize("restart_round", range(3))
     def test_joiner_restart_zero_data_loss_on_pending_writes(
         self,
         topology: RunbookTopology,
         api_key: str,
         joined_cluster: dict,
+        restart_round: int,
     ) -> None:
         """A SIGTERM-then-restart on the joiner must not truncate
         recently-written files.  After the daemon comes back up the
@@ -720,7 +722,7 @@ class TestRestartReplay:
         )
 
         suffix = uid()
-        path = f"/shared/pending-{suffix}.dat"
+        path = f"/shared/pending-{restart_round}-{suffix}.dat"
         # 64 KiB is large enough to trip any "wrote header but not
         # tail before SIGTERM" race in the kernel BlobStore, but
         # small enough to fit inside one CDC chunk so partial-write
@@ -736,9 +738,8 @@ class TestRestartReplay:
         )
         assert "error" not in wr, f"joiner write failed: {wr}"
 
-        # Force raft catch-up so the entry is committed BEFORE the
-        # restart — this method tests "restart does not corrupt
-        # committed data", not "raft survives an in-flight propose".
+        # Verify the acknowledged write is visible through both nodes
+        # before restarting its writer.
         wait_nodes_caught_up(
             [topology.founder_grpc, topology.joiner_grpc],
             "sharedzone",
@@ -750,13 +751,8 @@ class TestRestartReplay:
         docker_restart(topology.joiner_container)
         wait_healthy([topology.joiner_grpc])
 
-        # gRPC-alive ≠ raft-caught-up — joiner's metastore replay can
-        # lag the health-port flip on a freshly-restarted container.
-        # Without this gate the post-restart read can hit a window
-        # where the daemon answers RPCs but hasn't re-applied the
-        # log entry the test wrote pre-restart, surfacing as a
-        # spurious FILE_NOT_FOUND.  Same primitive the pre-restart
-        # phase uses for "all nodes caught up to the same index".
+        # Wait for the written path to be visible through both VFS
+        # endpoints after the joiner restores its state.
         wait_nodes_caught_up(
             [topology.founder_grpc, topology.joiner_grpc],
             "sharedzone",
@@ -778,28 +774,6 @@ class TestRestartReplay:
             f"data loss on SIGTERM — kernel BlobStore did not durably commit "
             f"before SIGTERM acknowledged"
         )
-
-
-# ===========================================================================
-# TestWitnessQuorumHA — REMOVED.
-#
-# The runbook §3b operator flow (`nexusd-cluster share` + `nexusd-cluster
-# join`) creates sharedzone as a 1-voter group (founder is the
-# authoritative single voter) + learner joiners.  There is no multi-voter
-# quorum to test for sharedzone in that flow.  The witness binary
-# participates in cluster ROOT-zone consensus per its own dedicated boot
-# path (rust/raft/src/bin/witness.rs in nexus-vfs), NOT in individual
-# federation zones.  Attempting to make sharedzone 3-voter by running
-# `nexusd-cluster join` against the witness corrupts the witness's data
-# dir because the nexusd-cluster CLI assumes a different on-disk schema
-# than the witness binary uses (verified in CI: witness logs show
-# "Bootstrapped ConfState with voters: [witness_id]" for sharedzone —
-# the join CLI re-created sharedzone locally instead of joining founder's).
-#
-# A meaningful witness-quorum test would require a different test
-# architecture (3-voter cluster root, NOT a federation zone) which is
-# out of scope for the runbook §3b/§4 binding this suite targets.
-# ===========================================================================
 
 
 # ===========================================================================

@@ -351,11 +351,13 @@ class KernelClient:
         # plane as the Python HTTP server.  In that deployment the internal
         # client must present the operator-provided key as well; otherwise the
         # kernel correctly starts fail-closed and every bootstrap RPC is
-        # unauthenticated.  An explicit argument still wins, including an
-        # explicit empty string for callers that intentionally probe no-auth.
-        self._auth_token = (
-            auth_token if auth_token is not None else os.environ.get("NEXUS_API_KEY", "")
-        )
+        # unauthenticated.  An explicit argument still wins.  The env fallback
+        # stays ``None`` when the variable is unset (NOT ``""``): the
+        # transport treats a connection-level empty string as an explicitly
+        # rejected bearer, while ``None`` means "no credential" and is what
+        # unauthenticated local kernels accept.
+        self._auth_token = auth_token if auth_token is not None else os.environ.get("NEXUS_API_KEY")
+        self._spawn_local = not server_address
         self.requires_python_hooks = True
         self._hooks: dict[str, list[Any]] = {}
 
@@ -536,12 +538,12 @@ class KernelClient:
         return self._transport.call_rpc(method, params or {})
 
     def call_rpc(self, method: str, params: dict[str, Any] | None = None) -> Any:
-        """Public generic Call RPC surface.
+        """Forward service calls through the kernel's existing authenticated channel.
 
-        Search-side discovery (search_service glob/grep) dispatches through
-        this name on whatever kernel object the assembly hands it; keep the
-        bridge public so typed and untyped callers coexist across the
-        kernel-client rewrite."""
+        Search-side discovery (search_service glob/grep) also dispatches
+        through this name on whatever kernel object the assembly hands it;
+        keep the bridge public so typed and untyped callers coexist.
+        """
         return self._call(method, params)
 
     def zone_runtime_call(

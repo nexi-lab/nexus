@@ -218,11 +218,13 @@ export class TmuxSession {
   async waitForExit(timeoutMs: number): Promise<number> {
     const deadline = performance.now() + timeoutMs;
     while (performance.now() < deadline) {
-      const proc = Bun.spawn(["tmux", "-S", TMUX_SOCKET, "display-message", "-p", "-t", this.sessionName, "#{pane_dead} #{pane_dead_status}"], { stdout: "pipe", stderr: "pipe" });
+      const proc = Bun.spawn(["tmux", "-S", TMUX_SOCKET, "display-message", "-p", "-t", this.sessionName, "#{pane_dead}|#{pane_dead_status}|#{pane_dead_signal}"], { stdout: "pipe", stderr: "pipe" });
       const status = await new Response(proc.stdout).text();
       if (await proc.exited !== 0) throw new Error("Could not read terminal exit status");
-      const [dead, code] = status.trim().split(/\s+/);
-      if (dead === "1") return Number(code);
+      const [dead, code, signal] = status.trim().split("|");
+      // The pane can close before tmux receives the child's exit status.
+      if (dead === "1" && code !== undefined && /^\d+$/.test(code)) return Number(code);
+      if (dead === "1" && signal) throw new Error(`Terminal exited from signal ${signal}`);
       await sleep(50);
     }
     throw new Error(`Terminal did not exit within ${timeoutMs}ms`);

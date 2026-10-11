@@ -42,7 +42,15 @@ describe.skipIf(!fixturePath)("native Search through the TUI worker and terminal
     const indexed = await searchFiles(fixture.needle, fixture.root, client, connection);
     expect(indexed.error).toBeDefined();
     expect(indexed.hits).toEqual([]);
-    await expect(searchFiles("g:**/*.txt", fixture.root, client, connection)).rejects.toThrow("search path is not readable");
+    // Await worker replies before asserting: https://github.com/oven-sh/bun/issues/37189.
+    let denied: unknown;
+    try {
+      await searchFiles("g:**/*.txt", fixture.root, client, connection);
+    } catch (error) {
+      denied = error;
+    }
+    expect(denied).toBeInstanceOf(Error);
+    expect((denied as Error).message).toContain("search path is not readable");
     const reader = new SearchClient(client, connection);
     const readerGrep = await reader.grep(fixture.needle, fixture.root, { files: [fixture.visible, fixture.hidden] });
     expect(readerGrep.matches.map(hit => ({ path: hit.path, line: hit.line_number, content: hit.line }))).toEqual([{ path: fixture.visible, line: 2, content: `${fixture.needle} native search` }]);

@@ -216,7 +216,7 @@ graph TD
   <li><strong>State SSOT.</strong> Agent runtime state (<code>pid &rarr; AgentState</code>, condvar wakeup, signal semantics, parent/child links, transition validation) lives in <code>kernel::core::agents::registry::AgentRegistry</code>. In-process Rust callers reach it directly; external callers reach it through the gRPC surface.</li>
   <li><strong>gRPC is the external surface.</strong> External clients (sudowork UI, orchestrator) reach the kernel over the VFS gRPC port; the agent&harr;kernel hot path stays in-process Rust.</li>
   <li><strong>Cluster profile.</strong> <code>nexusd-cluster</code> runs Nexus's cluster profile &mdash; bricks: IPC, FEDERATION &mdash; whether or not the sudocode agent adapter is compiled in.</li>
-  <li><strong>Zone = authorized replication boundary.</strong> Mounts project a zone into the VFS namespace; a subtree mount does not narrow the records replicated from that zone. Agent Move uses zone admission to separate private Agent data, public discovery, and conversations with different authorized readers. Path filtering cannot remove private metadata or message frames from a replica's WAL. The zone composition and admission checks still require end-to-end acceptance (&sect;3.1).</li>
+  <li><strong>Zone = authorized replication boundary.</strong> Mounts project a zone into the VFS namespace. The authorized reader set determines zone membership and the records replicated to each member. Agent Move separates private Agent data, discovery, and participant conversations through scoped zone admission (&sect;8.3).</li>
 </ul>
 
 <hr>
@@ -311,9 +311,18 @@ sequenceDiagram
 
 <p><strong>Containment is the mount table.</strong> A path under none of a session's mounts belongs to no mount and is refused &mdash; the same containment the co-hosted agent has from its workspace-boundary hook, reaching the CLI through the same mechanism rather than a second policy. <code>additionalDirectories</code> is deliberately absent from the <code>config</code> tool's settable registry: a session that can widen its own reach is not contained by it.</p>
 
-<p><strong>Paths are spelled the way each host speaks.</strong> A co-hosted agent's world IS the VFS, so <code>/proc/{pid}/workspace/main.rs</code> is the only name that file has. A standalone session's files also have a host name &mdash; the one its user typed, and the only one its <code>bash</code> tool can open &mdash; so its backend answers in host spelling and converts at the kernel edge (<code>KernelFsBackend::to_kernel</code>, idempotent, so composing methods convert once). Its transcripts likewise stay beside its configuration on host disk rather than at the VFS <code>/sessions</code>, where <code>scode --resume</code> already looks for them and where they outlive a VFS that exists only while the session does.</p>
+<p><strong>Workspace path translation.</strong> A cohost workspace is addressed
+through <code>/proc/{pid}/workspace/</code>. Standalone tools accept the user's
+host paths, and the backend translates them at the kernel edge. This workspace
+mapping is separate from the durable AgentHome contract below.</p>
 
-<p><strong>Current integration gap:</strong> a co-hosted agent's mailbox lives in its shared kernel; a standalone session's lives on host disk (<code>local_pair_root</code>) or in a daemon it dials. The agreed AgentHome contract in &sect;8.3 requires the same logical paths, identity, schema and link semantics for both hosts. Storage placement and transport are implementation details behind the common filesystem boundary; callers must not choose a different durable contract based on the host.</p>
+<p><strong>Durable host transparency.</strong> Cohost and standalone expose the
+<a href="https://s.shareone.vip/s/agent-context-storage-matrix#agent-delivery-contract">same Agent storage contract</a>.
+The workspace backend maps host files or Nexus mounts; durable Agent data uses
+the shared runtime service (&sect;8.3). Logical identity, formats, links and
+attachment recovery are independent of those placement and transport choices.
+Implementation acceptance is tracked in
+<a href="https://github.com/sudoprivacy/sudocode/blob/main/sudo-code-roadmap.html#agent-runtime-tasks">the runtime task list</a>.</p>
 
 <p>Inside <code>nexusd-cohost</code> the agent loop runs on <code>KernelFsBackend&lt;Kernel&gt;</code>, so <code>SessionStore</code>, <code>ConfigLoader</code>, and the workspace-bounded <code>file_ops</code> helpers all issue kernel syscalls against nexus VFS paths:</p>
 
@@ -343,29 +352,38 @@ sequenceDiagram
 <pre><code>cid = blake3(min(a,b) || 0x00 || max(a,b))[..32]
 
 /conversations/{cid}/transcript        DT_STREAM  &mdash; append-only; both participants append and read
-/conversations/{cid}/readers/{agent}   register   &mdash; {holder, lease_expires_at, read_offset}
-/agents/{name}/conversations/{peer}    DT_LINK    &mdash; index into /conversations/{cid}/</code></pre>
+/conversations/{cid}/readers/{agent}   register   &mdash; participant's consumed position</code></pre>
 
 <p>The id is <strong>derived, not allocated</strong>. Both sides compute it from the two names alone, so <code>send(to = "bob")</code> resolves to a conversation with no coordination, no registry lookup, and no requirement that either party ran first &mdash; whoever writes first creates it, idempotently. Sorting the pair makes it order-free (<code>f(a,b) == f(b,a)</code>), which is what yields chat-app semantics: exactly <em>one</em> thread per pair. The two names are separated by a NUL because agent names are user-chosen &mdash; under a <code>-</code> separator the pairs <code>("a-b", "c")</code> and <code>("a", "b-c")</code> hash identically, silently merging two conversations.</p>
 
 <p><strong>Why per-pair and not per-agent.</strong> A per-agent inbox interleaves every correspondent into one log, and a reader holds one offset into it. That single offset cannot express "caught up with A, still behind on B": draining the inbox to answer A also marks B's messages read. Ordering is global where the meaningful order is per-conversation. Splitting by pair gives each thread its own order and its own position &mdash; and makes the object one a chat client already knows how to render.</p>
 
-<p><strong>A read position is a register, not a frame.</strong> A position is mutable state with one current value; a transcript is an append-only log. Welding them would mean recovering a position by scanning <em>backward</em> for your own last receipt, and a DT_STREAM is forward offset-addressed &mdash; O(tail scan) where a register is O(1). The current implementation stores the three fields as <strong>one</strong> value beside the transcript, so the consumed position follows the <em>agent</em> across devices. That single value does not make the read/write/read lease acquisition atomic. Reader position is a durable fact; lease ownership and runtime presence are transient coordination state, not proof that a runtime is ready. Multi-runtime ownership still needs atomic acquisition, renewal during long turns, and fencing of an old holder after handoff; see the <a href="https://s.shareone.vip/s/agent-context-storage-matrix#agent-delivery-contract">consumer audit</a>.</p>
+<p><strong>Durable read position.</strong> Each participant's register records
+its consumed offset in O(1). Runtime ownership belongs to the shared service
+(&sect;8.3), whose execution role advances that position after accepted work.
+The transcript preserves the append-only message order.</p>
 
 <p><strong>A first read starts at offset 0.</strong> There is deliberately no seek-to-tail: a transcript carries one pair's conversation, so its backlog is the context a joining reader needs, not noise to skip past.</p>
 
-<p>The chat list under <code>/agents/{name}/conversations/</code> is the discovery index &mdash; listing it answers "who am I talking to" without scanning conversation ids. Each entry uses the shared <code>FsBackend::link/read_link</code> contract. Nexus creates a DT_LINK through both the in-process and gRPC backends; the gRPC request carries <code>link_target</code>, and the client verifies the target after creation. The local filesystem backend uses a symlink or junction, with a pointer-file fallback. Each representation stores the conversation root, never a second transcript.</p>
+<p>The Agent's conversation index uses the
+<a href="https://s.shareone.vip/s/agent-context-storage-matrix#agent-delivery-contract">canonical
+link layout</a>. Listing it discovers peers without scanning conversation IDs.
+Nexus creates DT_LINK through the in-process and gRPC backends; the gRPC
+request carries <code>link_target</code>, and the client verifies that target
+after creation. The storage contract owns local filesystem representations.</p>
 
-<pre><code>/agents/A/conversations/B ─┐
-                          ├─&rarr; /conversations/{cid}/
-/agents/B/conversations/A ─┘       transcript
-                                 readers/{agent}</code></pre>
+<p><strong>Agent indexes and delivery.</strong> The
+<a href="https://s.shareone.vip/s/agent-context-storage-matrix#agent-delivery-contract">Agent storage contract</a>
+owns the two canonical indexes, offline delivery and consumed-position semantics.
+Hosted ACP uses <code>acp-mailbox/1</code> over this transport.</p>
 
-<p><strong>Confirmed 2026-10-10:</strong> retain these two indexes and the single canonical conversation; do not add <code>chat-with-me</code>. Both participants compute the same CID, and either can find the existing pair through its own index. The links address the same conversation directory; they do not select a target based on the caller. Session history remains separately flat at <code>/sessions/{session-id}/</code>, with the existing per-Agent session links. Hosted ACP continues to use <code>acp-mailbox/1</code> over this transport.</p>
-
-<p><strong>Delivery without a runtime.</strong> An authorized sender can persist a message while the recipient has no PID, including before its first start. The next receiver discovers unread conversations through its own index and feeds them into its A2A queue. A successful send requires durable storage; entering a process-local queue alone must not advance the durable read position. Sudocode's standalone REPL acknowledges after the persisted turn or explicit cancellation, and leaves interrupted work pending on shutdown. A crash between turn persistence and cursor commit can cause replay. This is at-least-once delivery; the remaining consumer and cross-host acceptance gaps are recorded in the <a href="https://s.shareone.vip/s/agent-context-storage-matrix#agent-delivery-contract">storage matrix</a>.</p>
-
-<p><strong>Visibility and provisioning.</strong> <code>sys_watch</code> wakes a tailing reader; Raft replicates transcripts and registers to members of their owning zone (&sect;4.1). Shared namespace paths do not imply shared replication membership. Public discovery must not admit a peer to private Agent data or another pair's conversation zone, and following a link must authorize the target. The current conversation opener writes both participant indexes; when those indexes occupy private zones, an authorized provisioning service must arrange them without giving the sender general write access to the recipient's private directory. Sender stamping authenticates origin; it does not isolate readers. Zone composition, scoped admission and a third-node inspection proving the absence of another pair's metadata and message bytes remain acceptance work for Agent Move.</p>
+<p><strong>Visibility and provisioning.</strong> Zone authorization defines the
+replication set. An authorized provisioning service creates the shared
+conversation and each private participant index within its proper zone.
+Following a link authorizes the target. <code>sys_watch</code> wakes readers;
+Raft replicates the owning zone's records to its admitted nodes (&sect;4.1).
+The sender stamp authenticates origin, and zone membership determines which
+metadata and message bytes a peer replicates (&sect;8.3).</p>
 
 <h3>3.2 Sender identity</h3>
 
@@ -631,19 +649,58 @@ graph TB
 
 <p>Cohost agent loops share <code>nexusd-cohost</code>'s address space. The in-process failure boundary is <code>catch_unwind</code> per loop plus <code>SpawnHandle::abort</code> on reap; it is not an OS sandbox between loops. Subprocess runtimes and gVisor workloads have separate process or sandbox boundaries. Agent identity and durable data outlive any of those runtimes, and recovery follows the Agent's indexes to the canonical transcript.</p>
 
-<h3>8.3 Shared broker and AgentHome</h3>
+<h3 id="shared-agent-home">8.3 Shared runtime service</h3>
 
-<p><strong>Agreed target; end-to-end integration pending.</strong> On a desktop or laptop, one OS user shares one runtime-managed Nexus service between standalone scode and Sudowork. Scode owns the runtime installation and lifecycle contract; Sudowork calls that contract as the UI and uses vault as one service capability. It must not maintain a second daemon installation or decide daemon ownership from a listening port. In cloud deployments, the orchestrator chooses service and sandbox scope; this local rule does not merge every pod or tenant using the same host UID.</p>
+<p><strong>Dependency and ownership.</strong> Sudocode's runtime layer owns the
+Nexus installation, discovery and service lifecycle used by its Agents.
+Sudowork depends on that runtime contract and consumes its service capabilities,
+including Vault. Reusable Nexus crates remain independent of the agent engine;
+the Sudocode executable composes the dependencies at the binary edge (&sect;8.4).</p>
 
-<p>Installation, discovery and startup need one implementation used by both clients: a process-shared startup lock, an authenticated endpoint and compatibility probe, atomic installation with verified artifacts, and recovery of stale transient discovery records. Concurrent clients must converge on the same healthy service. Closing a UI client must not stop a service still used by standalone runtimes. Existing cluster boot and Moss startup coordination provide mechanisms to inspect and reuse; the common local runtime launcher is not yet implemented.</p>
+<pre>Sudowork UI
+    &darr; runtime connection and capability interface
+Sudocode runtime layer
+    &darr; installation, startup, discovery and lifecycle
+Nexus service and independent Nexus libraries</pre>
 
-<p><strong>AgentHome is a host-independent contract.</strong> Cohost and standalone expose the same Agent identity, logical paths, durable schema, index resolution and recovery semantics. <code>/agents/{name}/</code> contains the profile, memory and indexes; session and conversation bodies remain at <code>/sessions/{sid}/</code> and <code>/conversations/{cid}/</code>. Both <code>/agents/A/conversations/B</code> and <code>/agents/B/conversations/A</code> link to the same canonical conversation directory, including its transcript and reader registers. Recovery includes referenced durable attachments. Physical mount locations and transport stay behind the filesystem boundary. The current standalone layout in &sect;2.4 has not yet been unified with this target. Per-runtime PID, live status and process-local queues stay outside durable Agent data.</p>
+<p><strong>Local service scope.</strong> On a desktop or laptop, one OS user
+shares one managed service across scode and Sudowork clients. A process-shared
+startup lock, authenticated service identity and compatibility probe make
+concurrent starts converge on that service. Installation verifies artifacts
+before atomic promotion. Discovery is transient and recovers from stale records.
+Disconnecting a UI leaves the service available to its other runtime clients.</p>
 
-<p><strong>Credential planes are distinct.</strong> A zone is a logical data and Raft replication boundary within Nexus, wherever that Nexus service runs; it is not a gVisor pod. An Agent or service credential identifies a principal and carries authorized zone access. A replication node's mTLS identity is a separate peer credential and must have explicit admission to each zone it replicates. A Sudorouter model API key provides neither permission. File access authorization alone does not prove that zone membership and content replication RPCs enforce the intended scope. A subtree mount does not restrict the metadata or WAL copied by membership in its entire backing zone.</p>
+<p><strong>Cloud service scope.</strong> The orchestrator chooses the owning
+user, runtime placement and sandbox boundary. User runtimes authenticate to
+their selected service; the root gateway preserves the caller's owner and actor
+when routing a request. A shared host UID is an operating-system deployment
+detail. The <a href="https://s.shareone.vip/s/agent-context-storage-matrix#agent-delivery-contract">Agent storage contract</a>
+defines the identical identity, logical paths, formats, links and attachment
+recovery exposed by cohost and standalone.</p>
 
-<p><strong>Multiple runtimes of one Agent.</strong> For example, desktop A1 and laptop A2 can both represent Agent A. They must not concurrently consume the same A reader position in the A&harr;B conversation. The consuming role needs atomic acquisition, renewal throughout long turns, and fencing so a replaced runtime cannot commit progress. Distinct Agents have distinct reader registers; placing unrelated runtimes in one pod does not combine their queues. Current read/write/read lease acquisition does not provide that exclusion. Durable read progress is distinct from transient consumer ownership.</p>
+<p><strong>Credential and replication scope.</strong> A zone is a logical data
+and Raft replication boundary within Nexus. Agent and service credentials
+identify callers and carry authorized data access. Node mTLS credentials
+identify replication peers, which require explicit admission to each zone.
+Model API credentials authenticate model requests. The authorized reader set
+determines the replication scope; mounting a subtree projects a view of its
+backing zone. Membership replicates that zone's metadata and WAL as well as its
+content.</p>
 
-<p><strong>Move readiness:</strong> local writes and remote fetching remain the normal storage contract. A directory listing can be complete while transcript or attachment bytes still require the source. For desktop&rarr;cloud&rarr;laptop Move, content replication must confirm the full authorized durable closure, preserve links and verify content integrity at the destination; then disconnect the desktop and prove the laptop can resume with its sessions, memory and attachments. Runtime handoff is a separate acceptance: stop or fence the old consuming/writing role before the destination takes it over, while preserving unread messages. Zone admission, actual replica isolation, consumer ownership and the common AgentHome/service path remain prerequisites; complete Agent Move is not yet accepted.</p>
+<p><strong>Execution placement.</strong> Spawn establishes the runtime's owning
+box and role for its durable Agent. The runtime service coordinates execution
+and message consumption across that Agent's PIDs. Ownership transitions are
+atomic, remain valid through long turns, and fence a replaced runtime's progress
+and writes. Agent presence and ownership are transient runtime coordination;
+the conversation's consumed position is a durable fact. Raft orders committed
+data changes; executing agent loops follow the runtime lifecycle contract.</p>
+
+<p><strong>Move completion.</strong> Content synchronization verifies the Agent's
+authorized durable closure and link integrity on the destination, and recovery
+works with the source offline. Runtime handoff then transfers execution and
+consumption while preserving unread messages. Normal file operations retain local
+writes and remote content fetch. Implementation and acceptance evidence live in
+<a href="https://github.com/sudoprivacy/sudocode/blob/main/sudo-code-roadmap.html#agent-runtime-tasks">Sudocode's runtime task list</a>.</p>
 
 <h3>8.4 Binary-edge placement</h3>
 

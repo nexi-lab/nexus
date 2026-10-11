@@ -414,23 +414,6 @@ def check_docker_compose_version() -> CheckResult:
         )
 
 
-def check_pgvector() -> CheckResult:
-    """Check if pgvector extension is likely available (via Docker image)."""
-    # We can only check environment hints since we may not have a DB connection
-    db_url = os.getenv("NEXUS_DATABASE_URL", "")
-    if not db_url:
-        return CheckResult(
-            name="pgvector",
-            status=CheckStatus.WARNING,
-            message="Cannot verify pgvector (no database URL configured).",
-        )
-    return CheckResult(
-        name="pgvector",
-        status=CheckStatus.OK,
-        message="Database URL configured (pgvector verified at connection time).",
-    )
-
-
 # ---------------------------------------------------------------------------
 # Check registry
 # ---------------------------------------------------------------------------
@@ -459,7 +442,6 @@ CHECKS: dict[str, list[Any]] = {
     "dependencies": [
         check_python_version,
         check_docker_compose_version,
-        check_pgvector,
     ],
 }
 

@@ -162,6 +162,13 @@ class VFSGrpcServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
 
         if isinstance(exc, PermissionError | NexusPermissionError):
             return _error_payload(RPCErrorCode.PERMISSION_ERROR, str(exc))
+        if isinstance(exc, grpc.RpcError):
+            if exc.code() in (grpc.StatusCode.PERMISSION_DENIED, grpc.StatusCode.UNAUTHENTICATED):
+                return _error_payload(RPCErrorCode.PERMISSION_ERROR, exc.details())
+            if exc.code() == grpc.StatusCode.INVALID_ARGUMENT:
+                return _error_payload(RPCErrorCode.VALIDATION_ERROR, exc.details())
+            if exc.code() == grpc.StatusCode.NOT_FOUND:
+                return _error_payload(RPCErrorCode.FILE_NOT_FOUND, exc.details())
         if isinstance(exc, NexusFileNotFoundError):
             return _error_payload(RPCErrorCode.FILE_NOT_FOUND, str(exc))
         if isinstance(exc, InvalidPathError):

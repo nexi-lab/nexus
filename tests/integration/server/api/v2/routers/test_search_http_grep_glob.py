@@ -1,20 +1,4 @@
-"""Integration tests for HTTP grep/glob endpoints (#3701 Issue 1A).
-
-Exercises ``GET /api/v2/search/grep`` and ``GET /api/v2/search/glob`` via
-FastAPI's ``TestClient``. Mocks ``nexus_fs.service("search")`` to return
-a controllable SearchService stub so we can assert:
-
-* happy paths (basic match, pagination, case flags)
-* error paths (invalid regex → 400, service missing → 503, nexus_fs
-  missing → 503)
-* ReBAC interaction (permission_enforcer called, denied files stripped)
-* ``truncated_by_permissions`` surfaces in the response when denial rate
-  is high
-* MCP ↔ HTTP convergence sanity (HTTP uses the same ``build_paginated_list_response``
-  envelope as MCP)
-
-Backfills the coverage gap flagged during the review of #3701.
-"""
+"""HTTP discovery parsing, pagination, response paths and error mapping."""
 
 from __future__ import annotations
 
@@ -93,16 +77,6 @@ def _build_app(
     mock_daemon = MagicMock()
     mock_daemon.is_initialized = True
     app.state.search_daemon = mock_daemon
-    if permission_enforcer is not None and isinstance(permission_enforcer, MagicMock):
-        permission_enforcer.check.return_value = False
-        permission_enforcer.filter_list.side_effect = lambda paths, _context: (
-            permission_enforcer.filter_search_results(
-                paths,
-                user_id="user:alice",
-                zone_id="root",
-                is_admin=False,
-            )
-        )
     app.state.permission_enforcer = permission_enforcer
 
     app.dependency_overrides[require_auth] = lambda: {
@@ -185,22 +159,13 @@ class TestGrepHappyPath:
         assert kwargs["before_context"] == 2
         assert kwargs["after_context"] == 3
 
-    def test_max_results_overfetches_when_enforcer_active(self) -> None:
-        """Issue 16A + Codex #3701 sentinel fix: fetch_limit =
-        (limit + offset + 1) * overfetch when enforcer is on.
-
-        The +1 is the sentinel row added by ``_do_grep_operation`` so
-        ``has_more`` can be detected reliably even when the
-        post-ReBAC count happens to equal the requested window.
-        """
+    def test_grep_fetches_only_the_page_and_sentinel(self) -> None:
         svc = _make_search_service(grep_return=[])
         enforcer = MagicMock()
-        enforcer.filter_search_results = MagicMock(return_value=[])
         client = TestClient(_build_app(search_service=svc, permission_enforcer=enforcer))
-        client.get("/api/v2/search/grep?pattern=x&limit=10&offset=0")
-        kwargs = svc.grep.await_args.kwargs
-        # sentinel_window = (10 + 0 + 1) = 11; _REBAC_OVERFETCH_FACTOR = 3 → 33
-        assert kwargs["max_results"] == 33
+        client.get("/api/v2/search/grep?pattern=x&limit=10&offset=2")
+        assert svc.grep.await_args.kwargs["max_results"] == 13
+        assert not enforcer.method_calls
 
     def test_pagination_sentinel_detects_more_when_window_exactly_full(self) -> None:
         """Regression test for #3701 Codex finding #2 (silent truncation).
@@ -459,100 +424,11 @@ class TestGlobErrors:
 
 
 # ---------------------------------------------------------------------------
-# ReBAC interaction
+# Response paths
 # ---------------------------------------------------------------------------
 
 
-class TestRebacInteraction:
-    def test_denied_files_stripped_from_grep_results(self) -> None:
-        svc = _make_search_service(
-            grep_return=[
-                {"file": "/public/a.py", "line": 1, "content": "x", "match": "x"},
-                {"file": "/secret/b.py", "line": 1, "content": "x", "match": "x"},
-                {"file": "/public/c.py", "line": 1, "content": "x", "match": "x"},
-            ]
-        )
-        enforcer = MagicMock()
-        enforcer.filter_search_results = MagicMock(return_value=["/public/a.py", "/public/c.py"])
-        client = TestClient(_build_app(search_service=svc, permission_enforcer=enforcer))
-        resp = client.get("/api/v2/search/grep?pattern=x")
-        data = resp.json()
-        files = [r["file"] for r in data["items"]]
-        assert "/secret/b.py" not in files
-        assert files == ["/public/a.py", "/public/c.py"]
-
-    def test_denied_files_stripped_from_glob_results(self) -> None:
-        svc = _make_search_service(glob_return=["/public/a.py", "/secret/b.py", "/public/c.py"])
-        enforcer = MagicMock()
-        enforcer.filter_search_results = MagicMock(return_value=["/public/a.py", "/public/c.py"])
-        client = TestClient(_build_app(search_service=svc, permission_enforcer=enforcer))
-        resp = client.get("/api/v2/search/glob?pattern=**/*.py")
-        data = resp.json()
-        assert "/secret/b.py" not in data["items"]
-
-    def test_denial_rate_reported_in_response(self) -> None:
-        """4 results pre-filter, 1 post-filter → 75% denial.
-
-        Because 1 < limit=10 AND denial rate 0.75 >= the warn threshold,
-        the response flags ``truncated_by_permissions=True`` so the
-        caller can react (paginate, increase limit, or re-request).
-        """
-        svc = _make_search_service(
-            grep_return=[
-                {"file": f"/f{i}.py", "line": 1, "content": "x", "match": "x"} for i in range(4)
-            ]
-        )
-        enforcer = MagicMock()
-        enforcer.filter_search_results = MagicMock(return_value=["/f0.py"])
-        client = TestClient(_build_app(search_service=svc, permission_enforcer=enforcer))
-        resp = client.get("/api/v2/search/grep?pattern=x&limit=10")
-        data = resp.json()
-        assert data["permission_denial_rate"] == 0.75
-        assert data["truncated_by_permissions"] is True
-
-    def test_low_denial_rate_not_flagged(self) -> None:
-        """40 results, 30 permitted (25% denial), limit 10 → not flagged."""
-        svc = _make_search_service(
-            grep_return=[
-                {"file": f"/f{i}.py", "line": 1, "content": "x", "match": "x"} for i in range(40)
-            ]
-        )
-        enforcer = MagicMock()
-        enforcer.filter_search_results = MagicMock(return_value=[f"/f{i}.py" for i in range(30)])
-        client = TestClient(_build_app(search_service=svc, permission_enforcer=enforcer))
-        resp = client.get("/api/v2/search/grep?pattern=x&limit=10")
-        data = resp.json()
-        assert data["permission_denial_rate"] == 0.25
-        assert data["truncated_by_permissions"] is False
-
-    def test_high_denial_flagged_as_truncated(self) -> None:
-        """Explicit lock-in: high denial + undercount == truncated_by_permissions."""
-        svc = _make_search_service(
-            grep_return=[
-                {"file": f"/f{i}.py", "line": 1, "content": "x", "match": "x"} for i in range(20)
-            ]
-        )
-        enforcer = MagicMock()
-        enforcer.filter_search_results = MagicMock(return_value=["/f0.py"])
-        client = TestClient(_build_app(search_service=svc, permission_enforcer=enforcer))
-        resp = client.get("/api/v2/search/grep?pattern=x&limit=10")
-        data = resp.json()
-        assert data["permission_denial_rate"] == 0.95
-        # 1 permitted < 10 limit AND denial 0.95 >= 0.5 → flagged
-        assert data["truncated_by_permissions"] is True
-
-    def test_no_enforcer_no_denial_stats_degraded(self) -> None:
-        svc = _make_search_service(
-            grep_return=[
-                {"file": "/a.py", "line": 1, "content": "x", "match": "x"},
-            ]
-        )
-        client = TestClient(_build_app(search_service=svc, permission_enforcer=None))
-        resp = client.get("/api/v2/search/grep?pattern=x")
-        data = resp.json()
-        assert data["permission_denial_rate"] == 0.0
-        assert data["truncated_by_permissions"] is False
-
+class TestResultPaths:
     def test_grep_response_unscopes_zone_paths(self) -> None:
         """Regression for Codex review #2 finding #2.
 
@@ -788,103 +664,14 @@ class TestHttpEnvelopeParity:
         assert shared_keys <= set(grep_resp.json().keys())
         assert shared_keys <= set(glob_resp.json().keys())
 
-    def test_both_include_rebac_instrumentation(self) -> None:
+    def test_discovery_envelopes_include_only_observed_facts(self) -> None:
         svc = _make_search_service(grep_return=[], glob_return=[])
-        enforcer = MagicMock()
-        enforcer.filter_search_results = MagicMock(return_value=[])
-        client = TestClient(_build_app(search_service=svc, permission_enforcer=enforcer))
-        for endpoint in ("/api/v2/search/grep?pattern=x", "/api/v2/search/glob?pattern=*.py"):
-            data = client.get(endpoint).json()
-            assert "permission_denial_rate" in data
-            assert "truncated_by_permissions" in data
-
-
-# ---------------------------------------------------------------------------
-# Cross-endpoint parity (#3701 Issue 10A)
-#
-# Locks in the invariant: for the same user, same zone, and same ReBAC
-# policy, HTTP grep/glob/query all strip exactly the same set of files
-# via the same ``_apply_rebac_filter`` helper. This is the scoped-X
-# version of the 10A parity test — MCP is deferred pending auth-identity
-# infrastructure (see notes in the review summary).
-# ---------------------------------------------------------------------------
-
-
-def _file_parity_app(*, permitted: list[str]) -> tuple["FastAPI", list[dict[str, Any]]]:
-    """Build an app where the ReBAC policy permits only ``permitted`` paths.
-
-    The full file set is fixed (``/public/a.py``, ``/secret/b.py``,
-    ``/public/c.py``, ``/secret/d.py``) so the parity assertions have a
-    known ground truth.
-    """
-    all_files = ["/public/a.py", "/secret/b.py", "/public/c.py", "/secret/d.py"]
-    permitted_set = set(permitted)
-
-    grep_corpus = [{"file": p, "line": 1, "content": "match", "match": "match"} for p in all_files]
-
-    svc = _make_search_service(grep_return=grep_corpus, glob_return=all_files)
-
-    enforcer = MagicMock()
-    enforcer.filter_search_results = MagicMock(
-        side_effect=lambda paths, **_: [p for p in paths if p in permitted_set]
-    )
-
-    app = _build_app(search_service=svc, permission_enforcer=enforcer)
-    return app, grep_corpus
-
-
-class TestCrossEndpointParity:
-    def test_grep_and_glob_return_same_permitted_files(self) -> None:
-        app, _ = _file_parity_app(permitted=["/public/a.py", "/public/c.py"])
-        client = TestClient(app)
-
-        grep_files = sorted(
-            r["file"] for r in client.get("/api/v2/search/grep?pattern=match").json()["items"]
-        )
-        glob_files = sorted(client.get("/api/v2/search/glob?pattern=**/*.py").json()["items"])
-
-        assert grep_files == glob_files == ["/public/a.py", "/public/c.py"]
-
-    def test_full_denial_returns_empty_for_both(self) -> None:
-        app, _ = _file_parity_app(permitted=[])
-        client = TestClient(app)
-
-        grep = client.get("/api/v2/search/grep?pattern=match").json()
-        glob = client.get("/api/v2/search/glob?pattern=**/*.py").json()
-
-        assert grep["items"] == []
-        assert glob["items"] == []
-        assert grep["total"] == 0
-        assert glob["total"] == 0
-
-    def test_full_permit_returns_all_for_both(self) -> None:
-        app, _ = _file_parity_app(
-            permitted=["/public/a.py", "/secret/b.py", "/public/c.py", "/secret/d.py"]
-        )
-        client = TestClient(app)
-
-        grep_files = sorted(
-            r["file"] for r in client.get("/api/v2/search/grep?pattern=match").json()["items"]
-        )
-        glob_files = sorted(client.get("/api/v2/search/glob?pattern=**/*.py").json()["items"])
-
-        expected = sorted(["/public/a.py", "/secret/b.py", "/public/c.py", "/secret/d.py"])
-        assert grep_files == expected
-        assert glob_files == expected
-
-    def test_grep_and_glob_report_same_denial_rate(self) -> None:
-        app, _ = _file_parity_app(permitted=["/public/a.py"])  # 1/4 = 0.25 permit → 0.75 deny
-        client = TestClient(app)
-
-        grep = client.get("/api/v2/search/grep?pattern=match").json()
-        glob = client.get("/api/v2/search/glob?pattern=**/*.py").json()
-
-        assert grep["permission_denial_rate"] == glob["permission_denial_rate"] == 0.75
-
-
-# ---------------------------------------------------------------------------
-# files=[...] parameter (#3701 Issue 2A) — HTTP surface
-# ---------------------------------------------------------------------------
+        client = TestClient(_build_app(search_service=svc))
+        for operation in ("grep", "glob"):
+            data = client.get(f"/api/v2/search/{operation}?pattern=x").json()
+            assert "permission_denial_rate" not in data
+            assert "truncated_by_permissions" not in data
+            assert "permission_filter_ms" not in data["latency_breakdown"]
 
 
 class TestHttpFilesParameter:
@@ -1109,29 +896,6 @@ class TestPostGrep:
         )
         assert resp.status_code == 400
 
-    def test_post_grep_rebac_filter_strips_denied_files(self) -> None:
-        """POST handler shares the same ReBAC hook as GET."""
-        svc = _make_search_service(
-            grep_return=[
-                {"file": "/public/a.py", "line": 1, "content": "x", "match": "x"},
-                {"file": "/secret/b.py", "line": 1, "content": "x", "match": "x"},
-            ]
-        )
-        enforcer = MagicMock()
-        enforcer.filter_search_results = MagicMock(return_value=["/public/a.py"])
-        client = TestClient(_build_app(search_service=svc, permission_enforcer=enforcer))
-        resp = client.post("/api/v2/search/grep", json={"pattern": "x"})
-        data = resp.json()
-        files = [r["file"] for r in data["items"]]
-        assert "/secret/b.py" not in files
-        assert files == ["/public/a.py"]
-        assert data["permission_denial_rate"] == 0.5
-
-
-# ---------------------------------------------------------------------------
-# POST /api/v2/search/glob (#3701 follow-up)
-# ---------------------------------------------------------------------------
-
 
 class TestPostGlob:
     """POST /glob mirrors POST /grep semantics."""
@@ -1163,21 +927,6 @@ class TestPostGlob:
         client.post("/api/v2/search/glob", json={"pattern": "*.py", "files": []})
         assert svc.glob.call_args.kwargs["files"] == []
 
-    def test_post_glob_rebac_filter_strips_denied(self) -> None:
-        svc = _make_search_service(glob_return=["/public/a.py", "/secret/b.py"])
-        enforcer = MagicMock()
-        enforcer.filter_search_results = MagicMock(return_value=["/public/a.py"])
-        client = TestClient(_build_app(search_service=svc, permission_enforcer=enforcer))
-        resp = client.post("/api/v2/search/glob", json={"pattern": "*.py"})
-        data = resp.json()
-        assert "/secret/b.py" not in data["items"]
-        assert data["permission_denial_rate"] == 0.5
-
-
-# ---------------------------------------------------------------------------
-# GET/POST parity — same user, same request, identical response
-# ---------------------------------------------------------------------------
-
 
 class TestGetPostParity:
     """Lock in that GET and POST return identical envelopes for the same
@@ -1205,8 +954,6 @@ class TestGetPostParity:
             "offset",
             "has_more",
             "next_offset",
-            "permission_denial_rate",
-            "truncated_by_permissions",
         ):
             assert get_resp.json()[key] == post_resp.json()[key], f"mismatch on {key}"
         # Items should also match (order matters)

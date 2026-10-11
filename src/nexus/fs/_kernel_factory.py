@@ -83,19 +83,6 @@ def _get_or_open_kernel(redb_path: str) -> Any:
         return kernel
 
 
-def _evict_kernel_cache(kernel: Any) -> None:
-    """Remove a kernel from the shared cache when its metastore is released.
-
-    Called by ``NexusFS.close()`` right after ``kernel.release_metastores()``
-    so subsequent ``create_kernel(path)`` calls in the same process get a
-    fresh kernel that reopens the redb file.
-    """
-    with _get_cache_lock():
-        for path, cached in list(_KERNEL_CACHE.items()):
-            if cached is kernel:
-                _KERNEL_CACHE.pop(path, None)
-
-
 def create_kernel(db_path: str | Path, *, _args: Any = None, **_kwargs: Any) -> Any:
     """Create or retrieve a shared ``PyKernel`` backed by a redb metastore.
 

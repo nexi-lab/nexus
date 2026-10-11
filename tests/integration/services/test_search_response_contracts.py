@@ -65,12 +65,9 @@ def _build_app(daemon, auth=None):
     app.state.async_session_factory = MagicMock()
     app.state.async_read_session_factory = MagicMock()
 
-    from nexus.server.dependencies import get_auth_result, require_auth
+    from nexus.server.dependencies import get_auth_result
 
     principal = dict(auth or _ADMIN_AUTH)
-    app.dependency_overrides[require_auth] = lambda: principal
-    # /search/stats takes OPTIONAL auth via get_auth_result directly
-    # (#4736 zone scoping), so override that dependency too.
     app.dependency_overrides[get_auth_result] = lambda: principal
     return app
 
@@ -179,7 +176,7 @@ class TestIndexResponseContract:
         # A populated plugin error must NEVER 200 (review R1) — clients
         # need to retry, not believe the index is complete.
         assert resp.status_code == 500, resp.text
-        assert "fts commit failed" in resp.text
+        assert resp.json()["detail"] == "Failed to index Search documents"
 
     def test_cross_zone_document_rejected(self):
         from nexus.grpc.search.v1 import search_pb2
@@ -200,35 +197,6 @@ class TestIndexResponseContract:
                     {"path": "/ws/a.md", "text": "alpha", "zone_id": "victim-zone"},
                 ]
             },
-        )
-
-        assert resp.status_code == 403, resp.text
-        assert stub.requests == []
-
-    def test_read_only_principal_cannot_index(self):
-        from nexus.grpc.search.v1 import search_pb2
-        from nexus.server.dependencies import require_auth
-
-        daemon, stub = _daemon_with_stub(
-            IndexDocuments=search_pb2.IndexDocumentsResponse(indexed_count=1)
-        )
-        app = _build_app(daemon)
-        # Non-admin principal + no permission enforcer wired ⇒ the
-        # WRITE gate fails CLOSED (review R3): explicit indexing
-        # replaces content other readers see, so a read-only token
-        # must not reach the daemon.
-        app.dependency_overrides[require_auth] = lambda: {
-            "authenticated": True,
-            "user_id": "reader",
-            "zone_id": "eng",
-            "zone_set": ["eng"],
-            "zone_perms": [["eng", "r"]],
-            "is_admin": False,
-        }
-
-        resp = TestClient(app).post(
-            "/api/v2/search/index",
-            json={"documents": [{"path": "/ws/a.md", "text": "poison"}]},
         )
 
         assert resp.status_code == 403, resp.text
@@ -260,118 +228,100 @@ class TestIndexResponseContract:
 
 
 class TestHealthResponseContract:
-    CONTRACT_KEYS = (
-        "status",
-        "initialized",
-        "daemon_initialized",
-        "backend",
-        "bm25_index_loaded",
-        "db_pool_ready",
-        "zoekt_available",
-    )
-
-    def test_healthy_shape(self):
+    def test_healthy_shape_without_a_python_record_store(self):
         from nexus.grpc.search.v1 import search_pb2
 
         daemon, _ = _daemon_with_stub(
             Health=search_pb2.HealthResponse(status="healthy", detail="fts + ann online")
         )
         app = _build_app(daemon)
+        del app.state.record_store
+        del app.state.async_session_factory
+        del app.state.async_read_session_factory
 
-        body = TestClient(app).get("/api/v2/search/health").json()
+        response = TestClient(app).get("/api/v2/search/health")
+        assert response.status_code == 200
+        assert response.json() == {
+            "status": "healthy",
+            "detail": "fts + ann online",
+            "initialized": True,
+            "backend": "rust-plugin",
+            "fts_writer_faults": 0,
+            "fts_writer_unavailable": 0,
+            "last_verified_commit_age_ms": None,
+            "dispatch_panics": 0,
+        }
 
-        for key in self.CONTRACT_KEYS:
-            assert key in body, f"missing contract key {key!r}: {body}"
-        assert body["status"] == "healthy"
-        assert body["initialized"] is True
-        assert body["daemon_initialized"] is True
-        assert body["backend"] == "rust-plugin"
-        assert body["bm25_index_loaded"] is True
-        assert body["db_pool_ready"] is True
-        assert body["zoekt_available"] is False
-        # Post-P12 additive detail stays.
-        assert body["detail"] == "fts + ann online"
-
-    def test_degraded_keeps_keyword_leg_loaded(self):
+    def test_degraded_host_detail_is_preserved(self):
         from nexus.grpc.search.v1 import search_pb2
 
         daemon, _ = _daemon_with_stub(
             Health=search_pb2.HealthResponse(status="degraded", detail="semantic leg missing")
         )
-        app = _build_app(daemon)
-
-        body = TestClient(app).get("/api/v2/search/health").json()
+        body = TestClient(_build_app(daemon)).get("/api/v2/search/health").json()
         assert body["status"] == "degraded"
-        # Degraded = semantic missing; BM25 still answers.
-        assert body["bm25_index_loaded"] is True
+        assert body["detail"] == "semantic leg missing"
 
     def test_writer_liveness_fields_flow_through(self):
-        # #4725: the plugin's structured writer-liveness counters ride
-        # the same dict as ``status`` / ``detail`` so pollers can gate
-        # on numbers instead of parsing prose.
         from nexus.grpc.search.v1 import search_pb2
 
         daemon, _ = _daemon_with_stub(
             Health=search_pb2.HealthResponse(
                 status="degraded",
-                detail="fts writer fault, unverified since — zone 'root' 3s ago",
+                detail="zone 'root' has an unverified writer fault",
                 fts_writer_faults=1,
                 fts_writer_unavailable=0,
                 last_verified_commit_age_ms=4200,
                 dispatch_panics=2,
             )
         )
-        app = _build_app(daemon)
-
-        body = TestClient(app).get("/api/v2/search/health").json()
+        body = TestClient(_build_app(daemon)).get("/api/v2/search/health").json()
         assert body["status"] == "degraded"
         assert body["fts_writer_faults"] == 1
         assert body["fts_writer_unavailable"] == 0
         assert body["last_verified_commit_age_ms"] == 4200
         assert body["dispatch_panics"] == 2
-        # Rebuilt-but-unverified writer: keyword leg still answers.
-        assert body["bm25_index_loaded"] is True
 
-    def test_unset_commit_age_is_null(self):
+    def test_unavailable_host_reports_writer_failure(self):
         from nexus.grpc.search.v1 import search_pb2
 
         daemon, _ = _daemon_with_stub(
-            Health=search_pb2.HealthResponse(status="healthy", detail="fts + ann online")
+            Health=search_pb2.HealthResponse(
+                status="unavailable", detail="writer cannot be opened", fts_writer_unavailable=1
+            )
         )
-
         body = TestClient(_build_app(daemon)).get("/api/v2/search/health").json()
-        assert body["last_verified_commit_age_ms"] is None
-        assert body["fts_writer_faults"] == 0
-        assert body["fts_writer_unavailable"] == 0
-        assert body["dispatch_panics"] == 0
+        assert body["status"] == "unavailable"
+        assert body["fts_writer_unavailable"] == 1
+        assert body["initialized"] is True
 
-    def test_disabled_daemon_keeps_contract_keys(self):
-        app = _build_app(None)
+    def test_disabled_daemon(self):
+        body = TestClient(_build_app(None)).get("/api/v2/search/health").json()
+        assert body == {
+            "status": "disabled",
+            "detail": "Search daemon is not configured",
+            "initialized": False,
+            "backend": None,
+        }
 
-        body = TestClient(app).get("/api/v2/search/health").json()
-        assert body["status"] == "disabled"
-        for key in self.CONTRACT_KEYS:
-            assert key in body, f"missing contract key {key!r}: {body}"
-        assert body["initialized"] is False
-        assert body["bm25_index_loaded"] is False
-
-    def test_unreachable_plugin_is_unavailable_not_500(self):
+    def test_unreachable_plugin_reports_unavailable(self):
         from nexus.bricks.search.daemon import SearchDaemon
 
         daemon = SearchDaemon(target="127.0.0.1:1")
 
         class _ExplodingStub:
-            async def Health(self, req):  # noqa: N802 — gRPC stub surface
+            async def Health(self, req):  # noqa: N802
                 raise RuntimeError("connection refused")
 
         daemon._stub = _ExplodingStub()
-        app = _build_app(daemon)
-
-        resp = TestClient(app).get("/api/v2/search/health")
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["status"] == "unavailable"
-        assert body["bm25_index_loaded"] is False
+        response = TestClient(_build_app(daemon)).get("/api/v2/search/health")
+        assert response.status_code == 200
+        assert response.json() == {
+            "status": "unavailable",
+            "detail": "RuntimeError: connection refused",
+            "initialized": True,
+            "backend": "rust-plugin",
+        }
 
 
 class TestStatsResponseContract:
@@ -581,7 +531,7 @@ class TestRefreshResponseContract:
         )
 
         assert resp.status_code == 500
-        assert "tombstone" in resp.json()["detail"]
+        assert resp.json()["detail"] == "Failed to refresh Search document"
 
     def test_invalid_change_type_is_400(self):
         from nexus.grpc.search.v1 import search_pb2
@@ -654,8 +604,7 @@ class TestStatsStallDetectionContract:
         assert req.zone_id == "eng"
         assert body["zone_id"] == "eng"
 
-    def test_token_less_poller_keeps_root_zone_view(self):
-        from nexus.contracts.constants import ROOT_ZONE_ID
+    def test_unauthenticated_poller_does_not_read_root_counters(self):
         from nexus.grpc.search.v1 import search_pb2
 
         daemon, stub = _daemon_with_stub(
@@ -665,10 +614,8 @@ class TestStatsStallDetectionContract:
 
         resp = TestClient(app).get("/api/v2/search/stats")
 
-        assert resp.status_code == 200, "stats auth stays optional"
-        ((_, req),) = stub.requests
-        assert req.zone_id == "", "empty on the wire ⇒ plugin ROOT zone"
-        assert resp.json()["zone_id"] == ROOT_ZONE_ID
+        assert resp.status_code == 401
+        assert stub.requests == []
 
     def test_never_indexed_reports_zero_and_none_not_epoch(self):
         from nexus.grpc.search.v1 import search_pb2

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import re as _re
+from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
 import grpc
@@ -32,6 +33,7 @@ from tenacity import (
 )
 
 from nexus.contracts.exceptions import (
+    AuthenticationError,
     BackendError,
     RemoteConnectionError,
     RemoteTimeoutError,
@@ -128,11 +130,11 @@ _CHANNEL_OPTIONS = build_channel_options(
 
 
 class RPCTransport:
-    """Sync gRPC transport — replaces HTTP/JSON-RPC in RemoteBackend & RemoteMetastore (now Rust).
+    """Sync gRPC transport for remote filesystem and service calls.
 
     Creates a single ``grpc.Channel`` with automatic keepalive and retry.
-    All RPC calls go through the generic ``NexusVFSService.Call`` endpoint
-    which dispatches to the same handler pipeline as the HTTP endpoint.
+    Typed filesystem and search RPCs share one authenticated channel.
+    Other service calls use ``NexusVFSService.Call``.
 
     Args:
         server_address: gRPC server address (e.g. ``localhost:2028``).
@@ -171,7 +173,7 @@ class RPCTransport:
                 "with no tls_config). Pass a ZoneTlsConfig or use grpc:// for plaintext."
             )
         self.server_address = server_address
-        self._auth_token = auth_token or ""
+        self._auth_token = auth_token
         self._timeout = timeout
         self._connect_timeout = connect_timeout
         if tls_config is not None:
@@ -211,18 +213,19 @@ class RPCTransport:
                     "(docker-compose, k8s pod-local)."
                 )
             self._channel = grpc.insecure_channel(server_address, options=_CHANNEL_OPTIONS)
-        self._stub = vfs_pb2_grpc.NexusVFSServiceStub(self._channel)
-        from nexus.remote.search_client import SearchClient
+        self._closed = False
+        try:
+            self._stub = vfs_pb2_grpc.NexusVFSServiceStub(self._channel)
+            from nexus.remote.search_client import SearchClient
 
-        self._search = SearchClient(self._channel)
-        self._zone_runtime_stub = zone_runtime_pb2_grpc.ZoneRuntimeServiceStub(self._channel)
+            self._search = SearchClient(self._channel)
+            self._zone_runtime_stub = zone_runtime_pb2_grpc.ZoneRuntimeServiceStub(self._channel)
 
-        # Pre-warm: trigger eager TCP/TLS handshake so connection establishment
-        # overlaps with NexusFS construction instead of blocking on first RPC.
-        self._channel_ready = grpc.channel_ready_future(self._channel)
-
-        # Reuse BaseRemoteNexusFS error handling (static method access)
-        self._error_handler = BaseRemoteNexusFS()
+            self._error_handler = BaseRemoteNexusFS()
+        except BaseException:
+            with suppress(Exception):
+                self.close()
+            raise
 
     # ------------------------------------------------------------------
     # RPC call
@@ -323,10 +326,24 @@ class RPCTransport:
         )
         return dict(converted)
 
+    def _credential(self, override: str | None = None) -> str | None:
+        """Select one call's credential without changing the channel identity."""
+        caller = request_api_key.get()
+        if caller is not None:
+            return caller
+        return override if override is not None else self._auth_token
+
+    def _vfs_credential(self, override: str | None = None) -> str:
+        """VFS's string field cannot represent an explicitly empty bearer."""
+        credential = self._credential(override)
+        if credential == "":
+            raise AuthenticationError("Authentication required: empty request credential")
+        return credential or ""
+
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        retry=retry_if_exception_type(RemoteConnectionError),
         reraise=True,
     )
     def call_rpc(
@@ -354,20 +371,17 @@ class RPCTransport:
             RemoteTimeoutError: Call exceeded deadline.
             NexusError subclasses: Application-level errors from server.
         """
-        effective_token = auth_token if auth_token is not None else self._auth_token
         timeout = read_timeout if read_timeout is not None else self._timeout
-        if method in ("glob", "grep"):
-            caller = request_api_key.get()
-            credential: str | None
-            if caller is not None:
-                credential = caller
-            elif auth_token is not None:
-                credential = auth_token
-            else:
-                credential = self._auth_token or None
+        if method in (
+            "glob",
+            "grep",
+            "semantic_search",
+            "semantic_search_index",
+            "semantic_search_stats",
+        ):
             try:
                 return self._search._call(
-                    method, params or {}, credential=credential, timeout=timeout
+                    method, params or {}, credential=self._credential(auth_token), timeout=timeout
                 )
             except grpc.RpcError as exc:
                 if exc.code() == grpc.StatusCode.INVALID_ARGUMENT:
@@ -378,7 +392,7 @@ class RPCTransport:
         request = vfs_pb2.CallRequest(
             method=method,
             payload=payload,
-            auth_token=effective_token,
+            auth_token=self._vfs_credential(auth_token),
         )
 
         logger.debug("RPCTransport.call_rpc: %s params=%s", method, _redact_params(params))
@@ -417,7 +431,7 @@ class RPCTransport:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        retry=retry_if_exception_type(RemoteConnectionError),
         reraise=True,
     )
     def read_file(
@@ -448,7 +462,7 @@ class RPCTransport:
         """
         request = vfs_pb2.ReadRequest(
             path=path,
-            auth_token=self._auth_token,
+            auth_token=self._vfs_credential(),
             content_id=content_id,
             timeout_ms=int(timeout_ms),
             offset=int(offset),
@@ -465,7 +479,7 @@ class RPCTransport:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        retry=retry_if_exception_type(RemoteConnectionError),
         reraise=True,
     )
     def write_file(
@@ -485,7 +499,7 @@ class RPCTransport:
         request = vfs_pb2.WriteRequest(
             path=path,
             content=content,
-            auth_token=self._auth_token,
+            auth_token=self._vfs_credential(),
             content_id=content_id or "",
         )
         timeout = read_timeout if read_timeout is not None else self._timeout
@@ -505,7 +519,7 @@ class RPCTransport:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        retry=retry_if_exception_type(RemoteConnectionError),
         reraise=True,
     )
     def delete(
@@ -521,7 +535,9 @@ class RPCTransport:
         former ``sys_unlink`` Call carried for audit / metrics callers.
         Raises on auth or transport failure.
         """
-        request = vfs_pb2.DeleteRequest(path=path, auth_token=self._auth_token, recursive=recursive)
+        request = vfs_pb2.DeleteRequest(
+            path=path, auth_token=self._vfs_credential(), recursive=recursive
+        )
         timeout = read_timeout if read_timeout is not None else self._timeout
         try:
             response = self._stub.Delete(request, timeout=timeout)
@@ -544,7 +560,7 @@ class RPCTransport:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        retry=retry_if_exception_type(RemoteConnectionError),
         reraise=True,
     )
     def mkdir(
@@ -556,7 +572,7 @@ class RPCTransport:
     ) -> Any:
         """Mkdir via the typed Mkdir RPC. Returns the MkdirResponse."""
         request = vfs_pb2.MkdirRequest(
-            path=path, auth_token=self._auth_token, parents=parents, exist_ok=exist_ok
+            path=path, auth_token=self._vfs_credential(), parents=parents, exist_ok=exist_ok
         )
         timeout = read_timeout if read_timeout is not None else self._timeout
         try:
@@ -570,7 +586,7 @@ class RPCTransport:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        retry=retry_if_exception_type(RemoteConnectionError),
         reraise=True,
     )
     def batch_read(
@@ -592,7 +608,7 @@ class RPCTransport:
             if length is not None:
                 item.length = length
             req_items.append(item)
-        request = vfs_pb2.BatchReadRequest(auth_token=self._auth_token, items=req_items)
+        request = vfs_pb2.BatchReadRequest(auth_token=self._vfs_credential(), items=req_items)
         timeout = read_timeout if read_timeout is not None else self._timeout
         try:
             response = self._stub.BatchRead(request, timeout=timeout)
@@ -603,7 +619,7 @@ class RPCTransport:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        retry=retry_if_exception_type(RemoteConnectionError),
         reraise=True,
     )
     def batch_write(
@@ -620,7 +636,7 @@ class RPCTransport:
         responses in input order.
         """
         request = vfs_pb2.BatchWriteRequest(
-            auth_token=self._auth_token,
+            auth_token=self._vfs_credential(),
             items=[
                 vfs_pb2.BatchWriteItemRequest(path=path, content=content) for path, content in files
             ],
@@ -638,13 +654,13 @@ class RPCTransport:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        retry=retry_if_exception_type(RemoteConnectionError),
         reraise=True,
     )
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        retry=retry_if_exception_type(RemoteConnectionError),
         reraise=True,
     )
     def readdir(self, path: str, zone_id: str = "", read_timeout: float | None = None) -> list[Any]:
@@ -655,7 +671,9 @@ class RPCTransport:
         transport failure; the handler treats ``is_admin`` as a
         ctx-derived field, so it's not part of the request.
         """
-        request = vfs_pb2.ReaddirRequest(path=path, auth_token=self._auth_token, zone_id=zone_id)
+        request = vfs_pb2.ReaddirRequest(
+            path=path, auth_token=self._vfs_credential(), zone_id=zone_id
+        )
         timeout = read_timeout if read_timeout is not None else self._timeout
         try:
             response = self._stub.Readdir(request, timeout=timeout)
@@ -668,7 +686,7 @@ class RPCTransport:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        retry=retry_if_exception_type(RemoteConnectionError),
         reraise=True,
     )
     def batch_stat(
@@ -685,7 +703,7 @@ class RPCTransport:
         auth or transport failure.
         """
         request = vfs_pb2.BatchStatRequest(
-            auth_token=self._auth_token, zone_id=zone_id, paths=list(paths)
+            auth_token=self._vfs_credential(), zone_id=zone_id, paths=list(paths)
         )
         timeout = read_timeout if read_timeout is not None else self._timeout
         try:
@@ -697,7 +715,7 @@ class RPCTransport:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        retry=retry_if_exception_type(RemoteConnectionError),
         reraise=True,
     )
     def stat(self, path: str, zone_id: str = "", read_timeout: float | None = None) -> Any | None:
@@ -707,7 +725,7 @@ class RPCTransport:
         does not exist (``found == false`` — not an error). Raises on
         auth / transport failure.
         """
-        request = vfs_pb2.StatRequest(path=path, auth_token=self._auth_token, zone_id=zone_id)
+        request = vfs_pb2.StatRequest(path=path, auth_token=self._vfs_credential(), zone_id=zone_id)
         timeout = read_timeout if read_timeout is not None else self._timeout
         try:
             response = self._stub.Stat(request, timeout=timeout)
@@ -720,7 +738,7 @@ class RPCTransport:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        retry=retry_if_exception_type(RemoteConnectionError),
         reraise=True,
     )
     def setattr(self, path: str, read_timeout: float | None = None, **kwargs: Any) -> Any:
@@ -742,7 +760,7 @@ class RPCTransport:
         """
         request = vfs_pb2.SetattrRequest(
             path=path,
-            auth_token=self._auth_token,
+            auth_token=self._vfs_credential(),
             entry_type=int(kwargs.get("entry_type", 0) or 0),
             zone_id=kwargs.get("zone_id", "") or "",
             backend_name=kwargs.get("backend_name", "") or "",
@@ -824,12 +842,14 @@ class RPCTransport:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        retry=retry_if_exception_type(RemoteConnectionError),
         reraise=True,
     )
     def rename(self, path: str, new_path: str, read_timeout: float | None = None) -> Any:
         """Rename via the typed Rename RPC. Returns the RenameResponse."""
-        request = vfs_pb2.RenameRequest(path=path, new_path=new_path, auth_token=self._auth_token)
+        request = vfs_pb2.RenameRequest(
+            path=path, new_path=new_path, auth_token=self._vfs_credential()
+        )
         timeout = read_timeout if read_timeout is not None else self._timeout
         try:
             response = self._stub.Rename(request, timeout=timeout)
@@ -842,12 +862,12 @@ class RPCTransport:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        retry=retry_if_exception_type(RemoteConnectionError),
         reraise=True,
     )
     def copy(self, src: str, dst: str, read_timeout: float | None = None) -> Any:
         """Server-side copy via the typed Copy RPC. Returns the CopyResponse."""
-        request = vfs_pb2.CopyRequest(src=src, dst=dst, auth_token=self._auth_token)
+        request = vfs_pb2.CopyRequest(src=src, dst=dst, auth_token=self._vfs_credential())
         timeout = read_timeout if read_timeout is not None else self._timeout
         try:
             response = self._stub.Copy(request, timeout=timeout)
@@ -860,7 +880,7 @@ class RPCTransport:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        retry=retry_if_exception_type(RemoteConnectionError),
         reraise=True,
     )
     def lock(
@@ -877,7 +897,7 @@ class RPCTransport:
         """
         request = vfs_pb2.LockRequest(
             path=path,
-            auth_token=self._auth_token,
+            auth_token=self._vfs_credential(),
             lock_id=lock_id,
             timeout_ms=timeout_ms,
         )
@@ -893,7 +913,7 @@ class RPCTransport:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        retry=retry_if_exception_type(RemoteConnectionError),
         reraise=True,
     )
     def unlock(
@@ -905,7 +925,7 @@ class RPCTransport:
     ) -> Any:
         """Release an advisory lock via the typed Unlock RPC."""
         request = vfs_pb2.UnlockRequest(
-            path=path, auth_token=self._auth_token, lock_id=lock_id, force=force
+            path=path, auth_token=self._vfs_credential(), lock_id=lock_id, force=force
         )
         timeout = read_timeout if read_timeout is not None else self._timeout
         try:
@@ -919,7 +939,7 @@ class RPCTransport:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        retry=retry_if_exception_type(RemoteConnectionError),
         reraise=True,
     )
     def watch(
@@ -937,7 +957,7 @@ class RPCTransport:
         90 s aren't cut short.
         """
         request = vfs_pb2.WatchRequest(
-            path=path, auth_token=self._auth_token, timeout_ms=timeout_ms
+            path=path, auth_token=self._vfs_credential(), timeout_ms=timeout_ms
         )
         timeout = read_timeout if read_timeout is not None else max(timeout_ms / 1000.0 + 5.0, 5.0)
         try:
@@ -951,7 +971,7 @@ class RPCTransport:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        retry=retry_if_exception_type(RemoteConnectionError),
         reraise=True,
     )
     def get_xattr(self, path: str, key: str, read_timeout: float | None = None) -> Any:
@@ -960,7 +980,7 @@ class RPCTransport:
         Returns the ``GetXattrResponse`` — ``found=false`` means the key
         is not set, not an error.
         """
-        request = vfs_pb2.GetXattrRequest(path=path, key=key, auth_token=self._auth_token)
+        request = vfs_pb2.GetXattrRequest(path=path, key=key, auth_token=self._vfs_credential())
         timeout = read_timeout if read_timeout is not None else self._timeout
         try:
             response = self._stub.GetXattr(request, timeout=timeout)
@@ -973,13 +993,13 @@ class RPCTransport:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        retry=retry_if_exception_type(RemoteConnectionError),
         reraise=True,
     )
     def set_xattr(self, path: str, key: str, value: str, read_timeout: float | None = None) -> None:
         """Set an xattr via the typed SetXattr RPC."""
         request = vfs_pb2.SetXattrRequest(
-            path=path, key=key, value=value, auth_token=self._auth_token
+            path=path, key=key, value=value, auth_token=self._vfs_credential()
         )
         timeout = read_timeout if read_timeout is not None else self._timeout
         try:
@@ -992,7 +1012,7 @@ class RPCTransport:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        retry=retry_if_exception_type(RemoteConnectionError),
         reraise=True,
     )
     def get_xattr_bulk(
@@ -1004,7 +1024,7 @@ class RPCTransport:
         ``paths``).
         """
         request = vfs_pb2.GetXattrBulkRequest(
-            paths=list(paths), key=key, auth_token=self._auth_token
+            paths=list(paths), key=key, auth_token=self._vfs_credential()
         )
         timeout = read_timeout if read_timeout is not None else self._timeout
         try:
@@ -1018,12 +1038,12 @@ class RPCTransport:
     # ── Typed IPC pipe / stream ops ────────────────────────────────────
 
     def _ipc_path_request(self, path: str) -> Any:
-        return vfs_pb2.IpcPathRequest(path=path, auth_token=self._auth_token)
+        return vfs_pb2.IpcPathRequest(path=path, auth_token=self._vfs_credential())
 
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        retry=retry_if_exception_type(RemoteConnectionError),
         reraise=True,
     )
     def close_pipe(self, path: str, read_timeout: float | None = None) -> None:
@@ -1039,7 +1059,7 @@ class RPCTransport:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        retry=retry_if_exception_type(RemoteConnectionError),
         reraise=True,
     )
     def has_pipe(self, path: str, read_timeout: float | None = None) -> bool:
@@ -1056,7 +1076,7 @@ class RPCTransport:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        retry=retry_if_exception_type(RemoteConnectionError),
         reraise=True,
     )
     def close_all_pipes(self, read_timeout: float | None = None) -> None:
@@ -1064,7 +1084,7 @@ class RPCTransport:
         timeout = read_timeout if read_timeout is not None else self._timeout
         try:
             resp = self._stub.CloseAllPipes(
-                vfs_pb2.IpcEmpty(auth_token=self._auth_token), timeout=timeout
+                vfs_pb2.IpcEmpty(auth_token=self._vfs_credential()), timeout=timeout
             )
         except grpc.RpcError as exc:
             self._raise_transport_error(exc, timeout, "CloseAllPipes")
@@ -1074,7 +1094,7 @@ class RPCTransport:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        retry=retry_if_exception_type(RemoteConnectionError),
         reraise=True,
     )
     def close_stream(self, path: str, read_timeout: float | None = None) -> None:
@@ -1090,7 +1110,7 @@ class RPCTransport:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        retry=retry_if_exception_type(RemoteConnectionError),
         reraise=True,
     )
     def has_stream(self, path: str, read_timeout: float | None = None) -> bool:
@@ -1107,7 +1127,7 @@ class RPCTransport:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        retry=retry_if_exception_type(RemoteConnectionError),
         reraise=True,
     )
     def stream_write_nowait(self, path: str, data: bytes, read_timeout: float | None = None) -> int:
@@ -1115,7 +1135,9 @@ class RPCTransport:
 
         Returns the offset where the data landed (native bytes — no base64).
         """
-        request = vfs_pb2.StreamWriteRequest(path=path, data=data, auth_token=self._auth_token)
+        request = vfs_pb2.StreamWriteRequest(
+            path=path, data=data, auth_token=self._vfs_credential()
+        )
         timeout = read_timeout if read_timeout is not None else self._timeout
         try:
             resp = self._stub.StreamWriteNowait(request, timeout=timeout)
@@ -1128,7 +1150,7 @@ class RPCTransport:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        retry=retry_if_exception_type(RemoteConnectionError),
         reraise=True,
     )
     def stream_read_at(
@@ -1151,7 +1173,7 @@ class RPCTransport:
             offset=offset,
             blocking=blocking,
             timeout_ms=timeout_ms,
-            auth_token=self._auth_token,
+            auth_token=self._vfs_credential(),
         )
         if read_timeout is not None:
             timeout = read_timeout
@@ -1170,7 +1192,7 @@ class RPCTransport:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        retry=retry_if_exception_type(RemoteConnectionError),
         reraise=True,
     )
     def stream_collect_all(self, path: str, read_timeout: float | None = None) -> bytes:
@@ -1187,12 +1209,12 @@ class RPCTransport:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        retry=retry_if_exception_type(RemoteConnectionError),
         reraise=True,
     )
     def ping(self) -> dict[str, Any]:
         """Ping server — returns version, zone_id, uptime."""
-        request = vfs_pb2.PingRequest(auth_token=self._auth_token)
+        request = vfs_pb2.PingRequest(auth_token=self._vfs_credential())
         try:
             response = self._stub.Ping(request, timeout=self._connect_timeout)
         except grpc.RpcError as exc:
@@ -1248,7 +1270,10 @@ class RPCTransport:
             ) from exc
 
     def close(self) -> None:
-        """Close the gRPC channel."""
+        """Close the owned gRPC channel once."""
+        if self._closed:
+            return
+        self._closed = True
         self._channel.close()
 
 

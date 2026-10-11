@@ -3,10 +3,8 @@ name: FUSE Plugin macOS NFS E2E
 # Runs `tests/e2e/macos/test_fuse_plugin_nfs_e2e.py` against a real NFS
 # localhost mount on a `macos-latest` runner.
 #
-# When FUSE-T is broken on macOS (Tahoe: go-nfsv4 panic, SMB EOF, FSKit
-# entitlement missing), the FUSE plugin falls back to an in-process
-# NFSv3 server mounted via `mount_nfs`.  This suite exercises that
-# fallback path.
+# Select the in-process NFSv3 server explicitly so this suite always
+# exercises NFS, independent of FUSE-T's availability or startup timing.
 #
 # Flow: build nexusd-cluster + plugin → spawn cluster with NFS fallback
 # active → pytest workflows with gRPC cross-check → teardown.
@@ -181,6 +179,7 @@ jobs:
           NEXUS_CLUSTER_GRPC: "127.0.0.1:2126"
           NEXUS_FUSE_MOUNT_POINT: "/tmp/nexus-nfs-e2e"
           NEXUS_FUSE_VFS_ROOT: "/"
+          NEXUS_FUSE_MACOS_BACKEND: "nfs"
           NEXUS_BIND_ADDR: "127.0.0.1:2126"
           NEXUS_NO_TLS: "true"
         run: |

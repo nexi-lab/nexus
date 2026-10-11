@@ -54,12 +54,11 @@ def _make_daemon() -> MagicMock:
     daemon = MagicMock()
     daemon.is_initialized = True
     daemon.config = MagicMock()
-    daemon.config.txtai_graph = False
 
-    async def fake_search(*args: Any, **kwargs: Any) -> list[Any]:
-        return []
+    async def fake_search(*args: Any, **kwargs: Any) -> tuple[list[Any], str | None]:
+        return ([], None)
 
-    daemon.search = AsyncMock(side_effect=fake_search)
+    daemon.search_with_error = AsyncMock(side_effect=fake_search)
     return daemon
 
 
@@ -70,8 +69,6 @@ def _build_app(fs: FakeFS) -> tuple[FastAPI, MagicMock]:
     daemon = _make_daemon()
     app = FastAPI()
     app.state.search_daemon = daemon
-    app.state.record_store = object()
-    app.state.async_read_session_factory = object()
     app.state.permission_enforcer = None
     app.state.zone_registry = _Registry()
     app.state.nexus_fs = fs
@@ -95,7 +92,7 @@ def test_query_without_fence_does_not_stat() -> None:
     assert resp.status_code == 200, resp.text
     assert REVISION_HEADER not in resp.headers
     assert fs.stat_calls == []
-    daemon.search.assert_called_once()
+    daemon.search_with_error.assert_called_once()
 
 
 def test_query_with_satisfied_fence_runs_and_stamps_revision() -> None:
@@ -114,7 +111,7 @@ def test_query_with_satisfied_fence_runs_and_stamps_revision() -> None:
     # Fence stat ran under the caller's OperationContext (eng zone).
     assert fs.stat_calls[0][0] == "/ws/a.txt"
     assert getattr(fs.stat_calls[0][1], "zone_id", None) == "eng"
-    daemon.search.assert_called_once()
+    daemon.search_with_error.assert_called_once()
 
 
 def test_query_behind_revision_is_412_and_never_queries() -> None:
@@ -130,7 +127,7 @@ def test_query_behind_revision_is_412_and_never_queries() -> None:
     assert resp.status_code == 412, resp.text
     assert resp.json()["detail"]["current_revision"] == f"/ws/a.txt@{_LOCAL_GEN}"
     assert resp.headers[REVISION_HEADER] == f"/ws/a.txt@{_LOCAL_GEN}"
-    daemon.search.assert_not_called()
+    daemon.search_with_error.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -156,5 +153,5 @@ def test_other_search_routes_fence_before_work(method: str, route: str, kwargs: 
 
     assert resp.status_code == 412, resp.text
     assert resp.json()["detail"]["error"] == "revision_not_applied"
-    daemon.search.assert_not_called()
+    daemon.search_with_error.assert_not_called()
     daemon.batch_search.assert_not_called()

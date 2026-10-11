@@ -31,10 +31,12 @@ from types import SimpleNamespace
 from typing import IO, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.contracts.exceptions import AuthenticationError
 from nexus.contracts.rpc_types import RPCErrorCode
 from nexus.lib.rpc_codec import decode_rpc_message
 from nexus.lib.zone_revision import revision_fields as _revision_fields
 from nexus.remote.rpc_transport import RPCTransport
+from nexus.remote.vfs_client import stat_response_to_dict, walk_entries
 
 logger = logging.getLogger(__name__)
 
@@ -349,11 +351,13 @@ class KernelClient:
         # plane as the Python HTTP server.  In that deployment the internal
         # client must present the operator-provided key as well; otherwise the
         # kernel correctly starts fail-closed and every bootstrap RPC is
-        # unauthenticated.  An explicit argument still wins, including an
-        # explicit empty string for callers that intentionally probe no-auth.
-        self._auth_token = (
-            auth_token if auth_token is not None else os.environ.get("NEXUS_API_KEY", "")
-        )
+        # unauthenticated.  An explicit argument still wins.  The env fallback
+        # stays ``None`` when the variable is unset (NOT ``""``): the
+        # transport treats a connection-level empty string as an explicitly
+        # rejected bearer, while ``None`` means "no credential" and is what
+        # unauthenticated local kernels accept.
+        self._auth_token = auth_token if auth_token is not None else os.environ.get("NEXUS_API_KEY")
+        self._spawn_local = not server_address
         self.requires_python_hooks = True
         self._hooks: dict[str, list[Any]] = {}
 
@@ -369,15 +373,18 @@ class KernelClient:
 
     def open(self) -> None:
         """Start kernel subprocess (if local) and establish gRPC channel."""
-        if self._process is None and not self._is_remote():
-            self._spawn_kernel()
-        self._transport = RPCTransport(
-            server_address=self._server_address,
-            auth_token=self._auth_token,
-            timeout=self._timeout,
-        )
-        # Wait for kernel to be ready.
-        self._wait_ready()
+        try:
+            if self._spawn_local and self._process is None:
+                self._spawn_kernel()
+            self._transport = RPCTransport(
+                server_address=self._server_address,
+                auth_token=self._auth_token,
+                timeout=self._timeout,
+            )
+            self._wait_ready()
+        except BaseException:
+            self.close()
+            raise
 
     def close(self) -> None:
         """Shutdown kernel subprocess and close gRPC channel."""
@@ -389,9 +396,6 @@ class KernelClient:
         self._terminate_spawned_kernel()
         with contextlib.suppress(Exception):
             atexit.unregister(self._terminate_spawned_kernel)
-
-    def _is_remote(self) -> bool:
-        return self._process is None and self._transport is not None
 
     def _spawn_kernel(self) -> None:
         """Spawn nexus-cluster as a subprocess."""
@@ -500,6 +504,8 @@ class KernelClient:
             try:
                 self._transport.ping()
                 return
+            except AuthenticationError:
+                raise
             except Exception as e:
                 last_err = e
                 time.sleep(0.1)
@@ -532,12 +538,12 @@ class KernelClient:
         return self._transport.call_rpc(method, params or {})
 
     def call_rpc(self, method: str, params: dict[str, Any] | None = None) -> Any:
-        """Public generic Call RPC surface.
+        """Forward service calls through the kernel's existing authenticated channel.
 
-        Search-side discovery (search_service glob/grep) dispatches through
-        this name on whatever kernel object the assembly hands it; keep the
-        bridge public so typed and untyped callers coexist across the
-        kernel-client rewrite."""
+        Search-side discovery (search_service glob/grep) also dispatches
+        through this name on whatever kernel object the assembly hands it;
+        keep the bridge public so typed and untyped callers coexist.
+        """
         return self._call(method, params)
 
     def zone_runtime_call(
@@ -627,7 +633,7 @@ class KernelClient:
             return None
         if resp is None:
             return None
-        return _stat_response_to_dict(resp)
+        return stat_response_to_dict(resp)
 
     def sys_setattr(self, path: str, **kwargs: Any) -> Any:
         """Set attributes via the typed Setattr RPC.
@@ -806,7 +812,7 @@ class KernelClient:
         if not paths:
             return []
         return [
-            _stat_response_to_dict(item) if item.found else None
+            stat_response_to_dict(item) if item.found else None
             for item in self._transport.batch_stat(paths, zone_id)
         ]
 
@@ -948,45 +954,7 @@ class KernelClient:
         return [name for name, _etype in result]
 
     def _walk_entries(self, prefix: str, recursive: bool) -> list[tuple[str, int]]:
-        """``(path, entry_type)`` under ``prefix``, sorted — one ``sys_readdir``
-        RPC per directory (the gRPC client has no native prefix scan)."""
-        from nexus.contracts.metadata import DT_DIR, DT_MOUNT
-
-        def _normalize_dir(path: str) -> str:
-            if not path:
-                return "/"
-            if not path.startswith("/"):
-                path = f"/{path}"
-            if path != "/":
-                path = path.rstrip("/")
-            return path
-
-        root = _normalize_dir(prefix)
-        dir_entry_types = {DT_DIR, DT_MOUNT}
-        entries: list[tuple[str, int]] = []
-        seen_entries: set[str] = set()
-        seen_dirs: set[str] = set()
-        pending_dirs: list[str] = [root]
-
-        while pending_dirs:
-            current = pending_dirs.pop()
-            if current in seen_dirs:
-                continue
-            seen_dirs.add(current)
-            for name, etype in self.sys_readdir(current):
-                if not name or name == current:
-                    continue
-                if name in seen_entries:
-                    continue
-                seen_entries.add(name)
-                entries.append((name, etype))
-                if etype in dir_entry_types and recursive:
-                    pending_dirs.append(_normalize_dir(name))
-            if not recursive:
-                break
-
-        entries.sort(key=lambda item: item[0])
-        return entries
+        return list(walk_entries(self.sys_readdir, prefix, recursive))
 
     def _to_file_metadata(self, page: list[tuple[str, int]]) -> list[Any]:
         """FileMetadata for ``page``, enriched by ONE ``stat_batch`` RPC."""
@@ -1304,45 +1272,6 @@ def _error_kind_from_payload(error_payload: bytes) -> tuple[str, str]:
     if code in (RPCErrorCode.PERMISSION_ERROR.value, RPCErrorCode.ACCESS_DENIED.value):
         return "permission_denied", message
     return "io_error", message
-
-
-def _stat_response_to_dict(resp: Any) -> dict[str, Any]:
-    """Build the sys_stat metadata dict from a typed StatResponse.
-
-    Mirrors the `stat_to_json` shape of the former Call path: optional
-    string fields collapse ``""`` -> ``None``, and epoch-ms timestamps
-    gain the enriched ISO-8601 ``created_at`` / ``modified_at`` companions
-    that Python callers expect.
-    """
-    from datetime import UTC, datetime
-
-    def _opt(v: str) -> str | None:
-        return v or None
-
-    created = resp.created_at_ms if resp.HasField("created_at_ms") else None
-    modified = resp.modified_at_ms if resp.HasField("modified_at_ms") else None
-    d: dict[str, Any] = {
-        "path": resp.path,
-        "size": resp.size,
-        "content_id": _opt(resp.content_id),
-        "mime_type": resp.mime_type,
-        "is_directory": resp.is_directory,
-        "entry_type": resp.entry_type,
-        "mode": resp.mode,
-        "version": resp.version,
-        "gen": resp.gen,
-        "zone_id": _opt(resp.zone_id),
-        "created_at_ms": created,
-        "modified_at_ms": modified,
-        "last_writer_address": _opt(resp.last_writer_address),
-        "link_target": _opt(resp.link_target),
-        "owner_id": _opt(resp.owner_id),
-    }
-    if modified is not None:
-        d["modified_at"] = datetime.fromtimestamp(modified / 1000.0, UTC).isoformat()
-    if created is not None:
-        d["created_at"] = datetime.fromtimestamp(created / 1000.0, UTC).isoformat()
-    return d
 
 
 class _SysReadResult:

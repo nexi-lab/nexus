@@ -713,11 +713,3 @@ class FileContentCache:
             stats["total_size_bytes"] += zone_size
 
         return stats
-
-    def get_zoekt_index_path(self) -> Path:
-        """Get the path that Zoekt should index.
-
-        Returns:
-            Path to the cache directory for Zoekt indexing
-        """
-        return self.cache_dir

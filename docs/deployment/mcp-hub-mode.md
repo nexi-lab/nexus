@@ -68,6 +68,20 @@ async for msg in pubsub.listen():
 
 Per-request API keys are resolved once, then cached in-process for 60 seconds (keyed by sha256[:16] of the key). Token rotation takes up to 60s to propagate through warm caches. Only positive authentication results are cached — failed auths retry immediately.
 
+## Remote filesystem credentials
+
+File and Search calls use the filesystem's original gRPC channel, including its
+TLS configuration and selected zone. Each call selects the incoming request key,
+then any explicit service credential, then the configured default. The daemon
+authenticates the credential and checks access on every call.
+
+MCP borrows a supplied filesystem. It keeps no connection cache keyed by API key
+and does not close the caller's filesystem when an MCP client disconnects.
+Request credentials live only in a context variable and reset after the message.
+An explicit empty credential is rejected before a VFS call because its string
+token field cannot distinguish an empty bearer from certificate authentication.
+Search conveys bearer presence in gRPC metadata, including an empty bearer.
+
 ## Health endpoint
 
 `GET /health` returns `{"status": "healthy", "service": "nexus-mcp"}` — unchanged from pre-hub behavior, suitable for liveness checks.

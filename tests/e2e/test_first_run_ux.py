@@ -293,10 +293,8 @@ class TestFullWorkflow:
     def initialized_project(self, project_dir: Path) -> Path:
         """Run nexus init --preset demo and return the project dir.
 
-        Uses the repo-root nexus-stack.yml with NEXUS_DOCKERFILE pointing
-        to the lightweight nexus-demo.Dockerfile. The build context is the
-        repo root, so ``COPY . /tmp/nexus-build/`` picks up pyproject.toml
-        and src/, giving the container the PR's code (Python-only, no Rust).
+        Uses the repo compose file, whose build context selects the canonical
+        Dockerfile and includes the current Python code and Rust runtime.
         """
         # Find the repo root (where nexus-stack.yml lives)
         repo_root = Path(__file__).resolve().parents[2]

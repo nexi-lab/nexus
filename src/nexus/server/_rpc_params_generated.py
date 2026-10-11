@@ -100,6 +100,7 @@ __all__ = [
     "RevokeShareLinkParams",
     "RollbackParams",
     "SaveMountParams",
+    "SemanticSearchIndexParams",
     "SemanticSearchParams",
     "ShareWithUserParams",
     "SnapshotCommitParams",
@@ -969,6 +970,15 @@ class SemanticSearchParams:
 
 
 @dataclass
+class SemanticSearchIndexParams:
+    """Parameters for semantic_search_index(): Index current VFS bytes and return the host's indexed and skipped counts."""
+
+    path: str = "/"
+    recursive: bool = True
+    max_docs: int = 10000
+
+
+@dataclass
 class ShareWithUserParams:
     """Parameters for share_with_user(): Share a resource with a specific user."""
 
@@ -1172,6 +1182,7 @@ METHOD_PARAMS: dict[str, type] = {
     "rollback": RollbackParams,
     "save_mount": SaveMountParams,
     "semantic_search": SemanticSearchParams,
+    "semantic_search_index": SemanticSearchIndexParams,
     "share_with_user": ShareWithUserParams,
     "snapshot_commit": SnapshotCommitParams,
     "snapshot_create": SnapshotCreateParams,

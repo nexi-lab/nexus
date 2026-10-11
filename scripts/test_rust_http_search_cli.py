@@ -11,6 +11,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 from uuid import uuid4
 
@@ -42,7 +43,7 @@ async def main() -> None:
             text = text.replace(secret, "[redacted]")
         return text
 
-    async def cli(args, key=admin, zone="sharedzone", expected=0):
+    async def run(args, key=admin, zone="sharedzone", expected=0, extra_env=None):
         env = os.environ.copy()
         env.update(
             {
@@ -56,11 +57,9 @@ async def main() -> None:
                 "COLUMNS": "240",
             }
         )
+        env.update(extra_env or {})
         process = await asyncio.create_subprocess_exec(
             sys.executable,
-            "-m",
-            "nexus.cli.main",
-            "search",
             *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -76,6 +75,9 @@ async def main() -> None:
         output = stdout.decode() + stderr.decode()
         assert process.returncode == expected, (args, process.returncode, safe(output))
         return stdout.decode(), output
+
+    async def cli(args, key=admin, zone="sharedzone", expected=0):
+        return await run(["-m", "nexus.cli.main", "search", *args], key, zone, expected)
 
     async with httpx.AsyncClient(base_url=base, timeout=20, trust_env=False) as rust:
 
@@ -191,8 +193,102 @@ async def main() -> None:
             await admin_request("DELETE", f"/v2/auth/keys/{hashes['bob']}")
             await cli(["query", needle, "--mode", "keyword"], key=keys["bob"], expected=77)
             await cli(["query", needle, "--mode", "keyword"], key="sk-never-minted", expected=77)
+
+            with tempfile.TemporaryDirectory(prefix="search-benchmark-") as temp_dir:
+                dataset = Path(temp_dir)
+                corpus = dataset / "corpus"
+                corpus.mkdir()
+                bench_prefix = f"/docs/benchmark-{suffix}"
+                pages = [
+                    {
+                        "slug": "alpha",
+                        "title": f"amaryllis{suffix}",
+                        "compiled_truth": "first page",
+                    },
+                    {
+                        "slug": "nested/beta",
+                        "title": f"buttercup{suffix}",
+                        "compiled_truth": "second page",
+                        "timeline": ["one", "two"],
+                    },
+                ]
+                queries = [
+                    {"id": str(i), "text": page["title"], "gold": {"relevant": [page["slug"]]}}
+                    for i, page in enumerate(pages)
+                ]
+                for i, page in enumerate(pages):
+                    (corpus / f"{i}.json").write_text(json.dumps(page), encoding="utf-8")
+                query_file = dataset / "queries.json"
+                query_file.write_text(json.dumps(queries), encoding="utf-8")
+                result_file = dataset / "results.json"
+                bench_env = {
+                    "BENCH_CORPUS_DIR": str(corpus),
+                    "BENCH_QUERIES_FILE": str(query_file),
+                    "BENCH_ZONE_PREFIX": bench_prefix,
+                    "NEXUS_GRPC_PORT": target.rsplit(":", 1)[1],
+                    "NEXUS_GRPC_TLS": "true",
+                    "NEXUS_TLS_CA": os.environ["NEXUS_SEARCH_PLUGIN_TLS_CA"],
+                    "NEXUS_TLS_CERT": os.environ["NEXUS_SEARCH_PLUGIN_TLS_CERT"],
+                    "NEXUS_TLS_KEY": os.environ["NEXUS_SEARCH_PLUGIN_TLS_KEY"],
+                }
+                benchmark = [
+                    str(Path(__file__).with_name("bench_gbrain_evals.py")),
+                    "--mode",
+                    "keyword",
+                    "--save-results",
+                    str(result_file),
+                ]
+                await run(benchmark, extra_env=bench_env)
+                for page in pages:
+                    read = await vfs.Read(
+                        vfs_pb2.ReadRequest(
+                            path=f"{bench_prefix}/{page['slug']}.md", auth_token=admin
+                        )
+                    )
+                    assert not read.is_error and page["title"].encode() in read.content, safe(
+                        str(read)
+                    )
+                metrics = json.loads(result_file.read_text())
+                assert metrics["query_type"] == "keyword", metrics
+                assert metrics["queries"] == 2 and metrics["hits_any"] == "2/2", metrics
+                assert metrics["p_at_5"] == 0.2 and metrics["r_at_5"] == 1.0, metrics
+                assert metrics["mrr"] == 1.0, metrics
+
+                # Query-only runs never resolve an upload channel or require admin statistics.
+                query_env = {**bench_env, "NEXUS_GRPC_PORT": "invalid"}
+                await run([*benchmark, "--skip-index"], extra_env=query_env)
+                reused = json.loads(result_file.read_text())
+                assert reused["per_query"] == metrics["per_query"], reused
+                await run([*benchmark, "--skip-index"], key=keys["alice"], extra_env=query_env)
+                assert json.loads(result_file.read_text())["hits_any"] == "0/2"
+                await run(
+                    [*benchmark, "--skip-index"],
+                    key="sk-never-minted",
+                    expected=1,
+                    extra_env=query_env,
+                )
+                await run(benchmark, key=keys["alice"], expected=1, extra_env=bench_env)
+
+                # Corpus paths and duplicate slugs fail before any connection or write.
+                invalid_page = corpus / "0.json"
+                for slug, message in (
+                    ("../escape", "Invalid corpus slug"),
+                    ("nested/beta", "unique"),
+                ):
+                    invalid_page.write_text(
+                        json.dumps({**pages[0], "slug": slug}), encoding="utf-8"
+                    )
+                    _, error = await run(benchmark, expected=1, extra_env=query_env)
+                    assert message in error, safe(error)
+                invalid_page.write_text(json.dumps(pages[0]), encoding="utf-8")
+                _, error = await run(
+                    benchmark,
+                    expected=1,
+                    extra_env={**query_env, "BENCH_ZONE_PREFIX": "/docs/../escape"},
+                )
+                assert "absolute VFS directory" in error, safe(error)
             print(
-                "Rust HTTP Search CLI passed: index/query/stats/isolation/path/zone/admin/revocation"
+                "Rust HTTP Search CLI passed: index/query/stats/isolation/path/zone/admin/revocation/benchmark"
             )
         finally:
             await channel.close()

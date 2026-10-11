@@ -1,7 +1,7 @@
 """MCP ↔ auth identity bridge helpers (#3731).
 
-Resolves per-request subject identity for MCP search tools so they
-can apply the same ReBAC filtering as the HTTP endpoints.
+Resolves per-request identity for Search routing and activity attribution.
+The owning host verifies credentials and current file permissions.
 
 Extracted from ``server.py`` to keep that file under the 2000-line
 limit enforced by pre-commit.
@@ -17,41 +17,6 @@ if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS
 
 logger = logging.getLogger(__name__)
-
-
-def op_context_to_auth_dict(op_context: Any) -> dict[str, Any]:
-    """Convert an ``OperationContext`` (or None) into an auth_result dict.
-
-    ``_apply_rebac_filter`` expects a dict with ``subject_id``,
-    ``zone_id``, ``zone_set`` (#3785), and ``is_admin`` keys — the same
-    shape that the HTTP ``require_auth`` dependency returns.
-    """
-    from nexus.contracts.constants import ROOT_ZONE_ID
-
-    if op_context is None:
-        return {
-            "subject_id": "anonymous",
-            "zone_id": ROOT_ZONE_ID,
-            "zone_set": [],
-            "zone_perms": [],
-            "is_admin": False,
-        }
-    zone_id = getattr(op_context, "zone_id", None) or ROOT_ZONE_ID
-    raw_zone_set = getattr(op_context, "zone_set", None)
-    zone_set_attr: tuple = tuple(raw_zone_set) if isinstance(raw_zone_set, (tuple, list)) else ()
-    raw_zone_perms = getattr(op_context, "zone_perms", None)
-    zone_perms_attr: tuple = (
-        tuple(raw_zone_perms) if isinstance(raw_zone_perms, (tuple, list)) else ()
-    )
-    return {
-        "subject_id": getattr(op_context, "subject_id", None)
-        or getattr(op_context, "user_id", "anonymous"),
-        "zone_id": zone_id,
-        "zone_set": list(zone_set_attr) if zone_set_attr else [zone_id],
-        # JSON-friendly list-of-lists for zone_perms (#3785 F3c).
-        "zone_perms": [list(t) for t in zone_perms_attr] if zone_perms_attr else [[zone_id, "rw"]],
-        "is_admin": bool(getattr(op_context, "is_admin", False)),
-    }
 
 
 def authenticate_api_key(auth_provider: Any, api_key: str) -> Any:
@@ -169,26 +134,17 @@ def resolve_mcp_operation_context(
     # When auth_provider is available, use it to verify the key.
     # If verification fails, fail closed (return None).
     #
-    # When auth_provider is NOT available but a per-request key is set,
-    # _get_nexus_instance already created a remote NexusFS scoped to
-    # that key — its _init_cred IS the per-request identity (not
-    # ambient). So we allow steps 1-3 to proceed.
+    # Remote transports verify the request key at the owning host. The
+    # borrowed filesystem context supplies routing defaults only. Local
+    # services require a provider to resolve a presented request key.
     request_key = request_api_key.get()
-    if request_key and auth_provider is None:
-        # Per-request key set but no auth_provider to verify it.
-        # Fall through to NexusFS-based identity (steps 1-3).
-        # In remote mode, _get_nexus_instance already created a
-        # connection scoped to this key — _init_cred is that identity.
-        # In local mode, _init_cred is the process identity (single
-        # user, no multi-tenancy concern).
-        #
-        # NOTE: callers (e.g. CLI) should thread auth_provider for
-        # full verification. This fallback is safe but less strict.
-        logger.info(
-            "Per-request API key set but no auth_provider available; "
-            "using NexusFS-based identity (steps 1-3)."
-        )
-    if request_key and auth_provider is not None:
+    if (
+        request_key is not None
+        and auth_provider is None
+        and not callable(getattr(nx_instance, "_nexus_remote_call_rpc", None))
+    ):
+        return None
+    if request_key is not None and auth_provider is not None:
         auth_result = authenticate_api_key(auth_provider, request_key)
         if auth_result is not None:
             # Normalize to dict so we can use the shared HTTP helper.

@@ -2,11 +2,11 @@
 
 Nexus's `full` profile is the all-feature shared hub for a team. The
 `shared`/`demo` preset stack provisions **PostgreSQL + Dragonfly** (plus
-the Nexus server), the complete brick set, and local inference. Keyword
-search uses **BM25S**; Zoekt is an *optional, separately-run* code-search
-backend the preset does **not** start (see the user guide, "What about
-Zoekt?"). Use this profile for a shared node that exposes the full
-CLI/RPC surface; use `sandbox` for per-agent clients that connect to it.
+the Nexus server), the complete brick set, and local inference. Indexed search uses the Rust Search plugin hosted by `nexusd-cluster`.
+Configure that host separately; the Python server connects through gRPC.
+See the [Search deployment contract](search-plugin.md) for plugin loading,
+embedding configuration and credentials. Use this profile for a shared node;
+use `sandbox` for per-agent clients that connect to it.
 
 ## Three things called "profile" (read this first)
 
@@ -27,7 +27,7 @@ FULL.
 |---|---|
 | Storage | PostgreSQL |
 | Cache | Dragonfly / Redis |
-| Keyword search | BM25S (Zoekt optional, not started by the preset) |
+| Indexed search | Rust Search host (Tantivy keywords; HNSW vectors with an embedder) |
 | Bricks | LITE + search, pay, llm, mcp, workspace, snapshot, versioning, identity, delegation, share_link, portability, task_manager, observability, … (see contract test) |
 | Federation | OFF (that is the `cloud` profile) |
 | Auth | static (`NEXUS_API_KEY`) or database (`DatabaseAPIKeyAuth`) |
@@ -45,26 +45,17 @@ nexusd --profile full --host 0.0.0.0 --port 2026 \
 `nexusd --profile remote` is rejected: a daemon cannot be a thin
 client of another daemon.
 
-### Via the managed stack (known issue — see below)
+### Via the managed stack
 
 ```bash
 nexus init --preset shared
-nexus up                 # ⚠ currently exits rc=1 (see note)
+nexus up
 eval $(nexus env)
 nexus status
 ```
 
-> **Known issue (Bug B, tracked):** `nexus up --preset shared`
-> currently returns a non-zero exit code because the `nexus up` health
-> gate waits on a `zoekt` service that the `shared` preset does not
-> start. **The hub itself boots and serves correctly** (`/health`,
-> `/api/v2/features`, gRPC all work) — only the `nexus up` wrapper's
-> aggregate exit status is wrong. This is a pre-existing `nexus up`
-> health-gate defect, out of this docs/test issue's scope, tracked in
-> the #4132 design spec ("Bug B"). Until it is fixed, prefer the
-> **direct daemon path above**; if you use the stack, the containers
-> are healthy despite the rc=1 (verify with `nexus status` / a direct
-> `curl $URL/health`).
+Check `/api/v2/search/health` separately to verify that the Search host is
+reachable. A healthy server can have Search disabled when no host is configured.
 
 ## Auth
 
@@ -227,7 +218,7 @@ clients.
 | Sustained soak (opt-in)                  | ✅ verified | `test_sustained_fs_soak` gated by `NEXUS_SOAK=1`: 1000 files × 32 threads × 60s, 0 errors |
 | Large-file >10 MiB CLI cat (auto-stream) | ✅ verified | `test_cat_large_file_above_stream_threshold`: 11 MiB write, CLI cat byte-identical (triggers `STREAM_THRESHOLD` branch) |
 | Benchmark medians above                  | ✅ executed | `tests/benchmarks/bench_read_write_overhead.py` with `--benchmark-min-rounds=20` |
-| Over-the-wire (real Docker stack)        | ✅ verified | `test_full_profile_fs.py::test_full_fs_lifecycle_batch_range_lock` (12 RPC methods, HTTP wire, ~80s; worktree CLI used so the historical Bug B from #4132 — older `shared` preset including zoekt — never fires) |
+| Over-the-wire (real Docker stack)        | ✅ verified | `test_full_profile_fs.py::test_full_fs_lifecycle_batch_range_lock` (12 RPC methods, HTTP wire) |
 | IPv4 pin for `localhost` gRPC            | ✅ verified | 3 unit tests in `tests/unit/remote/test_grpc_target.py` (`test_localhost_pinned_to_ipv4`, `test_ipv6_loopback_pinned_to_ipv4`, `test_non_loopback_host_untouched`) |
 | Worktree CLI resolution (PYTHONPATH=src) | ✅ verified | `test_worktree_cli_resolves_to_src_with_pythonpath` ensures subprocess pytest harnesses run the worktree, not a stale system install |
 

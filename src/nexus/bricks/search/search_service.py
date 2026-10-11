@@ -6,7 +6,6 @@ import logging
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from contextlib import suppress
 from typing import TYPE_CHECKING, Any, cast
 
 from cachetools import TTLCache
@@ -15,7 +14,6 @@ from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import PermissionDeniedError
 from nexus.contracts.protocols.activity import EventKind, Result, emit
 from nexus.contracts.rebac_types import is_strong_consistency
-from nexus.contracts.search_types import SearchRequest
 from nexus.contracts.types import Permission
 from nexus.lib.rpc_decorator import rpc_expose
 from nexus.lib.zone_visibility import audit_all_zones, resolve_zone_view
@@ -44,7 +42,6 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from nexus.bricks.rebac.enforcer import PermissionEnforcer
     from nexus.bricks.rebac.manager import ReBACManager
-    from nexus.bricks.search.daemon import SearchDaemon
     from nexus.contracts.types import OperationContext
     from nexus.core.nexus_fs import NexusFS
 
@@ -1679,151 +1676,6 @@ class SearchService:
 
         return validate_path(path, allow_root=True)
 
-    def _filter_existing_search_paths(
-        self,
-        paths: builtins.list[str],
-        context: "OperationContext | None",
-    ) -> builtins.list[str]:
-        """Drop search hits whose file no longer exists in the VFS.
-
-        Search backends and SQL path rows can lag the authoritative kernel
-        namespace, especially around delete propagation. Result sets are small,
-        so check the namespace before permission checks instead of returning
-        stale hits while background cleanup catches up.
-        """
-        if not paths:
-            return paths
-
-        unique = list(dict.fromkeys(p for p in paths if p))
-        if not unique:
-            return []
-
-        candidates = unique
-        if self._record_store is not None:
-            try:
-                from sqlalchemy import select
-
-                from nexus.storage.models import FilePathModel
-
-                zone_id = getattr(context, "zone_id", None) if context is not None else None
-                stmt = select(FilePathModel.virtual_path).where(
-                    FilePathModel.virtual_path.in_(unique),
-                    FilePathModel.deleted_at.is_(None),
-                )
-                if zone_id:
-                    stmt = stmt.where(FilePathModel.zone_id == zone_id)
-
-                session = self._record_store.session_factory()
-                try:
-                    candidates = list(session.execute(stmt).scalars().all())
-                finally:
-                    session.close()
-            except Exception:
-                logger.debug("Search hit SQL existence filter failed", exc_info=True)
-
-        existing = self._filter_paths_existing_in_vfs(candidates, context)
-        if existing is None:
-            existing = set(candidates)
-
-        return [p for p in paths if p in existing]
-
-    def _filter_paths_existing_in_vfs(
-        self,
-        paths: builtins.list[str],
-        context: "OperationContext | None",
-    ) -> set[str] | None:
-        if self._nexus_fs is None:
-            return None
-
-        existing: set[str] = set()
-        for path in paths:
-            try:
-                stat = self._nexus_fs.sys_stat(path, context=context)
-            except TypeError:
-                stat = self._nexus_fs.sys_stat(path)
-            except Exception:
-                logger.debug("Search hit VFS existence check dropped %s", path, exc_info=True)
-                continue
-            if stat is not None:
-                existing.add(path)
-
-        return existing
-
-    def _filter_readable_search_paths(
-        self,
-        paths: builtins.list[str],
-        context: "OperationContext | None",
-    ) -> builtins.list[str]:
-        """Filter small search result sets by authoritative read access.
-
-        ``filter_list`` is optimized for list/glob/grep-scale workloads and may
-        use caches or bulk shortcuts. Search post-filtering only handles the
-        top few hits, so fall back to direct ``check`` for any paths the bulk
-        path denies. This preserves inherited directory grants without making
-        large tree scans slower.
-        """
-        if not paths:
-            return []
-
-        existing_paths = self._filter_existing_search_paths(paths, context)
-        if not self._enforce_permissions or self._permission_enforcer is None or context is None:
-            return existing_paths
-
-        unique = list(dict.fromkeys(p for p in existing_paths if p))
-        accessible: set[str] = set()
-
-        subject_type = "user"
-        subject_id = getattr(context, "user_id", None) or getattr(context, "subject_id", None)
-        with suppress(Exception):
-            subject_type, subject_id = context.get_subject()
-
-        search_filter = getattr(self._permission_enforcer, "filter_search_results", None)
-        if callable(search_filter) and subject_type == "user" and subject_id:
-            try:
-                accessible.update(
-                    search_filter(
-                        unique,
-                        user_id=subject_id,
-                        zone_id=getattr(context, "zone_id", None) or ROOT_ZONE_ID,
-                        is_admin=bool(getattr(context, "is_admin", False)),
-                    )
-                )
-            except Exception:
-                logger.debug("Search-specific permission filter failed", exc_info=True)
-
-        if not accessible:
-            try:
-                accessible.update(self._permission_enforcer.filter_list(unique, context))
-            except Exception:
-                logger.debug("Search permission filter_list failed", exc_info=True)
-
-        for path in unique:
-            if path in accessible:
-                continue
-            try:
-                if self._permission_enforcer.check(path, Permission.READ, context):
-                    accessible.add(path)
-            except Exception:
-                logger.debug("Search direct permission check denied %s", path, exc_info=True)
-
-        return [p for p in existing_paths if p in accessible]
-
-    def _filter_hit_dicts_by_read_permission(
-        self,
-        hits: builtins.list[dict[str, Any]],
-        context: "OperationContext | None",
-    ) -> builtins.list[dict[str, Any]]:
-        if not self._enforce_permissions or self._permission_enforcer is None or not hits:
-            return hits
-
-        readable = set(
-            self._filter_readable_search_paths(
-                [str(h.get("path", "")) for h in hits],
-                context,
-            )
-        )
-        return [h for h in hits if h.get("path", "") in readable]
-
     # =========================================================================
     # Indexed search
     # =========================================================================
@@ -1888,101 +1740,51 @@ class SearchService:
         query: str,
         path: str = "/",
         limit: int = 10,
-        filters: dict[str, Any] | None = None,  # noqa: ARG002
+        filters: dict[str, Any] | None = None,
         search_mode: str = "semantic",
         context: "OperationContext | None" = None,
     ) -> builtins.list[dict[str, Any]]:
-        """Search documents using natural language queries.
-
-        Args:
-            query: Natural language query
-            path: Root path to search
-            limit: Maximum number of results
-            filters: Optional filters (currently unused)
-            search_mode: "keyword", "semantic", or "hybrid"
-
-        Raises:
-            ValueError: If semantic search is not initialized
-        """
-        # Search is a read regardless of the deployment profile.
-        if self._enforce_permissions and self._permission_enforcer and context is None:
-            return []
-        if context is not None and not (context.is_admin or context.is_system):
-            from nexus.bricks.search.search_auth import readable_zone_filter
-
-            readable_zones = readable_zone_filter(context.zone_set, context.zone_perms)
-            if (
-                readable_zones is not None
-                and context.zone_id not in readable_zones
-                and ROOT_ZONE_ID not in readable_zones
-            ):
-                return []
-
-        daemon = self._require_search_daemon()
-        # Over-fetch to compensate for permission filtering
-        fetch_limit = (
-            limit * 3 if self._enforce_permissions and self._permission_enforcer else limit
+        """Query the owning kernel; credentials and permissions are resolved by its host."""
+        response = await asyncio.to_thread(
+            self._kernel.call_rpc,
+            "semantic_search",
+            {
+                "query": query,
+                "path": path,
+                "limit": limit,
+                "filters": filters,
+                "search_mode": search_mode,
+                "zone_id": getattr(context, "zone_id", None),
+            },
         )
-        zone_id = getattr(context, "zone_id", None) if context else None
-        # RPC may scope paths as /zone/{id}/...; daemon stores unscoped.
-        from nexus.server.path_utils import unscope_internal_path as _unscope
+        return cast(builtins.list[dict[str, Any]], response["results"])
 
-        db_path = _unscope(path) if path != "/" else None
-        daemon_results, error = await daemon.search_with_error(
-            SearchRequest(
-                query=query,
-                search_type=search_mode,
-                limit=fetch_limit,
-                path_filter=db_path,
-                zone_id=zone_id,
-            )
+    @rpc_expose(description="Index files through the search plugin")
+    async def semantic_search_index(
+        self,
+        path: str = "/",
+        recursive: bool = True,
+        max_docs: int = 10_000,
+        context: "OperationContext | None" = None,
+    ) -> dict[str, int]:
+        """Index current VFS bytes and return the host's indexed and skipped counts."""
+        return cast(
+            dict[str, int],
+            await asyncio.to_thread(
+                self._kernel.call_rpc,
+                "semantic_search_index",
+                {
+                    "path": path,
+                    "recursive": recursive,
+                    "max_docs": max_docs,
+                    "zone_id": getattr(context, "zone_id", None),
+                },
+            ),
         )
-        if error is not None:
-            raise RuntimeError(f"Search plugin query failed: {error}")
-        hits = []
-        for r in daemon_results:
-            entry: dict[str, Any] = {
-                "path": r.path,
-                "chunk_text": getattr(r, "chunk_text", ""),
-                "score": round(r.score, 4),
-                "chunk_index": getattr(r, "chunk_index", 0),
-                "start_offset": getattr(r, "start_offset", 0) or 0,
-                "end_offset": getattr(r, "end_offset", 0) or 0,
-                "line_start": getattr(r, "line_start", 0) or 0,
-                "line_end": getattr(r, "line_end", 0) or 0,
-            }
-            # Issue #3773 (Round-6 review): surface admin-configured path
-            # context when the daemon attached one. Omit the key when
-            # unset to match the HTTP router's shape contract.
-            ctx = getattr(r, "context", None)
-            if ctx is not None:
-                entry["context"] = ctx
-            # Issue #4545: title-arm attribution rides every transport
-            # with the same omit-when-None + round-4 contract as the
-            # HTTP, batch, and federated surfaces.
-            title_score = getattr(r, "title_score", None)
-            if title_score is not None:
-                entry["title_score"] = round(title_score, 4)
-            hits.append(entry)
-
-        # Filter by read permission — only return files the caller can access
-        if self._enforce_permissions and self._permission_enforcer and hits and context is not None:
-            hits = self._filter_hit_dicts_by_read_permission(hits, context)
-
-        return hits[:limit]
-
-    def _require_search_daemon(self) -> "SearchDaemon":
-        daemon = getattr(self, "_search_daemon", None)
-        if daemon is None:
-            raise ValueError(
-                "Semantic search is not available: configure the search-plugin daemon "
-                "with NEXUS_SEARCH_PLUGIN_TARGET."
-            )
-        return cast("SearchDaemon", daemon)
 
     @rpc_expose(description="Get semantic search indexing statistics")
     async def semantic_search_stats(self) -> dict[str, Any]:
-        """Get semantic search indexing statistics."""
-        stats = dict(await self._require_search_daemon().get_stats())
-        stats.setdefault("engine", stats.get("backend", "rust-plugin"))
-        return stats
+        """Read index statistics through the owning kernel's SearchService."""
+        return cast(
+            dict[str, Any], await asyncio.to_thread(self._kernel.call_rpc, "semantic_search_stats")
+        )

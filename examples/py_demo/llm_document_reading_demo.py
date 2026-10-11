@@ -12,7 +12,7 @@ This demo showcases LLM-powered document reading with Nexus:
 Prerequisites:
 1. Install Nexus: pip install nexus-ai-fs
 2. Set API key: export ANTHROPIC_API_KEY=your-key
-3. Optional: For semantic search: pip install nexus-ai-fs[semantic-search-remote]
+3. Configure a Rust Search plugin host for semantic search.
 
 Usage:
     python examples/py_demo/llm_document_reading_demo.py

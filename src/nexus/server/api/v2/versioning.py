@@ -94,13 +94,9 @@ def build_v2_registry(
 
     # ---- Core v2 routers ----
     try:
-        from nexus.server.api.v2.routers import (
-            mobile_search,
-            operations,
-        )
+        from nexus.server.api.v2.routers import operations
 
         _core_routers: list[RouterEntry] = [
-            RouterEntry(router=mobile_search.router, name="mobile_search", endpoint_count=2),
             RouterEntry(router=operations.router, name="operations", endpoint_count=2),
         ]
         for entry in _core_routers:
@@ -391,14 +387,6 @@ def build_v2_registry(
         registry.add(RouterEntry(router=search_router, name="search", endpoint_count=13))
     except ImportError as e:
         logger.warning("Failed to import Search routes: %s", e)
-
-    # ---- Graph router (Issue #2056 — ported from v1) ----
-    try:
-        from nexus.server.api.v2.routers.graph import router as graph_router
-
-        registry.add(RouterEntry(router=graph_router, name="graph", endpoint_count=4))
-    except ImportError as e:
-        logger.warning("Failed to import Graph routes: %s", e)
 
     # ---- Cache router (Issue #2056 — ported from v1) ----
     try:

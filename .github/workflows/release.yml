@@ -388,7 +388,6 @@ jobs:
           context: .
           load: true
           tags: ghcr.io/nexi-lab/nexus:smoke-test
-          build-args: TORCH_VARIANT=${{ matrix.variant }}
           cache-from: type=registry,ref=ghcr.io/nexi-lab/nexus:buildcache-release-${{ matrix.variant }}-${{ steps.pair.outputs.value }}
           cache-to: type=registry,ref=ghcr.io/nexi-lab/nexus:buildcache-release-${{ matrix.variant }}-${{ steps.pair.outputs.value }},mode=max,ignore-error=true
 
@@ -398,9 +397,9 @@ jobs:
           docker run --rm --entrypoint "" \
             ghcr.io/nexi-lab/nexus:smoke-test \
             python3 -c "
-          import pgvector
+          import psycopg2
           import docker
-          import fastembed
+          import openai
           import psutil
           print('All critical imports OK')
           "
@@ -435,7 +434,6 @@ jobs:
           platforms: ${{ matrix.platform }}
           provenance: false
           sbom: false
-          build-args: TORCH_VARIANT=${{ matrix.variant }}
           outputs: type=image,name=ghcr.io/nexi-lab/nexus,push-by-digest=true,name-canonical=true,push=true,oci-mediatypes=true
           cache-from: type=registry,ref=ghcr.io/nexi-lab/nexus:buildcache-release-${{ matrix.variant }}-${{ steps.pair.outputs.value }}
           cache-to: type=registry,ref=ghcr.io/nexi-lab/nexus:buildcache-release-${{ matrix.variant }}-${{ steps.pair.outputs.value }},mode=max,ignore-error=true

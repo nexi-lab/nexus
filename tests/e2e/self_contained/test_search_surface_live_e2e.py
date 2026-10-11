@@ -124,7 +124,6 @@ def live_search_app(
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
     monkeypatch.setenv("NEXUS_ENFORCE_PERMISSIONS", "false")
     monkeypatch.setenv("NEXUS_SEARCH_DAEMON", "true")
-    monkeypatch.setenv("NEXUS_TXTAI_USE_API_EMBEDDINGS", "false")
     monkeypatch.setenv("NEXUS_ENABLE_WRITE_BUFFER", "false")
     monkeypatch.setenv("NEXUS_ACTIVITY_ENABLED", "0")
     monkeypatch.setenv("NEXUS_ACTIVITY_DB_PATH", str(tmp_path / "activity.db"))
@@ -422,13 +421,14 @@ def test_live_search_http_surface_correctness_and_latency(live_search_app: LiveS
             live,
             "post",
             "/api/v2/search/locate",
-            json={"q": "main", "limit": 5},
+            json={"path": "/workspace/src/main.py"},
         )
         assert locate_response.status_code == 200
-        if any(c["path"] == "/workspace/src/main.py" for c in locate_body["candidates"]):
+        if locate_body["indexed"]:
             break
         time.sleep(0.1)
-    assert any(c["path"] == "/workspace/src/main.py" for c in locate_body["candidates"])
+    assert locate_body["indexed"]
+    assert locate_body["chunk_count"] > 0
     _assert_endpoint_latency(locate_body, key="elapsed_ms")
 
 

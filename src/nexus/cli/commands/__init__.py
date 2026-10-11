@@ -15,7 +15,6 @@ import click
 # Modules that expose register_commands(cli)
 _REGISTER_COMMANDS: dict[str, tuple[str, ...]] = {
     "file_ops": (
-        "init",
         "cat",
         "stat",
         "metadata",
@@ -102,7 +101,6 @@ _ADD_COMMAND: dict[str, tuple[str, str]] = {
     "delegation": ("delegation", "delegation"),
     "scheduler_cli": ("scheduler", "scheduler"),
     # "share" removed: /api/v2/share-links endpoints not implemented server-side
-    "graph_cli": ("graph", "graph"),
     "hub": ("hub", "hub"),
     "conflicts": ("conflicts", "conflicts"),
     "manifest_cli": ("manifest", "manifest"),

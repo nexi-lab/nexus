@@ -1,8 +1,4 @@
-"""Tests for ZoneSearchRegistry and ZoneSearchCapabilities (Issue #3147 Phase 2).
-
-Tests zone registration, capability detection, daemon lookup, and
-the from_daemon_stats factory method.
-"""
+"""Zone routing and host-reported Search capabilities."""
 
 from unittest.mock import MagicMock
 
@@ -15,12 +11,6 @@ from nexus.bricks.search.zone_registry import (
 
 
 class TestZoneSearchCapabilities:
-    def test_default_capabilities(self) -> None:
-        caps = ZoneSearchCapabilities(zone_id="zone_a")
-        assert caps.supports_semantic
-        assert caps.supports_keyword
-        assert caps.device_tier == "server"
-
     def test_keyword_only_zone(self) -> None:
         caps = ZoneSearchCapabilities(
             zone_id="phone_1",
@@ -30,45 +20,8 @@ class TestZoneSearchCapabilities:
         assert caps.supports_keyword
         assert not caps.supports_semantic
 
-    def test_from_daemon_stats_with_db(self) -> None:
-        daemon = MagicMock()
-        daemon.get_stats.return_value = {
-            "db_pool_size": 10,
-            "zoekt_available": True,
-            "embedding_dimensions": 384,
-        }
-        caps = ZoneSearchCapabilities.from_daemon_stats("zone_a", daemon)
-        assert "semantic" in caps.search_modes
-        assert "hybrid" in caps.search_modes
-        assert "keyword" in caps.search_modes
-
-    def test_from_daemon_stats_ignores_stats_post_p12(self) -> None:
-        # Post-P12 the sole SearchDaemon shape is the Rust plugin
-        # proxy, which always supports keyword + semantic + hybrid.
-        # from_daemon_stats no longer inspects daemon.get_stats() —
-        # the capability set is fixed.  The pre-P12 tests asserted
-        # keyword-only fallbacks based on db_pool_size / zoekt flags;
-        # those degradation modes no longer exist.
-        daemon = MagicMock()
-        daemon.get_stats.return_value = {
-            "db_pool_size": 0,
-            "zoekt_available": False,
-        }
-        caps = ZoneSearchCapabilities.from_daemon_stats("phone_1", daemon)
-        assert caps.search_modes == ("keyword", "semantic", "hybrid")
-        assert caps.supports_semantic
-        assert caps.supports_keyword
-
-    def test_from_daemon_stats_no_stats_method(self) -> None:
-        # Same post-P12 semantics: capability set is fixed; the
-        # classmethod does not read daemon.get_stats at all, so a
-        # daemon without a get_stats method is still fine.
-        daemon = MagicMock(spec=[])  # No get_stats
-        caps = ZoneSearchCapabilities.from_daemon_stats("zone_x", daemon)
-        assert caps.search_modes == ("keyword", "semantic", "hybrid")
-
     def test_frozen(self) -> None:
-        caps = ZoneSearchCapabilities(zone_id="z")
+        caps = ZoneSearchCapabilities(zone_id="z", search_modes=("keyword",))
         with pytest.raises(AttributeError):
             caps.zone_id = "other"  # noqa: B003
 
@@ -81,6 +34,7 @@ class TestZoneSearchRegistry:
         registry.register("zone_a", daemon)
         assert registry.get_daemon("zone_a") is daemon
         assert registry.has_zone("zone_a")
+        assert registry.get_capabilities("zone_a") is None
 
     def test_get_falls_back_to_default(self) -> None:
         default = MagicMock()
@@ -132,6 +86,37 @@ class TestZoneSearchRegistry:
         # Should be used as fallback
         assert registry.get_daemon("any_zone") is daemon
 
+    @pytest.mark.parametrize("remote", [False, True])
+    def test_replacing_a_route_clears_its_previous_capabilities(self, remote: bool) -> None:
+        registry = ZoneSearchRegistry()
+        register = registry.register_remote if remote else registry.register
+        register("zone", MagicMock(), ZoneSearchCapabilities("zone", search_modes=("keyword",)))
+        register("zone", MagicMock())
+        assert registry.get_capabilities("zone") is None
+
+    @pytest.mark.parametrize("remote_first", [False, True])
+    def test_moving_a_zone_replaces_the_route_and_capability_snapshot(
+        self, remote_first: bool
+    ) -> None:
+        default, daemon, transport = object(), object(), object()
+        registry = ZoneSearchRegistry(default_daemon=default)
+        caps = ZoneSearchCapabilities("zone", search_modes=("keyword",))
+        if remote_first:
+            registry.register_remote("zone", transport, caps)
+            registry.register("zone", daemon)
+            assert not registry.is_remote("zone")
+            assert registry.get_transport("zone") is None
+            assert registry.get_daemon("zone") is daemon
+            assert registry.list_zones() == ["zone"]
+        else:
+            registry.register("zone", daemon, caps)
+            registry.register_remote("zone", transport)
+            assert registry.is_remote("zone")
+            assert registry.get_transport("zone") is transport
+            assert registry.get_daemon("zone") is default
+            assert registry.list_zones() == []
+        assert registry.get_capabilities("zone") is None
+
 
 class TestRemoteCapabilityDiscovery:
     @pytest.mark.asyncio
@@ -161,18 +146,37 @@ class TestRemoteCapabilityDiscovery:
         assert registry.get_capabilities("remote_z") is caps
 
     @pytest.mark.asyncio
-    async def test_discover_remote_fallback_on_error(self) -> None:
-        """Failed RPC should fall back to keyword-only."""
+    async def test_discovery_failure_clears_a_previous_capability_snapshot(self) -> None:
+        from unittest.mock import AsyncMock
+
+        registry = ZoneSearchRegistry()
+        registry.register_remote(
+            "remote", MagicMock(), ZoneSearchCapabilities("remote", search_modes=("keyword",))
+        )
+        client = AsyncMock()
+        client.get_search_capabilities.side_effect = RuntimeError("host unavailable")
+        with pytest.raises(RuntimeError, match="host unavailable"):
+            await registry.discover_remote_capabilities("remote", client)
+        assert registry.get_capabilities("remote") is None
+
+    @pytest.mark.asyncio
+    async def test_discovery_rejects_a_different_zone(self) -> None:
         from unittest.mock import AsyncMock
 
         registry = ZoneSearchRegistry()
         client = AsyncMock()
-        client.get_search_capabilities = AsyncMock(
-            side_effect=RuntimeError("RPC not supported"),
-        )
+        client.get_search_capabilities.return_value = {"zone_id": "other"}
+        with pytest.raises(ValueError, match="different zone"):
+            await registry.discover_remote_capabilities("remote", client)
+        assert registry.get_capabilities("remote") is None
 
-        caps = await registry.discover_remote_capabilities("old_node", client)
-        assert caps.zone_id == "old_node"
-        assert caps.search_modes == ("keyword",)
-        assert not caps.supports_semantic
-        assert caps.device_tier == "unknown"
+    @pytest.mark.asyncio
+    async def test_incomplete_discovery_does_not_invent_capabilities(self) -> None:
+        from unittest.mock import AsyncMock
+
+        registry = ZoneSearchRegistry()
+        client = AsyncMock()
+        client.get_search_capabilities.return_value = {"zone_id": "remote"}
+        with pytest.raises(KeyError):
+            await registry.discover_remote_capabilities("remote", client)
+        assert registry.get_capabilities("remote") is None

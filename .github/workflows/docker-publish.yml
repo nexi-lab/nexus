@@ -12,6 +12,21 @@ on:
       tag:
         description: "Image tag (default: git SHA short)"
         required: false
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'Dockerfile'
+      - 'dockerfiles/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'pyproject.toml'
+      - 'src/nexus/**'
+      - 'rust/**'
+      - 'scripts/test_*plugin.py'
+      - 'scripts/test_rust_http_search_cli.py'
+      - 'scripts/test_published_search_quality.py'
+      - 'scripts/prepare_published_fixture.sh'
+      - '.github/workflows/docker-publish.yml'
 
 permissions:
   contents: read
@@ -34,6 +49,7 @@ jobs:
   # bypassed by typing "edge" into the dispatch box.
   validate-inputs:
     name: Validate dispatch inputs
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - name: Reject reserved release tags as custom dispatch tags
@@ -339,21 +355,6 @@ jobs:
     needs: [build-and-push, push-cluster-manifest]
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    services:
-      postgres:
-        image: pgvector/pgvector:pg16
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: nexus
-          POSTGRES_DB: nexus
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 5
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -365,39 +366,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # ---------------------------------------------------------------
-      # Search plugin sidecar (P12 topology contract): post-#4598 the
-      # Rust nexus-search-plugin cdylib is the sole search backend.
-      # The edge image is Python-server-only (no plugin baked in), so
-      # the smoke tests that assert auto-index-on-write (sections 9+10
-      # of test_build_perf_e2e.py) need a plugin process reachable at
-      # NEXUS_SEARCH_PLUGIN_TARGET.
-      #
-      # #4613: the sidecar now runs the PUBLISHED plugin-host image
-      # (pushed by push-cluster-manifest earlier in this workflow)
-      # instead of an in-workflow build — the smoke validates the
-      # exact artifact the public pulls, so a tag can no longer pass
-      # e2e using an image that doesn't exist outside CI.
-      # ---------------------------------------------------------------
-      - name: Prepare shared workspace volume
-        run: |
-          # Both containers see the same /workspace bytes.  Post-P12
-          # the plugin has to read a file by absolute path when
-          # NotifyFileChange fires, so nexus-e2e's writes must land
-          # somewhere the plugin container can also read.
-          docker volume create nexus-shared-workspace
-          sudo chmod 777 "$(docker volume inspect nexus-shared-workspace --format '{{.Mountpoint}}')"
-
-      # ---------------------------------------------------------------
-      # #4646: the published plugin-host image deliberately ships NO
-      # ONNX Runtime dylib and NO embedding model (size + licensing —
-      # see docs/deployment/search-plugin.md).  Without them semantic /
-      # hybrid queries are typed-unavailable, the perf smoke's HERB
-      # hybrid-retrieval gate scores 0/8, and promote-tags never runs —
-      # `edge` was stuck while SHA tags advanced.  Provision both on
-      # the runner and mount them into the sidecar, exactly as the
-      # deployment docs prescribe for operators.
-      # ---------------------------------------------------------------
       - name: Cache embedder assets (ORT dylib + mE5-small model)
         uses: actions/cache@v4
         with:
@@ -454,336 +422,54 @@ jobs:
           chmod -R a+rX "$ASSETS"
           ls -la "$ASSETS/ort" "$ASSETS/model"
 
-      - name: Start search-plugin sidecar on 127.0.0.1:2126
+      - name: Start the published SDK image
         run: |
-          # Same single-node topology + flags as the search-plugin-e2e
-          # compose's bootstrap entrypoint, but running the published
-          # image.  Reachable 0.0.0.0 bind + --no-tls trips the
-          # loopback auth invariant; this is a trusted CI smoke, so
-          # take the sanctioned escape.
-          docker run -d --name nexus-search-plugin-node \
-            -p 2126:2126 \
-            -e NEXUS_HOSTNAME=node \
+          docker run -d --name nexus-e2e --network host --no-healthcheck \
+            -v "${GITHUB_WORKSPACE}:/tests:ro" \
+            --entrypoint sleep \
+            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-and-push.outputs.version }}" infinity
+
+      - name: Start the published Rust Search host with the local embedder
+        run: |
+          docker run -d --name nexus-search-plugin-node --network host \
+            -e NEXUS_BIND_ADDR=127.0.0.1:2126 \
             -e NEXUS_ADVERTISE_ADDR=127.0.0.1:2126 \
-            -e RUST_LOG=info,nexus_raft=info,kernel::plugins=debug,plugins=debug \
+            -e NEXUS_HTTP_ADDR=127.0.0.1:2127 \
+            -e NEXUS_REBAC_ENABLED=true \
+            -e NEXUS_API_KEY_SECRET=search-quality-ci-only \
+            -e NEXUS_CLUSTER_INIT=sharedzone \
+            -e NEXUS_CLUSTER_INIT_MOUNTS=/workspace=sharedzone \
             -e ORT_DYLIB_PATH=/embedder/ort/libonnxruntime.so \
             -e NEXUS_SEARCH_MODEL_DIR=/embedder/model \
+            -e NEXUS_SEARCH_QUERY_EXPANSION=false \
+            -e NEXUS_SEARCH_CONTEXTUAL_CHUNKING=false \
+            -e NEXUS_SEARCH_EMBED_API_URL= \
             -v /tmp/nexus-embedder:/embedder:ro \
-            -v nexus-shared-workspace:/workspace \
             "${{ env.REGISTRY }}/${{ env.CLUSTER_IMAGE_NAME }}:${{ needs.push-cluster-manifest.outputs.version }}" \
-            --bind-addr 0.0.0.0:2126 \
-            --data-dir /app/data \
-            --no-tls \
-            --insecure-no-auth \
-            --plugin-dir /plugins
-          # Wait for the plugin's gRPC bind to be reachable from the
-          # host (2126:2126 mapping so --network host of nexus-e2e
-          # sees the same port).
-          deadline=$((SECONDS + 120))
-          while [ $SECONDS -lt $deadline ]; do
-            if timeout 1 bash -c '</dev/tcp/127.0.0.1/2126' 2>/dev/null; then
-              echo "Search plugin sidecar healthy after ${SECONDS}s"
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "::error::Search plugin sidecar failed to bind 127.0.0.1:2126 within 120s"
-          docker logs --tail=200 nexus-search-plugin-node || true
-          exit 1
-
-      - name: Start Nexus edge container
-        run: |
-          # Container runs as nexus (UID 1000) — match host volume ownership
-          mkdir -p /tmp/nexus-data && sudo chown -R 1000:1000 /tmp/nexus-data
-          docker run -d --name nexus-e2e \
-            --network host \
-            -e NEXUS_DATABASE_URL=postgresql+psycopg2://postgres:nexus@localhost/nexus \
-            -e NEXUS_HOST=0.0.0.0 \
-            -e NEXUS_PORT=2026 \
-            -e NEXUS_GRPC_PORT=2028 \
-            -e NEXUS_GRPC_TLS=false \
-            -e NEXUS_PROFILE=full \
-            -e NEXUS_ENFORCE_PERMISSIONS=true \
-            -e NEXUS_ALLOW_ADMIN_BYPASS=true \
-            -e NEXUS_DB_ASYNC_USE_POOL=1 \
-            -e NEXUS_DB_POOL_SIZE=5 \
-            -e NEXUS_DB_MAX_OVERFLOW=10 \
-            -e NEXUS_THREAD_POOL_SIZE=24 \
-            -e NEXUS_INDEX_MAX_CONCURRENCY=2 \
-            -e NEXUS_INDEX_MAX_EMBEDDING_CONCURRENCY=1 \
-            -e NEXUS_ML_WORKERS=1 \
-            -e NEXUS_VDB_WORKERS=1 \
-            -e NEXUS_SEARCH_POOL_MIN=2 \
-            -e NEXUS_SEARCH_POOL_MAX=8 \
-            -e NEXUS_SEARCH_PLUGIN_TARGET=127.0.0.1:2126 \
-            -v /tmp/nexus-data:/app/data \
-            -v nexus-shared-workspace:/workspace \
-            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-and-push.outputs.version }}"
-
-          # Wait for server to be ready
-          echo "Waiting for Nexus to start..."
-          for i in $(seq 1 180); do
-            if ! docker ps --format '{{.Names}}' | grep -qx nexus-e2e; then
-              echo "::error::nexus-e2e exited before becoming healthy"
-              docker inspect nexus-e2e --format 'exit_code={{.State.ExitCode}} status={{.State.Status}} started_at={{.State.StartedAt}} finished_at={{.State.FinishedAt}} error={{json .State.Error}}' || true
-              echo "Crash signatures from container logs:"
-              docker logs nexus-e2e 2>&1 | grep -E -m 20 'Illegal instruction|Traceback|ERROR:|FATAL:|panic|segmentation fault|core dumped' || true
-              echo "Last 200 container log lines:"
-              docker logs nexus-e2e 2>&1 | tail -200 || true
-              exit 1
-            fi
-            if docker exec nexus-e2e curl --max-time 5 -sf http://127.0.0.1:2026/health > /dev/null 2>&1; then
-              echo "Nexus is ready (attempt ${i}/180)"
-              break
-            fi
-            sleep 1
-          done
-          if ! docker exec nexus-e2e curl --max-time 5 -sf http://127.0.0.1:2026/health > /dev/null 2>&1; then
-            echo "::error::nexus-e2e never became healthy from inside the container"
-            docker inspect nexus-e2e --format 'exit_code={{.State.ExitCode}} status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} started_at={{.State.StartedAt}} finished_at={{.State.FinishedAt}} error={{json .State.Error}}' || true
-            echo "Container-internal health probe:"
-            docker exec nexus-e2e curl -v --max-time 5 http://127.0.0.1:2026/health || true
-            echo "Host-side health probe:"
-            curl -v --max-time 5 http://127.0.0.1:2026/health || true
-            echo "Container listen sockets:"
-            docker exec nexus-e2e sh -c 'ss -ltnp 2>/dev/null || netstat -ltnp 2>/dev/null || true' || true
-            echo "Crash signatures from container logs:"
-            docker logs nexus-e2e 2>&1 | grep -E -m 20 'Illegal instruction|Traceback|ERROR:|FATAL:|panic|segmentation fault|core dumped' || true
-            echo "Last 200 container log lines:"
-            docker logs nexus-e2e 2>&1 | tail -200 || true
-            exit 1
-          fi
-
-      - name: Initialize and extract credentials
-        run: |
-          # Container startup already runs docker-entrypoint.sh, initializes the
-          # database, and writes /app/data/.admin-api-key. Re-running the
-          # entrypoint via docker exec starts a second long-running server path.
-          ADMIN_KEY=$(curl --max-time 5 -sf http://127.0.0.1:2026/api/admin/bootstrap 2>/dev/null \
-            | python3 -c "import sys,json; print(json.load(sys.stdin).get('api_key',''))" 2>/dev/null || true)
-          if [ -z "$ADMIN_KEY" ]; then
-            echo "Bootstrap not available, reading admin key from container..."
-            ADMIN_KEY=$(timeout 30s docker exec nexus-e2e sh -c "
-              for i in \$(seq 1 30); do
-                if [ -s /app/data/.admin-api-key ]; then
-                  cat /app/data/.admin-api-key
-                  exit 0
-                fi
-                sleep 1
-              done
-              exit 1
-            " 2>/dev/null || true)
-          fi
-          if [ -z "$ADMIN_KEY" ]; then
-            echo "::error::Unable to obtain Nexus admin API key"
-            docker inspect nexus-e2e --format 'exit_code={{.State.ExitCode}} status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' || true
-            exit 1
-          fi
-          echo "NEXUS_URL=http://127.0.0.1:2026" >> "$GITHUB_ENV"
-          echo "NEXUS_API_KEY=${ADMIN_KEY}" >> "$GITHUB_ENV"
-          echo "Admin key obtained: ${ADMIN_KEY:0:10}..."
-
-      - name: Seed demo workspace
-        run: |
-          # nexus demo init needs a nexus.yaml — create a minimal one
-          docker exec nexus-e2e sh -c "printf 'preset: demo\nserver_url: http://127.0.0.1:2026\ndata_dir: /app/data\nports:\n  http: 2026\n  grpc: 2028\n' > /app/nexus.yaml"
-          docker exec \
-            -w /app \
-            -e NEXUS_URL=http://127.0.0.1:2026 \
-            -e NEXUS_API_KEY="${NEXUS_API_KEY}" \
-            -e NEXUS_PROFILE=remote \
-            -e NEXUS_GRPC_PORT=2028 \
-            -e NEXUS_GRPC_TLS=false \
-            nexus-e2e nexus demo init --skip-semantic
-
-      - name: Copy test scripts into container
-        run: |
-          docker cp permissions_demo_enhanced.sh nexus-e2e:/tmp/
-          docker cp scripts/test_build_perf_e2e.py nexus-e2e:/tmp/
-
-      - name: Check VFS gRPC availability
-        id: vfs_grpc
-        run: |
-          # SSOT: read the port from the container the daemon is actually
-          # running in, not a workflow-side duplicate. The container env was
-          # set with ``-e NEXUS_GRPC_PORT=...`` on ``docker run`` above; if a
-          # future change rebinds the daemon, the probe follows automatically.
-          GRPC_PORT=$(docker exec nexus-e2e sh -c 'printf %s "${NEXUS_GRPC_PORT:-2028}"')
-          if [ -z "$GRPC_PORT" ]; then
-            echo "::error::Container has empty NEXUS_GRPC_PORT — daemon won't expose VFS gRPC"
-            exit 1
-          fi
-          if docker exec -i -e GRPC_PORT="$GRPC_PORT" nexus-e2e python3 - <<'PY'
-          import os
-          import socket
-          import sys
-
-          port = int(os.environ["GRPC_PORT"])
-          try:
-              with socket.create_connection(("127.0.0.1", port), timeout=2):
-                  pass
-          except OSError:
-              sys.exit(1)
-          PY
-          then
-            echo "available=true" >> "$GITHUB_OUTPUT"
-            echo "VFS gRPC is available on 127.0.0.1:${GRPC_PORT}"
-          else
-            # Loud (warning, not notice) so the skip surfaces in the PR
-            # summary instead of being invisible. The underlying root cause —
-            # the edge Docker image bundles Python ``nexusd`` whose lifespan
-            # no longer starts a VFS gRPC server (the server moved to Rust /
-            # ``nexusd-cluster``) — is tracked separately; until it lands,
-            # downstream gRPC-only smoke steps cannot run on this image.
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "::warning title=VFS gRPC unavailable in edge image::No gRPC listener on 127.0.0.1:${GRPC_PORT}. Edge image ships Python nexusd (no Rust VFS gRPC); permissions demo + build-perf e2e will be skipped. Tracked: https://github.com/nexi-lab/nexus/issues?q=is%3Aissue+VFS+gRPC+edge+image"
-          fi
-
-      - name: Run permissions demo
-        if: steps.vfs_grpc.outputs.available == 'true'
-        run: |
-          docker exec \
-            -e NEXUS_URL=http://127.0.0.1:2026 \
-            -e NEXUS_API_KEY="${NEXUS_API_KEY}" \
-            -e NEXUS_PROFILE=remote \
-            nexus-e2e bash /tmp/permissions_demo_enhanced.sh
-
-      - name: Seed search index
-        run: |
-          # Replay the mixed deployment's VFS writes through its HTTP indexing
-          # pipeline. The plugin builds keyword and vector indices in one batch.
-          docker exec -i -e NEXUS_API_KEY="${NEXUS_API_KEY}" nexus-e2e python - <<'PY'
-          import os
-          import httpx
-
-          with httpx.Client(base_url="http://127.0.0.1:2026", timeout=300) as client:
-              response = client.post(
-                  "/api/v2/admin/reindex",
-                  headers={"Authorization": f"Bearer {os.environ['NEXUS_API_KEY']}"},
-                  json={"target": "search"},
-              )
-              response.raise_for_status()
-              result = response.json()
-              assert result["search_index_errors"] == 0, result
-              assert result["search_paths_indexed"] > 0, result
-              print(f"Search paths indexed: {result['search_paths_indexed']}")
-          PY
-
-      # ---------------------------------------------------------------
-      # Search HTTP contract smoke (#4616/#4617) — UNCONDITIONAL.
-      # The full build-perf script below needs VFS gRPC and is skipped
-      # when the edge image lacks it, which previously meant a tag
-      # could publish without ANY check that the plugin actually
-      # LOADED (TCP bind alone doesn't prove dlopen + signature
-      # verification succeeded) or that the repaired wire contracts
-      # hold.  This step needs only HTTP, so it always runs: it FAILS
-      # the workflow when /search/health is not healthy/degraded (the
-      # server→plugin gRPC link end-to-end) or when the /index,
-      # /stats, and /query/batch response shapes drift.  #4736 adds the
-      # write-to-searchable contract: one files/write with index:true
-      # must be served by /query, /stats must carry the stall-detection
-      # triple, and refresh on a missing path must NOT be "accepted".
-      # ---------------------------------------------------------------
-      - name: Search HTTP contract smoke
-        run: |
-          docker exec \
-            -e NEXUS_URL=http://127.0.0.1:2026 \
-            -e NEXUS_API_KEY="${NEXUS_API_KEY}" \
-            -i nexus-e2e python3 - <<'PY'
-          import json, os, urllib.error, urllib.request
-
-          url, key = os.environ["NEXUS_URL"], os.environ["NEXUS_API_KEY"]
-
-          def http(method, path, body=None):
-              req = urllib.request.Request(
-                  f"{url}{path}",
-                  data=json.dumps(body).encode() if body is not None else None,
-                  headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                  method=method,
-              )
-              resp = urllib.request.urlopen(req, timeout=60)
-              return resp.status, json.loads(resp.read().decode())
-
-          failures = []
-
-          # 1. Plugin actually loaded: the server-side probe + live link.
-          st, health = http("GET", "/api/v2/search/health")
-          if health.get("status") not in ("healthy", "degraded"):
-              failures.append(f"plugin link not healthy: {health}")
-          for k in ("initialized", "daemon_initialized", "backend",
-                    "bm25_index_loaded", "db_pool_ready", "zoekt_available"):
-              if k not in health:
-                  failures.append(f"health missing contract key {k!r}: {health}")
-
-          # 2. /index count is a plain int + zoneId casing (#4617).
-          st, idx = http("POST", "/api/v2/search/index",
-                         {"documents": [{"path": "/workspace/demo/README.md",
-                                         "text": "contract smoke seed doc"}]})
-          if st != 200 or idx.get("count") != 1 or "zoneId" not in idx or "skippedCount" not in idx:
-              failures.append(f"index contract drift (want count==1 int + zoneId + skippedCount): status={st} body={idx}")
-
-          # 3. /stats identity + visibility fields (#4617/#4623).
-          st, stats = http("GET", "/api/v2/search/stats")
-          for k in ("initialized", "backend", "embedding_model", "indexing_in_progress"):
-              if k not in stats:
-                  failures.append(f"stats missing contract key {k!r}: {stats}")
-
-          # 4. /query/batch answers with per-entry error semantics (#4616/#4612).
-          st, batch = http("POST", "/api/v2/search/query/batch",
-                           {"queries": [{"q": "contract smoke seed", "type": "keyword", "limit": 3},
-                                        {"q": "bad", "limit": 0}]})
-          entries = batch.get("queries", [])
-          if st != 200 or len(entries) != 2:
-              failures.append(f"batch endpoint broken: status={st} body={batch}")
-          else:
-              if "error" in entries[0]:
-                  failures.append(f"batch valid entry carries error: {entries[0]}")
-              if "error" not in entries[1]:
-                  failures.append(f"batch invalid spec missing per-entry error: {entries[1]}")
-
-          # 5. Write-to-searchable (#4736): ONE write+index call, then the
-          #    document is served and /stats has caught up to its seq.
-          smoke_path = "/workspace/demo/contract-smoke-4736.md"
-          st, wr = http("POST", "/api/v2/files/write",
-                        {"path": smoke_path,
-                         "content": "zebrafish write-to-searchable sentinel",
-                         "index": True})
-          verdict = (wr.get("index") or {}) if st == 200 else {}
-          if st != 200 or verdict.get("status") != "indexed" or not isinstance(verdict.get("index_seq"), int):
-              failures.append(f"write+index contract drift (want index.status=indexed + int index_seq): status={st} body={wr}")
-          else:
-              st, stats = http("GET", "/api/v2/search/stats")
-              for k in ("last_index_seq", "pending", "last_successful_index_at"):
-                  if k not in stats:
-                      failures.append(f"stats missing stall-detection key {k!r}: {stats}")
-              if (stats.get("last_index_seq") or -1) < verdict["index_seq"]:
-                  failures.append(f"stats last_index_seq behind the write's index_seq: {stats} vs {verdict}")
-              st, q = http("GET", "/api/v2/search/query?q=zebrafish&type=keyword&limit=5")
-              hit_paths = [r.get("path") for r in q.get("results", [])]
-              if smoke_path not in hit_paths:
-                  failures.append(f"write+index document not served by /query: status={st} body={q}")
-
-          # 6. refresh on a path that does not exist must be a 404, never
-          #    an "accepted" ack the caller cannot distinguish from success.
-          try:
-              st, body = http("POST", "/api/v2/search/refresh?path=/workspace/demo/missing-4736.md&change_type=update")
-              failures.append(f"refresh on a missing path must not succeed: status={st} body={body}")
-          except urllib.error.HTTPError as exc:
-              if exc.code != 404:
-                  failures.append(f"refresh on a missing path: want 404, got {exc.code}")
-
-          if failures:
-              print("SEARCH CONTRACT SMOKE FAILED:")
-              for f in failures:
-                  print(f"  - {f}")
-              raise SystemExit(1)
-          print("search contract smoke OK (health/index/stats/batch/write+index/refresh)")
-          PY
+            --data-dir /app/data --plugin-dir /plugins
+          bash scripts/prepare_published_fixture.sh nexus-search-plugin-node nexus-e2e /tmp/search-quality
 
       - name: Verify SearchService against the published plugin
         run: |
-          docker cp scripts/test_search_service_plugin.py nexus-e2e:/tmp/test_search_service_plugin.py
-          docker exec nexus-e2e python /tmp/test_search_service_plugin.py
+          docker exec \
+            -e NEXUS_SEARCH_PLUGIN_TARGET=127.0.0.1:2126 \
+            -e NEXUS_SEARCH_PLUGIN_TLS=true \
+            -e NEXUS_SEARCH_PLUGIN_TLS_CA=/tmp/search-quality/tls/ca.pem \
+            -e NEXUS_SEARCH_PLUGIN_TLS_CERT=/tmp/search-quality/tls/node.pem \
+            -e NEXUS_SEARCH_PLUGIN_TLS_KEY=/tmp/search-quality/tls/node-key.pem \
+            -e NEXUS_SEARCH_TEST_ADMIN_KEY=/tmp/search-quality/search-admin-key \
+            nexus-e2e python /tests/scripts/test_search_service_plugin.py
+
+      - name: Verify VFS indexing visibility and published hybrid retrieval quality
+        run: |
+          docker exec \
+            -e NEXUS_SEARCH_PLUGIN_TARGET=127.0.0.1:2126 \
+            -e NEXUS_SEARCH_TEST_HTTP=http://127.0.0.1:2127 \
+            -e NEXUS_SEARCH_PLUGIN_TLS_CA=/tmp/search-quality/tls/ca.pem \
+            -e NEXUS_SEARCH_PLUGIN_TLS_CERT=/tmp/search-quality/tls/node.pem \
+            -e NEXUS_SEARCH_PLUGIN_TLS_KEY=/tmp/search-quality/tls/node-key.pem \
+            -e NEXUS_SEARCH_TEST_ADMIN_KEY=/tmp/search-quality/search-admin-key \
+            nexus-e2e python /tests/scripts/test_published_search_quality.py
 
       - name: Verify caller credentials with production ReBAC and node mTLS
         run: |
@@ -801,23 +487,7 @@ jobs:
             -e NEXUS_SEARCH_EMBED_API_URL= \
             "${{ env.REGISTRY }}/${{ env.CLUSTER_IMAGE_NAME }}:${{ needs.push-cluster-manifest.outputs.version }}" \
             --data-dir /app/data --plugin-dir /plugins
-          deadline=$((SECONDS + 120))
-          until docker logs nexus-search-credentials-node 2>&1 | grep -q 'VFS data plane ready'; do
-            if [ "$SECONDS" -ge "$deadline" ]; then
-              docker logs --tail=100 nexus-search-credentials-node
-              exit 1
-            fi
-            sleep 1
-          done
-          docker exec nexus-search-credentials-node sh -c \
-            'nexusd-cluster auth mint --subject-type user --subject-id operator --admin > /tmp/search-admin-key'
-          mkdir -p /tmp/search-credentials/tls
-          for file in ca.pem node.pem node-key.pem; do
-            docker cp "nexus-search-credentials-node:/app/data/tls/$file" /tmp/search-credentials/tls/
-          done
-          docker cp nexus-search-credentials-node:/tmp/search-admin-key /tmp/search-credentials/
-          docker cp /tmp/search-credentials nexus-e2e:/tmp/search-credentials
-          docker exec -u 0 nexus-e2e chown -R nexus:nexus /tmp/search-credentials
+          bash scripts/prepare_published_fixture.sh nexus-search-credentials-node nexus-e2e /tmp/search-credentials
           docker cp scripts/test_search_credentials_plugin.py nexus-e2e:/tmp/test_search_credentials_plugin.py
           docker exec \
             -e NEXUS_SEARCH_PLUGIN_TARGET=127.0.0.1:2326 \
@@ -843,6 +513,7 @@ jobs:
       - name: Verify Search CLI against Rust HTTP
         run: |
           docker cp scripts/test_rust_http_search_cli.py nexus-e2e:/tmp/test_rust_http_search_cli.py
+          docker cp scripts/bench_gbrain_evals.py nexus-e2e:/tmp/bench_gbrain_evals.py
           docker exec \
             -e NEXUS_SEARCH_PLUGIN_TARGET=127.0.0.1:2326 \
             -e NEXUS_SEARCH_PLUGIN_TLS_CA=/tmp/search-credentials/tls/ca.pem \
@@ -851,16 +522,18 @@ jobs:
             -e NEXUS_SEARCH_TEST_ADMIN_KEY=/tmp/search-credentials/search-admin-key \
             nexus-e2e python /tmp/test_rust_http_search_cli.py
 
-      - name: Run build perf e2e
-        if: steps.vfs_grpc.outputs.available == 'true'
+      - name: Verify agent SDK files Search and live authorization
         run: |
+          docker cp scripts/test_search_agent_credentials_plugin.py nexus-e2e:/tmp/test_search_agent_credentials_plugin.py
           docker exec \
-            -e NEXUS_URL=http://127.0.0.1:2026 \
-            -e NEXUS_API_KEY="${NEXUS_API_KEY}" \
-            -e NEXUS_PROFILE=remote \
-            -e NEXUS_GRPC_PORT=2028 \
-            -e NEXUS_GRPC_TLS=false \
-            nexus-e2e python3 /tmp/test_build_perf_e2e.py
+            -e NEXUS_SEARCH_PLUGIN_TARGET=127.0.0.1:2326 \
+            -e NEXUS_SEARCH_PLUGIN_TLS_CA=/tmp/search-credentials/tls/ca.pem \
+            -e NEXUS_SEARCH_PLUGIN_TLS_CERT=/tmp/search-credentials/tls/node.pem \
+            -e NEXUS_SEARCH_PLUGIN_TLS_KEY=/tmp/search-credentials/tls/node-key.pem \
+            -e NEXUS_SEARCH_TEST_ADMIN_KEY=/tmp/search-credentials/search-admin-key \
+            -e NEXUS_SEARCH_TEST_AGENT_A=/tmp/search-credentials/agent-a \
+            -e NEXUS_SEARCH_TEST_AGENT_B=/tmp/search-credentials/agent-b \
+            nexus-e2e python /tmp/test_search_agent_credentials_plugin.py
 
       - name: Collect container logs on failure
         if: failure() || cancelled()
@@ -884,7 +557,6 @@ jobs:
           docker rm -f nexus-e2e 2>/dev/null || true
           docker rm -f nexus-search-plugin-node 2>/dev/null || true
           docker rm -f nexus-search-credentials-node 2>/dev/null || true
-          docker volume rm -f nexus-shared-workspace 2>/dev/null || true
 
   # ---------------------------------------------------------------------------
   # Tag promotion (review R2, #4613 ask 3): mutable/public tags — edge,

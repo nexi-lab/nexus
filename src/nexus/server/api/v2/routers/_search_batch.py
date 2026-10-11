@@ -201,6 +201,9 @@ def parse_batch_query_spec(raw: Any) -> ParsedBatchSpec | str:
             return parsed_half_life
         recency_half_life = parsed_half_life
 
+    if "graph_mode" in raw and raw["graph_mode"] != "none":
+        return "Graph search is not available"
+
     # Enum validation runs after alias resolution; messages use the
     # canonical public name (so `search_type: "keywrod"` errors on "type").
     # Defaults apply ONLY when the key (and its alias) is absent — an

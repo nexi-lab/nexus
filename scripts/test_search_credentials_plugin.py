@@ -8,13 +8,17 @@ in NEXUS_SEARCH_TEST_ADMIN_KEY. No test credentials are logged.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import socket
+from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
 import grpc
 import httpx
+import uvicorn
 from fastapi import FastAPI
 
 from nexus.bricks.auth.providers.static_key import StaticAPIKeyAuth
@@ -26,10 +30,39 @@ from nexus.contracts.search_types import SearchRequest
 from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
 from nexus.lib.request_credentials import request_api_key
 from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
+from nexus.remote.rpc_transport import RPCTransport
 from nexus.runtime.zone_runner import ZoneRegistry
+from nexus.security.tls.config import ZoneTlsConfig
 from nexus.server.api.v2.routers.search import router
 from nexus.server.lifespan.vfs_grpc import VFSGrpcServicer
 from nexus.server.middleware.request_credentials import RequestCredentialsMiddleware
+
+
+@asynccontextmanager
+async def live_http_client(app):
+    """Exercise the HTTP middleware and zone runner through a real TCP listener."""
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        listener.setblocking(False)
+        server = uvicorn.Server(uvicorn.Config(app, log_level="warning", access_log=False))
+        task = asyncio.create_task(server.serve(sockets=[listener]))
+        try:
+            async with asyncio.timeout(10):
+                while not server.started:
+                    if task.done():
+                        await task
+                        raise AssertionError("HTTP listener exited before startup")
+                    await asyncio.sleep(0.01)
+            async with httpx.AsyncClient(
+                base_url=f"http://127.0.0.1:{listener.getsockname()[1]}",
+                timeout=20,
+                trust_env=False,
+            ) as client:
+                yield client
+        finally:
+            server.should_exit = True
+            await task
 
 
 async def main() -> None:
@@ -44,11 +77,21 @@ async def main() -> None:
         certificate_chain=Path(os.environ["NEXUS_SEARCH_PLUGIN_TLS_CERT"]).read_bytes(),
     )
     channel = grpc.aio.secure_channel(target, credentials)
+    transport = RPCTransport(
+        target,
+        tls_config=ZoneTlsConfig(
+            ca_cert_path=Path(os.environ["NEXUS_SEARCH_PLUGIN_TLS_CA"]),
+            node_cert_path=Path(os.environ["NEXUS_SEARCH_PLUGIN_TLS_CERT"]),
+            node_key_path=Path(os.environ["NEXUS_SEARCH_PLUGIN_TLS_KEY"]),
+            known_zones_path=Path("/tmp/search-known-zones"),
+        ),
+    )
     vfs = vfs_pb2_grpc.NexusVFSServiceStub(channel)
     suffix = uuid4().hex
     paths = {name: f"/docs/{name}-{suffix}.txt" for name in ("alice", "bob")}
     keys: dict[str, str] = {}
     key_hashes: dict[str, str] = {}
+    created = set()
     needle = f"marigold{suffix[:8]}"
     text = f"{needle} constellation credential isolation"
 
@@ -76,6 +119,9 @@ async def main() -> None:
             )
 
         try:
+            baseline = await admin_request(
+                "GET", "/v2/documents/stats", params={"zone_id": "sharedzone"}
+            )
             for name, path in paths.items():
                 minted = await admin_request(
                     "POST",
@@ -88,9 +134,11 @@ async def main() -> None:
                 )
                 keys[name] = minted["key"]
                 key_hashes[name] = minted["key_hash"]
-                await vfs.Write(
+                written = await vfs.Write(
                     vfs_pb2.WriteRequest(path=path, content=text.encode(), auth_token=admin)
                 )
+                assert not written.is_error, written
+                created.add(path)
                 scope = request_api_key.set(admin)
                 try:
                     indexed = await daemon.index_documents(
@@ -112,12 +160,15 @@ async def main() -> None:
 
             provider = StaticAPIKeyAuth(
                 {
-                    key: {"subject_id": f"{name}-{suffix}", "zone_id": "sharedzone"}
+                    key: {
+                        "subject_type": "user",
+                        "subject_id": f"{name}-{suffix}",
+                        "zone_id": "sharedzone",
+                    }
                     for name, key in keys.items()
                 }
             )
-            service = SearchService(metadata_store=None, enforce_permissions=False)
-            service._search_daemon = daemon
+            service = SearchService(metadata_store=transport)
 
             class Services:
                 def service(self, name):
@@ -130,17 +181,97 @@ async def main() -> None:
             app.state.auth_provider = provider
             app.state.auth_cache_store = InMemoryCacheStore()
             app.state.search_daemon = daemon
-            app.state.record_store = object()
-            app.state.async_read_session_factory = object()
-            app.state.permission_enforcer = None
+            policy_calls = []
+
+            class NoPythonPolicy:
+                def __getattr__(self, name):
+                    policy_calls.append(name)
+                    raise AssertionError(f"HTTP Search consulted Python policy: {name}")
+
+            app.state.permission_enforcer = NoPythonPolicy()
             app.state.zone_registry = zones
             app.state.subscription_manager = None
             app.state.exposed_methods = {}
             app.state.nexus_fs = Services()
 
-            async with httpx.AsyncClient(
-                transport=httpx.ASGITransport(app), base_url="http://test"
-            ) as client:
+            async with live_http_client(app) as client:
+                health = await client.get("/api/v2/search/health")
+                assert health.is_success, health.text
+                assert health.json()["status"] in ("healthy", "degraded"), health.text
+                assert health.json()["initialized"] is True, health.text
+                assert health.json()["fts_writer_faults"] == 0, health.text
+                assert health.json()["fts_writer_unavailable"] == 0, health.text
+
+                async def stats(credential, expected_status):
+                    headers = {"X-Nexus-Zone-ID": "sharedzone"}
+                    if credential is not None:
+                        headers["Authorization"] = f"Bearer {credential}"
+                    response = await client.get("/api/v2/search/stats", headers=headers)
+                    assert response.status_code == expected_status, response.text
+                    if expected_status == 200:
+                        assert response.json()["zone_id"] == "sharedzone", response.text
+                        assert response.json()["fts_path_count"] == baseline[
+                            "fts_path_count"
+                        ] + len(paths), response.text
+
+                await asyncio.gather(
+                    *[
+                        stats(credential, status)
+                        for credential, status in (
+                            (admin, 200),
+                            (None, 401),
+                            (keys["alice"], 403),
+                            (keys["bob"], 403),
+                            ("sk-never-minted", 401),
+                        )
+                        * 3
+                    ]
+                )
+
+                scope_path = f"/docs/probe-{suffix}"
+                management = (
+                    (
+                        "POST",
+                        "/api/v2/search/index",
+                        {"json": {"documents": [{"path": paths["alice"], "text": text}]}},
+                    ),
+                    (
+                        "POST",
+                        "/api/v2/search/refresh",
+                        {"params": {"path": f"{scope_path}.txt", "change_type": "delete"}},
+                    ),
+                    ("POST", "/api/v2/search/index-directory", {"json": {"path": scope_path}}),
+                    ("GET", "/api/v2/search/indexed-dirs", {}),
+                    ("POST", "/api/v2/search/indexing-mode", {"json": {"mode": "on"}}),
+                    ("DELETE", "/api/v2/search/index-directory", {"json": {"path": scope_path}}),
+                )
+
+                async def manage(method, route, kwargs, credential, status):
+                    headers = {"X-Nexus-Zone-ID": "sharedzone"}
+                    if credential is not None:
+                        headers["Authorization"] = f"Bearer {credential}"
+                    response = await client.request(method, route, headers=headers, **kwargs)
+                    assert response.status_code == status, (method, route, response.text)
+                    if status == 200 and route.endswith("/index"):
+                        assert response.json()["count"] == 1, response.text
+                        assert response.json()["indexSeq"] > 0, response.text
+                    if status == 200 and route.endswith("/indexed-dirs"):
+                        assert scope_path in response.json()["directories"], response.text
+                        assert response.json()["zone_id"] == "sharedzone", response.text
+
+                for method, route, kwargs in management:
+                    await asyncio.gather(
+                        *[
+                            manage(method, route, kwargs, credential, status)
+                            for credential, status in (
+                                (admin, 200),
+                                (keys["alice"], 403),
+                                (keys["bob"], 403),
+                                (None, 401),
+                                ("sk-invalid", 401),
+                            )
+                        ]
+                    )
 
                 async def query(name):
                     response = await client.get(
@@ -165,6 +296,29 @@ async def main() -> None:
                     for result in batch.json()["queries"]
                 ), batch.text
 
+                for operation, pattern in (("glob", "*.txt"), ("grep", needle)):
+                    response = await client.post(
+                        f"/api/v2/search/{operation}",
+                        headers={"Authorization": f"Bearer {keys['bob']}"},
+                        json={"pattern": pattern, "path": "/docs", "files": list(paths.values())},
+                    )
+                    assert response.is_success, response.text
+                    items = response.json()["items"]
+                    found = items if operation == "glob" else [hit["file"] for hit in items]
+                    assert found == [paths["bob"]], response.text
+                    empty = await client.post(
+                        f"/api/v2/search/{operation}",
+                        headers={"Authorization": f"Bearer {keys['bob']}"},
+                        json={"pattern": pattern, "path": "/docs", "files": []},
+                    )
+                    assert empty.is_success and empty.json()["items"] == [], empty.text
+                    denied = await client.post(
+                        f"/api/v2/search/{operation}",
+                        headers={"Authorization": f"Bearer {keys['bob']}"},
+                        json={"pattern": pattern, "path": "/docs"},
+                    )
+                    assert denied.status_code == 403, denied.text
+
                 from nexus.server.dependencies import _get_cached_auth
 
                 cached_identity = await _get_cached_auth(app.state.auth_cache_store, keys["alice"])
@@ -173,6 +327,40 @@ async def main() -> None:
 
                 # A real Python gRPC service dispatch shares the same daemon.
                 servicer = VFSGrpcServicer(app)
+                indexed_rpc = await servicer.Call(
+                    vfs_pb2.CallRequest(
+                        method="semantic_search_index",
+                        auth_token=admin,
+                        payload=encode_rpc_message(
+                            {
+                                "path": "/zone/sharedzone/docs",
+                                "recursive": False,
+                                "max_docs": 2,
+                            }
+                        ),
+                    ),
+                    SimpleNamespace(peer=lambda: "ipv4:127.0.0.1:1"),
+                )
+                assert not indexed_rpc.is_error, decode_rpc_message(indexed_rpc.payload)
+                assert decode_rpc_message(indexed_rpc.payload)["result"] == {
+                    "indexed_count": 2,
+                    "skipped_count": 0,
+                }
+                denied_index = await servicer.Call(
+                    vfs_pb2.CallRequest(
+                        method="semantic_search_index",
+                        auth_token=keys["bob"],
+                        payload=encode_rpc_message({"path": "/docs"}),
+                    ),
+                    SimpleNamespace(peer=lambda: "ipv4:127.0.0.1:1"),
+                )
+                from nexus.contracts.rpc_types import RPCErrorCode
+
+                assert denied_index.is_error
+                assert (
+                    decode_rpc_message(denied_index.payload)["code"]
+                    == RPCErrorCode.PERMISSION_ERROR.value
+                )
                 rpc = await servicer.Call(
                     vfs_pb2.CallRequest(
                         method="semantic_search",
@@ -185,6 +373,28 @@ async def main() -> None:
                 assert [
                     hit["path"] for hit in decode_rpc_message(rpc.payload)["result"]["results"]
                 ] == [paths["bob"]]
+                for operation, pattern, result_key in (
+                    ("glob", "*.txt", "matches"),
+                    ("grep", needle, "results"),
+                ):
+                    rpc = await servicer.Call(
+                        vfs_pb2.CallRequest(
+                            method=operation,
+                            auth_token=keys["bob"],
+                            payload=encode_rpc_message(
+                                {
+                                    "pattern": pattern,
+                                    "path": "/docs",
+                                    "files": list(paths.values()),
+                                }
+                            ),
+                        ),
+                        SimpleNamespace(peer=lambda: "ipv4:127.0.0.1:1"),
+                    )
+                    assert not rpc.is_error, decode_rpc_message(rpc.payload)
+                    items = decode_rpc_message(rpc.payload)["result"][result_key]
+                    found = items if operation == "glob" else [hit["file"] for hit in items]
+                    assert found == [paths["bob"]], items
 
                 from fastmcp import Client
 
@@ -195,6 +405,24 @@ async def main() -> None:
                 )
 
                 mcp = await create_mcp_server(nx=app.state.nexus_fs, auth_provider=provider)
+
+                async def mcp_discovery(mcp_client, name, *, allowed=True):
+                    for operation, pattern in (("glob", "*.txt"), ("grep", needle)):
+                        result = await mcp_client.call_tool(
+                            f"nexus_{operation}",
+                            {"pattern": pattern, "path": "/docs", "files": list(paths.values())},
+                        )
+                        body = json.loads(result.content[0].text)
+                        found = (
+                            body["items"]
+                            if operation == "glob"
+                            else [hit["file"] for hit in body["items"]]
+                        )
+                        assert found == ([paths[name]] if allowed else []), body
+                        assert {"permission_denial_rate", "truncated_by_permissions"}.isdisjoint(
+                            body
+                        )
+
                 scope = set_request_api_key(keys["alice"])
                 try:
                     async with Client(mcp) as mcp_client:
@@ -203,6 +431,7 @@ async def main() -> None:
                         )
                         assert paths["alice"] in str(result), result
                         assert paths["bob"] not in str(result), result
+                        await mcp_discovery(mcp_client, "alice")
                 finally:
                     reset_request_api_key(scope)
 
@@ -226,13 +455,48 @@ async def main() -> None:
                         assert paths[name] in str(result), result
                         other = "bob" if name == "alice" else "alice"
                         assert paths[other] not in str(result), result
+                        await mcp_discovery(mcp_client, name)
 
                 async with mcp_app.router.lifespan_context(mcp_app):
                     await asyncio.gather(mcp_http_search("alice"), mcp_http_search("bob"))
 
-                class Zones:
+                class Zones(NoPythonPolicy):
                     async def list_accessible_zones(self, **_kwargs):
                         return ["sharedzone"]
+
+                app.state.rebac_service = Zones()
+                federated = await client.get(
+                    "/api/v2/search/query",
+                    params={"q": needle, "type": "keyword", "federated": True},
+                    headers={"Authorization": f"Bearer {keys['alice']}"},
+                )
+                assert federated.is_success, federated.text
+                assert [hit["path"] for hit in federated.json()["results"]] == [paths["alice"]]
+
+                for name in keys:
+                    located = await client.post(
+                        "/api/v2/search/locate",
+                        json={"path": paths[name]},
+                        headers={"Authorization": f"Bearer {keys[name]}"},
+                    )
+                    assert located.is_success and located.json()["indexed"], located.text
+                    assert located.json()["chunk_count"] > 0, located.text
+                    assert 0 <= located.json()["elapsed_ms"] < 2000, located.text
+                    other = "bob" if name == "alice" else "alice"
+                    denied = await client.post(
+                        "/api/v2/search/locate",
+                        json={"path": paths[other]},
+                        headers={"Authorization": f"Bearer {keys[name]}"},
+                    )
+                    assert denied.status_code == 403, denied.text
+
+                for mode in ("low", "high", "dual", "auto"):
+                    graph = await client.get(
+                        "/api/v2/search/query",
+                        params={"q": needle, "graph_mode": mode},
+                        headers={"Authorization": f"Bearer {keys['alice']}"},
+                    )
+                    assert graph.status_code == 501, graph.text
 
                 dispatcher = FederatedSearchDispatcher(daemon, Zones())
                 scope = request_api_key.set(keys["alice"])
@@ -252,20 +516,73 @@ async def main() -> None:
                         else:
                             raise AssertionError("User inherited node administrative authority")
                     await grant("alice", "DELETE")
+                    async with Client(mcp) as mcp_client:
+                        await mcp_discovery(mcp_client, "alice", allowed=False)
                     repeated = await dispatcher.search(
                         needle, ("user", f"alice-{suffix}"), search_type="keyword"
                     )
                     assert repeated.results == [], repeated
+                    for route, body in (
+                        (
+                            "/api/v2/search/query/batch",
+                            {"queries": [{"q": needle, "type": "keyword"}]},
+                        ),
+                        ("/api/v2/search/locate", {"path": paths["alice"]}),
+                    ):
+                        response = await client.post(
+                            route,
+                            json=body,
+                            headers={"Authorization": f"Bearer {keys['alice']}"},
+                        )
+                        if route.endswith("batch"):
+                            assert (
+                                response.is_success
+                                and response.json()["queries"][0]["results"] == []
+                            ), response.text
+                        else:
+                            assert response.status_code == 403, response.text
+                    response = await client.get(
+                        "/api/v2/search/query",
+                        params={"q": needle, "type": "keyword"},
+                        headers={"Authorization": f"Bearer {keys['alice']}"},
+                    )
+                    assert response.is_success and response.json()["results"] == [], response.text
                 finally:
                     request_api_key.reset(scope)
                 # Python can cache identity, but kernel key revocation remains authoritative.
                 await admin_request("DELETE", f"/v2/auth/keys/{key_hashes['bob']}")
+                key_hashes.pop("bob")
                 revoked = await client.get(
                     "/api/v2/search/query",
                     params={"q": needle, "type": "keyword"},
                     headers={"Authorization": f"Bearer {keys['bob']}"},
                 )
-                assert not revoked.is_success, revoked.text
+                assert revoked.status_code == 401, revoked.text
+                revoked_batch = await client.post(
+                    "/api/v2/search/query/batch",
+                    json={"queries": [{"q": needle, "type": "keyword"}]},
+                    headers={"Authorization": f"Bearer {keys['bob']}"},
+                )
+                assert revoked_batch.status_code == 401, revoked_batch.text
+                await stats(keys["bob"], 401)
+                for method, route, kwargs in management:
+                    await manage(method, route, kwargs, keys["bob"], 401)
+                scope = set_request_api_key(keys["bob"])
+                try:
+                    async with Client(mcp) as mcp_client:
+                        for operation, pattern in (("glob", "*.txt"), ("grep", needle)):
+                            rejected = await mcp_client.call_tool(
+                                f"nexus_{operation}",
+                                {
+                                    "pattern": pattern,
+                                    "path": "/docs",
+                                    "files": list(paths.values()),
+                                },
+                            )
+                            assert "Authentication required" in rejected.content[0].text, rejected
+                finally:
+                    reset_request_api_key(scope)
+                assert policy_calls == [], policy_calls
                 assert request_api_key.get() is None
                 await daemon.get_health()  # Internal boot probe still uses node mTLS.
                 for token in ("sk-never-minted", ""):
@@ -284,12 +601,29 @@ async def main() -> None:
                     finally:
                         request_api_key.reset(scope)
             print(
-                "Search credentials live contract passed: HTTP/concurrency/batch/RPC/MCP/admin/revocation"
+                "Search credentials live contract passed: TCP HTTP/user/concurrency/batch/locate/RPC/MCP/admin/management/revocation"
             )
         finally:
-            await daemon.shutdown()
-            await asyncio.to_thread(zones.stop_all)
-            await channel.close()
+            try:
+                for name in keys:
+                    await grant(name, "DELETE")
+                scope = request_api_key.set(admin)
+                try:
+                    for path in created:
+                        removed = await vfs.Delete(
+                            vfs_pb2.DeleteRequest(path=path, auth_token=admin), timeout=15
+                        )
+                        assert not removed.is_error, removed
+                        await daemon.notify_file_change(path, "delete", zone_id="sharedzone")
+                finally:
+                    request_api_key.reset(scope)
+                for key_hash in key_hashes.values():
+                    await admin_request("DELETE", f"/v2/auth/keys/{key_hash}")
+            finally:
+                await daemon.shutdown()
+                await asyncio.to_thread(zones.stop_all)
+                await channel.close()
+                transport.close()
 
 
 if __name__ == "__main__":

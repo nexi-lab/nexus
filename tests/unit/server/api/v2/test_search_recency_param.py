@@ -1,7 +1,7 @@
 """Unit tests for the recency request params on GET /api/v2/search/query (#4543).
 
 Covers:
-(a) recency=on|auto accepted and threaded to daemon.search
+(a) recency=on|auto accepted and threaded to daemon.search_with_error
 (b) recency=bogus -> 400 before touching the daemon
 (c) params omitted -> daemon receives None (defer-to-config sentinel)
 (d) weight/half-life bounds -> 422 from FastAPI validation
@@ -50,8 +50,6 @@ def _build_app(daemon: Any) -> "FastAPI":
 
     app = FastAPI()
     app.state.search_daemon = daemon
-    app.state.record_store = object()
-    app.state.async_read_session_factory = object()
     app.state.permission_enforcer = None
     app.state.zone_registry = _RecordingRegistry()
     app.dependency_overrides[require_auth] = lambda: _AUTH
@@ -63,12 +61,11 @@ def _make_daemon() -> MagicMock:
     daemon = MagicMock()
     daemon.is_initialized = True
     daemon.config = MagicMock()
-    daemon.config.txtai_graph = False
 
-    async def fake_search(*args: Any, **kwargs: Any) -> list[Any]:
-        return []
+    async def fake_search(*args: Any, **kwargs: Any) -> tuple[list[Any], str | None]:
+        return ([], None)
 
-    daemon.search = AsyncMock(side_effect=fake_search)
+    daemon.search_with_error = AsyncMock(side_effect=fake_search)
     return daemon
 
 
@@ -78,7 +75,7 @@ def test_recency_bogus_returns_400() -> None:
         response = client.get("/api/v2/search/query", params={"q": "x", "recency": "bogus"})
     assert response.status_code == 400, response.text
     assert "recency" in response.json().get("detail", "").lower()
-    daemon.search.assert_not_called()
+    daemon.search_with_error.assert_not_called()
 
 
 @pytest.mark.parametrize("mode", ["off", "on", "auto"])
@@ -95,7 +92,7 @@ def test_recency_mode_accepted_and_threaded(mode: str) -> None:
             },
         )
     assert response.status_code not in (400, 422), response.text
-    req = daemon.search.call_args.args[0]
+    req = daemon.search_with_error.call_args.args[0]
     assert req.recency == mode
     assert req.recency_weight == 0.5
     assert req.recency_half_life_days == 7.0
@@ -107,7 +104,7 @@ def test_recency_omitted_forwards_none() -> None:
     with TestClient(_build_app(daemon)) as client:
         response = client.get("/api/v2/search/query", params={"q": "x"})
     assert response.status_code not in (400, 422), response.text
-    req = daemon.search.call_args.args[0]
+    req = daemon.search_with_error.call_args.args[0]
     assert req.recency is None
     assert req.recency_weight is None
     assert req.recency_half_life_days is None
@@ -127,4 +124,4 @@ def test_out_of_bounds_knobs_return_422(params: dict[str, Any]) -> None:
     with TestClient(_build_app(daemon)) as client:
         response = client.get("/api/v2/search/query", params={"q": "x", **params})
     assert response.status_code == 422, response.text
-    daemon.search.assert_not_called()
+    daemon.search_with_error.assert_not_called()

@@ -561,7 +561,6 @@ async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> No
     at factory enlist time — no start/stop lifecycle needed here.
     We just expose it on app.state for shutdown cleanup.
 
-    ZoektWriteObserver (Issue #810) is also OBSERVE-phase — no lifecycle.
     """
     nx = svc.nexus_fs
 
@@ -579,11 +578,6 @@ async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> No
         app.state.delivery_worker = svc.delivery_worker
     if svc.event_signal is not None:
         app.state.event_signal = svc.event_signal
-
-    # Issue #810: ZoektWriteObserver — registered as OBSERVE-phase observer
-    # via hook_spec at factory enlist time. No start/stop lifecycle needed.
-    # Legacy callbacks (notify_write/notify_sync_complete) still work for
-    # CASLocalBackend fallback path.
 
     # TaskDispatchPipeConsumer (task lifecycle signals)
     tdc = svc.task_dispatch_consumer
@@ -640,16 +634,6 @@ async def _shutdown_pipe_consumers(app: "FastAPI") -> None:
             logger.warning(
                 "[OBSERVE] Error stopping RecordStoreWriteObserver: %s", e, exc_info=True
             )
-
-    # Issue #810: ZoektWriteObserver — no async stop needed (OBSERVE phase).
-    # Cancel any pending debounce timer for clean shutdown.
-    _zwo = getattr(app.state, "zoekt_write_observer", None)
-    if _zwo is not None and hasattr(_zwo, "cancel"):
-        try:
-            _zwo.cancel()
-            logger.info("[OBSERVE] ZoektWriteObserver cancelled")
-        except Exception as e:
-            logger.warning("[OBSERVE] Error cancelling ZoektWriteObserver: %s", e, exc_info=True)
 
     # TaskDispatchPipeConsumer
     tdc = getattr(app.state, "task_dispatch_consumer", None)

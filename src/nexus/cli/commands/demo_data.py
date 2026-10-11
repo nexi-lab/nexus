@@ -215,11 +215,11 @@ DEMO_FILES: list[tuple[str, str, str]] = [
         "Content-addressable storage (CAS) backed by local disk or GCS.\n"
         "Each file's content is hashed (SHA-256) and stored by hash.\n\n"
         "## Metadata Layer\n"
-        "Raft consensus for distributed metadata (sled state machine).\n"
+        "Raft consensus for distributed metadata.\n"
         "Supports single-node embedded mode (like SQLite) and multi-node federation.\n\n"
         "## Search\n"
-        "- Grep: direct CAS scan or Zoekt trigram index\n"
-        "- Semantic: pgvector HNSW index with embedding cache in Dragonfly\n\n"
+        "- Grep: live workspace bytes through the Rust Search host\n"
+        "- Indexed search: Tantivy keywords and HNSW semantic vectors in the Rust plugin\n\n"
         "## Permissions\n"
         "Relationship-based access control (ReBAC) with Zanzibar-style tuples.\n"
         "Zone isolation ensures cross-zone data cannot leak.\n",
@@ -256,7 +256,7 @@ DEMO_FILES: list[tuple[str, str, str]] = [
         "  ttl: 3600\n"
         "  max_memory: 512mb\n\n"
         "search:\n"
-        "  engine: zoekt\n"
+        "  engine: rust-plugin\n"
         "  semantic_enabled: true\n"
         "  embedding_model: text-embedding-3-small\n",
         "YAML config file (grep-friendly)",
@@ -540,12 +540,11 @@ HERB_CORPUS: list[tuple[str, str, str]] = [
         "- **Category**: Add-on\n"
         "- **Version**: 0.9.x\n"
         "- **Pricing**: Included with Nexus Core\n"
-        "- **Description**: Vector-based semantic search powered by pgvector "
-        "HNSW indices. Embedding cache in Dragonfly for sub-millisecond "
-        "repeated queries. Supports custom embedding models via API.\n"
-        "- **Key Features**: pgvector HNSW, Dragonfly embedding cache, "
+        "- **Description**: Semantic search powered by the Rust Search plugin's "
+        "HNSW index. Supports local or API embedding models.\n"
+        "- **Key Features**: Tantivy keywords, HNSW vectors, "
         "hybrid keyword+semantic search, configurable embedding models\n"
-        "- **Integration**: Works with Zoekt for combined keyword and semantic results\n",
+        "- **Integration**: Runs in the Kernel that owns the workspace mounts\n",
         "HERB product record — Semantic Search",
     ),
     (

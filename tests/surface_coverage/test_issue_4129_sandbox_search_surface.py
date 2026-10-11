@@ -10,7 +10,6 @@ _USER_GUIDE = REPO_ROOT / "docs/guides/user-guide.md"
 OWNING_ISSUE = 4129
 
 SANDBOX_SEARCH_ROWS = {
-    "glob.batch",
     "search.cli",
     "search.glob",
     "search.grep",

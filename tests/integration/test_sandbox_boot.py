@@ -6,7 +6,7 @@ Validates the full SANDBOX wiring across Tasks 1-14:
   * ``nexus.connect(profile="sandbox")`` boots end-to-end and exposes a
     usable VFS (write + sys_read round-trip).
   * HTTP surface restricted to ``/health`` + ``/api/v2/features`` (+ FastAPI
-    built-ins) after the route allowlist filter runs (Task 11).
+    built-ins).
   * ``/api/v2/features`` reports ``profile="sandbox"`` and the expected
     enabled brick set (no ``llm``, ``pay``, ``observability``).
 
@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import inspect
 import time
+import warnings
 from pathlib import Path
 
 import httpx
@@ -136,7 +137,7 @@ async def test_sandbox_http_surface_is_restricted(
 ) -> None:
     """HTTP surface on SANDBOX: only /health and /api/v2/features (+OpenAPI).
 
-    All other API routes must 404 after Task 11's route allowlist filter.
+    Application routes outside the sandbox surface must return 404.
     """
     monkeypatch.setenv("NEXUS_PROFILE", "sandbox")
 
@@ -158,6 +159,7 @@ async def test_sandbox_http_surface_is_restricted(
             # OpenAPI built-ins remain reachable
             r = await client.get("/openapi.json")
             assert r.status_code == 200
+            assert set(r.json()["paths"]) == {"/health", "/api/v2/features"}
 
             # Other API routes are filtered out → 404
             for blocked_path in (
@@ -165,7 +167,13 @@ async def test_sandbox_http_surface_is_restricted(
                 "/api/v2/skills/list",
                 "/api/v2/locks/list",
                 "/api/v2/catalog/list",
-                "/api/v2/graph/nodes",
+                "/api/v2/search/stats",
+                "/api/v2/search/query",
+                "/health/detailed",
+                "/metrics",
+                "/metrics/pool",
+                "/dashboard/tasks",
+                "/debug/asyncio",
             ):
                 r = await client.get(blocked_path)
                 assert r.status_code == 404, (
@@ -176,25 +184,36 @@ async def test_sandbox_http_surface_is_restricted(
         nx.close()
 
 
-def _resolve_search_service(nx: object) -> object | None:
-    """Return the underlying SearchService instance from ``nx.service("search")``.
+@pytest.mark.asyncio
+async def test_http_profiles_do_not_mutate_shared_routers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from nexus.server.fastapi_server import create_app
 
-    ``nx.service(name)`` returns the raw service instance directly
-    (Rust kernel ABI — no ServiceRef proxy).
-    """
-    return nx.service("search") if hasattr(nx, "service") else None
+    for profile in ("full", "sandbox", "full"):
+        monkeypatch.setenv("NEXUS_PROFILE", profile)
+        app = create_app(nexus_fs=None, api_key="profile-test-key")
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "error", message="Duplicate Operation ID.*", category=UserWarning
+            )
+            paths = set(app.openapi()["paths"])
+        if profile == "sandbox":
+            assert paths == {"/health", "/api/v2/features"}
+        else:
+            assert {
+                "/api/v2/search/query",
+                "/api/v2/catalog/search",
+                "/api/v2/aspects/{urn}",
+                "/api/v2/lineage/{urn}",
+            } <= paths
 
-
-# The three SqliteVec wiring tests here (default-wires / disabled-does-
-# not-wire / enabled-wires) were deleted as part of the R10 arc SANDBOX
-# deprecation: the Rust search-plugin is now the sole semantic-search
-# backend and `SqliteVecBackend` was removed alongside its factory
-# wiring.  `SearchService._sqlite_vec_backend` is now always `None`,
-# so these three assertions would tautologically pass or fail.  The
-# other SANDBOX-boot tests below still exercise "boots without
-# external services / never starts federation / restricted HTTP
-# surface / features endpoint" — the parts of the profile that
-# survive the vec-backend removal.
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+        ) as client:
+            response = await client.get("/api/v2/search/query", params={"q": "test"})
+            assert response.status_code == (404 if profile == "sandbox" else 401)
+            assert response.headers.get("X-Request-ID")
 
 
 @pytest.mark.asyncio

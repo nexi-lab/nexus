@@ -173,19 +173,6 @@ class TestSearchServiceSmoke:
         assert service.metadata == mock_metadata
         assert service._enforce_permissions is False
 
-    @pytest.mark.asyncio
-    async def test_semantic_search_not_initialized(self, mock_metadata):
-        """Test semantic_search raises if not initialized."""
-        from nexus.bricks.search.search_service import SearchService
-
-        service = SearchService(
-            metadata_store=mock_metadata,
-            enforce_permissions=False,
-        )
-
-        with pytest.raises(ValueError, match="not available"):
-            await service.semantic_search(query="test")
-
 
 # =============================================================================
 # MountService Smoke Tests

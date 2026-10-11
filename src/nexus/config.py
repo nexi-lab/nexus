@@ -385,8 +385,8 @@ class NexusConfig(BaseModel):
         description="Refresh cache at this fraction of TTL (0.7 = refresh at 70% of TTL)",
     )
 
-    # Identity settings for memory API (v0.4.0)
-    zone_id: str | None = Field(default=None, description="Zone ID for memory operations")
+    # Service scope and memory identity settings
+    zone_id: str | None = Field(default=None, description="Default zone for service operations")
     user_id: str | None = Field(default=None, description="User ID for memory operations")
     agent_id: str | None = Field(default=None, description="Agent ID for memory operations")
 
@@ -552,14 +552,6 @@ def _apply_sandbox_defaults(cfg: "NexusConfig") -> "NexusConfig":
     if "cache_size_mb" not in user_set:
         updates["cache_size_mb"] = 64
 
-    # Codex review R3 (high): SANDBOX vec is now ON by default (PR
-    # #4022) — the [sandbox] extra bundles sqlite-vec + fastembed so
-    # offline embeddings work out of the box. Leaving the schema
-    # default (True) means ``connect(config={"profile":"sandbox"})``
-    # exercises the hybrid path. Users can still opt out via
-    # ``enable_vector_search=False`` (config dict or env).
-    # No override here: the schema default (True) is now what we want.
-
     if not updates:
         return cfg
     return cfg.model_copy(update=updates)
@@ -585,14 +577,7 @@ def load_config(
         FileNotFoundError: If specified config file doesn't exist
         ValueError: If configuration is invalid
     """
-    # Codex review R5 #3 (medium): NexusConfig instances must go
-    # through ``_apply_sandbox_defaults`` too — dict/YAML inputs do,
-    # so a passthrough here would silently leave SANDBOX-typed
-    # ``NexusConfig(profile="sandbox")`` callers with no
-    # ``db_path``/``record_store_path`` and the local sqlite-vec
-    # backend would skip wiring (no DB path resolved). Source-
-    # agnosticism is the whole point of having a single ``connect()``
-    # entry point. The defaulter is no-op for non-sandbox profiles.
+    # Apply the same storage defaults to model, dictionary and file inputs.
     if isinstance(config, NexusConfig):
         return _apply_sandbox_defaults(config)
 

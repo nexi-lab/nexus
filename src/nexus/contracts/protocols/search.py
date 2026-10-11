@@ -106,3 +106,11 @@ class SearchProtocol(Protocol):
     ) -> builtins.list[dict[str, Any]]: ...
 
     async def semantic_search_stats(self) -> dict[str, Any]: ...
+
+    async def semantic_search_index(
+        self,
+        path: str = "/",
+        recursive: bool = True,
+        max_docs: int = 10_000,
+        context: "OperationContext | None" = None,
+    ) -> dict[str, int]: ...

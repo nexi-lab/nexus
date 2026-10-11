@@ -1,16 +1,7 @@
-"""Unified search result types and field detection (Issue #1520, #1499).
-
-Provides BaseSearchResult as the common base for all search result dataclasses,
-eliminating 4x DRY violation across semantic.py, async_search.py, daemon.py,
-and graph_retrieval.py.
-
-Also provides detect_matched_field() — the canonical 6-field version used by
-ranking.py and bm25s_search.py (Issue #1092, #1499).
-"""
+"""Shared search result types for transport and federation."""
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any
 
 # Backend timing legs surfaced on ``SearchResultList.search_timing`` and
 # echoed by the ``/query`` router in its response envelope.  Federated
@@ -29,28 +20,11 @@ BACKEND_LEG_TIMING_KEYS = (
 )
 
 
-# Tier-boost over-fetch cap (Issue #4544): env-sourced ranking knobs are
-# untrusted input; the widening factor is capped so route-limit × ReBAC
-# over-fetch × this cap keeps backend work bounded.
-TIER_BOOST_OVERFETCH_CAP = 10
-
-
-def sane_overfetch_factor(raw: Any) -> int:
-    """Clamp the tier-boost over-fetch factor to ``[1, TIER_BOOST_OVERFETCH_CAP]``."""
-    try:
-        value = int(raw)
-    except (TypeError, ValueError):
-        return 1
-    return max(1, min(value, TIER_BOOST_OVERFETCH_CAP))
-
-
 @dataclass
 class BaseSearchResult:
     """Common search result fields shared by all search types.
 
-    All search result dataclasses in the search brick extend this base.
-    This enables fuse_results() to accept typed results directly instead
-    of requiring dict conversion.
+    Search clients and cross-zone response adapters share these fields.
     """
 
     path: str
@@ -73,7 +47,7 @@ class BaseSearchResult:
     zone_id: str | None = None  # Source zone for cross-zone federated results
     # Issue #3773: admin-configured path description for LLM consumers
     context: str | None = None
-    semantic_degraded: bool | None = None  # Issue #3778: federation fell back to BM25S
+    semantic_degraded: bool | None = None
     # Issue #4398: macro-chunk expansion fields for hybrid search context
     macro_text: str | None = None
     macro_line_start: int | None = None
@@ -127,71 +101,3 @@ class SearchResultList(list[BaseSearchResult]):
     ) -> None:
         super().__init__(results)
         self.search_timing = dict(search_timing or {})
-
-
-def detect_matched_field(
-    query: str,
-    path: str,
-    content: str | None = None,  # noqa: ARG001 - kept for API consistency
-    title: str | None = None,
-    tags: list[str] | None = None,
-    description: str | None = None,
-) -> str:
-    """Detect which field the query primarily matched in.
-
-    Checks fields in order of importance (filename first, content last)
-    and returns the first field where a match is found.
-
-    Args:
-        query: Search query
-        path: File path
-        content: File content (optional, reserved for API consistency)
-        title: Document title (optional)
-        tags: Document tags (optional)
-        description: Document description (optional)
-
-    Returns:
-        Name of the matched field ("filename", "title", "path", "tags", "description", "content")
-    """
-    query_lower = query.lower().strip()
-    query_terms = query_lower.split()
-
-    # Extract filename from path
-    filename = path.split("/")[-1].lower() if path else ""
-    filename_without_ext = filename.rsplit(".", 1)[0] if "." in filename else filename
-
-    # Check filename (highest priority)
-    if query_lower in filename or query_lower in filename_without_ext:
-        return "filename"
-
-    # Check if all query terms appear in filename
-    if all(term in filename for term in query_terms):
-        return "filename"
-
-    # Check title
-    if title:
-        title_lower = title.lower()
-        if query_lower in title_lower or all(term in title_lower for term in query_terms):
-            return "title"
-
-    # Check tags
-    if tags:
-        tags_lower = [t.lower() for t in tags]
-        tags_combined = " ".join(tags_lower)
-        if query_lower in tags_combined or any(query_lower in t for t in tags_lower):
-            return "tags"
-
-    # Check path (excluding filename)
-    path_lower = path.lower() if path else ""
-    path_without_filename = "/".join(path_lower.split("/")[:-1]) if "/" in path_lower else ""
-    if query_lower in path_without_filename:
-        return "path"
-
-    # Check description
-    if description:
-        desc_lower = description.lower()
-        if query_lower in desc_lower:
-            return "description"
-
-    # Default to content
-    return "content"

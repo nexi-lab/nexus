@@ -4,7 +4,6 @@ from nexus.cli.clients.agent_ext import AgentExtClient
 from nexus.cli.clients.base import BaseServiceClient, NexusAPIError
 from nexus.cli.clients.conflicts import ConflictsClient
 from nexus.cli.clients.delegation import DelegationClient
-from nexus.cli.clients.graph import GraphClient
 from nexus.cli.clients.identity import IdentityClient
 from nexus.cli.clients.manifest import ManifestClient
 from nexus.cli.clients.rlm import RLMClient
@@ -18,7 +17,6 @@ __all__ = [
     "BaseServiceClient",
     "ConflictsClient",
     "DelegationClient",
-    "GraphClient",
     "IdentityClient",
     "ManifestClient",
     "NexusAPIError",

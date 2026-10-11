@@ -90,7 +90,6 @@ def generate_coverage(
 
     # --- HTTP (v3: recursive scan of server/api/ + server/ subdirs) ---
     # Also include server/ for routes in auth/, health/, middleware/ subdirs.
-    _http_scanned: set[Path] = set()
     for http_root in (
         repo_root / "src/nexus/server/api",
         repo_root / "src/nexus/server/auth",
@@ -128,19 +127,19 @@ def generate_coverage(
                 continue
             _upsert(operations, op_id, "mcp", raw.name, raw.source)
 
-    # --- gRPC typed (recursive scan of proto/) ---
+    # --- gRPC typed: local protos, then bindings for externally owned protos ---
+    typed_methods = {}
     proto_root = repo_root / "proto"
     if proto_root.exists():
         for proto_file in sorted(proto_root.rglob("*.proto")):
             for raw in extract_grpc_typed.extract_grpc_typed_methods(proto_file):
-                try:
-                    op_id = normalize.normalize_grpc_typed(raw.method)
-                except ValueError:
-                    # Service.Method shape but unknown service → keep "<svc>.<method>"
-                    # lowercased so classify_op_id can route via substring rules.
-                    service, _, method_name = raw.method.partition(".")
-                    op_id = f"{service.lower()}.{method_name.lower()}"
-                _upsert(operations, op_id, "grpc_typed", raw.method, raw.source)
+                typed_methods[raw.method] = raw
+    for binding in sorted((repo_root / "src/nexus/grpc").rglob("*_pb2_grpc.py")):
+        for raw in extract_grpc_typed.extract_generated_grpc_methods(binding):
+            typed_methods.setdefault(raw.method, raw)
+    for raw in typed_methods.values():
+        op_id = normalize.normalize_grpc_typed(raw.method)
+        _upsert(operations, op_id, "grpc_typed", raw.method, raw.source)
 
     # --- gRPC Call (frozenset of syscall names) ---
     dispatch = repo_root / "src/nexus/server/_kernel_syscall_dispatch.py"
@@ -234,10 +233,9 @@ def generate_coverage(
             if wanted:
                 operations[op_id].usage_example = f"WANTED: {wanted}"
 
-    # Default profile assignment: extractor marks everything supported on all three.
-    # Subissues override to unavailable/admin_only/etc.
+    # Discovery proves that an entry point exists. Profile support requires curation.
     # Skip ops that already have profiles set (e.g. missing_needed gaps above).
-    default_profiles = dict.fromkeys(("lite", "sandbox", "full"), ProfileStatus.SUPPORTED)
+    default_profiles = dict.fromkeys(("lite", "sandbox", "full"), ProfileStatus.UNVERIFIED)
     for op in operations.values():
         if not op.profiles:
             op.profiles = dict(default_profiles)

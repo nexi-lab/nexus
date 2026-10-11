@@ -54,11 +54,6 @@ class TestApplySandboxDefaults:
         assert result.cache_size_mb == 64
 
     def test_sandbox_vector_search_default_on(self) -> None:
-        # PR #4022 + Codex review R3: SANDBOX is now vec-ON by default.
-        # The [sandbox] extra bundles sqlite-vec + fastembed so offline
-        # embeddings work out of the box; the schema default (True) is
-        # the right behavior for SANDBOX too. Users opt out via
-        # enable_vector_search=False (config dict or env).
         cfg = NexusConfig(profile="sandbox")
         result = _apply_sandbox_defaults(cfg)
         assert result.enable_vector_search is True
@@ -169,8 +164,7 @@ class TestLoadConfigNexusConfigPassthroughNormalizes:
     """Codex review R5 #3 (medium): ``load_config(NexusConfig(...))`` was
     a passthrough that skipped ``_apply_sandbox_defaults``. dict/YAML
     inputs flow through it. The asymmetry meant a SANDBOX-typed
-    NexusConfig instance left ``db_path`` unset, which broke local
-    sqlite-vec wiring (no DB path resolved → vec backend skipped)."""
+    NexusConfig instance left ``db_path`` unset."""
 
     def test_nexusconfig_sandbox_passes_through_defaulter(self) -> None:
         cfg_in = NexusConfig(profile="sandbox")

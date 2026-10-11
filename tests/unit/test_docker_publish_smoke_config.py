@@ -8,22 +8,6 @@ ROOT = Path(__file__).resolve().parents[2]
 DOCKER_PUBLISH = ROOT / ".github/workflows/docker-publish.yml"
 DOCKERFILE = ROOT / "Dockerfile"
 DOCKER_ENTRYPOINT = ROOT / "dockerfiles/docker-entrypoint.sh"
-BUILD_PERF = ROOT / "scripts/test_build_perf_e2e.py"
-
-
-def test_docker_publish_startup_gate_uses_basic_health_probe() -> None:
-    text = DOCKER_PUBLISH.read_text()
-    start_step = text[
-        text.index("- name: Start Nexus edge container") : text.index(
-            "- name: Initialize and extract credentials"
-        )
-    ]
-
-    assert (
-        "docker exec nexus-e2e curl --max-time 5 -sf http://127.0.0.1:2026/health"
-    ) in start_step
-    assert "if curl --max-time 5 -sf http://127.0.0.1:2026/health" not in start_step
-    assert "/healthz/ready" not in start_step
 
 
 def test_image_healthcheck_uses_bounded_basic_health_probe() -> None:
@@ -50,33 +34,6 @@ def test_entrypoint_startup_wait_uses_bounded_basic_health_probe() -> None:
     ) in wait_for_health
 
 
-def test_build_perf_smoke_uses_basic_health_probe() -> None:
-    text = BUILD_PERF.read_text()
-
-    assert 'step("health endpoint GET /health")' in text
-    assert 'urlopen(f"{NEXUS_URL}/health", timeout=5)' in text
-    assert "/healthz/ready" not in text
-
-
-def test_search_contract_smoke_covers_write_to_searchable() -> None:
-    """#4736: the unconditional contract smoke must prove one write+index
-    call is served, /stats carries the stall-detection triple, and
-    refresh on a missing path is a 404 rather than an "accepted" ack."""
-    text = DOCKER_PUBLISH.read_text()
-    smoke_step = text[
-        text.index("- name: Search HTTP contract smoke") : text.index("- name: Run build perf e2e")
-    ]
-
-    assert '"/api/v2/files/write"' in smoke_step
-    assert '"index": True' in smoke_step
-    assert 'verdict.get("status") != "indexed"' in smoke_step
-    for key in ("last_index_seq", "pending", "last_successful_index_at"):
-        assert f'"{key}"' in smoke_step, f"stats key {key} not checked"
-    assert "/api/v2/search/query?q=zebrafish" in smoke_step
-    assert "change_type=update" in smoke_step
-    assert "exc.code != 404" in smoke_step
-
-
 def test_search_plugin_sidecar_has_embedder_wiring() -> None:
     """#4646: the sidecar must boot with a usable local embedder.
 
@@ -89,12 +46,12 @@ def test_search_plugin_sidecar_has_embedder_wiring() -> None:
     text = DOCKER_PUBLISH.read_text()
     provision_step = text[
         text.index("- name: Provision embedder assets") : text.index(
-            "- name: Start search-plugin sidecar"
+            "- name: Start the published Rust Search host"
         )
     ]
     sidecar_step = text[
-        text.index("- name: Start search-plugin sidecar") : text.index(
-            "- name: Start Nexus edge container"
+        text.index("- name: Start the published Rust Search host") : text.index(
+            "- name: Verify caller credentials"
         )
     ]
 

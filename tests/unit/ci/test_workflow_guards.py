@@ -14,9 +14,14 @@ when the invariant still held.
 
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -80,11 +85,6 @@ def _assert_gha_cache_export_non_blocking(workflow_name: str, job_id: str, step_
 
 
 # ---------------------------------------------------------------------------
-# cluster-binary-build.yml — deleted (#4259, migrated to nexus-vfs)
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
 # docker-publish.yml
 # ---------------------------------------------------------------------------
 
@@ -97,42 +97,84 @@ def test_docker_publish_gha_cache_export_is_non_blocking() -> None:
     )
 
 
-_VFS_GRPC_GATE = "steps.vfs_grpc.outputs.available == 'true'"
-
-
-def test_docker_edge_smoke_skips_grpc_dependent_steps_without_vfs_grpc() -> None:
-    """Without a working VFS gRPC, the edge smoke job must skip gRPC-only
-    steps instead of running them against a daemon that has no listener.
-
-    Asserts the structural shape:
-      1. A ``Check VFS gRPC availability`` step that exports a step output
-         named ``available``.
-      2. The two downstream steps that exercise gRPC (permissions demo and
-         build perf e2e) gate on that output.
-    """
+def test_release_tag_promotion_requires_the_published_image_smoke_to_pass() -> None:
     workflow = _load_workflow("docker-publish.yml")
-    job = _job(workflow, "e2e-edge")
+    promotion = _job(workflow, "promote-tags")
+    assert "e2e-edge" in promotion["needs"]
+    assert "always()" not in promotion.get("if", "")
+    smoke = _job(workflow, "e2e-edge")
+    assert set(smoke["needs"]) == {"build-and-push", "push-cluster-manifest"}
+    assert not smoke.get("continue-on-error", False)
 
-    probe = _step_by_name(job, "Check VFS gRPC availability")
-    assert probe.get("id") == "vfs_grpc", (
-        f"Probe step must have ``id: vfs_grpc`` for downstream ``if:`` "
-        f"conditions to reference it. Got id={probe.get('id')!r}"
-    )
-    run_body = probe.get("run", "")
-    assert "available=true" in run_body and "available=false" in run_body, (
-        "Probe must emit both ``available=true`` and ``available=false`` "
-        "via $GITHUB_OUTPUT — without both branches the gate is undefined."
-    )
 
-    permissions = _step_by_name(job, "Run permissions demo")
-    build_perf = _step_by_name(job, "Run build perf e2e")
-    for step in (permissions, build_perf):
-        condition = step.get("if", "")
-        assert _VFS_GRPC_GATE in condition, (
-            f"step {step.get('name')!r} must gate on ``{_VFS_GRPC_GATE}``; "
-            f"otherwise it will fail against an edge image without VFS gRPC. "
-            f"Got: if={condition!r}"
-        )
+@pytest.mark.skipif(sys.platform == "win32", reason="unit-test workflow uses Unix bash")
+@pytest.mark.parametrize("status", [0, 1, 124, 137, 143])
+def test_unit_workflow_preserves_process_failure_after_a_passing_summary(tmp_path, status) -> None:
+    step = _step_by_name(_job(_load_workflow("test.yml"), "test"), "Run unit tests")
+    bash = shutil.which("bash")
+    assert bash is not None
+    uv = tmp_path / "uv"
+    uv.write_text(
+        f"#!{sys.executable}\n"
+        "print('==================== 6000 passed ====================')\n"
+        f"raise SystemExit({status})\n",
+        encoding="utf-8",
+    )
+    uv.chmod(0o755)
+    result = subprocess.run(
+        [bash, "-e", "-o", "pipefail", "-c", step["run"]],
+        cwd=tmp_path,
+        env={**os.environ, "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}"},
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == status, result.stdout + result.stderr
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="unit-test workflow uses Unix bash")
+def test_unit_workflow_reports_a_real_worker_crash_without_restarting_it(tmp_path) -> None:
+    step = _step_by_name(_job(_load_workflow("test.yml"), "test"), "Run unit tests")
+    bash = shutil.which("bash")
+    assert bash is not None
+    cases = tmp_path / "test_worker.py"
+    cases.write_text(
+        "def test_before(): pass\n"
+        "def test_crash():\n"
+        "    import os\n"
+        "    os._exit(23)\n"
+        "def test_after(): pass\n",
+        encoding="utf-8",
+    )
+    uv = tmp_path / "uv"
+    uv.write_text(
+        f"#!{sys.executable}\n"
+        "import os, sys\n"
+        "args = sys.argv[4:]\n"
+        "args = [arg for arg in args if not arg.startswith('--cov')]\n"
+        f"args[args.index('tests/unit')] = {str(cases)!r}\n"
+        "args[args.index('auto')] = '2'\n"
+        "args.extend(['-p', 'xdist.plugin', '-p', 'pytest_timeout'])\n"
+        "os.execv(sys.executable, [sys.executable, *args])\n",
+        encoding="utf-8",
+    )
+    uv.chmod(0o755)
+    result = subprocess.run(
+        [bash, "-e", "-o", "pipefail", "-c", step["run"]],
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}",
+            "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+        },
+        capture_output=True,
+        text=True,
+        timeout=45,
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode != 0, output
+    assert "crashed while running" in output and "test_crash" in output, output
+    assert "replacing crashed worker" not in output, output
 
 
 # ---------------------------------------------------------------------------

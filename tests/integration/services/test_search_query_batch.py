@@ -153,6 +153,9 @@ class TestParseBatchQuerySpec:
             ({"q": "x", "fusion": "bogus"}, "fusion"),
             ({"q": "x", "expand": "huge"}, "expand"),
             ({"q": "x", "recency": "always"}, "recency"),
+            ({"q": "x", "graph_mode": "auto"}, "Graph search"),
+            ({"q": "x", "graph_mode": "low"}, "Graph search"),
+            ({"q": "x", "graph_mode": None}, "Graph search"),
         ],
     )
     def test_invalid_specs_return_error_message(self, raw, fragment):

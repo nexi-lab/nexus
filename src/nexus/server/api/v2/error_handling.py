@@ -11,6 +11,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
+import grpc
 from fastapi import HTTPException
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,23 @@ DEFAULT_ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     KeyError: (404, "Resource not found: {error}"),
     PermissionError: (403, "Permission denied: {error}"),
 }
+
+
+def grpc_http_exception(error: grpc.RpcError) -> HTTPException:
+    """Preserve the upstream RPC's failure category at an HTTP boundary."""
+    status = {
+        grpc.StatusCode.INVALID_ARGUMENT: 400,
+        grpc.StatusCode.UNAUTHENTICATED: 401,
+        grpc.StatusCode.PERMISSION_DENIED: 403,
+        grpc.StatusCode.NOT_FOUND: 404,
+        grpc.StatusCode.ALREADY_EXISTS: 409,
+        grpc.StatusCode.ABORTED: 409,
+        grpc.StatusCode.RESOURCE_EXHAUSTED: 429,
+        grpc.StatusCode.UNIMPLEMENTED: 501,
+        grpc.StatusCode.UNAVAILABLE: 503,
+        grpc.StatusCode.DEADLINE_EXCEEDED: 504,
+    }.get(error.code(), 500)
+    return HTTPException(status_code=status, detail=error.details() or "Upstream RPC failed")
 
 
 def api_error_handler(
@@ -54,6 +72,8 @@ def api_error_handler(
             except HTTPException:
                 # Already an HTTP error — let it propagate unchanged.
                 raise
+            except grpc.RpcError as e:
+                raise grpc_http_exception(e) from e
             except tuple(merged_map.keys()) as e:
                 # Look up the most specific matching class.
                 for exc_type, (status, template) in merged_map.items():

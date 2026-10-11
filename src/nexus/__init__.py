@@ -192,7 +192,11 @@ def _open_local_kernel(metadata_path: str, kernel: object = None) -> Any:
         client = KernelClient(ephemeral=True)
     else:
         client = KernelClient(metadata_path=metadata_path)
-    client.open()
+    try:
+        client.open()
+    except BaseException:
+        client.close()
+        raise
     return client
 
 
@@ -244,6 +248,7 @@ def connect(
             >>> nx = nexus.connect(config={"profile": "cloud"})
     """
     import os
+    from contextlib import ExitStack
     from pathlib import Path
 
     from nexus.config import NexusConfig, load_config
@@ -280,75 +285,88 @@ def connect(
             trust_local_project=False,
         )
 
-        transport = RPCTransport(
-            server_address=grpc_address,
-            auth_token=api_key,
-            timeout=float(timeout),
-            connect_timeout=float(connect_timeout),
-            tls_config=_tls_config,
-        )
+        with ExitStack() as startup_resources:
+            transport = RPCTransport(
+                server_address=grpc_address,
+                auth_token=api_key,
+                timeout=float(timeout),
+                connect_timeout=float(connect_timeout),
+                tls_config=_tls_config,
+            )
 
-        # Rust-native remote wiring (Issue #1134 Phase 4, a803a9d63):
-        # the root mount carries backend_type="remote" + connection params,
-        # and PyKernel::sys_setattr constructs both the Rust RemoteBackend
-        # and the Rust RemoteMetastore from those params — no Python shim.
-        # The metastore handle is a bare ``PyKernel``: the kernel routes
-        # per-mount reads/writes to the remote backend it built.
-        from nexus.contracts.metadata import DT_MOUNT
-        from nexus.contracts.types import OperationContext as _RemoteOC
-        from nexus.core.config import PermissionConfig as _PermissionConfig
-        from nexus.core.nexus_fs import NexusFS as _RemoteNexusFS
+            startup_resources.callback(transport.close)
 
-        remote_kernel = _open_local_kernel(":memory:")
-        nfs = _RemoteNexusFS(
-            metadata_store=remote_kernel,
-            permissions=_PermissionConfig(enforce=False),
-            init_cred=_RemoteOC(user_id="remote", groups=[], is_admin=False),
-        )
+            # Rust-native remote wiring (Issue #1134 Phase 4, a803a9d63):
+            # the root mount carries backend_type="remote" + connection params,
+            # and PyKernel::sys_setattr constructs both the Rust RemoteBackend
+            # and the Rust RemoteMetastore from those params — no Python shim.
+            # The metastore handle is a bare ``PyKernel``: the kernel routes
+            # per-mount reads/writes to the remote backend it built.
+            from nexus.contracts.metadata import DT_MOUNT
+            from nexus.contracts.types import OperationContext as _RemoteOC
+            from nexus.core.config import PermissionConfig as _PermissionConfig
+            from nexus.core.nexus_fs import NexusFS as _RemoteNexusFS
 
-        nfs.sys_setattr(
-            "/",
-            entry_type=DT_MOUNT,
-            backend_type="remote",
-            backend_name="remote",
-            server_address=grpc_address,
-            remote_auth_token=api_key,
-            remote_ca_pem=(_tls_config.ca_pem.decode() if _tls_config else None),
-            remote_cert_pem=(_tls_config.node_cert_pem.decode() if _tls_config else None),
-            remote_key_pem=(_tls_config.node_key_pem.decode() if _tls_config else None),
-            remote_timeout=float(timeout),
-        )
+            remote_kernel = _open_local_kernel(":memory:")
+            startup_resources.callback(remote_kernel.close)
+            nfs = _RemoteNexusFS(
+                metadata_store=remote_kernel,
+                permissions=_PermissionConfig(enforce=False),
+                init_cred=_RemoteOC(
+                    user_id="remote",
+                    zone_id=cfg.zone_id,
+                    groups=[],
+                    is_admin=False,
+                ),
+            )
+            nfs._register_runtime_closeable(remote_kernel)
+            nfs._register_runtime_closeable(transport)
+            startup_resources.pop_all()
+            startup_resources.callback(nfs.close)
 
-        # Issue #4055: expose HTTP URL + API key so NexusFUSEOperations(use_rust=True)
-        # can spawn the Rust nexus-fuse daemon (it talks to /api/nfs/* HTTP
-        # endpoints, not gRPC).
-        #
-        # The original cross-tenant cache-sharing concern that motivated an
-        # opt-in env gate was addressed in cache.rs by namespacing the foyer
-        # directory with `principal_hash(server_url, api_key)` — different
-        # API keys never share a cache directory, so exposing the credentials
-        # here is safe for unscoped remote mounts. Scoped/agent mounts are
-        # blocked from constructing the Rust daemon entirely in
-        # NexusFUSEOperations (see operations.py: `context is not None`).
-        nfs._base_url = server_url  # noqa: SLF001
-        nfs._api_key = api_key  # noqa: SLF001
+            nfs.sys_setattr(
+                "/",
+                entry_type=DT_MOUNT,
+                backend_type="remote",
+                backend_name="remote",
+                server_address=grpc_address,
+                remote_auth_token=api_key,
+                remote_ca_pem=(_tls_config.ca_pem.decode() if _tls_config else None),
+                remote_cert_pem=(_tls_config.node_cert_pem.decode() if _tls_config else None),
+                remote_key_pem=(_tls_config.node_key_pem.decode() if _tls_config else None),
+                remote_timeout=float(timeout),
+            )
 
-        # Wire service proxies for REMOTE profile (Issue #1171).
-        # Fills all 25+ service slots with RemoteServiceProxy — forwards
-        # method calls to the server via gRPC.
-        from nexus.factory._remote import (
-            _boot_remote_services,
-            install_remote_kernel_rpc_overrides,
-        )
+            # Issue #4055: expose HTTP URL + API key so NexusFUSEOperations(use_rust=True)
+            # can spawn the Rust nexus-fuse daemon (it talks to /api/nfs/* HTTP
+            # endpoints, not gRPC).
+            #
+            # The original cross-tenant cache-sharing concern that motivated an
+            # opt-in env gate was addressed in cache.rs by namespacing the foyer
+            # directory with `principal_hash(server_url, api_key)` — different
+            # API keys never share a cache directory, so exposing the credentials
+            # here is safe for unscoped remote mounts. Scoped/agent mounts are
+            # blocked from constructing the Rust daemon entirely in
+            # NexusFUSEOperations (see operations.py: `context is not None`).
+            nfs._base_url = server_url  # noqa: SLF001
+            nfs._api_key = api_key  # noqa: SLF001
 
-        _boot_remote_services(nfs, call_rpc=transport.call_rpc)
-        install_remote_kernel_rpc_overrides(nfs, transport)
-        cast(Any, nfs)._nexus_remote_call_rpc = transport.call_rpc
-        nfs._register_runtime_closeable(transport)
-        nfs._remote_base_url = server_url
-        nfs._remote_api_key = api_key or ""
+            # Wire service proxies for REMOTE profile (Issue #1171).
+            # Fills all 25+ service slots with RemoteServiceProxy — forwards
+            # method calls to the server via gRPC.
+            from nexus.factory._remote import (
+                _boot_remote_services,
+                wire_remote_filesystem,
+            )
 
-        return nfs
+            _boot_remote_services(nfs, call_rpc=transport.call_rpc)
+            wire_remote_filesystem(nfs, transport)
+            cast(Any, nfs)._nexus_remote_call_rpc = transport.call_rpc
+            nfs._remote_base_url = server_url
+            nfs._remote_api_key = api_key or ""
+
+            startup_resources.pop_all()
+            return nfs
 
     # ── Local node (single-node or federated, auto-detected) ────────
     # Heavy imports for local profiles
@@ -483,6 +501,7 @@ def connect(
     for _k, _v in _env_to_propagate.items():
         os.environ[_k] = _v
 
+    startup_resources = ExitStack()
     try:
         # Apply FeaturesConfig overrides (Issue #1389)
         overrides = cfg.features.to_overrides() if cfg.features else {}
@@ -507,6 +526,7 @@ def connect(
         # annotation is now ``Any`` (kernel-shape) per the W3 SSOT
         # cleanup.
         metadata_store: Any = _open_local_kernel(metadata_path, kernel=_early_kernel)
+        startup_resources.callback(metadata_store.close)
         # Python no longer owns a FederationService object. `federation=None`
         # below just drops a dead kwarg into the orchestrator; _lifecycle.py
         # handles the None path. ``metadata_store`` here is a ``PyKernel`` —
@@ -545,6 +565,8 @@ def connect(
             record_store = SQLAlchemyRecordStore(db_url=_database_url)
         else:
             record_store = None
+        if record_store is not None:
+            startup_resources.callback(record_store.close)
 
         # Build config objects from NexusConfig fields (Issue #1391)
         from nexus.core.config import (
@@ -622,6 +644,10 @@ def connect(
             security=getattr(cfg, "security", None),
         )
 
+        nx_fs._register_runtime_closeable(metadata_store)
+        startup_resources.pop_all()
+        startup_resources.callback(nx_fs.close)
+
         # Set memory config for Memory API
         if cfg.zone_id or cfg.user_id or cfg.agent_id:
             nx_fs._memory_config = {
@@ -645,22 +671,26 @@ def connect(
         # Start audit hook if federation is active (requires a loaded Raft zone).
         _init_audit_hook(nx_fs)
 
+        startup_resources.pop_all()
         return nx_fs
     finally:
-        # Codex review R4 (high): restore env so successive
-        # ``connect()`` calls (and any subprocess spawned later) do
-        # NOT inherit the synthetic NEXUS_PROFILE /
-        # NEXUS_ENABLE_VECTOR_SEARCH this call wrote. Without this,
-        # call N+1 sees call N's value as "operator env" and refuses
-        # to overwrite, leaking sandbox/false through into a later
-        # full/true boot. Always restore in finally so a raised
-        # exception during boot doesn't leave sticky env either.
-        for _k, _prev in _env_saved.items():
-            if _prev is None:
-                os.environ.pop(_k, None)
-            else:
-                os.environ[_k] = _prev
-        _CONNECT_ENV_LOCK.release()
+        try:
+            startup_resources.close()
+        finally:
+            # Codex review R4 (high): restore env so successive
+            # ``connect()`` calls (and any subprocess spawned later) do
+            # NOT inherit the synthetic NEXUS_PROFILE /
+            # NEXUS_ENABLE_VECTOR_SEARCH this call wrote. Without this,
+            # call N+1 sees call N's value as "operator env" and refuses
+            # to overwrite, leaking sandbox/false through into a later
+            # full/true boot. Always restore in finally so a raised
+            # exception during boot doesn't leave sticky env either.
+            for _k, _prev in _env_saved.items():
+                if _prev is None:
+                    os.environ.pop(_k, None)
+                else:
+                    os.environ[_k] = _prev
+            _CONNECT_ENV_LOCK.release()
 
 
 def _register_federation_resolver(nx_fs: "NexusFS", federation: Any, backend: Any) -> None:

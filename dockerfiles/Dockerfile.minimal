@@ -1,5 +1,5 @@
 # Nexus Minimal Docker Image
-# Lightweight standalone server with storage only (no Zoekt, no ML, no cloud).
+# Lightweight standalone server for storage.
 # Kernel-tier Rust migrated to nexus-vfs (#4259); nexusd-cluster installed
 # from the nexus-vfs git repo.
 #

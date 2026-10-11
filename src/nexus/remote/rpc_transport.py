@@ -218,8 +218,8 @@ class RPCTransport:
             self._stub = vfs_pb2_grpc.NexusVFSServiceStub(self._channel)
             from nexus.remote.search_client import SearchClient
 
-        self._search = SearchClient(self._channel)
-        self._zone_runtime_stub = zone_runtime_pb2_grpc.ZoneRuntimeServiceStub(self._channel)
+            self._search = SearchClient(self._channel)
+            self._zone_runtime_stub = zone_runtime_pb2_grpc.ZoneRuntimeServiceStub(self._channel)
 
             self._error_handler = BaseRemoteNexusFS()
         except BaseException:
@@ -325,6 +325,20 @@ class RPCTransport:
             use_integers_for_enums=False,
         )
         return dict(converted)
+
+    def _credential(self, override: str | None = None) -> str | None:
+        """Select one call's credential without changing the channel identity."""
+        caller = request_api_key.get()
+        if caller is not None:
+            return caller
+        return override if override is not None else self._auth_token
+
+    def _vfs_credential(self, override: str | None = None) -> str:
+        """VFS's string field cannot represent an explicitly empty bearer."""
+        credential = self._credential(override)
+        if credential == "":
+            raise AuthenticationError("Authentication required: empty request credential")
+        return credential or ""
 
     @retry(
         stop=stop_after_attempt(3),

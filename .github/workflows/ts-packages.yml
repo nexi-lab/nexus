@@ -71,7 +71,7 @@ jobs:
       - name: Install the terminal E2E dependency
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config libevent-dev libncurses-dev libutempter-dev
+          sudo apt-get install -y build-essential bison pkg-config libevent-dev libncurses-dev libutempter-dev
           # tmux 3.4 can lose SIGCHLD during utmp cleanup, leaving exited panes
           # as zombies with no exit status: https://github.com/tmux/tmux/issues/4559.
           build_dir=$(mktemp -d "${RUNNER_TEMP}/nexus-tmux.XXXXXX")

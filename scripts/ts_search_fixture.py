@@ -15,15 +15,35 @@ from nexus.remote.rpc_transport import RPCTransport
 
 def main(action: str) -> None:
     destination = Path(os.environ["NEXUS_TS_SEARCH_FIXTURE"])
-    admin = Path(os.environ["NEXUS_SEARCH_TEST_ADMIN_KEY"]).read_text().strip()
-    base = os.environ["NEXUS_SEARCH_TEST_HTTP"].rstrip("/")
+    if action == "cleanup":
+        if not destination.exists():
+            return
+        previous = json.loads(destination.read_text())
+        connection = previous["connection"]
+        admin = previous["adminKey"]
+    elif action == "prepare":
+        previous = None
+        connection = {
+            field: os.environ[field]
+            for field in (
+                "NEXUS_SEARCH_TEST_HTTP",
+                "NEXUS_SEARCH_PLUGIN_TARGET",
+                "NEXUS_SEARCH_PLUGIN_TLS_CA",
+                "NEXUS_SEARCH_PLUGIN_TLS_CERT",
+                "NEXUS_SEARCH_PLUGIN_TLS_KEY",
+            )
+        }
+        admin = Path(os.environ["NEXUS_SEARCH_TEST_ADMIN_KEY"]).read_text().strip()
+    else:
+        raise ValueError("action must be prepare or cleanup")
+    base = connection["NEXUS_SEARCH_TEST_HTTP"].rstrip("/")
     tls = SimpleNamespace(
-        ca_pem=Path(os.environ["NEXUS_SEARCH_PLUGIN_TLS_CA"]).read_bytes(),
-        node_cert_pem=Path(os.environ["NEXUS_SEARCH_PLUGIN_TLS_CERT"]).read_bytes(),
-        node_key_pem=Path(os.environ["NEXUS_SEARCH_PLUGIN_TLS_KEY"]).read_bytes(),
+        ca_pem=Path(connection["NEXUS_SEARCH_PLUGIN_TLS_CA"]).read_bytes(),
+        node_cert_pem=Path(connection["NEXUS_SEARCH_PLUGIN_TLS_CERT"]).read_bytes(),
+        node_key_pem=Path(connection["NEXUS_SEARCH_PLUGIN_TLS_KEY"]).read_bytes(),
     )
     transport = RPCTransport(
-        os.environ["NEXUS_SEARCH_PLUGIN_TARGET"], auth_token=admin, tls_config=tls, timeout=30
+        connection["NEXUS_SEARCH_PLUGIN_TARGET"], auth_token=admin, tls_config=tls, timeout=30
     )
 
     def http(method: str, route: str, body: dict | None = None) -> dict:
@@ -49,15 +69,14 @@ def main(action: str) -> None:
 
     try:
         if action == "cleanup":
-            if destination.exists():
-                cleanup(json.loads(destination.read_text()))
-                destination.unlink()
+            cleanup(previous)
+            destination.unlink()
             return
-        if action != "prepare":
-            raise ValueError("action must be prepare or cleanup")
         suffix = uuid4().hex
-        root = f"/docs/ts-search-{suffix}"
+        parent = os.environ.get("NEXUS_TS_SEARCH_ROOT", "/docs").rstrip("/")
+        root = f"{parent}/ts-search-{suffix}"
         manifest = {
+            "connection": connection,
             "url": base,
             "adminKey": admin,
             "root": root,

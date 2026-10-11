@@ -8,6 +8,7 @@ import { searchFiles } from "../../src/panels/files/file-search.js";
 import { testRender } from "../helpers/render.js";
 
 const fixturePath = process.env.NEXUS_TS_SEARCH_FIXTURE;
+const hybridFixturePath = process.env.NEXUS_TS_SEARCH_HYBRID_FIXTURE;
 
 describe.skipIf(!fixturePath)("native Search through the TUI worker and terminal renderer", () => {
   const fixture = fixturePath ? JSON.parse(readFileSync(fixturePath, "utf8")) : null;
@@ -39,8 +40,8 @@ describe.skipIf(!fixturePath)("native Search through the TUI worker and terminal
 
   it("discovery preserves directory access checks and returns readable current bytes", async () => {
     const indexed = await searchFiles(fixture.needle, fixture.root, client, connection);
-    expect(indexed.error).toBeUndefined();
-    expect(indexed.hits.map(hit => hit.path)).toEqual([fixture.visible]);
+    expect(indexed.error).toBeDefined();
+    expect(indexed.hits).toEqual([]);
     await expect(searchFiles("g:**/*.txt", fixture.root, client, connection)).rejects.toThrow("search path is not readable");
     const reader = new SearchClient(client, connection);
     const readerGrep = await reader.grep(fixture.needle, fixture.root, { files: [fixture.visible, fixture.hidden] });
@@ -93,4 +94,22 @@ describe.skipIf(!fixturePath)("native Search through the TUI worker and terminal
       setup.renderer.destroy();
     }
   });
+
+  it.skipIf(!hybridFixturePath)("file explorer hybrid and semantic queries use the real local model", async () => {
+    const full = JSON.parse(readFileSync(hybridFixturePath!, "utf8"));
+    const fullManager = createWorkerManager({ apiKey: full.readerKey, baseUrl: "http://127.0.0.1:1", maxRetries: 0 });
+    const fullClient = fullManager.client as unknown as FetchClient;
+    const fullConnection = { url: full.url, zoneId: "sharedzone" };
+    try {
+      const indexed = await searchFiles(full.needle, full.root, fullClient, fullConnection);
+      expect(indexed.error).toBeUndefined();
+      expect(indexed.hits.map(hit => hit.path)).toEqual([full.visible]);
+      useSearchStore.setState({ searchMode: "semantic" });
+      await useSearchStore.getState().search(full.needle, fullClient, fullConnection);
+      expect(useSearchStore.getState().error).toBeNull();
+      expect(useSearchStore.getState().searchResults.map(hit => hit.path)).toEqual([full.visible]);
+    } finally {
+      fullManager.terminate();
+    }
+  }, 30000);
 });

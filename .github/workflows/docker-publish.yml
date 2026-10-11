@@ -549,39 +549,43 @@ jobs:
 
       - name: Prepare native TypeScript Search facts and credentials
         run: |
-          docker exec \
-            -e NEXUS_TS_SEARCH_FIXTURE=/tmp/ts-search-fixture.json \
-            -e NEXUS_SEARCH_TEST_HTTP=http://127.0.0.1:2327 \
-            -e NEXUS_SEARCH_PLUGIN_TARGET=127.0.0.1:2326 \
-            -e NEXUS_SEARCH_PLUGIN_TLS_CA=/tmp/search-credentials/tls/ca.pem \
-            -e NEXUS_SEARCH_PLUGIN_TLS_CERT=/tmp/search-credentials/tls/node.pem \
-            -e NEXUS_SEARCH_PLUGIN_TLS_KEY=/tmp/search-credentials/tls/node-key.pem \
-            -e NEXUS_SEARCH_TEST_ADMIN_KEY=/tmp/search-credentials/search-admin-key \
-            nexus-e2e python /tests/scripts/ts_search_fixture.py prepare
-          docker cp nexus-e2e:/tmp/ts-search-fixture.json /tmp/ts-search-fixture.json
+          while read -r label grpc_port http_port credentials root; do
+            docker exec \
+              -e NEXUS_TS_SEARCH_FIXTURE="/tmp/ts-search-${label}.json" \
+              -e NEXUS_TS_SEARCH_ROOT="$root" \
+              -e NEXUS_SEARCH_TEST_HTTP="http://127.0.0.1:${http_port}" \
+              -e NEXUS_SEARCH_PLUGIN_TARGET="127.0.0.1:${grpc_port}" \
+              -e NEXUS_SEARCH_PLUGIN_TLS_CA="/tmp/${credentials}/tls/ca.pem" \
+              -e NEXUS_SEARCH_PLUGIN_TLS_CERT="/tmp/${credentials}/tls/node.pem" \
+              -e NEXUS_SEARCH_PLUGIN_TLS_KEY="/tmp/${credentials}/tls/node-key.pem" \
+              -e NEXUS_SEARCH_TEST_ADMIN_KEY="/tmp/${credentials}/search-admin-key" \
+              nexus-e2e python /tests/scripts/ts_search_fixture.py prepare
+            docker cp "nexus-e2e:/tmp/ts-search-${label}.json" "/tmp/ts-search-${label}.json"
+          done <<'FIXTURES'
+          keyword 2326 2327 search-credentials /docs
+          hybrid 2126 2127 search-quality /workspace
+          FIXTURES
 
       - name: Verify Search through the real TUI worker and terminal renderer
         working-directory: packages/nexus-tui
         env:
-          NEXUS_TS_SEARCH_FIXTURE: /tmp/ts-search-fixture.json
+          NEXUS_TS_SEARCH_FIXTURE: /tmp/ts-search-keyword.json
+          NEXUS_TS_SEARCH_HYBRID_FIXTURE: /tmp/ts-search-hybrid.json
         run: |
           test -s "$NEXUS_TS_SEARCH_FIXTURE"
+          test -s "$NEXUS_TS_SEARCH_HYBRID_FIXTURE"
           bun test --timeout 30000 tests/e2e/native-search.test.tsx
 
       - name: Clean up TypeScript Search facts and credentials
         if: always()
         run: |
-          if docker exec nexus-e2e test -s /tmp/ts-search-fixture.json; then
-            docker exec \
-              -e NEXUS_TS_SEARCH_FIXTURE=/tmp/ts-search-fixture.json \
-              -e NEXUS_SEARCH_TEST_HTTP=http://127.0.0.1:2327 \
-              -e NEXUS_SEARCH_PLUGIN_TARGET=127.0.0.1:2326 \
-              -e NEXUS_SEARCH_PLUGIN_TLS_CA=/tmp/search-credentials/tls/ca.pem \
-              -e NEXUS_SEARCH_PLUGIN_TLS_CERT=/tmp/search-credentials/tls/node.pem \
-              -e NEXUS_SEARCH_PLUGIN_TLS_KEY=/tmp/search-credentials/tls/node-key.pem \
-              -e NEXUS_SEARCH_TEST_ADMIN_KEY=/tmp/search-credentials/search-admin-key \
-              nexus-e2e python /tests/scripts/ts_search_fixture.py cleanup
-          fi
+          for label in keyword hybrid; do
+            destination="/tmp/ts-search-${label}.json"
+            if docker exec nexus-e2e test -s "$destination"; then
+              docker exec -e NEXUS_TS_SEARCH_FIXTURE="$destination" \
+                nexus-e2e python /tests/scripts/ts_search_fixture.py cleanup
+            fi
+          done
 
       - name: Collect container logs on failure
         if: failure() || cancelled()

@@ -8,7 +8,9 @@ on:
   merge_group:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # Finish validation for every pushed commit. A later docs-only push
+  # must not cancel code checks; newer PR revisions may replace older runs.
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}
   cancel-in-progress: true
 
 env:

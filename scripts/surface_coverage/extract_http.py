@@ -9,6 +9,7 @@ are prepended so the recorded path matches the externally-visible route.
 from __future__ import annotations
 
 import ast
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,6 +21,26 @@ class RawHttpRoute:
     method: str
     path: str
     source: str
+
+
+def extract_typescript_http_client_routes(client_path: Path) -> list[RawHttpRoute]:
+    """Read literal native routes called by the typed HTTP client.
+
+    Published-host E2E tests verify the client contract. Match return statements
+    so comments and examples do not register an HTTP surface.
+    """
+    if not client_path.is_file():
+        return []
+    text = client_path.read_text(encoding="utf-8")
+    pattern = r'^[ \t]*return[ \t]+this\.transport\.(get|post)\("(/v\d+/[^"\n]+)"'
+    return [
+        RawHttpRoute(
+            method=match.group(1).upper(),
+            path=match.group(2),
+            source=f"{client_path}:{text.count(chr(10), 0, match.start()) + 1}",
+        )
+        for match in re.finditer(pattern, text, re.MULTILINE)
+    ]
 
 
 def extract_http_routes(py_path_or_dir: Path) -> list[RawHttpRoute]:

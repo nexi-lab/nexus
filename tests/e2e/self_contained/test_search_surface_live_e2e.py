@@ -239,49 +239,6 @@ def test_live_search_http_surface_correctness_and_latency(live_search_app: LiveS
     assert stats_response.status_code == 200
     assert stats["initialized"] is True
 
-    glob_response, glob_body = _request(
-        live,
-        "get",
-        "/api/v2/search/glob",
-        params={"pattern": "**/*.py", "path": "/workspace", "limit": 5},
-    )
-    assert glob_response.status_code == 200
-    assert "/workspace/src/main.py" in glob_body["items"]
-    _assert_endpoint_latency(glob_body)
-
-    glob_post_response, glob_post = _request(
-        live,
-        "post",
-        "/api/v2/search/glob",
-        json={"pattern": "**/*.md", "path": "/workspace", "limit": 5},
-    )
-    assert glob_post_response.status_code == 200
-    assert glob_post["items"] == ["/workspace/docs.md"]
-    _assert_endpoint_latency(glob_post)
-
-    grep_response, grep_body = _request(
-        live,
-        "get",
-        "/api/v2/search/grep",
-        params={"pattern": "TODO", "path": "/workspace", "limit": 5},
-    )
-    assert grep_response.status_code == 200
-    assert any(item["file"] == "/workspace/src/main.py" for item in grep_body["items"])
-    _assert_endpoint_latency(grep_body)
-
-    grep_post_response, grep_post = _request(
-        live,
-        "post",
-        "/api/v2/search/grep",
-        json={"pattern": "needle", "path": "/workspace", "limit": 5},
-    )
-    assert grep_post_response.status_code == 200
-    assert {item["file"] for item in grep_post["items"]} == {
-        "/workspace/docs.md",
-        "/workspace/src/main.py",
-    }
-    _assert_endpoint_latency(grep_post)
-
     index_response, index_body = _request(
         live,
         "post",

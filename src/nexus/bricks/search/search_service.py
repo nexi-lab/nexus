@@ -841,8 +841,7 @@ class SearchService:
         # whose paths are not valid virtual filesystem paths. The ReBAC brick
         # stores namespace configurations as ``FileMetadata(path="ns:rebac:{type}",
         # backend_name="_namespace")`` via ``MetastoreNamespaceStore``. When a
-        # non-admin user's list request walks from ``/`` (e.g. the new POST
-        # ``/api/v2/search/grep`` endpoint defaults to ``path="/"``), those
+        # non-admin user's list request walks from ``/``, those
         # synthetic entries leak into the candidate set, then the permission
         # filter's ``router.validate_path`` call rejects them with
         # ``InvalidPathError: Path must be absolute: ns:rebac:memory``.

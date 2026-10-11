@@ -80,8 +80,6 @@ class TestSearchAuthEnforcement:
         [
             ("GET", "/api/v2/search/stats", {}),
             ("GET", "/api/v2/search/query", {"params": {"q": "needle"}}),
-            ("POST", "/api/v2/search/grep", {"json": {"pattern": "needle"}}),
-            ("POST", "/api/v2/search/glob", {"json": {"pattern": "**/*.md"}}),
             ("POST", "/api/v2/search/locate", {"json": {"path": "/docs/a.md"}}),
             ("POST", "/api/v2/search/query/batch", {"json": {"queries": [{"query": "needle"}]}}),
         ],

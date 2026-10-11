@@ -245,6 +245,16 @@ def test_correctness_test_accepts_existing_repo_path() -> None:
     assert findings == []
 
 
+def test_correctness_test_keeps_package_tests_relative_to_the_repo() -> None:
+    row = _op(correctness_test="packages/nexus-tui/tests/e2e/native-search.test.tsx")
+    findings = validate_coverage(_coverage(row), repo_root=Path.cwd(), check_references=True)
+    assert findings == []
+
+    row.correctness_test = "packages/nexus-tui/tests/e2e/missing.test.tsx"
+    findings = validate_coverage(_coverage(row), repo_root=Path.cwd(), check_references=True)
+    assert [(f.code, f.field) for f in findings] == [("invalid_test_reference", "correctness_test")]
+
+
 def test_correctness_test_accepts_multiple_existing_repo_paths() -> None:
     row = _op(
         correctness_test=(

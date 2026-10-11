@@ -134,10 +134,6 @@ def test_query_behind_revision_is_412_and_never_queries() -> None:
     ("method", "route", "kwargs"),
     [
         ("post", "/api/v2/search/query/batch", {"json": {"queries": [{"q": "hello"}]}}),
-        ("get", "/api/v2/search/glob", {"params": {"pattern": "*.py"}}),
-        ("post", "/api/v2/search/glob", {"json": {"pattern": "*.py"}}),
-        ("get", "/api/v2/search/grep", {"params": {"pattern": "TODO"}}),
-        ("post", "/api/v2/search/grep", {"json": {"pattern": "TODO"}}),
     ],
 )
 def test_other_search_routes_fence_before_work(method: str, route: str, kwargs: dict) -> None:

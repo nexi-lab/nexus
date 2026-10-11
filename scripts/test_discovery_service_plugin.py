@@ -16,6 +16,7 @@ import httpx
 
 from nexus.bricks.search.search_service import SearchService
 from nexus.contracts.types import OperationContext
+from nexus.grpc.search.v1 import search_pb2
 from nexus.lib.request_credentials import request_api_key
 from nexus.remote.kernel_client import KernelClient
 from nexus.remote.rpc_transport import RPCTransport
@@ -85,6 +86,32 @@ async def main() -> None:
                     **subjects[name],
                 },
             )
+
+        async def grep_http(name: str):
+            response = await http.post(
+                "/v2/search/grep",
+                headers={"Authorization": f"Bearer {keys[name]}"},
+                json={
+                    "pattern": needle,
+                    "root_path": "/docs",
+                    "files": list(paths.values()),
+                    "block_type": "code",
+                    "section": "API",
+                    "before_context": 1,
+                    "after_context": 1,
+                    "max_results": 1,
+                },
+            )
+            assert response.is_success, (response.status_code, safe(response.text))
+            body = response.json()
+            assert not body.get("error"), safe(response.text)
+            expected = (
+                search_pb2.DISCOVERY_FILTER_FILES
+                | search_pb2.DISCOVERY_FILTER_BLOCK_TYPE
+                | search_pb2.DISCOVERY_FILTER_SECTION
+            )
+            assert body["applied_filters"] & expected == expected, body
+            return body["matches"]
 
         try:
             agent_key = await http.post(
@@ -179,6 +206,11 @@ async def main() -> None:
                     assert len(rows) == 1 and rows[0]["file"] == paths[name], rows
                     assert rows[0]["content"] == f"{needle} {name}", rows
                     assert rows[0]["line"] == 4 and rows[0]["section"]["heading"] == "API"
+                    native_rows = await grep_http(name)
+                    assert len(native_rows) == 1 and native_rows[0]["path"] == paths[name]
+                    assert native_rows[0]["line_number"] == 4, native_rows
+                    assert native_rows[0]["line"] == f"{needle} {name}", native_rows
+                    assert native_rows[0]["section"]["heading"] == "API", native_rows
                     assert await facade.grep(needle, path="/docs", files=[]) == []
                 finally:
                     request_api_key.reset(caller)
@@ -192,7 +224,12 @@ async def main() -> None:
                 )
                 assert rows[0]["content"] == f"{needle} revised", rows
                 assert rows[0]["line"] == 3 and rows[0]["section"]["line_end"] == 4
+                native_rows = await grep_http("alice")
+                assert len(native_rows) == 1 and native_rows[0]["line"] == f"{needle} revised"
+                assert native_rows[0]["line_number"] == 3, native_rows
+                assert native_rows[0]["section"]["line_end"] == 4, native_rows
                 await grant("alice", "DELETE")
+                assert await grep_http("alice") == []
                 assert await facade.grep(needle, path="/docs", files=[paths["alice"]]) == []
                 assert (
                     await facade.semantic_search(needle, path="/docs", search_mode="keyword") == []

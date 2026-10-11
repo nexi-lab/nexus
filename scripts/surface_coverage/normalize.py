@@ -70,8 +70,8 @@ def normalize_grpc_call(call_name: str) -> str:
 
 
 def normalize_http(method: str, path: str) -> str:
-    """`POST /api/v1/<module>/<verb>[/<more>]` -> `<module>.<verb>[_<more>]`."""
-    m = re.match(r"^/api/v\d+/([^/]+)/(.+?)/?$", path)
+    """Map `/api/vN/` and native `/vN/` routes onto the same operation."""
+    m = re.match(r"^/(?:api/)?v\d+/([A-Za-z][A-Za-z0-9_-]*)/(.+?)/?$", path)
     if not m:
         raise ValueError(f"unrecognized HTTP path: {path!r}")
     module = m.group(1).replace("-", "_")

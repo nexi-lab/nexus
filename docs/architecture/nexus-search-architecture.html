@@ -354,7 +354,7 @@ flowchart TB
 <h2 id="http">4. HTTP surface</h2>
 
 <h3>4.1 Python FastAPI in mixed deployments</h3>
-<p>Router: <code>src/nexus/server/api/v2/routers/search.py</code>. The Python server still serves <code>/api/v2/search/query</code>, query batching, glob/grep, health/stats, and indexed-directory management. Indexed queries use the Rust plugin; Python still adapts results and handles its own callers.</p>
+<p>Router: <code>src/nexus/server/api/v2/routers/search.py</code>. The Python server still serves <code>/api/v2/search/query</code>, query batching, health/stats, and indexed-directory management. Indexed queries use the Rust plugin; Python still adapts results and handles its own callers.</p>
 
 <h3>4.2 Rust axum in the cluster</h3>
 <p>Crate: <code>nexus-vfs/rust/http-api/</code>. The cluster installs this listener through <a href="https://github.com/nexi-lab/nexus-vfs/blob/main/rust/profiles/cluster/src/authorization.rs"><code>rust/profiles/cluster/src/authorization.rs</code></a>. Current routes:</p>

@@ -5,7 +5,7 @@ node="$1"
 client="$2"
 destination="$3"
 deadline=$((SECONDS + 120))
-until docker logs "$node" 2>&1 | grep -q 'VFS data plane ready'; do
+until docker logs "$node" 2>&1 | grep -F 'VFS data plane ready' >/dev/null; do
   if [ "$(docker inspect "$node" --format '{{.State.Running}}')" != true ] || [ "$SECONDS" -ge "$deadline" ]; then
     docker logs --tail=100 "$node"
     exit 1

@@ -91,6 +91,7 @@ async def main() -> None:
     paths = {name: f"/docs/{name}-{suffix}.txt" for name in ("alice", "bob")}
     keys: dict[str, str] = {}
     key_hashes: dict[str, str] = {}
+    created = set()
     needle = f"marigold{suffix[:8]}"
     text = f"{needle} constellation credential isolation"
 
@@ -118,6 +119,9 @@ async def main() -> None:
             )
 
         try:
+            baseline = await admin_request(
+                "GET", "/v2/documents/stats", params={"zone_id": "sharedzone"}
+            )
             for name, path in paths.items():
                 minted = await admin_request(
                     "POST",
@@ -130,9 +134,11 @@ async def main() -> None:
                 )
                 keys[name] = minted["key"]
                 key_hashes[name] = minted["key_hash"]
-                await vfs.Write(
+                written = await vfs.Write(
                     vfs_pb2.WriteRequest(path=path, content=text.encode(), auth_token=admin)
                 )
+                assert not written.is_error, written
+                created.add(path)
                 scope = request_api_key.set(admin)
                 try:
                     indexed = await daemon.index_documents(
@@ -204,7 +210,9 @@ async def main() -> None:
                     assert response.status_code == expected_status, response.text
                     if expected_status == 200:
                         assert response.json()["zone_id"] == "sharedzone", response.text
-                        assert response.json()["fts_path_count"] == 2, response.text
+                        assert response.json()["fts_path_count"] == baseline[
+                            "fts_path_count"
+                        ] + len(paths), response.text
 
                 await asyncio.gather(
                     *[
@@ -543,6 +551,7 @@ async def main() -> None:
                     request_api_key.reset(scope)
                 # Python can cache identity, but kernel key revocation remains authoritative.
                 await admin_request("DELETE", f"/v2/auth/keys/{key_hashes['bob']}")
+                key_hashes.pop("bob")
                 revoked = await client.get(
                     "/api/v2/search/query",
                     params={"q": needle, "type": "keyword"},
@@ -595,10 +604,26 @@ async def main() -> None:
                 "Search credentials live contract passed: TCP HTTP/user/concurrency/batch/locate/RPC/MCP/admin/management/revocation"
             )
         finally:
-            await daemon.shutdown()
-            await asyncio.to_thread(zones.stop_all)
-            await channel.close()
-            transport.close()
+            try:
+                for name in keys:
+                    await grant(name, "DELETE")
+                scope = request_api_key.set(admin)
+                try:
+                    for path in created:
+                        removed = await vfs.Delete(
+                            vfs_pb2.DeleteRequest(path=path, auth_token=admin), timeout=15
+                        )
+                        assert not removed.is_error, removed
+                        await daemon.notify_file_change(path, "delete", zone_id="sharedzone")
+                finally:
+                    request_api_key.reset(scope)
+                for key_hash in key_hashes.values():
+                    await admin_request("DELETE", f"/v2/auth/keys/{key_hash}")
+            finally:
+                await daemon.shutdown()
+                await asyncio.to_thread(zones.stop_all)
+                await channel.close()
+                transport.close()
 
 
 if __name__ == "__main__":

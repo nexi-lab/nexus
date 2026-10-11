@@ -80,11 +80,6 @@ def _assert_gha_cache_export_non_blocking(workflow_name: str, job_id: str, step_
 
 
 # ---------------------------------------------------------------------------
-# cluster-binary-build.yml — deleted (#4259, migrated to nexus-vfs)
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
 # docker-publish.yml
 # ---------------------------------------------------------------------------
 
@@ -97,42 +92,14 @@ def test_docker_publish_gha_cache_export_is_non_blocking() -> None:
     )
 
 
-_VFS_GRPC_GATE = "steps.vfs_grpc.outputs.available == 'true'"
-
-
-def test_docker_edge_smoke_skips_grpc_dependent_steps_without_vfs_grpc() -> None:
-    """Without a working VFS gRPC, the edge smoke job must skip gRPC-only
-    steps instead of running them against a daemon that has no listener.
-
-    Asserts the structural shape:
-      1. A ``Check VFS gRPC availability`` step that exports a step output
-         named ``available``.
-      2. The two downstream steps that exercise gRPC (permissions demo and
-         build perf e2e) gate on that output.
-    """
+def test_release_tag_promotion_requires_the_published_image_smoke_to_pass() -> None:
     workflow = _load_workflow("docker-publish.yml")
-    job = _job(workflow, "e2e-edge")
-
-    probe = _step_by_name(job, "Check VFS gRPC availability")
-    assert probe.get("id") == "vfs_grpc", (
-        f"Probe step must have ``id: vfs_grpc`` for downstream ``if:`` "
-        f"conditions to reference it. Got id={probe.get('id')!r}"
-    )
-    run_body = probe.get("run", "")
-    assert "available=true" in run_body and "available=false" in run_body, (
-        "Probe must emit both ``available=true`` and ``available=false`` "
-        "via $GITHUB_OUTPUT — without both branches the gate is undefined."
-    )
-
-    permissions = _step_by_name(job, "Run permissions demo")
-    build_perf = _step_by_name(job, "Run build perf e2e")
-    for step in (permissions, build_perf):
-        condition = step.get("if", "")
-        assert _VFS_GRPC_GATE in condition, (
-            f"step {step.get('name')!r} must gate on ``{_VFS_GRPC_GATE}``; "
-            f"otherwise it will fail against an edge image without VFS gRPC. "
-            f"Got: if={condition!r}"
-        )
+    promotion = _job(workflow, "promote-tags")
+    assert "e2e-edge" in promotion["needs"]
+    assert "always()" not in promotion.get("if", "")
+    smoke = _job(workflow, "e2e-edge")
+    assert set(smoke["needs"]) == {"build-and-push", "push-cluster-manifest"}
+    assert not smoke.get("continue-on-error", False)
 
 
 # ---------------------------------------------------------------------------

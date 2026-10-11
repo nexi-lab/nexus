@@ -68,6 +68,36 @@ def _paths(items: Any) -> set[str]:
     return {i["path"] if isinstance(i, dict) else i for i in items}
 
 
+@pytest.mark.parametrize("details", [False, True])
+def test_nonrecursive_list_infers_only_directories_with_readable_descendants(details: bool) -> None:
+    cred = _process_cred()
+    svc = _service(cred)
+    fs = cast(_FakeFS, svc._nexus_fs)
+    fs.rows = [
+        {"path": "/docs/read.txt", "entry_type": 0, "size": 3, "zone_id": "root"},
+        {"path": "/docs/visible/nested.txt", "entry_type": 0, "size": 3, "zone_id": "root"},
+        {"path": "/docs/hidden/private.txt", "entry_type": 0, "size": 3, "zone_id": "root"},
+    ]
+    checked: list[str] = []
+
+    def filter_readable(paths: list[str], _context: OperationContext) -> list[str]:
+        checked.extend(paths)
+        return [path for path in paths if "/hidden/" not in path]
+
+    svc._permission_enforcer = cast(
+        Any, SimpleNamespace(filter_list=filter_readable, rebac_manager=None)
+    )
+
+    result = svc.list("/docs", recursive=False, details=details, context=cred)
+
+    assert _paths(result) == {"/docs/read.txt", "/docs/visible"}
+    assert set(checked) == {row["path"] for row in fs.rows}
+    if details:
+        by_path = {item["path"]: item for item in result}
+        assert by_path["/docs/visible"]["is_directory"] is True
+        assert by_path["/docs/read.txt"]["is_directory"] is False
+
+
 def test_default_context_passed_explicitly_sees_everything() -> None:
     cred = _process_cred()
     svc = _service(cred)

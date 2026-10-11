@@ -14,9 +14,14 @@ when the invariant still held.
 
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -100,6 +105,31 @@ def test_release_tag_promotion_requires_the_published_image_smoke_to_pass() -> N
     smoke = _job(workflow, "e2e-edge")
     assert set(smoke["needs"]) == {"build-and-push", "push-cluster-manifest"}
     assert not smoke.get("continue-on-error", False)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="unit-test workflow uses Unix bash")
+@pytest.mark.parametrize("status", [0, 1, 124, 137, 143])
+def test_unit_workflow_preserves_process_failure_after_a_passing_summary(tmp_path, status) -> None:
+    step = _step_by_name(_job(_load_workflow("test.yml"), "test"), "Run unit tests")
+    bash = shutil.which("bash")
+    assert bash is not None
+    uv = tmp_path / "uv"
+    uv.write_text(
+        f"#!{sys.executable}\n"
+        "print('==================== 6000 passed ====================')\n"
+        f"raise SystemExit({status})\n",
+        encoding="utf-8",
+    )
+    uv.chmod(0o755)
+    result = subprocess.run(
+        [bash, "-e", "-o", "pipefail", "-c", step["run"]],
+        cwd=tmp_path,
+        env={**os.environ, "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}"},
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == status, result.stdout + result.stderr
 
 
 # ---------------------------------------------------------------------------

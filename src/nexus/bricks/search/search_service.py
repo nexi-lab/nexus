@@ -34,9 +34,6 @@ def _entry_is_dir(entry: dict[str, Any]) -> bool:
     return entry.get("entry_type") in _DIR_ENTRY_TYPES
 
 
-# Zone-aware path prefixes for cross-zone filtering (Issue #899)
-ZONE_AWARE_PREFIXES: tuple[str, ...] = ("/zones/", "/shared/", "/archives/")
-
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
@@ -128,16 +125,6 @@ class SearchService:
         if self._nexus_fs:
             return self._nexus_fs._get_context_identity(context)
         return None, None, False
-
-    def _has_descendant_access(self, path: str, permission: Permission, context: Any) -> bool:
-        """Check if user has access to any descendant of path."""
-        if self._nexus_fs:
-            return self._nexus_fs._descendant_checker.has_access(path, permission, context)
-        return False
-
-    def _get_backend_directory_entries(self, path: str) -> set[str]:  # noqa: ARG002
-        """Backend directory entries — removed, metastore is authoritative."""
-        return set()
 
     def _record_read_if_tracking(
         self,
@@ -261,7 +248,6 @@ class SearchService:
         import time as _time
 
         _list_start = _time.time()
-        _preapproved_dirs: set[str] = set()
         _accessible_int_ids: set[int] | None = None
 
         if path and path != "/":
@@ -278,9 +264,6 @@ class SearchService:
         # strip made every zone-scoped list/glob/grep scan the ROOT namespace
         # and return nothing for tenants whenever permissions were enforced.
 
-        # OPTIMIZATION: For non-recursive, try sparse directory index + Tiger bitmap
-        _use_fast_path = False
-        _revision_before: int | None = None
         _rebac_manager = (
             getattr(self._permission_enforcer, "rebac_manager", None)
             if self._permission_enforcer
@@ -291,31 +274,15 @@ class SearchService:
             f"[LIST-DEBUG] START path={path}, recursive={recursive}, zone={list_zone_id}, "
             f"details={details}, has_context={context is not None}"
         )
-        # ``list_directory_entries`` was a Raft-side sparse-index helper that
-        # the kernel doesn't expose; the fast path is permanently disabled.
-        # The block below is kept (gated by a constant ``False``) so a
-        # future kernel-side equivalent can re-enable it without
-        # restructuring the caller.
-        _LIST_FAST_PATH_AVAILABLE = False
-        if _LIST_FAST_PATH_AVAILABLE and not recursive and not details and context:
-            all_files, _preapproved_dirs, _use_fast_path, _revision_before = self._list_fast_path(
-                path, list_zone_id, context, _rebac_manager
-            )
-
-        if not _use_fast_path:
-            all_files, _accessible_int_ids = self._list_slow_path(
-                list_prefix,
-                list_zone_id,
-                subject_type,
-                subject_id,
-                _revision_before,
-                _rebac_manager,
-                # Issue #4739: strong consistency must not pre-filter by the
-                # Tiger bitmap; fall through to filter_list (strong chain).
-                use_tiger_pushdown=not is_strong_consistency(getattr(context, "consistency", None)),
-            )
-            sample_paths = [m["path"] for m in all_files[:5]]
-            logger.info(f"[LIST-DEBUG] FALLBACK all_files sample: {sample_paths}")
+        all_files, _accessible_int_ids = self._list_candidates(
+            list_prefix,
+            list_zone_id,
+            subject_type,
+            subject_id,
+            _rebac_manager,
+            # Strong consistency sends every candidate through filter_list.
+            use_tiger_pushdown=not is_strong_consistency(getattr(context, "consistency", None)),
+        )
 
         # Issue #3779 follow-up / #4740: the metastore is shared across zones
         # (each row carries a zone_id), so the zone predicate is applied to
@@ -390,24 +357,13 @@ class SearchService:
             )
 
         # Issue #900: Single Permission Pass
-        allowed_set, backend_dirs = self._list_permission_filter(
-            all_files,
-            results,
-            path,
-            recursive,
-            context,
-            _accessible_int_ids,
-            _preapproved_dirs,
-        )
+        allowed_set = self._list_permission_filter(all_files, context, _accessible_int_ids)
         if self._enforce_permissions:
             results_before = len(results)
             results = [meta for meta in results if meta["path"] in allowed_set]
             logger.info(
                 f"[LIST-DEBUG] after perm filter: {len(results)} results (was {results_before})"
             )
-        else:
-            if not recursive:
-                backend_dirs = self._get_backend_directory_entries(path)
 
         # Sort by path
         _sort_start = _time.time()
@@ -421,9 +377,7 @@ class SearchService:
             path,
             recursive,
             allowed_set,
-            backend_dirs,
             context,
-            zone_id=list_zone_id,
         )
 
         logger.info(f"[LIST-DEBUG] FINAL directories: {sorted(directories)[:10]}")
@@ -706,109 +660,8 @@ class SearchService:
             )
         return results_with_details
 
-    def _list_fast_path(
-        self,
-        path: str,
-        list_zone_id: str,
-        context: Any,
-        _rebac_manager: Any,
-    ) -> tuple[builtins.list[Any], set[str], bool, int | None]:
-        """Non-recursive list using sparse directory index + Tiger bitmap."""
-        _preapproved_dirs: set[str] = set()
-        _revision_before: int | None = None
-
-        if _rebac_manager and hasattr(_rebac_manager, "_get_zone_revision_for_grant"):
-            _revision_before = _rebac_manager._get_zone_revision_for_grant(list_zone_id)
-
-        import time as _time
-
-        _idx_start = _time.time()
-        # ``list_directory_entries`` was a Raft-side sparse-index helper
-        # that the kernel metastore doesn't expose. Returning ``None``
-        # keeps the documented "miss → fall back" branch live; ``path``
-        # and ``list_zone_id`` become unused below the early return.
-        dir_entries = None
-        _idx_elapsed = (_time.time() - _idx_start) * 1000
-
-        if dir_entries is None:
-            logger.info(
-                f"[LIST-TIMING] list_directory_entries(): {_idx_elapsed:.1f}ms (sparse index MISS)"
-            )
-            return [], set(), False, _revision_before
-
-        logger.info(
-            f"[LIST-TIMING] list_directory_entries(): {_idx_elapsed:.1f}ms, "
-            f"{len(dir_entries)} entries (sparse index HIT)"
-        )
-
-        # Issue #3706: Batch permission check — collect all directory prefixes
-        # and check them in a single call instead of N serial calls.
-        _perm_start = _time.time()
-        _resolved_entries: builtins.list[tuple[str, dict[str, Any]]] = []
-        _dir_prefixes: builtins.list[str] = []
-        for entry in dir_entries:
-            entry_path = f"{path.rstrip('/')}/{entry['name']}"
-            _resolved_entries.append((entry_path, entry))
-            if entry["type"] == "directory":
-                _dir_prefixes.append(entry_path)
-
-        _accessible_dirs: dict[str, bool] = {}
-        if _dir_prefixes and self._permission_enforcer:
-            _accessible_dirs = self._permission_enforcer.has_accessible_descendants_batch(
-                _dir_prefixes, context
-            )
-
-        all_files = []
-        for entry_path, entry in _resolved_entries:
-            if entry["type"] == "directory":
-                if _accessible_dirs.get(entry_path, True):
-                    _preapproved_dirs.add(entry_path)
-                    all_files.append(
-                        {
-                            "path": entry_path,
-                            "size": 0,
-                            "created_at": entry.get("created_at"),
-                            "content_id": None,
-                            "mime_type": "inode/directory",
-                            "entry_type": 1,
-                        }
-                    )
-            else:
-                all_files.append(
-                    {
-                        "path": entry_path,
-                        "size": 0,
-                        "created_at": entry.get("created_at"),
-                        "content_id": None,
-                        "mime_type": None,
-                        "entry_type": 0,
-                    }
-                )
-        logger.info(
-            f"[LIST-TIMING] has_accessible_descendants_batch(): "
-            f"{(_time.time() - _perm_start) * 1000:.1f}ms for {len(dir_entries)} entries "
-            f"({len(_dir_prefixes)} dirs checked in 1 batch call)"
-        )
-
-        # Check revision consistency
-        _use_fast_path = True
-        if (
-            _revision_before is not None
-            and _rebac_manager
-            and hasattr(_rebac_manager, "_get_zone_revision_for_grant")
-        ):
-            _revision_after = _rebac_manager._get_zone_revision_for_grant(list_zone_id)
-            if _revision_after != _revision_before:
-                logger.warning(
-                    f"[LIST-TIMING] Revision changed ({_revision_before} -> {_revision_after}), "
-                    f"falling back to full list"
-                )
-                _use_fast_path = False
-
-        return all_files, _preapproved_dirs, _use_fast_path, _revision_before
-
     def _sys_readdir_entries(self, list_prefix: str) -> builtins.list[dict[str, Any]]:
-        """Recursive sys_readdir → list of detail dicts for the slow-path scan.
+        """Recursive sys_readdir → list of detail dicts for the listing scan.
 
         The detail dict (sys_readdir details=True) is the §2.5 syscall's
         native output shape and the single shape the list pipeline works
@@ -911,13 +764,12 @@ class SearchService:
                             pending.append((path, depth + 1))
         return out
 
-    def _list_slow_path(
+    def _list_candidates(
         self,
         list_prefix: str,
         list_zone_id: str,
         subject_type: str | None,
         subject_id: str | None,
-        _revision_before: int | None,
         _rebac_manager: Any,
         use_tiger_pushdown: bool = True,
     ) -> tuple[builtins.list[Any], set[int] | None]:
@@ -930,6 +782,7 @@ class SearchService:
         import time as _time
 
         _accessible_int_ids: set[int] | None = None
+        _revision_before: int | None = None
         _pushdown_disabled = _os.getenv("NEXUS_DISABLE_PREDICATE_PUSHDOWN", "").lower() in (
             "1",
             "true",
@@ -1049,19 +902,14 @@ class SearchService:
     def _list_permission_filter(
         self,
         all_files: builtins.list[Any],
-        results: builtins.list[Any],  # noqa: ARG002 - Reserved for future predicate pushdown
-        path: str,
-        recursive: bool,
         context: Any,
         _accessible_int_ids: set[int] | None,
-        _preapproved_dirs: set[str],
-    ) -> tuple[set[str], set[str]]:
+    ) -> set[str]:
         """Single permission pass for all candidate paths (Issue #900)."""
         allowed_set: set[str] = set()
-        backend_dirs: set[str] = set()
 
         if not self._enforce_permissions:
-            return allowed_set, backend_dirs
+            return allowed_set
 
         import time
 
@@ -1074,10 +922,6 @@ class SearchService:
 
         candidate_paths: set[str] = set()
         candidate_paths.update(meta["path"] for meta in all_files)
-
-        if not recursive:
-            backend_dirs = self._get_backend_directory_entries(path)
-            candidate_paths.update(backend_dirs)
 
         # Single permission filter call
         filter_start = time.time()
@@ -1097,16 +941,13 @@ class SearchService:
             allowed_set = set(allowed_list)
         filter_elapsed = time.time() - filter_start
 
-        if _preapproved_dirs:
-            allowed_set.update(_preapproved_dirs)
-
         logger.debug(
             f"[PERF-LIST] Permission filter: {filter_elapsed:.3f}s, "
             f"allowed {len(allowed_set)}/{len(candidate_paths)} paths"
         )
         logger.debug(f"[PERF-LIST] Total: {time.time() - perm_start:.3f}s")
 
-        return allowed_set, backend_dirs
+        return allowed_set
 
     def _list_infer_directories(
         self,
@@ -1115,11 +956,9 @@ class SearchService:
         path: str,
         recursive: bool,
         allowed_set: set[str],
-        backend_dirs: set[str],
         context: Any,
-        zone_id: str = ROOT_ZONE_ID,
     ) -> set[str]:
-        """Infer directory entries from file paths and backend."""
+        """Infer directory entries from authorized file paths."""
         import time as _time
 
         _dir_start = _time.time()
@@ -1140,13 +979,6 @@ class SearchService:
                             dir_path = path + dir_name if path != "/" else "/" + dir_name
                             directories.add(dir_path)
 
-                self._list_check_backend_dirs(
-                    backend_dirs,
-                    allowed_set,
-                    directories,
-                    context,
-                    zone_id=zone_id,
-                )
             else:
                 for meta in all_files:
                     _mp = str(meta["path"])
@@ -1155,101 +987,12 @@ class SearchService:
                         dir_name = rel_path.split("/")[0]
                         dir_path = path + dir_name if path != "/" else "/" + dir_name
                         directories.add(dir_path)
-                directories.update(backend_dirs)
 
         logger.info(
             f"[LIST-TIMING] dir_processing: {(_time.time() - _dir_start) * 1000:.1f}ms, "
             f"{len(directories)} dirs"
         )
         return directories
-
-    def _list_check_backend_dirs(
-        self,
-        backend_dirs: set[str],
-        allowed_set: set[str],
-        directories: set[str],
-        context: Any,
-        zone_id: str = ROOT_ZONE_ID,
-    ) -> None:
-        """Check backend directories for access using bulk TRAVERSE check."""
-        import time as _time
-
-        # Precompute ancestor directories of allowed paths
-        allowed_ancestors: set[str] = set()
-        for p in allowed_set:
-            parts = p.split("/")
-            for i in range(2, len(parts)):
-                ancestor = "/".join(parts[:i])
-                if ancestor:
-                    allowed_ancestors.add(ancestor)
-
-        _bd_start = _time.time()
-        _traverse_checks = 0
-        _prefix_checks = 0
-        dirs_needing_traverse: list[str] = []
-
-        for dir_path in backend_dirs:
-            if dir_path in allowed_set:
-                directories.add(dir_path)
-                continue
-            if dir_path in allowed_ancestors:
-                _prefix_checks += 1
-                directories.add(dir_path)
-                continue
-            dirs_needing_traverse.append(dir_path)
-
-        # Two-phase TRAVERSE optimization (Fix #1147)
-        user_zone = zone_id
-        _skipped_cross_zone = 0
-        _ZONE_PREFIXES = ZONE_AWARE_PREFIXES
-        dirs_to_check: list[str] = []
-
-        for dir_path in dirs_needing_traverse:
-            if user_zone:
-                skip = False
-                for tp in _ZONE_PREFIXES:
-                    if dir_path.startswith(tp):
-                        rest = dir_path[len(tp) :]
-                        path_zone = rest.split("/")[0] if rest else None
-                        if path_zone and path_zone != user_zone:
-                            _skipped_cross_zone += 1
-                            skip = True
-                        break
-                if skip:
-                    continue
-            dirs_to_check.append(dir_path)
-
-        # Bulk TRAVERSE check via rebac_check_bulk
-        _traverse_checks = len(dirs_to_check)
-        _rebac_manager = (
-            getattr(self._permission_enforcer, "rebac_manager", None)
-            if self._permission_enforcer
-            else None
-        )
-        if dirs_to_check and _rebac_manager and hasattr(_rebac_manager, "rebac_check_bulk"):
-            subject = context.get_subject()
-            bulk_checks = []
-            for dp in dirs_to_check:
-                for perm in ("traverse", "read", "write"):
-                    bulk_checks.append((subject, perm, ("file", dp)))
-            bulk_results = _rebac_manager.rebac_check_bulk(bulk_checks, zone_id)
-            for dp in dirs_to_check:
-                if (
-                    bulk_results.get((subject, "traverse", ("file", dp)), False)
-                    or bulk_results.get((subject, "read", ("file", dp)), False)
-                    or bulk_results.get((subject, "write", ("file", dp)), False)
-                ):
-                    directories.add(dp)
-        else:
-            for dir_path in dirs_to_check:
-                if self._permission_enforcer.check(dir_path, Permission.TRAVERSE, context):
-                    directories.add(dir_path)
-
-        logger.info(
-            f"[LIST-TIMING] backend_dir_checks: {(_time.time() - _bd_start) * 1000:.1f}ms, "
-            f"traverse={_traverse_checks}, prefix={_prefix_checks}, "
-            f"skipped_cross_zone={_skipped_cross_zone}"
-        )
 
     def _list_build_details(
         self,

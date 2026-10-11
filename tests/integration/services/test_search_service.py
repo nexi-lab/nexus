@@ -170,11 +170,11 @@ class TestSearchServiceInit:
         svc = SearchService(metadata_store=mock_metadata_store, record_store=mock_record_store)
         assert svc._record_store is mock_record_store
 
-    def test_list_slow_path_passes_zone_id_to_tiger_pushdown(
+    def test_list_candidates_passes_zone_id_to_tiger_pushdown(
         self, mock_metadata_store, mock_permission_enforcer, mock_dlc, mock_gateway
     ):
         """Predicate pushdown must request the bitmap for the current list zone."""
-        # _list_slow_path scans via the §2.5 syscall surface — sys_readdir
+        # _list_candidates scans via the §2.5 syscall surface — sys_readdir
         # detail dicts, not metadata_store.list FileMetadata objects.
         entry = {"path": "/visible.txt", "entry_type": 0, "size": 0}
         mock_gateway.sys_readdir.return_value = [entry]
@@ -193,12 +193,11 @@ class TestSearchServiceInit:
             enforce_permissions=True,
         )
 
-        all_files, accessible_ids = svc._list_slow_path(
+        all_files, accessible_ids = svc._list_candidates(
             list_prefix="",
             list_zone_id="test_zone",
             subject_type="user",
             subject_id="test_user",
-            _revision_before=None,
             _rebac_manager=rebac_manager,
         )
 

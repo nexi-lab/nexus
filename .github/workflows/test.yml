@@ -138,8 +138,8 @@ jobs:
         run: |
           if [ ! -f unit_test_duration_sec.txt ]; then exit 0; fi
           dur=$(cat unit_test_duration_sec.txt)
-          echo "### Unit tests" >> $GITHUB_STEP_SUMMARY
-          echo "Duration: **${dur}s** (target &lt;180s; max 1200s)" >> $GITHUB_STEP_SUMMARY
+          echo "### Unit tests" >> "$GITHUB_STEP_SUMMARY"
+          echo "Duration: **${dur}s** (target &lt;180s; max 1200s)" >> "$GITHUB_STEP_SUMMARY"
           if [ "$dur" -gt 1200 ]; then
             echo "::error::Unit tests took ${dur}s (max 1200s). Keep the suite lean; see tests/unit/README.md"
             exit 1
@@ -150,6 +150,11 @@ jobs:
         if: needs.detect-changes.outputs.code_changed == 'true'
         run: |
           uv run --no-sync pytest tests/integration/search/test_discovery_client.py -q -o "addopts="
+
+      - name: Verify listing facade contracts
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        run: |
+          uv run --no-sync pytest tests/integration/services/test_search_service.py -q -o "addopts="
 
       - name: Verify benchmark collection
         if: needs.detect-changes.outputs.code_changed == 'true' && matrix.os == 'ubuntu-latest'
@@ -215,12 +220,9 @@ jobs:
             echo "::error::could not extract nexus-vfs rev pin from Cargo.toml"
             exit 1
           fi
-          # --force: the shared rust-cache can restore a prior
-          # `nexusd-cluster` binary owned by a different package (e.g.
-          # the retired nexus-local `nexusd` assembly); cargo refuses to
-          # overwrite across owners without it.
+          # --force replaces cached binaries with the pinned package build.
           cargo install --locked --force --git https://github.com/nexi-lab/nexus-vfs --rev "$REV" --bin nexusd-cluster nexus-cluster
-          sudo ln -sf $(which nexusd-cluster) /usr/local/bin/nexus-cluster
+          sudo ln -sf "$(command -v nexusd-cluster)" /usr/local/bin/nexus-cluster
 
       # Pre-build the nexus-server image once with buildx + GHA layer cache.
       # The ``running_nexus`` fixture in tests/e2e/self_contained/conftest.py
@@ -535,14 +537,14 @@ jobs:
         env:
           VIRTUAL_ENV: /tmp/nexus-fs-test
         run: |
-          uv venv --python 3.14 $VIRTUAL_ENV
+          uv venv --python 3.14 "$VIRTUAL_ENV"
           start_time=$(date +%s%N)
-          uv pip install --python $VIRTUAL_ENV/bin/python dist/*.whl
+          uv pip install --python "$VIRTUAL_ENV/bin/python" dist/*.whl
           end_time=$(date +%s%N)
           install_ms=$(( (end_time - start_time) / 1000000 ))
           echo "Install time: ${install_ms}ms"
-          echo "### nexus-fs install time" >> $GITHUB_STEP_SUMMARY
-          echo "**${install_ms}ms**" >> $GITHUB_STEP_SUMMARY
+          echo "### nexus-fs install time" >> "$GITHUB_STEP_SUMMARY"
+          echo "**${install_ms}ms**" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Smoke test — import
         run: |
@@ -607,14 +609,14 @@ jobs:
           print(match.group(1) if match else '0')
           ")
             ms=$((cumulative_us / 1000))
-            measurements+=($ms)
+            measurements+=("$ms")
             echo "  Run ${i}: ${ms}ms"
           done
-          IFS=$'\n' sorted=($(sort -n <<<"${measurements[*]}")); unset IFS
+          mapfile -t sorted < <(printf '%s\n' "${measurements[@]}" | sort -n)
           actual_ms=${sorted[0]}
           echo "Min import time: ${actual_ms}ms (budget: 240ms)"
-          echo "### nexus-fs import time" >> $GITHUB_STEP_SUMMARY
-          echo "**${actual_ms}ms** min of [${measurements[0]}, ${measurements[1]}, ${measurements[2]}, ${measurements[3]}, ${measurements[4]}]ms (budget: 240ms)" >> $GITHUB_STEP_SUMMARY
+          echo "### nexus-fs import time" >> "$GITHUB_STEP_SUMMARY"
+          echo "**${actual_ms}ms** min of [${measurements[0]}, ${measurements[1]}, ${measurements[2]}, ${measurements[3]}, ${measurements[4]}]ms (budget: 240ms)" >> "$GITHUB_STEP_SUMMARY"
           if [ "$actual_ms" -gt 240 ]; then
             echo "::error::Min import time ${actual_ms}ms exceeds 240ms budget"
             exit 1

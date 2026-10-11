@@ -217,9 +217,11 @@ export class TmuxSession {
 
   async waitForExit(timeoutMs: number): Promise<number> {
     const deadline = performance.now() + timeoutMs;
+    let lastStatus = "";
     while (performance.now() < deadline) {
-      const proc = Bun.spawn(["tmux", "-S", TMUX_SOCKET, "display-message", "-p", "-t", this.sessionName, "#{pane_dead}|#{pane_dead_status}|#{pane_dead_signal}"], { stdout: "pipe", stderr: "pipe" });
+      const proc = Bun.spawn(["tmux", "-S", TMUX_SOCKET, "display-message", "-p", "-t", this.sessionName, "#{pane_dead}|#{pane_dead_status}|#{pane_dead_signal}|#{pane_pid}|#{pane_current_command}"], { stdout: "pipe", stderr: "pipe" });
       const status = await new Response(proc.stdout).text();
+      lastStatus = status.trim();
       if (await proc.exited !== 0) throw new Error("Could not read terminal exit status");
       const [dead, code, signal] = status.trim().split("|");
       // The pane can close before tmux receives the child's exit status.
@@ -227,7 +229,12 @@ export class TmuxSession {
       if (dead === "1" && signal) throw new Error(`Terminal exited from signal ${signal}`);
       await sleep(50);
     }
-    throw new Error(`Terminal did not exit within ${timeoutMs}ms`);
+    const pane = await this.capturePane();
+    const pid = lastStatus.split("|")[3];
+    const processInfo = pid && /^\d+$/.test(pid) ? Bun.spawn(["ps", "-o", "pid,ppid,stat,comm", "-p", pid], { stdout: "pipe", stderr: "pipe" }) : null;
+    const processes = processInfo ? await new Response(processInfo.stdout).text() : "";
+    if (processInfo) await processInfo.exited;
+    throw new Error(`Terminal did not exit within ${timeoutMs}ms (tmux status: ${JSON.stringify(lastStatus)}).\n${processes}\n${pane}`);
   }
 
   /**

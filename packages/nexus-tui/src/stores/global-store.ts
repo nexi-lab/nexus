@@ -143,45 +143,12 @@ export const useGlobalStore = create<GlobalState>((set, get) => ({
       // pool (some servers hang on /auth/me indefinitely, starving all other requests).
       const fast = { timeout: 8_000 };
 
-      let [health, features] = await Promise.all([
+      const [health, features] = await Promise.all([
         client.get<{ status?: string; uptime_seconds?: number }>(
           "/healthz/ready", fast,
         ).catch(() => null),
         client.get<FeaturesResponse>("/api/v2/features", fast).catch(() => null),
       ]);
-
-      // Auto-discovery: if health check fails, scan common ports to find the server.
-      // Only probe when running interactively (not in tests) — probing creates real
-      // HTTP connections that cause test timeouts.
-      if (!health && typeof process !== "undefined" && process.stdout?.isTTY) {
-        const configuredUrl = get().config.baseUrl ?? "";
-        const hostname = configuredUrl.replace(/:\d+$/, "").replace(/^https?:\/\//, "");
-        const protocol = configuredUrl.startsWith("https") ? "https" : "http";
-        const PROBE_PORTS = [2026, 2027, 2042, 2043, 8080, 2122];
-
-        for (const port of PROBE_PORTS) {
-          if (configuredUrl.includes(`:${port}`)) continue;
-          try {
-            const probeUrl = `${protocol}://${hostname || "localhost"}:${port}`;
-            const probeClient = new FetchClient({ ...get().config, baseUrl: probeUrl, timeout: 3000, maxRetries: 0 });
-            const probeHealth = await probeClient.get<{ status?: string; uptime_seconds?: number }>(
-              "/healthz/ready",
-            ).catch(() => null);
-            if (probeHealth) {
-              const newConfig = resolveConfig({ transformKeys: false, baseUrl: probeUrl });
-              const newClient = new FetchClient(newConfig);
-              [health, features] = await Promise.all([
-                Promise.resolve(probeHealth),
-                newClient.get<FeaturesResponse>("/api/v2/features").catch(() => null),
-              ]);
-              set({ config: newConfig, client: newClient });
-              break;
-            }
-          } catch {
-            // probe failed, try next port
-          }
-        }
-      }
 
       if (!health) {
         throw new Error("Server health check failed");

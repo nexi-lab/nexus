@@ -154,6 +154,7 @@ def arm_zone_services(
         if fs is None:  # pragma: no cover - guarded by composite arming
             raise RuntimeError("zone filesystem unavailable")
         from nexus.contracts.types import OperationContext
+        from nexus.lib.request_credentials import request_api_key
         from nexus.lib.zone_scoping import scope_single_path
 
         ctx = OperationContext(
@@ -166,7 +167,16 @@ def arm_zone_services(
             groups=[],
         )
         scoped_path = scope_single_path(path, f"/zone/{zone_id}", zone_id)
-        fs.write(path=scoped_path, buf=buf, context=ctx)
+        # These are node-owned records written under a service principal, so
+        # the write must carry the node identity, not the ambient request
+        # bearer: the request-credentials middleware binds the HTTP caller's
+        # key for user-file RPCs, and the kernel's API-key plane only knows
+        # the node key — a user bearer here reads as invalid credentials.
+        request_token = request_api_key.set(None)
+        try:
+            fs.write(path=scoped_path, buf=buf, context=ctx)
+        finally:
+            request_api_key.reset(request_token)
         return len(buf)
 
     from nexus.services.zones.session_runtime import SessionRuntimeService

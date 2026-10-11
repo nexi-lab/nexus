@@ -40,6 +40,16 @@ const TMUX_SESSION_PREFIX = "nexus-tui-test";
 const TMUX_SOCKET = `/tmp/nexus-tui-test-${process.pid}.sock`;
 
 let sessionCounter = 0;
+let dependencyCheck: Promise<void> | undefined;
+
+async function checkTmuxVersion(): Promise<void> {
+  const proc = Bun.spawn(["tmux", "-V"], { stdout: "pipe", stderr: "pipe" });
+  const version = (await new Response(proc.stdout).text()).trim();
+  const parsed = /^tmux (\d+)\.(\d+)/.exec(version);
+  if (await proc.exited !== 0 || !parsed || Number(parsed[1]) < 3 || (Number(parsed[1]) === 3 && Number(parsed[2]) < 6)) {
+    throw new Error(`Terminal E2E requires tmux >= 3.6 for reliable child exit status; found ${version || "unknown"}`);
+  }
+}
 
 export interface TmuxSessionOptions {
   /** Terminal width in columns. Default: 120 */
@@ -66,6 +76,7 @@ export class TmuxSession {
    * Create a new tmux session and start the TUI (or custom command).
    */
   static async create(options: TmuxSessionOptions = {}): Promise<TmuxSession> {
+    await (dependencyCheck ??= checkTmuxVersion());
     const width = options.width ?? DEFAULT_WIDTH;
     const height = options.height ?? DEFAULT_HEIGHT;
     const sessionName = `${TMUX_SESSION_PREFIX}-${++sessionCounter}-${Date.now()}`;

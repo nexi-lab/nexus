@@ -38,6 +38,7 @@ on:
       - 'src/nexus/cli/commands/federation.py'
       - 'src/nexus/cli/commands/zone.py'
       - 'tests/e2e/docker/test_federation*.py'
+      - 'tests/e2e/docker/runbook_helpers.py'
       - '.dockerignore'
       - '.github/workflows/federation-e2e.yml'
   pull_request:

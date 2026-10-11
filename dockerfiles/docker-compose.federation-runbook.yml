@@ -1,27 +1,15 @@
-# Federation Runbook E2E — 3-voter sharedzone HA cluster
+# Federation Runbook E2E
 # =========================================================================
-# Single compose for all five test classes in
-# tests/e2e/docker/test_federation_runbook.py.
-#
-# Topology mirrors the production runbook's recommended HA shape:
-#
-#   founder  (voter, owns local root + creates sharedzone, mounts /shared)
-#   joiner   (voter, owns its own local root, joins sharedzone via CLI)
-#   witness  (voter, vote-only — joins sharedzone as voter for quorum)
-#
-# Each node owns its own local root zone. `nexusd-cluster join` (run by
-# the test container against the joiner and witness) writes the local
-# DT_MOUNT into each node's local root, pointing at the sharedzone
-# raft group. See docs/architecture/federation-cross-machine-runbook.html
-# for the operator-level write-up of the same flow.
+# Founder and joiner are voters in sharedzone. Each owns a local root;
+# the witness joins only the founder's root. Offline `nexusd-cluster join`
+# commits the /shared mount into the joiner's private root.
 #
 # Lifecycle contract — the fixture (not Docker) owns daemon lifecycle.
 # No `restart: unless-stopped`: runbook §3b requires the daemon to be
 # *down* while the offline `nexusd-cluster join` runs (redb exclusive
 # lock).  An auto-restart policy violates that contract and races the
-# join binary against a re-spawned daemon.  TestWitnessQuorumHA's
-# `docker stop founder` / `docker start founder` semantics also need
-# Docker to honor a stop and not bounce the container.
+# join binary against a re-spawned daemon. The no-quorum test also
+# needs Docker to honor stops without restarting the containers.
 #
 # Usage:
 #   docker compose -f dockerfiles/docker-compose.federation-runbook.yml up -d founder joiner witness
@@ -127,9 +115,9 @@ services:
       NEXUS_BIND_ADDR: 0.0.0.0:2126
       NEXUS_DATA_DIR: /home/nexus/data
       NEXUS_NO_TLS: "true"
-      # Witness self-detects from NEXUS_PEERS (its own boot path keeps
-      # the legacy contract — see bin/witness.rs in nexus-vfs).
-      NEXUS_PEERS: founder:2126,joiner:2126,witness:2126
+      # The witness joins the founder's root. The joiner's root is
+      # private so its offline join can commit the local DT_MOUNT.
+      NEXUS_PEERS: founder:2126,witness:2126
       RUST_LOG: info,nexus_raft=debug
     volumes:
       - runbook_witness_data:/home/nexus/data

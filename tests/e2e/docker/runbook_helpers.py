@@ -1,23 +1,4 @@
-"""Shared helpers for the runbook-binding federation E2E suite.
-
-The functions in this module fall into two groups:
-
-1. **gRPC + raft catch-up gates lifted from the legacy suite.**
-   The body of `grpc_call`, `wait_healthy`, `wait_replicated`,
-   `wait_leader_elected`, `wait_nodes_caught_up`, `wait_zone_ready` is
-   copy-faithful with the legacy `test_federation_e2e.py` (lines 92-451)
-   so the convergence semantics are preserved.  The renames drop the
-   leading underscore and *deliberately* omit the legacy
-   `_grpc_call_or_skip` / `_docker_client_or_skip` /
-   `_cli_exec_or_skip` shapes — the runbook suite treats "method not
-   available" / "docker socket missing" / "subcommand not found" as
-   hard test failures, not silent skips.  See the plan for why.
-
-2. **New runbook-specific helpers**
-   (`run_nexusd_cluster_join`, `restart_daemon`, `assert_log_contains`,
-   `assert_log_does_not_contain`).  These wrap `docker exec` /
-   `docker restart` so test bodies stay focused on assertions.
-"""
+"""Typed RPC, readiness and cluster lifecycle helpers for federation E2E."""
 
 from __future__ import annotations
 
@@ -671,56 +652,68 @@ def wait_leader_elected(
         time.sleep(0.2)
 
 
+def _readiness_stat(
+    target: str,
+    path: str,
+    *,
+    api_key: str,
+    zone_id: str,
+    timeout: float,
+) -> dict:
+    """Probe application state while a restarted transport recovers."""
+    try:
+        return vfs_stat(target, path, api_key=api_key, zone_id=zone_id, timeout=timeout)
+    except grpc.RpcError as error:
+        if error.code() not in (
+            grpc.StatusCode.UNAVAILABLE,
+            grpc.StatusCode.DEADLINE_EXCEEDED,
+        ):
+            raise
+        return {"error": f"{error.code().name}: {error.details()}"}
+
+
 def wait_nodes_caught_up(
     nodes: list[str],
     zone_ids: str | list[str],
     *,
     api_key: str = ADMIN_API_KEY,
     timeout: float = 60,
-    probe_path: str | None = None,
+    probe_path: str,
 ) -> None:
-    """Wait until every node in ``nodes`` has caught up on every zone in
-    ``zone_ids``.
+    """Wait until the written path is visible on every node and zone.
 
-    Signal: a typed ``Stat`` for ``probe_path`` returns ``found=True``
-    on every node.  When ``probe_path`` is supplied, this directly
-    pins "the leader's last write is visible on every node's local
-    state machine", which is what raft catch-up means at the
-    application layer.
-
-    Why typed Stat vs the Python-server ``federation_cluster_info``
-    snapshot: the Rust ``nexusd-cluster`` binary's ``Call`` dispatcher
-    exposes typed agent/mount-points surfaces only — federation
-    cluster-info was a Python-server method and was never ported.
-    Stat is the production read path; if it returns ``found=True``
-    everywhere, the apply pointer is observably caught up — strictly
-    stronger than the snapshot-equality check the legacy helper used.
-
-    Backwards-compat: if ``probe_path`` is None, fall back to a brief
-    settle window — the original gate was protecting against
-    follower-stale reads which the runbook §3b 1-voter sharedzone with
-    a single learner does not re-elect through, and the *next* op
-    (``vfs_read`` / ``vfs_stat``) carries its own typed retry.
+    Typed Stat proves visibility through each node's public VFS.
+    Transient transport errors use the remaining readiness budget;
+    permanent RPC failures propagate immediately.
     """
     if isinstance(zone_ids, str):
         zone_ids = [zone_ids]
-    if probe_path is None:
-        time.sleep(0.5)
-        return
-    deadline = time.time() + timeout
+    if not nodes or not zone_ids or not probe_path:
+        raise ValueError("catch-up requires nodes, zones and a written probe path")
+    deadline = time.monotonic() + timeout
     last_results: dict[str, dict] = {}
-    while time.time() < deadline:
+    while time.monotonic() < deadline:
         last_results = {}
         all_ready = True
         for n in nodes:
             for zone_id in zone_ids:
-                s = vfs_stat(n, probe_path, api_key=api_key, zone_id=zone_id, timeout=5)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    all_ready = False
+                    break
+                s = _readiness_stat(
+                    n,
+                    probe_path,
+                    api_key=api_key,
+                    zone_id=zone_id,
+                    timeout=min(5, remaining),
+                )
                 last_results[f"{n}|{zone_id}"] = s
                 if "error" in s or not s.get("result", {}).get("found"):
                     all_ready = False
         if all_ready:
             return
-        time.sleep(0.5)
+        time.sleep(min(0.5, max(0, deadline - time.monotonic())))
     pytest.fail(
         f"Raft catch-up stalled: probe_path={probe_path} zones={zone_ids} "
         f"results={last_results} within {timeout}s.  Check transport reconnect / peer health."
@@ -765,24 +758,13 @@ def wait_zone_ready(
     successes = 0
     last_stat: dict = {}
     while time.monotonic() < deadline:
-        try:
-            last_stat = vfs_stat(
-                target,
-                mount_path,
-                api_key=api_key,
-                zone_id=zone_id,
-                timeout=min(5, deadline - time.monotonic()),
-            )
-        except grpc.RpcError as error:
-            # A restarted node may accept TCP before it can serve a Stat.
-            # Retry transport warm-up within the existing readiness budget;
-            # permanent refusals (including auth errors) still fail immediately.
-            if error.code() not in (
-                grpc.StatusCode.UNAVAILABLE,
-                grpc.StatusCode.DEADLINE_EXCEEDED,
-            ):
-                raise
-            last_stat = {"error": f"{error.code().name}: {error.details()}"}
+        last_stat = _readiness_stat(
+            target,
+            mount_path,
+            api_key=api_key,
+            zone_id=zone_id,
+            timeout=min(5, deadline - time.monotonic()),
+        )
         if "error" not in last_stat:
             successes += 1
             if successes >= stable_window:

@@ -1,18 +1,9 @@
 name: Federation E2E
 
-# Runs `tests/e2e/docker/test_federation_runbook.py` against the
-# 3-voter HA cluster in
-# `dockerfiles/docker-compose.federation-runbook.yml`.  The suite
-# binds 1-to-1 to docs/architecture/federation-cross-machine-runbook.html
-# and locks the cross-machine L1 milestone (Win↔Mac sharedzone byte-
-# exact read, landed 2026-06-06) into CI so the six-months bug class
-# the runbook describes cannot regress silently.
-#
-# Why this is a separate workflow (vs docker-integration.yml):
-#   docker-integration.yml is disabled per #1720 and exercises a much
-#   broader matrix (mounts, MCP, skills, postgres, …). Re-enabling all
-#   of it is its own scope. This workflow targets the federation
-#   surface only — small, fast, deterministic.
+# Runs the native federation runbook suite against two sharedzone
+# voters and a witness in the founder's root. The suite verifies
+# offline join, cross-node byte-exact reads, restart replay and SC
+# writes refusing to commit without quorum.
 
 on:
   workflow_dispatch:
@@ -52,7 +43,7 @@ jobs:
   federation-e2e:
     name: Federation E2E (Docker)
     runs-on: ubuntu-latest
-    # Cold cache: image build + cluster up + 58 tests is ~12-15 min on
+    # Cold cache: image build, cluster startup and tests take ~12-15 min on
     # 2-vCPU runners. Warm gha cache shaves the rust compile to ~2 min.
     # 30 min upper bound leaves margin for slow-building dependencies.
     timeout-minutes: 30

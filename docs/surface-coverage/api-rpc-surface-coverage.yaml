@@ -4829,17 +4829,17 @@ operations:
   owning_issue: 4133
 - id: filesystem.path_context
   module: filesystem
-  summary: Manage path-level descriptions that the search daemon can attach to retrieval results.
+  summary: CLI for durable path descriptions and Search ranking weights.
   transports:
     cli:
       name: nexus path-context
-      source: src/nexus/cli/commands/path_context.py:32
+      source: src/nexus/cli/commands/path_context.py:31
   profiles:
     lite: supported
     sandbox: supported
     full: supported
   usage_example: nexus path-context set src/nexus/bricks/search "Search, semantic indexing, RRF, and parser-backed retrieval"
-  correctness_test: tests/unit/cli/test_path_context_cli.py; tests/integration/server/api/v2/routers/test_path_contexts_router.py
+  correctness_test: tests/unit/cli/test_path_context_cli.py; scripts/test_rust_http_search_cli.py
   perf_class: control
   perf_link: control-plane or setup operation; outside the per-query hot path, so no dedicated latency benchmark is required
   gap_issue: null
@@ -9301,7 +9301,7 @@ operations:
   transports:
     cli:
       name: nexus path-context delete
-      source: src/nexus/cli/commands/path_context.py:141
+      source: src/nexus/cli/commands/path_context.py:138
   profiles:
     lite: unverified
     sandbox: unverified
@@ -9318,7 +9318,7 @@ operations:
   transports:
     cli:
       name: nexus path-context list
-      source: src/nexus/cli/commands/path_context.py:95
+      source: src/nexus/cli/commands/path_context.py:90
   profiles:
     lite: unverified
     sandbox: unverified
@@ -9335,7 +9335,7 @@ operations:
   transports:
     cli:
       name: nexus path-context set
-      source: src/nexus/cli/commands/path_context.py:41
+      source: src/nexus/cli/commands/path_context.py:36
   profiles:
     lite: unverified
     sandbox: unverified
@@ -9346,23 +9346,6 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
-- id: path_contexts.api_v2
-  module: filesystem
-  summary: HTTP API for zone-scoped path-context CRUD used to annotate search results.
-  transports:
-    http:
-      name: PUT /api/v2/path-contexts/
-      source: src/nexus/server/api/v2/routers/path_contexts.py:224
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: PUT /api/v2/path-contexts/ {"path_prefix":"src/nexus/bricks/search","description":"Search brick"}
-  correctness_test: tests/e2e/self_contained/test_search_surface_live_e2e.py
-  perf_class: control
-  perf_link: control-plane or setup operation; tests/e2e/self_contained/test_search_surface_live_e2e.py enforces live latency
-  gap_issue: null
-  owning_issue: 4135
 - id: pay.approvals
   module: pay
   summary: ''
@@ -11516,7 +11499,7 @@ operations:
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:52
     http:
       name: POST /api/v2/search/index
-      source: src/nexus/server/api/v2/routers/search.py:765
+      source: src/nexus/server/api/v2/routers/search.py:658
   profiles:
     lite: supported
     sandbox: supported
@@ -11747,7 +11730,7 @@ operations:
   transports:
     http:
       name: POST /api/v2/search/query/batch
-      source: src/nexus/server/api/v2/routers/search.py:605
+      source: src/nexus/server/api/v2/routers/search.py:503
   profiles:
     lite: supported
     sandbox: supported
@@ -11767,7 +11750,7 @@ operations:
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:57
     http:
       name: POST /api/v2/search/refresh
-      source: src/nexus/server/api/v2/routers/search.py:915
+      source: src/nexus/server/api/v2/routers/search.py:808
   profiles:
     lite: supported
     sandbox: supported
@@ -17782,14 +17765,6 @@ parity_warnings:
   missing:
   - grpc_typed
   - http
-  - mcp
-  - sdk
-- operation_id: path_contexts.api_v2
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
   - mcp
   - sdk
 - operation_id: pay.approvals

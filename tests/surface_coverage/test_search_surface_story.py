@@ -13,7 +13,6 @@ PREEXISTING_SANDBOX_SEARCH_ISSUE = 4129
 
 SUPPORTED_ROWS = {
     "filesystem.path_context",
-    "path_contexts.api_v2",
     "search.cli",
     "search.glob",
     "search.grep",

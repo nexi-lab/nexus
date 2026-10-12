@@ -1,7 +1,6 @@
 """Path context model (Issue #3773).
 
-The path_contexts table is primarily accessed through raw SQL in
-``nexus.bricks.search.path_context``. Keeping a model here ensures
+The Rust Search plugin reads and writes this durable configuration table.
 ``Base.metadata.create_all`` creates the table for SQLite/dev/test databases,
 matching the Alembic-managed production schema.
 """

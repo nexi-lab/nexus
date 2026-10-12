@@ -1,8 +1,7 @@
 """Path-context CLI commands (Issue #3773).
 
-Thin wrapper over ``/api/v2/path-contexts`` for administering the zone-scoped
-path-prefix -> description mappings that surface as the ``context`` field on
-search results.
+Administer durable, zone-scoped descriptions and ranking weights through the
+Rust Search API at ``/v2/search/path-contexts``.
 
 Examples:
     nexus path-context set src/nexus/bricks/search "Hybrid search brick"
@@ -31,11 +30,7 @@ def register_commands(cli: click.Group) -> None:
 
 @click.group(name="path-context")
 def path_context() -> None:
-    """Path context descriptions — admin CRUD for search result annotations.
-
-    Descriptions are attached to search results whose path starts with the
-    configured prefix (longest prefix wins). Requires admin credentials.
-    """
+    """Manage path descriptions and Search ranking weights (admin writes)."""
 
 
 @path_context.command(name="set")
@@ -71,7 +66,7 @@ def path_context_set(
     client = get_api_client_from_options(remote_url, remote_api_key, profile_name=profile_name)
     try:
         result = client.put(
-            "/api/v2/path-contexts/",
+            "/v2/search/path-contexts",
             {
                 "zone_id": zone_id,
                 "path_prefix": path_prefix,
@@ -93,7 +88,9 @@ def path_context_set(
 
 
 @path_context.command(name="list")
-@click.option("--zone-id", default=None, help="Filter by zone (default: all zones)")
+@click.option(
+    "--zone-id", default=None, help="Zone filter (default: caller zone; all zones for admins)"
+)
 @click.option("--json", "as_json", is_flag=True, help="Emit raw JSON")
 @add_backend_options
 @click.pass_context
@@ -116,7 +113,7 @@ def path_context_list(
     client = get_api_client_from_options(remote_url, remote_api_key, profile_name=profile_name)
     params = {"zone_id": zone_id} if zone_id else None
     try:
-        result = client.get("/api/v2/path-contexts/", params=params)
+        result = client.get("/v2/search/path-contexts", params=params)
     except Exception as e:
         console.print(f"[nexus.error]Error:[/nexus.error] {e}")
         raise SystemExit(1) from e
@@ -163,7 +160,7 @@ def path_context_delete(
     client = get_api_client_from_options(remote_url, remote_api_key, profile_name=profile_name)
     try:
         client.delete(
-            "/api/v2/path-contexts/",
+            "/v2/search/path-contexts",
             params={"zone_id": zone_id, "path_prefix": path_prefix},
         )
     except httpx.HTTPStatusError as e:

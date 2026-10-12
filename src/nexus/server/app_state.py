@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
+    from nexus.contracts.protocols.delegation import DelegationProtocol
+
 logger = logging.getLogger(__name__)
 
 
@@ -110,7 +112,7 @@ class NexusAppState:
     governance_response_service: Any = None
 
     # === Services (brick-sourced) ===
-    delegation_service: Any = None
+    delegation_service: "DelegationProtocol | None" = None
     chunked_upload_service: Any = None
 
     # === IPC ===

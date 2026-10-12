@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-import shutil
 import time
 from collections.abc import Generator
 from dataclasses import dataclass
@@ -13,66 +11,9 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.testkit.kernel import configure_search_plugin
+
 pytestmark = pytest.mark.e2e
-
-
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[3]
-
-
-def _resolve_cluster_binary() -> Path | None:
-    configured = os.environ.get("NEXUS_KERNEL_BINARY")
-    if configured:
-        candidate = Path(configured)
-        if candidate.is_file():
-            return candidate
-        resolved = shutil.which(configured)
-        if resolved:
-            return Path(resolved)
-        pytest.fail(f"NEXUS_KERNEL_BINARY is unavailable: {configured}")
-    root = _repo_root()
-    for directory in (
-        root / "rust" / "target" / "release",
-        root / "rust" / "target" / "debug",
-        root / "target" / "release",
-        root / "target" / "debug",
-    ):
-        for name in ("nexusd-cluster", "nexus-cluster", "nexusd-cluster.exe", "nexus-cluster.exe"):
-            candidate = directory / name
-            if candidate.exists() and os.access(candidate, os.X_OK):
-                return candidate
-    for name in ("nexusd-cluster", "nexus-cluster"):
-        resolved = shutil.which(name)
-        if resolved:
-            return Path(resolved)
-    return None
-
-
-def _resolve_search_plugin_dylib(cluster: Path) -> Path | None:
-    """Resolve the Search library built alongside the cluster binary."""
-    configured = os.environ.get("NEXUS_SEARCH_PLUGIN_LIBRARY")
-    if configured:
-        candidate = Path(configured)
-        if candidate.is_file():
-            return candidate
-        pytest.fail(f"NEXUS_SEARCH_PLUGIN_LIBRARY is unavailable: {configured}")
-    root = _repo_root()
-    for directory in (
-        cluster.parent,
-        root / "rust" / "target" / "release",
-        root / "rust" / "target" / "debug",
-        root / "target" / "release",
-        root / "target" / "debug",
-    ):
-        for name in (
-            "libnexus_search_plugin.dylib",
-            "libnexus_search_plugin.so",
-            "nexus_search_plugin.dll",
-        ):
-            candidate = directory / name
-            if candidate.exists():
-                return candidate
-    return None
 
 
 @dataclass
@@ -87,46 +28,7 @@ def live_search_app(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> Generator[LiveSearchApp, None, None]:
-    cluster = _resolve_cluster_binary()
-    if cluster is None:
-        if os.environ.get("CI"):
-            pytest.fail("live Search E2E requires the pinned cluster binary")
-        pytest.skip(
-            "live search E2E requires the worktree cluster binary; "
-            "build it with `cargo build -p nexus-cluster`"
-        )
-
-    monkeypatch.setenv("NEXUS_KERNEL_BINARY", str(cluster))
-
-    plugin_dylib = _resolve_search_plugin_dylib(cluster)
-    if plugin_dylib is None:
-        if os.environ.get("CI"):
-            pytest.fail("live Search E2E requires the pinned Search plugin library")
-        pytest.skip("live Search E2E requires `cargo build -p nexus-search-plugin`")
-
-    import base64
-
-    from cryptography.hazmat.primitives import serialization
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-
-    # The loader verifies the real library using an ephemeral fixture signing key.
-    plugins_dir = tmp_path / "plugins"
-    plugins_dir.mkdir()
-    plugin_copy = plugins_dir / plugin_dylib.name
-    shutil.copy2(plugin_dylib, plugin_copy)
-    signing_key = Ed25519PrivateKey.generate()
-    (plugins_dir / (plugin_dylib.name + ".sig")).write_bytes(
-        signing_key.sign(plugin_copy.read_bytes())
-    )
-    trust_dir = tmp_path / "trusted_keys"
-    trust_dir.mkdir()
-    pub_raw = signing_key.public_key().public_bytes(
-        encoding=serialization.Encoding.Raw,
-        format=serialization.PublicFormat.Raw,
-    )
-    (trust_dir / "live-e2e.pub").write_text(base64.b64encode(pub_raw).decode() + "\n")
-    monkeypatch.setenv("NEXUS_PLUGIN_DIR", str(plugins_dir))
-    monkeypatch.setenv("NEXUS_LOCAL_TRUSTED_KEYS_DIR", str(trust_dir))
+    configure_search_plugin(tmp_path, monkeypatch)
 
     monkeypatch.setenv("NEXUS_ENFORCE_PERMISSIONS", "false")
     monkeypatch.setenv("NEXUS_SEARCH_DAEMON", "true")

@@ -14,6 +14,7 @@ import pytest
 from fastmcp import Client
 from sqlalchemy import create_engine
 
+from nexus.bricks.auth.providers.static_key import StaticAPIKeyAuth
 from nexus.bricks.mcp.middleware import ToolNamespaceMiddleware
 from nexus.bricks.mcp.profiles import grant_tools_for_profile, load_profiles
 from nexus.bricks.mcp.server import create_mcp_server, reset_request_api_key, set_request_api_key
@@ -29,6 +30,7 @@ from nexus.bricks.workflows.types import (
 )
 from nexus.contracts.types import OperationContext
 from nexus.storage.models import Base
+from tests.testkit.kernel import configure_search_plugin
 from tests.testkit.metadata import InMemoryNexusFS
 
 pytestmark = pytest.mark.e2e
@@ -105,6 +107,7 @@ EXPECTED_PROFILE_TOOLS: dict[str, set[str]] = {
         "nexus_discovery_get_tool_details",
         "nexus_discovery_load_tools",
         "nexus_hub_admin",
+        "nexus_hub_status",
     },
 }
 
@@ -155,27 +158,15 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[4]
 
 
-def _resolve_cluster_binary() -> Path | None:
-    root = _repo_root()
-    for directory in (
-        root / "target" / "debug",
-        root / "target" / "release",
-        root / "rust" / "target" / "debug",
-        root / "rust" / "target" / "release",
-    ):
-        for name in ("nexusd-cluster", "nexus-cluster"):
-            candidate = directory / name
-            if candidate.exists() and os.access(candidate, os.X_OK):
-                return candidate
-    return None
-
-
 def _text(result: Any) -> str:
     return "\n".join(getattr(item, "text", str(item)) for item in result.content)
 
 
 def _decode_json_result(result: Any) -> Any:
-    return json.loads(_text(result))
+    text = _text(result)
+    assert not result.is_error, text
+    assert not text.startswith("Error:"), text
+    return json.loads(text)
 
 
 async def _timed_list(client: Client, api: str, records: list[PerfRecord]) -> list[str]:
@@ -222,14 +213,7 @@ async def test_issue_4131_mcp_profiles_real_protocol_and_perf(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    cluster = _resolve_cluster_binary()
-    if cluster is None:
-        pytest.skip(
-            "issue #4131 real MCP E2E requires nexusd-cluster/nexus-cluster; "
-            "build it with `cargo build -p nexus-cluster`"
-        )
-
-    monkeypatch.setenv("NEXUS_KERNEL_BINARY", str(cluster))
+    configure_search_plugin(tmp_path, monkeypatch)
     monkeypatch.setenv("NEXUS_ENFORCE_PERMISSIONS", "false")
     monkeypatch.setenv("NEXUS_ENABLE_WRITE_BUFFER", "false")
     monkeypatch.setenv("NEXUS_ACTIVITY_ENABLED", "0")
@@ -282,14 +266,29 @@ async def test_issue_4131_mcp_profiles_real_protocol_and_perf(
             cache_ttl=60,
             revision_window=1,
         )
-        server = await create_mcp_server(nx=nx, tool_namespace_middleware=middleware)
+        profile_keys = {name: f"sk-issue4131-{name}" for name in EXPECTED_PROFILE_TOOLS}
+        full_subject = "sk-issue4131-full-calls"
+        provider = StaticAPIKeyAuth(
+            {
+                key: {
+                    "subject_type": "user",
+                    "subject_id": key,
+                    "zone_id": "root",
+                    "is_admin": True,
+                }
+                for key in (*profile_keys.values(), full_subject)
+            }
+        )
+        server = await create_mcp_server(
+            nx=nx, tool_namespace_middleware=middleware, auth_provider=provider
+        )
         profiles = load_profiles(_repo_root() / "src" / "nexus" / "config" / "tool_profiles.yaml")
 
         async with Client(server, timeout=30) as unfiltered:
             registered = set(await _timed_list(unfiltered, "tools/list unfiltered", records))
 
         for profile_name, expected_tools in EXPECTED_PROFILE_TOOLS.items():
-            subject_id = f"issue4131-{profile_name}"
+            subject_id = profile_keys[profile_name]
             grant_tools_for_profile(
                 rebac_manager=rebac,
                 subject=("api_key", subject_id),
@@ -308,7 +307,6 @@ async def test_issue_4131_mcp_profiles_real_protocol_and_perf(
             assert missing_optional <= OPTIONAL_SANDBOX_TOOLS
             assert names == expected_visible
 
-        full_subject = "issue4131-full-calls"
         grant_tools_for_profile(
             rebac_manager=rebac,
             subject=("api_key", full_subject),
@@ -372,7 +370,11 @@ async def test_issue_4131_mcp_profiles_real_protocol_and_perf(
                 )
                 assert grep["count"] >= 1
 
-                semantic = _text(
+                indexed = await nx.service("search").semantic_search_index(
+                    path="/issue4131", recursive=True
+                )
+                assert indexed["indexed_count"] >= 1, indexed
+                semantic = _decode_json_result(
                     await _timed_call(
                         client,
                         "nexus_semantic_search",
@@ -380,7 +382,9 @@ async def test_issue_4131_mcp_profiles_real_protocol_and_perf(
                         records,
                     )
                 )
-                assert semantic.startswith("{") or "Semantic search not available" in semantic
+                assert any(hit["path"] == "/issue4131/api.txt" for hit in semantic["items"]), (
+                    semantic
+                )
 
                 edit = _decode_json_result(
                     await _timed_call(

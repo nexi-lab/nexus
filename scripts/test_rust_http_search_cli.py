@@ -134,6 +134,62 @@ async def main() -> None:
             assert "Found 1 results" in human and any(path in human for path in paths.values()), (
                 safe(human)
             )
+            context_command = ["-m", "nexus.cli.main", "path-context"]
+            prefix = paths["alice"]
+            await run(
+                [
+                    *context_command,
+                    "set",
+                    prefix,
+                    "preferred document",
+                    "--zone-id",
+                    "sharedzone",
+                    "--weight",
+                    "4",
+                ]
+            )
+            context_json, _ = await run(
+                [*context_command, "list", "--zone-id", "sharedzone", "--json"], key=keys["alice"]
+            )
+            configured = next(
+                record
+                for record in json.loads(context_json)
+                if record["path_prefix"] == prefix.strip("/")
+            )
+            assert configured["weight"] == 4.0, configured
+            weighted_json, _ = await cli(
+                ["query", needle, "--mode", "keyword", "--json"], key=keys["alice"]
+            )
+            assert json.loads(weighted_json)[0]["tier_boost"] == 4.0
+            await run(
+                [*context_command, "set", prefix, "forbidden", "--zone-id", "sharedzone"],
+                key=keys["alice"],
+                expected=1,
+            )
+            await run(
+                [*context_command, "list", "--zone-id", "root", "--json"],
+                key=keys["alice"],
+                expected=1,
+            )
+            await run([*context_command, "list", "--json"], key="sk-never-minted", expected=1)
+            await run(
+                [*context_command, "set", prefix, "plain document", "--zone-id", "sharedzone"]
+            )
+            replaced_json, _ = await run(
+                [*context_command, "list", "--zone-id", "sharedzone", "--json"]
+            )
+            replaced = next(
+                record
+                for record in json.loads(replaced_json)
+                if record["path_prefix"] == prefix.strip("/")
+            )
+            assert replaced["weight"] is None and replaced["created_at"] == configured["created_at"]
+            plain_json, _ = await cli(
+                ["query", needle, "--mode", "keyword", "--json"], key=keys["alice"]
+            )
+            assert json.loads(plain_json)[0].get("tier_boost") in (None, 1.0)
+            await run([*context_command, "delete", prefix, "--zone-id", "sharedzone"])
+            await run([*context_command, "delete", prefix, "--zone-id", "sharedzone"], expected=1)
             _, stats_output = await cli(["stats"])
             stats = await admin_request(
                 "GET", "/v2/documents/stats", params={"zone_id": "sharedzone"}
@@ -288,7 +344,7 @@ async def main() -> None:
                 )
                 assert "absolute VFS directory" in error, safe(error)
             print(
-                "Rust HTTP Search CLI passed: index/query/stats/isolation/path/zone/admin/revocation/benchmark"
+                "Rust HTTP Search CLI passed: index/query/stats/path-contexts/isolation/path/zone/admin/revocation/benchmark"
             )
         finally:
             await channel.close()

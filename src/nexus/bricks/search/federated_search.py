@@ -105,17 +105,11 @@ class FederatedSearchDispatcher:
         config: FederatedSearchConfig | None = None,
         *,
         registry: Any | None = None,
-        path_prefix_boosts_resolver: Any | None = None,
     ):
         self._daemon = daemon  # Default/fallback daemon
         self._rebac = rebac
         self._config = config or FederatedSearchConfig()
         self._registry = registry  # Phase 2: ZoneSearchRegistry
-        # #4620: async callable ``zone_id -> dict[prefix_key, weight]``
-        # supplying each LOCAL leg's path-context tier weights (the
-        # caller owns store access; the router passes
-        # ``_resolve_path_prefix_boosts``). None = legs run unboosted.
-        self._path_prefix_boosts_resolver = path_prefix_boosts_resolver
         # Zone discovery cache: subject_key -> (zones, expiry_time)
         self._zone_cache: dict[str, tuple[list[str], float]] = {}
 
@@ -176,18 +170,6 @@ class FederatedSearchDispatcher:
         """Search one zone using its supported mode and the caller's credentials."""
         effective_type = self._get_effective_search_type(zone_id, search_type)
 
-        # Each local leg carries its zone's path-context weights.
-        path_prefix_boosts: dict[str, float] | None = None
-        if self._path_prefix_boosts_resolver is not None:
-            try:
-                path_prefix_boosts = await self._path_prefix_boosts_resolver(zone_id) or None
-            except Exception:
-                logger.warning(
-                    "path-prefix boost resolution failed for zone %r; leg runs unboosted",
-                    zone_id,
-                    exc_info=True,
-                )
-
         daemon = self._get_daemon_for_zone(zone_id)
         leg_request = SearchRequest(
             query=query,
@@ -201,7 +183,6 @@ class FederatedSearchDispatcher:
             recency_weight=recency_weight,
             recency_half_life_days=recency_half_life_days,
             zone_id=zone_id,
-            path_prefix_boosts=path_prefix_boosts,
         )
         results, backend_error = await daemon.search_with_error(leg_request)
         if backend_error:

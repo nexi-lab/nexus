@@ -95,10 +95,26 @@ Indexed Python HTTP query and batch routes forward the caller's credential and
 requested limits to SearchService. The host authorizes returned candidates;
 Python does not evaluate file grants again. These reads do not require a Python
 record store. Path-context ranking weights remain optional durable configuration.
-The Python routes still load those weights from `path_contexts`. Native HTTP
-and direct gRPC callers can supply `path_prefix_boosts`, but they do not yet
-load that table. Its durable configuration needs a native owner before the
-Python query and federation routes can be removed.
+The Rust Search plugin loads the existing `path_contexts` SQL table for every
+entry point, including direct gRPC, batch, and each executing federated zone.
+Set `DATABASE_URL` or `NEXUS_DATABASE_URL` to the same PostgreSQL or SQLite
+database that holds those rows. SQLAlchemy `postgresql+asyncpg` and
+`sqlite+aiosqlite` URL spellings are accepted. Apply the existing database
+migrations before enabling configuration; Search does not create tables.
+Use SQLAlchemy's SQLite path convention: `sqlite:///config.db` is relative
+and `sqlite:////data/config.db` is absolute. For a remotely executed zone,
+connect configuration CRUD to its Search owner and use that owner's database.
+`PUT`, `GET`, and `DELETE /v2/search/path-contexts` forward the original bearer
+to `PutPathContext`, `ListPathContexts`, and `DeletePathContext` on SearchService.
+Writes require administrator authority; ordinary listing requires a zone read
+grant. Omitting the zone lists all zones for administrators and the caller zone
+for other callers. Omitting `weight` on PUT clears the existing multiplier.
+The bounded memory cache refreshes after `NEXUS_PATH_CONTEXT_FRESHNESS_SECONDS`
+(default 1 second); native writes invalidate immediately. External writes are
+reloaded even when row counts and timestamps stay unchanged. Explicit query
+`path_prefix_boosts` override configured defaults at matching prefixes. Without
+a database, Search uses request weights; database failures leave Search available
+without configured weights and report a warning. CRUD reports HTTP 503.
 Responses report observed timings; permission-denial statistics are not exposed.
 The query limit bounds the host's ranked candidate window. Live authorization
 and VFS checks can leave fewer returned hits than that limit.

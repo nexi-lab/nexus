@@ -35,7 +35,7 @@ class TestPathContextSet:
             )
         assert result.exit_code == 0, result.output
         fake.put.assert_called_once_with(
-            "/api/v2/path-contexts/",
+            "/v2/search/path-contexts",
             {"zone_id": "root", "path_prefix": "src", "description": "x", "weight": None},
         )
         assert "root:src" in result.output
@@ -117,7 +117,7 @@ class TestPathContextList:
         fake = _patched_client(get={"contexts": []})
         with patch("nexus.cli.api_client.get_api_client_from_options", return_value=fake):
             runner.invoke(path_context, ["list", "--zone-id", "other", "--remote-url", MOCK_URL])
-        fake.get.assert_called_once_with("/api/v2/path-contexts/", params={"zone_id": "other"})
+        fake.get.assert_called_once_with("/v2/search/path-contexts", params={"zone_id": "other"})
 
 
 class TestPathContextDelete:
@@ -129,7 +129,7 @@ class TestPathContextDelete:
         assert result.exit_code == 0, result.output
         assert "deleted" in result.output
         fake.delete.assert_called_once_with(
-            "/api/v2/path-contexts/",
+            "/v2/search/path-contexts",
             params={"zone_id": "root", "path_prefix": "src"},
         )
 

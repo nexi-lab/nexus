@@ -321,7 +321,6 @@ async def search_query(
             )
 
         return await _handle_single_zone_search(
-            request=request,
             q=q,
             search_type=type,
             limit=limit,
@@ -342,101 +341,8 @@ async def search_query(
     return await run_zone_scoped(_get_zone_registry(request), target_zone, _work)
 
 
-PATH_CONTEXT_FRESHNESS_ENV = "NEXUS_PATH_CONTEXT_FRESHNESS_SECONDS"
-DEFAULT_PATH_CONTEXT_FRESHNESS_SECONDS = 1.0
-
-
-def path_context_freshness_seconds() -> float:
-    """How long a zone's path-context fingerprint is trusted between DB checks.
-
-    Without a window every search paid a ``COUNT(*), MAX(updated_at)``
-    round trip (~10% of server CPU under load).  Writes through this
-    process's path-context routes invalidate immediately; the window only
-    bounds how long another process's write can go unseen.  ``0``
-    restores the per-query check.
-    """
-    raw = os.environ.get(PATH_CONTEXT_FRESHNESS_ENV, "").strip()
-    if not raw:
-        return DEFAULT_PATH_CONTEXT_FRESHNESS_SECONDS
-    try:
-        return max(0.0, float(raw))
-    except ValueError:
-        logger.warning("%s=%r is not a number; using default", PATH_CONTEXT_FRESHNESS_ENV, raw)
-        return DEFAULT_PATH_CONTEXT_FRESHNESS_SECONDS
-
-
-async def _resolve_path_prefix_boosts(request: Request, zone_id: str | None) -> dict[str, float]:
-    """Load the zone's path_contexts weight rows into the plugin's boost map (#4620).
-
-    Pre-P12 the daemon applied tier weights itself post-fusion (#4544);
-    post-P12 the plugin owns that pass but only sees what the server stamps
-    into ``QueryRequest.path_prefix_boosts`` — without this resolver the
-    weight rows are dead config (CRUD works, ranking silently ignores them).
-
-    Rows are served through a per-event-loop :class:`PathContextCache`
-    (fingerprint-checked, so an upsert is visible on the next query without
-    a per-request full table scan). Fail-open: any store or lookup error
-    logs once and returns ``{}`` — search must keep working unboosted.
-    """
-    import asyncio
-
-    from nexus.bricks.search.path_context import PathContextCache, prefix_boosts_from_records
-    from nexus.contracts.constants import ROOT_ZONE_ID
-
-    try:
-        from nexus.server.api.v2.routers.path_contexts import _get_store
-
-        store = await _get_store(request)
-    except HTTPException:
-        # No DB URL and no injected store — this deployment has no
-        # path-context storage at all, so there are no rows to apply.
-        return {}
-    except Exception:
-        logger.warning(
-            "path-context store unavailable; searching without tier boosts",
-            exc_info=True,
-        )
-        return {}
-
-    try:
-        # One cache per event loop, mirroring _get_store's per-loop store
-        # discipline (same loop ⇒ same store ⇒ the cache never mixes
-        # engines across loops).
-        loop = asyncio.get_running_loop()
-        caches: dict[Any, PathContextCache] | None = getattr(
-            request.app.state, "_search_prefix_boost_caches", None
-        )
-        if caches is None:
-            caches = {}
-            request.app.state._search_prefix_boost_caches = caches
-        for stale in [lk for lk in caches if not hasattr(lk, "is_closed") or lk.is_closed()]:
-            caches.pop(stale, None)
-        cache = caches.get(loop)
-        if cache is None:
-            cache = PathContextCache(
-                store=store, fingerprint_ttl_s=path_context_freshness_seconds()
-            )
-            caches[loop] = cache
-
-        effective_zone = zone_id or ROOT_ZONE_ID
-        await cache.refresh_if_stale(effective_zone)
-        return prefix_boosts_from_records(cache.snapshot_zone(effective_zone) or [])
-    except Exception:
-        # Warn once per process, not per query — a deployment whose DB
-        # lacks the path_contexts table would otherwise log on every
-        # search. Once is enough to surface the dead-config risk.
-        if not getattr(request.app.state, "_prefix_boost_resolution_warned", False):
-            request.app.state._prefix_boost_resolution_warned = True
-            logger.warning(
-                "path-context boost resolution failed; searching without tier boosts",
-                exc_info=True,
-            )
-        return {}
-
-
 async def _handle_single_zone_search(
     *,
-    request: Request,
     q: str,
     search_type: str,
     limit: int,
@@ -455,7 +361,6 @@ async def _handle_single_zone_search(
 ) -> dict[str, Any]:
     """Serialize the owning host's authorized query response."""
     try:
-        path_prefix_boosts = await _resolve_path_prefix_boosts(request, zone_id)
         search_request = SearchRequest(
             query=q,
             search_type=search_type,
@@ -470,7 +375,6 @@ async def _handle_single_zone_search(
             recency=recency,
             recency_weight=recency_weight,
             recency_half_life_days=recency_half_life_days,
-            path_prefix_boosts=path_prefix_boosts or None,
         )
         results, backend_error = await search_daemon.search_with_error(search_request)
         daemon_timing = getattr(results, "search_timing", None)
@@ -545,16 +449,10 @@ async def _handle_federated_search(
 
     registry = getattr(request.app.state, "zone_search_registry", None)
 
-    # #4620: each local federated leg gets its zone's path-context tier
-    # weights, resolved through the same cache the single-zone path uses.
-    async def _boosts_for_zone(zone_id: str) -> dict[str, float]:
-        return await _resolve_path_prefix_boosts(request, zone_id)
-
     dispatcher = FederatedSearchDispatcher(
         daemon=search_daemon,
         rebac=rebac,
         registry=registry,
-        path_prefix_boosts_resolver=_boosts_for_zone,
     )
     fed_response = await dispatcher.search(
         query=q,
@@ -689,10 +587,6 @@ async def search_query_batch(
     valid: list[tuple[int, ParsedBatchSpec]] = [
         (i, p) for i, p in enumerate(parsed) if isinstance(p, ParsedBatchSpec)
     ]
-    # #4620: batch is single-zone, so the zone's path_contexts tier
-    # weights resolve ONCE and stamp onto every inner request — the
-    # same boost map single /query sends, cached per event loop.
-    path_prefix_boosts = await _resolve_path_prefix_boosts(request, zone_id) if valid else {}
     # Same typed request shape as the single-query path — the P12 proxy's
     # batch_search takes SearchRequest objects (zone_id rides inside each
     # request, exactly like single ``search()``), so every tuning knob the
@@ -712,7 +606,6 @@ async def search_query_batch(
             recency=spec.recency,
             recency_weight=spec.recency_weight,
             recency_half_life_days=spec.recency_half_life_days,
-            path_prefix_boosts=path_prefix_boosts or None,
         )
         for _, spec in valid
     ]

@@ -22,8 +22,14 @@ def _repo_root() -> Path:
 
 def _resolve_cluster_binary() -> Path | None:
     configured = os.environ.get("NEXUS_KERNEL_BINARY")
-    if configured and Path(configured).is_file():
-        return Path(configured)
+    if configured:
+        candidate = Path(configured)
+        if candidate.is_file():
+            return candidate
+        resolved = shutil.which(configured)
+        if resolved:
+            return Path(resolved)
+        pytest.fail(f"NEXUS_KERNEL_BINARY is unavailable: {configured}")
     root = _repo_root()
     for directory in (
         root / "rust" / "target" / "release",
@@ -35,18 +41,21 @@ def _resolve_cluster_binary() -> Path | None:
             candidate = directory / name
             if candidate.exists() and os.access(candidate, os.X_OK):
                 return candidate
+    for name in ("nexusd-cluster", "nexus-cluster"):
+        resolved = shutil.which(name)
+        if resolved:
+            return Path(resolved)
     return None
 
 
 def _resolve_search_plugin_dylib(cluster: Path) -> Path | None:
-    """Worktree build of the Rust search plugin, if present.
-
-    When found, the fixture loads it into the spawned kernel via
-    ``NEXUS_PLUGIN_DIR`` and points the app's SearchDaemon at the
-    kernel's gRPC listener — the /search surface then runs against the
-    REAL plugin instead of 503ing. Build with
-    ``cargo build -p nexus-search-plugin``.
-    """
+    """Resolve the Search library built alongside the cluster binary."""
+    configured = os.environ.get("NEXUS_SEARCH_PLUGIN_LIBRARY")
+    if configured:
+        candidate = Path(configured)
+        if candidate.is_file():
+            return candidate
+        pytest.fail(f"NEXUS_SEARCH_PLUGIN_LIBRARY is unavailable: {configured}")
     root = _repo_root()
     for directory in (
         cluster.parent,
@@ -71,10 +80,6 @@ class LiveSearchApp:
     client: TestClient
     nx: Any
     headers: dict[str, str]
-    # True when the worktree search-plugin dylib was loaded into the
-    # spawned kernel — tests that need real plugin-backed /search
-    # endpoints skip when False instead of asserting into 503s.
-    plugin_loaded: bool = False
 
 
 @pytest.fixture()
@@ -84,6 +89,8 @@ def live_search_app(
 ) -> Generator[LiveSearchApp, None, None]:
     cluster = _resolve_cluster_binary()
     if cluster is None:
+        if os.environ.get("CI"):
+            pytest.fail("live Search E2E requires the pinned cluster binary")
         pytest.skip(
             "live search E2E requires the worktree cluster binary; "
             "build it with `cargo build -p nexus-cluster`"
@@ -91,36 +98,35 @@ def live_search_app(
 
     monkeypatch.setenv("NEXUS_KERNEL_BINARY", str(cluster))
 
-    # Load the worktree search-plugin dylib into the spawned kernel when
-    # available (#4620). Must be set BEFORE nexus.connect — the kernel
-    # scans NEXUS_PLUGIN_DIR at boot. The kernel refuses unsigned
-    # plugins, so detach-sign the dylib with an ephemeral test-local
-    # Ed25519 key and trust it via NEXUS_LOCAL_TRUSTED_KEYS_DIR (the
-    # loader's documented local-trust extension point; format contract
-    # matches scripts/sign_plugin.py).
     plugin_dylib = _resolve_search_plugin_dylib(cluster)
-    if plugin_dylib is not None:
-        import base64
+    if plugin_dylib is None:
+        if os.environ.get("CI"):
+            pytest.fail("live Search E2E requires the pinned Search plugin library")
+        pytest.skip("live Search E2E requires `cargo build -p nexus-search-plugin`")
 
-        from cryptography.hazmat.primitives import serialization
-        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    import base64
 
-        plugins_dir = tmp_path / "plugins"
-        plugins_dir.mkdir()
-        shutil.copy2(plugin_dylib, plugins_dir / plugin_dylib.name)
-        signing_key = Ed25519PrivateKey.generate()
-        (plugins_dir / (plugin_dylib.name + ".sig")).write_bytes(
-            signing_key.sign(plugin_dylib.read_bytes())
-        )
-        trust_dir = tmp_path / "trusted_keys"
-        trust_dir.mkdir()
-        pub_raw = signing_key.public_key().public_bytes(
-            encoding=serialization.Encoding.Raw,
-            format=serialization.PublicFormat.Raw,
-        )
-        (trust_dir / "live-e2e.pub").write_text(base64.b64encode(pub_raw).decode() + "\n")
-        monkeypatch.setenv("NEXUS_PLUGIN_DIR", str(plugins_dir))
-        monkeypatch.setenv("NEXUS_LOCAL_TRUSTED_KEYS_DIR", str(trust_dir))
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    # The loader verifies the real library using an ephemeral fixture signing key.
+    plugins_dir = tmp_path / "plugins"
+    plugins_dir.mkdir()
+    plugin_copy = plugins_dir / plugin_dylib.name
+    shutil.copy2(plugin_dylib, plugin_copy)
+    signing_key = Ed25519PrivateKey.generate()
+    (plugins_dir / (plugin_dylib.name + ".sig")).write_bytes(
+        signing_key.sign(plugin_copy.read_bytes())
+    )
+    trust_dir = tmp_path / "trusted_keys"
+    trust_dir.mkdir()
+    pub_raw = signing_key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    (trust_dir / "live-e2e.pub").write_text(base64.b64encode(pub_raw).decode() + "\n")
+    monkeypatch.setenv("NEXUS_PLUGIN_DIR", str(plugins_dir))
+    monkeypatch.setenv("NEXUS_LOCAL_TRUSTED_KEYS_DIR", str(trust_dir))
 
     monkeypatch.setenv("NEXUS_ENFORCE_PERMISSIONS", "false")
     monkeypatch.setenv("NEXUS_SEARCH_DAEMON", "true")
@@ -143,28 +149,20 @@ def live_search_app(
         }
     )
 
-    # The plugin's SearchService rides the kernel's own gRPC listener
-    # (Phase P routing), which binds a RANDOM free port locally — not the
-    # 2126 the SearchDaemon dials by default. Point the daemon at the
-    # spawned kernel before create_app's lifespan probes it.
-    plugin_loaded = False
-    if plugin_dylib is not None:
-        kernel_addr = getattr(getattr(nx, "_kernel", None), "_server_address", None)
-        if kernel_addr:
-            monkeypatch.setenv("NEXUS_SEARCH_PLUGIN_TARGET", str(kernel_addr))
-            plugin_loaded = True
-
-    app = create_app(
-        nexus_fs=nx,
-        api_key="live-search-secret",
-        database_url=database_url,
-        data_dir=str(tmp_path),
-    )
-    headers = {"Authorization": "Bearer live-search-secret"}
-
     try:
+        kernel_addr = getattr(getattr(nx, "_kernel", None), "_server_address", None)
+        assert kernel_addr, "the spawned Kernel must expose its Search gRPC listener"
+        monkeypatch.setenv("NEXUS_SEARCH_PLUGIN_TARGET", str(kernel_addr))
+
+        app = create_app(
+            nexus_fs=nx,
+            api_key="live-search-secret",
+            database_url=database_url,
+            data_dir=str(tmp_path),
+        )
+        headers = {"Authorization": "Bearer live-search-secret"}
         with TestClient(app, raise_server_exceptions=False) as client:
-            yield LiveSearchApp(client=client, nx=nx, headers=headers, plugin_loaded=plugin_loaded)
+            yield LiveSearchApp(client=client, nx=nx, headers=headers)
     finally:
         close = getattr(nx, "close", None)
         if callable(close):
@@ -211,8 +209,6 @@ def test_live_write_to_searchable_contract(live_search_app: LiveSearchApp) -> No
     import base64
 
     live = live_search_app
-    if not live.plugin_loaded:
-        pytest.skip("search-plugin dylib not loaded into the spawned kernel")
     slow = 10_000.0  # indexing round-trips, not the read-path latency budget
 
     live.nx.mkdir("/ws", exist_ok=True)
@@ -325,8 +321,6 @@ def test_live_admin_reindex_indexes_replayed_paths(live_search_app: LiveSearchAp
     plugin — the response counts completions, not queue depth, and the
     documents are served immediately afterwards."""
     live = live_search_app
-    if not live.plugin_loaded:
-        pytest.skip("search-plugin dylib not loaded into the spawned kernel")
     slow = 30_000.0
 
     live.nx.mkdir("/rx", exist_ok=True)

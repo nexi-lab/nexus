@@ -195,30 +195,36 @@ jobs:
         if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv pip install -e ".[dev,test]"
 
-      # The nexus-cluster binary is required by NexusFS (KernelClient spawns
-      # it as a subprocess). Binary SSOT is now nexus-vfs; install via
-      # cargo install --locked from the git repo.
+      # Build the Kernel binary and Search library from the repository's VFS pin.
       - name: Set up Rust toolchain
         if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
-      - name: Cache nexus-cluster install
+      - name: Cache native Search fixture
         if: needs.detect-changes.outputs.code_changed == 'true'
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: e2e-nexus-cluster
+          shared-key: e2e-search-fixture
 
-      - name: Install nexus-cluster from nexus-vfs (pinned rev)
+      - name: Build cluster and Search plugin from the pinned VFS revision
         if: needs.detect-changes.outputs.code_changed == 'true'
-        # Same rev the repo ships (Cargo.toml pins == Dockerfile ARGs,
-        # enforced by the smoke job preflight). Unpinned installs track
-        # nexus-vfs HEAD and let E2E pass/fail on unreviewed upstream
-        # movement (#4343).
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
         run: |
           REV=$(python3 scripts/nexus_vfs_revision.py)
-          # --force replaces cached binaries with the pinned package build.
-          cargo install --locked --force --git https://github.com/nexi-lab/nexus-vfs --rev "$REV" --bin nexusd-cluster nexus-cluster
-          sudo ln -sf "$(command -v nexusd-cluster)" /usr/local/bin/nexus-cluster
+          fixture_source="$RUNNER_TEMP/nexus-vfs-search-fixture"
+          git init "$fixture_source"
+          git -C "$fixture_source" remote add origin https://github.com/nexi-lab/nexus-vfs.git
+          git -C "$fixture_source" fetch --depth=1 origin "$REV"
+          git -C "$fixture_source" checkout --detach FETCH_HEAD
+          cargo build --locked --release --manifest-path "$fixture_source/Cargo.toml" \
+            -p nexus-cluster -p nexus-search-plugin
+          test -x "$CARGO_TARGET_DIR/release/nexusd-cluster"
+          test -f "$CARGO_TARGET_DIR/release/libnexus_search_plugin.so"
+          echo "NEXUS_KERNEL_BINARY=$CARGO_TARGET_DIR/release/nexusd-cluster" >> "$GITHUB_ENV"
+          echo "NEXUS_SEARCH_PLUGIN_LIBRARY=$CARGO_TARGET_DIR/release/libnexus_search_plugin.so" >> "$GITHUB_ENV"
+          echo "$CARGO_TARGET_DIR/release" >> "$GITHUB_PATH"
+          sudo ln -sf "$CARGO_TARGET_DIR/release/nexusd-cluster" /usr/local/bin/nexus-cluster
 
       # Pre-build the nexus-server image once with buildx + GHA layer cache.
       # The ``running_nexus`` fixture in tests/e2e/self_contained/conftest.py

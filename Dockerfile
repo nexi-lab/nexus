@@ -56,6 +56,7 @@ ENV PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1
 # Copy only metadata — src/ changes won't invalidate this expensive layer
 WORKDIR /build
 COPY pyproject.toml uv.lock* README.md Cargo.toml Cargo.lock ./
+COPY scripts/nexus_vfs_revision.py ./nexus_vfs_revision.py
 # Create minimal package stub so setuptools can discover the package
 RUN mkdir -p src/nexus && echo '__version__ = "0.0.0"' > src/nexus/__init__.py
 ENV UV_HTTP_TIMEOUT=300
@@ -73,18 +74,12 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # listener with NEXUS_HTTP_ADDR=127.0.0.1:2027. Python HTTP uses NEXUS_PORT=2026;
 # give the Rust listener its own port.
 #
-# The pin below is the same rev the workspace's Cargo.toml git-deps
-# use and every other Dockerfile carries; the `test.yml` "Kernel pin
-# consistency preflight" fails the build if they drift, so a bump lands
-# in Cargo.toml / Cargo.lock / this Dockerfile / dockerfiles/ ARGs
-# together — an unpinned install would track nexus-vfs HEAD and ship
-# an untested kernel (#4343).  Symlinked to `nexus-cluster` below so
-# the Python runtime spawns it unchanged.
+# Read the workspace revision and verify Cargo.lock before installing.
 ENV CARGO_NET_RETRY=10 \
     CARGO_HTTP_TIMEOUT=120
-ARG NEXUS_VFS_REV=c60ea0f3284dd7f6990347cc520b376bbe290b2e
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
+    NEXUS_VFS_REV="$(python3 /build/nexus_vfs_revision.py /build/Cargo.toml)" && \
     cargo install --locked \
         --git https://github.com/nexi-lab/nexus-vfs \
         --rev "${NEXUS_VFS_REV}" \

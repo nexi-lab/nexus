@@ -215,11 +215,7 @@ jobs:
         # nexus-vfs HEAD and let E2E pass/fail on unreviewed upstream
         # movement (#4343).
         run: |
-          REV=$(grep 'nexus-vfs' Cargo.toml | grep -m1 -oE 'rev = "[a-f0-9]{40}"' | cut -d'"' -f2)
-          if [ -z "$REV" ]; then
-            echo "::error::could not extract nexus-vfs rev pin from Cargo.toml"
-            exit 1
-          fi
+          REV=$(python3 scripts/nexus_vfs_revision.py)
           # --force replaces cached binaries with the pinned package build.
           cargo install --locked --force --git https://github.com/nexi-lab/nexus-vfs --rev "$REV" --bin nexusd-cluster nexus-cluster
           sudo ln -sf "$(command -v nexusd-cluster)" /usr/local/bin/nexus-cluster
@@ -654,13 +650,7 @@ jobs:
 
       - name: Kernel pin consistency preflight
         if: needs.detect-changes.outputs.code_changed == 'true'
-        # Every nexus-vfs pin in the repo must agree: the Cargo.toml
-        # crate pins, the Cargo.lock resolution, and the remaining image
-        # ARGs (dockerfiles/Dockerfile.{minimal,raft-server,raft-witness}).
-        # The main image's nexusd-cluster now pins nexus-vfs THROUGH
-        # Cargo.lock (it builds the nexus-local `nexusd` crate, #36), not
-        # an ARG. A partial bump ships a kernel the gate below never
-        # tested — the exact drift class behind #4343.
+        # Images and this gate read the same manifest and verify its lockfile.
         run: |
           set -euo pipefail
           # Every nexus-vfs install — in Dockerfiles AND workflow
@@ -703,58 +693,32 @@ jobs:
             echo "$UNLOCKED"
             exit 1
           fi
-          CARGO_REVS=$(grep 'nexus-vfs' Cargo.toml | grep -oE 'rev = "[a-f0-9]{40}"' | grep -oE '[a-f0-9]{40}' | sort -u)
-          LOCK_REVS=$(grep -oE 'nexus-vfs\?rev=[a-f0-9]{40}' Cargo.lock | grep -oE '[a-f0-9]{40}' | sort -u)
-          DOCKER_REVS=$(grep -rh -oE 'ARG NEXUS_VFS_REV=[a-f0-9]{40}' Dockerfile dockerfiles/ | grep -oE '[a-f0-9]{40}' | sort -u)
-          echo "Cargo.toml pins:  $CARGO_REVS"
-          echo "Cargo.lock pins:  $LOCK_REVS"
-          echo "Dockerfile pins:  $DOCKER_REVS"
-          # Empty extraction means the format drifted and the guard is
-          # comparing nothing — fail closed, not open.
-          for SET in "$CARGO_REVS" "$LOCK_REVS" "$DOCKER_REVS"; do
-            if [ -z "$SET" ]; then
-              echo "::error::a nexus-vfs pin source extracted zero revs — pin-extraction pattern regressed"
+          NEXUS_VFS_REV=$(python3 scripts/nexus_vfs_revision.py)
+          echo "Validated workspace and lockfile revision: $NEXUS_VFS_REV"
+          for f in Dockerfile dockerfiles/*; do
+            [ -f "$f" ] || continue
+            grep -q 'NEXUS_VFS_REV' "$f" || continue
+            if grep -q '^ARG NEXUS_VFS_REV' "$f"; then
+              echo "::error::$f declares a separate nexus-vfs revision"
+              exit 1
+            fi
+            if ! grep -F 'nexus_vfs_revision.py ' "$f" | grep -F '$(python3 ' > /dev/null; then
+              echo "::error::$f must read the validated workspace revision"
               exit 1
             fi
           done
-          UNIQUE=$(printf '%s\n%s\n%s\n' "$CARGO_REVS" "$LOCK_REVS" "$DOCKER_REVS" | sort -u | grep -c . )
-          if [ "$UNIQUE" -ne 1 ]; then
-            echo "::error::nexus-vfs pins diverge across Cargo.toml / Cargo.lock / Dockerfiles — partial bump ships an untested kernel"
-            exit 1
-          fi
+          python3 -m unittest discover -s tests/unit -p test_nexus_vfs_revision.py
 
       - name: Install nexusd-cluster (the shipped production binary)
         id: install_cluster
         if: needs.detect-changes.outputs.code_changed == 'true'
-        # Production ships nexus-vfs's `nexus-cluster` crate as `nexusd-cluster`
-        # — the KERNEL-ARCHITECTURE §7 `cluster` profile PLUS the
-        # managed_agent control plane (relocated into nexus-vfs by #241).
-        # The earlier nexus-local assembly (`rust/nexusd`) was retired once
-        # the service crates it composed relocated into nexus-vfs itself
-        # (2026-09-24), so there is now ONE production build path and this
-        # gate installs it via `cargo install --git nexus-vfs` at the same
-        # rev the preflight validated. The rev is read from Cargo.toml at
-        # runtime (rather than hardcoded here) so a pin bump lands in ONE
-        # place; the preflight above guarantees this rev matches Cargo.lock
-        # and every Dockerfile ARG. `--locked` honors the nexus-vfs
-        # Cargo.lock at that rev.
+        # Build the production cluster at the validated workspace revision.
+        # --locked uses nexus-vfs's own transitive dependency resolution.
         run: |
-          NEXUS_VFS_REV=$(grep -oE 'nexus-vfs", rev = "[a-f0-9]{40}' Cargo.toml \
-            | grep -oE '[a-f0-9]{40}' | sort -u)
-          if [ -z "$NEXUS_VFS_REV" ] || [ "$(echo "$NEXUS_VFS_REV" | wc -l)" -ne 1 ]; then
-            echo "::error::could not extract a single nexus-vfs rev from Cargo.toml (got: $NEXUS_VFS_REV)"
-            exit 1
-          fi
+          NEXUS_VFS_REV=$(python3 scripts/nexus_vfs_revision.py)
           echo "rev=${NEXUS_VFS_REV}" >> "$GITHUB_OUTPUT"
           echo "Installing nexusd-cluster from nexus-vfs @ ${NEXUS_VFS_REV}"
-          # --force: the Swatinem/rust-cache shared-key restores
-          # ~/.cargo/bin from a prior run; before this cutover it held a
-          # `nexusd-cluster` binary installed as part of the nexus-local
-          # `nexusd v0.1.0 (rust/nexusd)` crate, which cargo refuses to
-          # overwrite with the `nexus-cluster` package's copy. Force
-          # replacement here — every run reinstalls from the pinned rev
-          # and the cache only exists to save compile time, not to
-          # preserve stale binaries.
+          # Reinstall so cached binaries cannot bypass the current revision.
           cargo install --locked --force \
             --git https://github.com/nexi-lab/nexus-vfs \
             --rev "${NEXUS_VFS_REV}" \

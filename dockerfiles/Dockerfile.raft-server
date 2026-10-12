@@ -17,16 +17,15 @@ FROM rust:1-slim-bookworm AS builder
 # to system protoc on PATH.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         protobuf-compiler \
+        python3 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
 
-# Pinned to the same nexus-vfs rev as every other kernel-tier image
-# (CI preflight enforces agreement) — an unpinned install tracks HEAD
-# and can skew the raft contract against the cluster/witness images.
-# --locked honors the source tree's Cargo.lock.
-ARG NEXUS_VFS_REV=c60ea0f3284dd7f6990347cc520b376bbe290b2e
-RUN cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --rev "${NEXUS_VFS_REV}" --bin nexus-raft-server raft
+# Build the same revision as the workspace and its lockfile.
+COPY Cargo.toml Cargo.lock scripts/nexus_vfs_revision.py /build/
+RUN NEXUS_VFS_REV="$(python3 /build/nexus_vfs_revision.py /build/Cargo.toml)" && \
+    cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --rev "${NEXUS_VFS_REV}" --bin nexus-raft-server raft
 
 # ---------- Production image ----------
 FROM debian:bookworm-slim

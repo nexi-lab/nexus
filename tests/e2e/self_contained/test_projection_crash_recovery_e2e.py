@@ -36,37 +36,21 @@ import httpx
 import pytest
 from sqlalchemy import func, select
 
-pytestmark = [pytest.mark.e2e, pytest.mark.slow]
+from tests.testkit.kernel import resolve_kernel_binary
+
+pytestmark = [
+    pytest.mark.e2e,
+    pytest.mark.slow,
+    pytest.mark.skipif(
+        os.name != "posix", reason="whole-node SIGKILL requires POSIX process groups"
+    ),
+]
 
 _BURST = int(os.environ.get("NEXUS_CRASH_BURST", "20000"))
 _THREADS = 8
 _KILL_AT_FRACTION = 0.4
 _API_KEY = "crash-e2e-admin-key"
 _PREFIX = "/burst"
-
-
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[3]
-
-
-def _resolve_cluster_binary() -> Path | None:
-    explicit = os.environ.get("NEXUS_KERNEL_BINARY")
-    if explicit:
-        candidate = Path(explicit)
-        if candidate.exists() and os.access(candidate, os.X_OK):
-            return candidate
-    root = _repo_root()
-    for directory in (
-        root / "rust" / "target" / "release",
-        root / "rust" / "target" / "debug",
-        root / "target" / "release",
-        root / "target" / "debug",
-    ):
-        for name in ("nexusd-cluster", "nexus-cluster"):
-            candidate = directory / name
-            if candidate.exists() and os.access(candidate, os.X_OK):
-                return candidate
-    return None
 
 
 def _free_port() -> int:
@@ -88,7 +72,7 @@ class _Server:
     def base_url(self) -> str:
         return f"http://127.0.0.1:{self.port}"
 
-    def start(self, timeout: float = 180.0) -> None:
+    def start(self, timeout: float = 60.0) -> None:
         self.port = _free_port()
         nexusd_bin = str(Path(sys.executable).parent / "nexusd")
         self.lines = []
@@ -113,7 +97,7 @@ class _Server:
             stderr=subprocess.STDOUT,
             # Own process group: nexusd's kernel child inherits it, so one
             # SIGKILL to the group is the whole-node crash we want.
-            preexec_fn=os.setsid,
+            start_new_session=True,
         )
         self.pgid = os.getpgid(self.process.pid)
 
@@ -129,19 +113,20 @@ class _Server:
         # Readiness = the HTTP health route answers; log markers depend on
         # the log level and uvicorn's formatter.
         deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            if self.process.poll() is not None:
-                pytest.fail(
-                    f"nexusd exited with {self.process.returncode} before ready:\n"
-                    + "".join(self.lines[-60:])
-                )
-            try:
-                r = httpx.get(f"{self.base_url}/health", timeout=2.0)
-                if r.status_code < 500:
-                    return
-            except httpx.HTTPError:
-                pass
-            time.sleep(0.25)
+        with httpx.Client(base_url=self.base_url, timeout=2.0, trust_env=False) as client:
+            while time.monotonic() < deadline:
+                if self.process.poll() is not None:
+                    pytest.fail(
+                        f"nexusd exited with {self.process.returncode} before ready:\n"
+                        + "".join(self.lines[-60:])
+                    )
+                try:
+                    response = client.get("/health")
+                    if response.status_code == 200:
+                        return
+                except httpx.HTTPError:
+                    pass
+                time.sleep(0.25)
         self.stop()
         pytest.fail("nexusd did not become ready:\n" + "".join(self.lines[-60:]))
 
@@ -180,8 +165,10 @@ class _Server:
 
 @pytest.fixture()
 def crash_server(tmp_path: Path) -> Generator[_Server, None, None]:
-    cluster = _resolve_cluster_binary()
+    cluster = resolve_kernel_binary()
     if cluster is None:
+        if os.environ.get("CI"):
+            pytest.fail("crash-recovery E2E requires the pinned cluster binary")
         pytest.skip("crash-recovery E2E requires a cluster binary (NEXUS_KERNEL_BINARY)")
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -236,6 +223,7 @@ def _kernel_files(base_url: str, *, settle_s: float = 60.0) -> dict[str, dict[st
                 "params": {"path": _PREFIX, "recursive": True, "details": True},
             },
             timeout=120.0,
+            trust_env=False,
         )
         assert resp.status_code == 200, resp.text
         last_body = resp.json()
@@ -254,10 +242,15 @@ def _kernel_files(base_url: str, *, settle_s: float = 60.0) -> dict[str, dict[st
         time.sleep(1.0)
 
 
+# Full pressure and recovery can exceed the suite's 120-second smoke budget.
+@pytest.mark.timeout(900)
 def test_kill_9_during_burst_loses_zero_version_rows(crash_server: _Server, tmp_path: Path) -> None:
     server = crash_server
+    print(f"\ncrash-recovery: starting {_BURST}-write workload", flush=True)
     server.start()
-    with httpx.Client(base_url=server.base_url, headers=_headers(), timeout=30.0) as c:
+    with httpx.Client(
+        base_url=server.base_url, headers=_headers(), timeout=30.0, trust_env=False
+    ) as c:
         assert c.post("/api/v2/files/mkdir", json={"path": _PREFIX}).status_code == 200
 
     acked: set[str] = set()
@@ -269,7 +262,9 @@ def test_kill_9_during_burst_loses_zero_version_rows(crash_server: _Server, tmp_
 
     def worker(t: int) -> None:
         nonlocal attempted
-        with httpx.Client(base_url=server.base_url, headers=_headers(), timeout=30.0) as c:
+        with httpx.Client(
+            base_url=server.base_url, headers=_headers(), timeout=30.0, trust_env=False
+        ) as c:
             for i in range(per_thread):
                 if stop.is_set():
                     return
@@ -289,7 +284,7 @@ def test_kill_9_during_burst_loses_zero_version_rows(crash_server: _Server, tmp_
     for th in threads:
         th.start()
     kill_at = int(_BURST * _KILL_AT_FRACTION)
-    while time.monotonic() - started < 600:
+    while time.monotonic() - started < 180:
         with acked_lock:
             done = len(acked)
         if done >= kill_at or all(not th.is_alive() for th in threads):
@@ -297,24 +292,32 @@ def test_kill_9_during_burst_loses_zero_version_rows(crash_server: _Server, tmp_
         time.sleep(0.02)
 
     # ── The crash ────────────────────────────────────────────────────
+    print(f"crash-recovery: SIGKILL after {done} acknowledgements", flush=True)
     server.kill9()
     stop.set()
+    drain_deadline = time.monotonic() + 35.0
     for th in threads:
-        th.join(timeout=60)
+        th.join(timeout=max(0.0, drain_deadline - time.monotonic()))
+    assert not any(th.is_alive() for th in threads), "HTTP writers did not exit after SIGKILL"
     acked_before_crash = set(acked)
-    assert acked_before_crash, "no write was acknowledged before the crash"
+    assert len(acked_before_crash) >= kill_at, (
+        f"burst did not reach its crash point: {len(acked_before_crash)}/{kill_at} acknowledged"
+    )
 
     # ── Restart on the same data dir + RecordStore, then reconcile ───
+    print("crash-recovery: restarting on durable storage", flush=True)
     server.start()
     kernel = _kernel_files(server.base_url)
     assert kernel, "kernel lost every write under the burst prefix"
     kernel_missing_acked = sorted(acked_before_crash - set(kernel))
 
+    print(f"crash-recovery: reconciling {len(kernel)} durable files", flush=True)
     reconcile = httpx.post(
         f"{server.base_url}/api/v2/admin/reconcile-projections",
         headers=_headers(),
         json={"prefix": _PREFIX},
-        timeout=600.0,
+        timeout=180.0,
+        trust_env=False,
     )
     assert reconcile.status_code == 200, reconcile.text
     report = reconcile.json()

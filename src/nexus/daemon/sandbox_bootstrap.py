@@ -11,10 +11,7 @@ Sequence:
    backend via ``nexus_fs.sys_setattr(f"/zone/{zone_id}", entry_type=DT_MOUNT,
    backend_type="remote", server_address=..., remote_auth_token=..., zone_id=...)``.
    This creates a live gRPC-backed mount; I/O routes to the hub automatically.
-5. Register all zones in the ``ZoneSearchRegistry``:
-   - ``"local"`` zone → ``search_registry.register(zone_id, search_daemon)``
-   - remote zones → ``search_registry.register_remote(zone_id, transport)``
-6. Start ``BootIndexer(workspace, search_daemon, health_state).start_async()``
+5. Start ``BootIndexer(workspace, search_daemon, health_state).start_async()``
    for background workspace indexing.
 """
 
@@ -46,11 +43,7 @@ class SandboxBootstrapper:
                          ``hub_url`` is ``None``.
         nexus_fs:        NexusFS instance used to mount zones into the Rust
                          kernel via ``sys_setattr``.
-        search_registry: ``ZoneSearchRegistry`` (or equivalent).  Must expose
-                         ``register(zone_id, daemon)`` for local zones and
-                         ``register_remote(zone_id, transport)`` for remote ones.
-        search_daemon:   Local search daemon instance passed to ``BootIndexer``
-                         and registered as the daemon for the ``"local"`` zone.
+        search_daemon:   Local search daemon instance passed to ``BootIndexer``.
         health_state:    Mutable dict with at least a ``"status"`` key.  Should
                          be ``{"status": "indexing"}`` before ``run()`` is called.
                          ``BootIndexer`` will transition it to ``"ready"`` once
@@ -63,7 +56,6 @@ class SandboxBootstrapper:
         hub_url: str | None,
         hub_token: str | None,
         nexus_fs: Any,
-        search_registry: Any,
         search_daemon: Any,
         health_state: dict[str, Any],
     ) -> None:
@@ -71,7 +63,6 @@ class SandboxBootstrapper:
         self._hub_url = hub_url
         self._hub_token = hub_token
         self._nexus_fs = nexus_fs
-        self._search_registry = search_registry
         self._search_daemon = search_daemon
         self._health_state = health_state
 
@@ -96,9 +87,6 @@ class SandboxBootstrapper:
             self._workspace,
         )
 
-        if self._search_registry is not None:
-            self._search_registry.register("local", self._search_daemon)
-
         # Step 3: Federation handshake
         hub_session = None
         if self._hub_url is not None:
@@ -120,7 +108,7 @@ class SandboxBootstrapper:
                     exc,
                 )
 
-        # Step 4 & 5: Remote zones — use Rust-native backend_type="remote" so
+        # Step 4: Remote zones — use Rust-native backend_type="remote" so
         # the kernel constructs a live gRPC client that routes I/O to the hub.
         # Strip grpc:// / grpcs:// prefix since server_address is host:port only.
         #
@@ -151,10 +139,7 @@ class SandboxBootstrapper:
                     grant.zone_id,
                     _server_addr,
                 )
-                if self._search_registry is not None:
-                    self._search_registry.register_remote(grant.zone_id, hub_session.transport)
-
-        # Step 6: Background workspace indexing
+        # Step 5: Background workspace indexing
         indexer = BootIndexer(
             workspace=self._workspace,
             search_daemon=self._search_daemon,

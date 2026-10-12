@@ -512,7 +512,7 @@ and indexing throughput are hot or
 setup paths. Benchmarks live in
 `tests/benchmarks/test_search_benchmarks.py`,
 `tests/benchmarks/test_indexing_benchmarks.py`,
-`tests/benchmarks/test_search_protocol_benchmark.py`, and
+`scripts/test_published_search_quality.py`, and
 `docs/benchmarks/2026-04-18-sandbox-vs-gbrain.md`. The April benchmark
 reported sandbox hybrid retrieval tied gbrain baseline P@1 at 0.947 on the
 gbrain corpus and passed the HERB QA gate at 8/8 top-5 hits.
@@ -586,6 +586,10 @@ async def use_local_and_hub_context(nx):
     return company_policy, hits
 ```
 
+The SDK query selects the connected kernel's zone. To search across readable
+zones, send `POST /v2/search/query` to the owning Rust HTTP listener with the
+existing bearer credential and omit `zone_id`.
+
 **Expected behavior:**
 
 - **Success:** the handshake returns the token's hub grants, the daemon mounts
@@ -599,7 +603,7 @@ async def use_local_and_hub_context(nx):
 - **Unavailable:** a bad token or unreachable hub does not prevent local work.
   The handshake is logged as failed, remote zones are not mounted, and the
   sandbox continues in local-only mode. Indexed search requires a reachable
-  plugin; cross-zone HTTP queries report unavailable zones in `zones_failed`.
+  plugin; cross-zone HTTP queries report failed zones in the response's `error`.
 
 **Correctness assertions:** `federation_client_whoami` must return exactly the
 remote zone IDs and `r` / `rw` grants used by the mount table; a write through
@@ -608,17 +612,20 @@ from the hub; and hub-down startup must keep `/zone/local` usable. These are
 covered by
 `tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py`,
 `tests/unit/remote/test_federation_handshake.py`,
-`tests/unit/backends/test_remote_zone.py`, and
-`tests/integration/bricks/search/test_federated_search.py::TestRemoteZoneSearch`.
+and `tests/unit/backends/test_remote_zone.py`. Native cross-zone dispatch is
+covered by the VFS workspace's
+[`federated_query_e2e.rs`](https://github.com/nexi-lab/nexus-vfs/blob/main/rust/http-api/tests/federated_query_e2e.rs)
+and signed-plugin authorization by
+[`production_http_search.rs`](https://github.com/nexi-lab/nexus-vfs/blob/main/rust/profiles/cluster/tests/production_http_search.rs).
 
 **Performance classification:** handshake and hub status are control-plane
 paths. Local workspace read/write/list remain the hot file paths benchmarked in
 `tests/benchmarks/bench_read_write_overhead.py`. Remote hub reads and
-federated search fanout are hot once the agent is running; synthetic guardrails
-live in `tests/benchmarks/bench_sandbox_federation_latency.py`
+federated Search queries are hot once the agent is running. Native retrieval
+latency is measured by `scripts/test_published_search_quality.py`. Synthetic
+handshake/read guardrails live in `tests/benchmarks/bench_sandbox_federation_latency.py`
 (`TestSandboxFederationHandshakeLatency`, `TestSandboxFederationReadLatency`,
-`TestFederatedSearchFanoutLatency`, and
-`TestSandboxHubDownDegradedLatency`). The benchmark budgets are for local
+and `TestSandboxHubDownDegradedLatency`). The benchmark budgets are for local
 dispatch overhead only; live hub latency depends on the network and the hub's
 storage/search backend.
 

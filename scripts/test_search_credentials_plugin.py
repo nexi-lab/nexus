@@ -1,4 +1,4 @@
-"""Live HTTP/MCP/Python RPC -> SearchDaemon -> signed plugin authorization.
+"""Live native HTTP, SDK, RPC, MCP and Search management authorization.
 
 Requires an isolated ReBAC-enabled cluster with /docs mounted in sharedzone,
 node mTLS configured through NEXUS_SEARCH_PLUGIN_TLS_*, and an admin key file
@@ -25,7 +25,7 @@ from nexus.bricks.auth.providers.static_key import StaticAPIKeyAuth
 from nexus.bricks.search.daemon import SearchDaemon
 from nexus.bricks.search.search_service import SearchService
 from nexus.contracts.cache_store import InMemoryCacheStore
-from nexus.contracts.search_types import SearchRequest
+from nexus.grpc.search.v1 import search_pb2, search_pb2_grpc
 from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
 from nexus.lib.request_credentials import request_api_key
 from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
@@ -85,6 +85,7 @@ async def main() -> None:
             known_zones_path=Path("/tmp/search-known-zones"),
         ),
     )
+    search = search_pb2_grpc.SearchServiceStub(channel)
     vfs = vfs_pb2_grpc.NexusVFSServiceStub(channel)
     suffix = uuid4().hex
     paths = {name: f"/docs/{name}-{suffix}.txt" for name in ("alice", "bob")}
@@ -148,14 +149,18 @@ async def main() -> None:
                     request_api_key.reset(scope)
                 await grant(name, "POST")
 
-            scope = request_api_key.set(admin)
-            try:
-                indexed_hits = await daemon.search(
-                    SearchRequest(query=needle, search_type="keyword", zone_id="sharedzone")
-                )
-                assert {hit.path for hit in indexed_hits} == set(paths.values()), indexed_hits
-            finally:
-                request_api_key.reset(scope)
+            indexed = await search.Query(
+                search_pb2.QueryRequest(
+                    q=needle,
+                    query_type=search_pb2.QUERY_TYPE_KEYWORD,
+                    zone_id="sharedzone",
+                    limit=10,
+                ),
+                metadata=(("authorization", f"Bearer {admin}"),),
+                timeout=20,
+            )
+            assert not indexed.HasField("error"), indexed.error
+            assert {hit.path for hit in indexed.results} == set(paths.values()), indexed
 
             provider = StaticAPIKeyAuth(
                 {
@@ -633,20 +638,21 @@ async def main() -> None:
                 assert request_api_key.get() is None
                 await daemon.get_health()  # Internal boot probe still uses node mTLS.
                 for token in ("sk-never-minted", ""):
-                    scope = request_api_key.set(token)
                     try:
-                        try:
-                            await daemon.search(
-                                SearchRequest(
-                                    query=needle, search_type="keyword", zone_id="sharedzone"
-                                )
-                            )
-                        except grpc.aio.AioRpcError as exc:
-                            assert exc.code() == grpc.StatusCode.UNAUTHENTICATED, exc.code()
-                        else:
-                            raise AssertionError("Invalid bearer inherited node authority")
-                    finally:
-                        request_api_key.reset(scope)
+                        await search.Query(
+                            search_pb2.QueryRequest(
+                                q=needle,
+                                query_type=search_pb2.QUERY_TYPE_KEYWORD,
+                                zone_id="sharedzone",
+                                limit=10,
+                            ),
+                            metadata=(("authorization", f"Bearer {token}"),),
+                            timeout=20,
+                        )
+                    except grpc.aio.AioRpcError as exc:
+                        assert exc.code() == grpc.StatusCode.UNAUTHENTICATED, exc.code()
+                    else:
+                        raise AssertionError("Invalid bearer inherited node authority")
             print(
                 "Search credentials live contract passed: TCP HTTP/user/concurrency/batch/locate/RPC/MCP/admin/management/revocation"
             )

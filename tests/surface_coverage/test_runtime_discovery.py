@@ -49,6 +49,8 @@ def _rpc_op(
 
 
 def _touch_executable(path: Path) -> Path:
+    if os.name == "nt":
+        path = path.with_suffix(".exe")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("#!/bin/sh\n", encoding="utf-8")
     path.chmod(0o755)

@@ -312,19 +312,19 @@ flowchart TB
   <strong>Naming trap:</strong> two orthogonal concepts live near each other &mdash; do not confuse.
 </div>
 <table>
-  <thead><tr><th>Dimension</th><th><code>peer_fanout.rs</code> (Rust plugin)</th><th><code>federated_search.py</code> (Python orchestration)</th></tr></thead>
+  <thead><tr><th>Dimension</th><th><code>peer_fanout.rs</code> (Rust plugin)</th><th><code>rust/federated-search/</code> (Rust dispatcher)</th></tr></thead>
   <tbody>
     <tr><td><strong>Fans out to</strong></td><td>Peer plugin instances of the <strong>same zone</strong></td><td>Daemons of <strong>different zones</strong> (possibly different machines)</td></tr>
-    <tr><td><strong>Auth</strong></td><td>None &mdash; peer plugins are trusted (tailnet + TLS)</td><td>ReBAC-aware &mdash; only fans to zones subject can access</td></tr>
+    <tr><td><strong>Auth</strong></td><td>The originating host authorizes returned files; peer transport follows the configured TLS policy</td><td>Live ReBAC-readable zones bounded by the original credential's zone grants</td></tr>
     <tr><td><strong>Credential</strong></td><td><code>PEER_FANOUT_MARKER_HEADER</code> (loop guard, not auth)</td><td><code>SearchDelegation</code> short-lived (30s) credential per remote zone</td></tr>
-    <tr><td><strong>Zone routing</strong></td><td>Every peer sees same query</td><td>Per-zone capability routing (skip semantic queries to keyword-only zones)</td></tr>
-    <tr><td><strong>Fusion</strong></td><td><code>fusion::rrf_multi</code> (Rust)</td><td><code>rrf_multi_fusion</code> (Python; algorithm-equivalent)</td></tr>
+    <tr><td><strong>Zone routing</strong></td><td>Every peer sees same query</td><td>The registry selects the zone's local or remote owning host</td></tr>
+    <tr><td><strong>Fusion</strong></td><td><code>fusion::rrf_multi</code> (Rust)</td><td>Shared RRF algorithms in <code>search-common</code></td></tr>
   </tbody>
 </table>
 
 <h2 id="grpc">3. gRPC surface &mdash; <code>nexus.search.v1.SearchService</code></h2>
 
-<p>Wire SSOT: <code>rust/services/proto/nexus/search/v1/search.proto</code>. Both the Rust plugin (server) and consumers (Python daemon proxy, Rust http-api client, sudocode Rust agent) codegen from this one file.</p>
+<p>Wire SSOT: <code>nexus-vfs/rust/proto/nexus/search/v1/search.proto</code>. The Rust plugin, host and HTTP adapter use this schema; Python and agent clients consume its generated bindings.</p>
 
 <table>
   <thead><tr><th>Plane</th><th>RPC</th><th>Purpose</th></tr></thead>
@@ -336,7 +336,7 @@ flowchart TB
     <tr><td rowspan="4">Indexing</td><td><code>Index</code></td><td>walker-based re-index of a subtree</td></tr>
     <tr><td><code>IndexDocuments</code></td><td>explicit-payload POST (HTTP-fed bytes → chunks → index)</td></tr>
     <tr><td><code>Refresh</code></td><td>content-hash-driven incremental refresh</td></tr>
-    <tr><td><code>NotifyFileChange</code></td><td>fsnotify hook → schedule targeted re-index</td></tr>
+    <tr><td><code>NotifyFileChange</code></td><td>delete indexed content; create/update require explicit document indexing</td></tr>
     <tr><td rowspan="4">Directory tracking</td><td><code>AddIndexedDirectory</code></td><td>register a subtree for automatic Refresh</td></tr>
     <tr><td><code>RemoveIndexedDirectory</code></td><td>drop tracking</td></tr>
     <tr><td><code>ListIndexedDirectories</code></td><td>enumerate tracked subtrees</td></tr>
@@ -362,6 +362,7 @@ flowchart TB
   <li><code>GET /v2/status</code></li>
   <li><code>GET /v2/search/glob</code> and <code>GET /v2/search/grep</code></li>
   <li><code>POST /v2/search/query</code>, including Rust cross-zone dispatch</li>
+  <li><code>POST /v2/search/query/batch</code>, up to 500 entries with one original credential</li>
   <li><code>POST /v2/documents/{index,refresh,batch}</code> and <code>GET /v2/documents/stats</code></li>
   <li><code>GET/POST /v2/auth/keys</code> and <code>DELETE /v2/auth/keys/{key_hash}</code></li>
   <li><code>GET/POST/DELETE /v2/rebac/tuples</code></li>
@@ -509,11 +510,6 @@ flowchart TB
       <td>2026-08-17</td>
       <td>10-principle audit round applied to every merged PR; residuals R1-R10 all fixed or filed as issues.</td>
       <td>User-standing quality bar; see the audit findings folded into #4676/#4677/#4679/#4680.</td>
-    </tr>
-    <tr>
-      <td>2026-08-17</td>
-      <td>Keep <code>federated_search.py</code> in Python for now.</td>
-      <td>Cross-zone dispatch has a three-way tie to Python ReBAC + delegation-mint + zone-registry. Independent move loses meaning. Long-term destination: Rust <code>http-api</code>, not plugin.</td>
     </tr>
     <tr>
       <td>2026-08-18</td>

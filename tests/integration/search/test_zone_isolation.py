@@ -1,17 +1,4 @@
-"""Zone isolation through the post-P12 ``SearchDaemon`` gRPC proxy.
-
-Every search / index / evict call the server makes must carry the caller's
-zone to the Rust ``nexus-search-plugin`` — the plugin keeps one tantivy +
-HNSW index per zone, so a dropped or wrong ``zone_id`` either leaks another
-tenant's documents into a query or files a tenant's document where its own
-queries never look.  These tests run the REAL proxy over a fake gRPC stub
-and pin the zone on every outgoing request (same pattern as
-``tests/integration/services/test_search_response_contracts.py``).
-
-Rewritten for P12 (#4598 / #4736): the previous version drove the deleted
-in-process daemon (``DaemonConfig`` / ``create_backend`` / txtai SQL WHERE
-clauses) and had failed at collection since the pivot.
-"""
+"""Search management requests preserve the authorized indexing zone."""
 
 from __future__ import annotations
 
@@ -32,7 +19,6 @@ if "nexus_runtime" not in sys.modules:
     sys.modules["nexus_runtime"] = _nexus_runtime_stub
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.contracts.search_types import SearchRequest
 from nexus.grpc.search.v1 import search_pb2
 
 
@@ -60,54 +46,6 @@ def _daemon_with_stub(**responses):
         setattr(stub, method, _make(method, resp))
     daemon._stub = stub
     return daemon, stub
-
-
-def _hit(path: str, zone_id: str) -> search_pb2.QueryResult:
-    return search_pb2.QueryResult(
-        path=path, chunk_index=0, chunk_text="x", score=0.9, zone_id=zone_id
-    )
-
-
-class TestQueryZoneStamping:
-    def test_search_forwards_the_request_zone(self) -> None:
-        daemon, stub = _daemon_with_stub(Query=search_pb2.QueryResponse(results=[]))
-
-        asyncio.run(daemon.search(SearchRequest(query="test query", zone_id="corp")))
-
-        ((method, req),) = stub.requests
-        assert method == "Query"
-        assert req.zone_id == "corp"
-
-    def test_search_zone_none_is_empty_on_the_wire(self) -> None:
-        """Empty ``zone_id`` is the plugin's ROOT-zone selector — the proxy
-        must not invent a zone the caller did not ask for."""
-        daemon, stub = _daemon_with_stub(Query=search_pb2.QueryResponse(results=[]))
-
-        asyncio.run(daemon.search(SearchRequest(query="test")))
-
-        ((_, req),) = stub.requests
-        assert req.zone_id == ""
-
-    @pytest.mark.asyncio
-    async def test_different_zones_are_different_requests(self) -> None:
-        daemon, stub = _daemon_with_stub(Query=search_pb2.QueryResponse(results=[]))
-
-        await daemon.search(SearchRequest(query="test", zone_id="zone-a"))
-        await daemon.search(SearchRequest(query="test", zone_id="zone-b"))
-
-        assert [req.zone_id for _, req in stub.requests] == ["zone-a", "zone-b"]
-
-    def test_results_keep_the_plugin_zone(self) -> None:
-        """A hit's zone rides back on the result so the router can scope
-        ReBAC / path unscoping per zone."""
-        daemon, _ = _daemon_with_stub(
-            Query=search_pb2.QueryResponse(results=[_hit("/a.py", "corp"), _hit("/b.py", "corp")])
-        )
-
-        results = asyncio.run(daemon.search(SearchRequest(query="test", zone_id="corp")))
-
-        assert [r.path for r in results] == ["/a.py", "/b.py"]
-        assert all(getattr(r, "zone_id", "corp") == "corp" for r in results)
 
 
 class TestIndexZoneStamping:

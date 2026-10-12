@@ -697,7 +697,6 @@ In Linux, `vfsmount` (kernel) has two layers: `lookup_slow()` is the hot-path re
 | P4 | **ConnectorProtocol** | `core/protocols/connector.py` | Kernel | Sync | 13 (Medium) | Composed (P2+P3) | storage driver | Full storage backend interface (ContentStore + DirectoryOps + lifecycle) |
 | P5 | **VFSRouterProtocol** | `core/protocols/vfs_router.py` | Kernel | Async | 1 (Micro) | Standalone | VFS `lookup_slow()` | Route virtual path → backend + physical path. Mount CRUD moved to P10 MountProtocol. |
 | P6 | **SearchProtocol** | `services/protocols/search.py` | Service | Mixed | 6 (Small) | Standalone | `readdir` + custom | Unified find interface (glob/grep/semantic) |
-| P7 | **SearchBrickProtocol** | `services/protocols/search.py` | Service | Mixed | 5 (Small) | Standalone | search daemon | Per-brick search with indexing lifecycle |
 | P8 | **PermissionProtocol** | `services/protocols/permission.py` | Service | Sync | 6 (Small) | Standalone | SELinux / Zanzibar | ReBAC check/write/delete/expand |
 | P9a | **WatchProtocol** | `services/protocols/watch.py` | Service | Async | 2 (Micro) | Standalone | `inotify` | File change long-poll (split from EventsProtocol) |
 | P9b | **LockProtocol** | `services/protocols/lock.py` | Service | Async | 3 (Micro) | Standalone | `flock` | Advisory lock lifecycle (split from EventsProtocol) |

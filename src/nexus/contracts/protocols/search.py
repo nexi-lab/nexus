@@ -4,40 +4,7 @@ import builtins
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from nexus.contracts.search_types import SearchRequest  # noqa: F401
     from nexus.contracts.types import OperationContext
-
-# =============================================================================
-# Issue #1520: Search Brick Protocol
-# =============================================================================
-
-
-@runtime_checkable
-class SearchBrickProtocol(Protocol):
-    """Brick contract for search operations (Issue #1520).
-
-    Defines the interface that search brick implementations must satisfy.
-    ``SearchDaemon`` is the canonical implementation.
-
-    Used by the kernel layer to interact with the search service
-    without hard-coupling to its internals.
-    """
-
-    @property
-    def is_initialized(self) -> bool: ...
-
-    async def startup(self) -> None: ...
-
-    async def shutdown(self) -> None: ...
-
-    async def search(self, request: "SearchRequest") -> builtins.list[Any]: ...
-
-    def get_stats(self) -> dict[str, Any]: ...
-
-    def get_health(self) -> dict[str, Any]: ...
-
-    async def notify_file_change(self, path: str, change_type: str = "update") -> None: ...
-
 
 # =============================================================================
 # Issue #1287: Search Service Protocol

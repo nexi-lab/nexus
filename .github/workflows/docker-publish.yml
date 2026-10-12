@@ -105,6 +105,9 @@ jobs:
         run: |
           pair="${{ matrix.platform }}"
           echo "value=${pair//\//-}" >> "$GITHUB_OUTPUT"
+          # Each Git ref uses its own build cache.
+          cache_ref="$(printf '%s' "$GITHUB_REF" | sha256sum | cut -d' ' -f1)"
+          echo "cache_ref=$cache_ref" >> "$GITHUB_OUTPUT"
 
       - name: Build and push by digest
         id: build
@@ -114,8 +117,8 @@ jobs:
           file: ./Dockerfile
           platforms: ${{ matrix.platform }}
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true,oci-mediatypes=true
-          cache-from: type=gha,scope=${{ github.ref_name }}-${{ steps.pair.outputs.value }}
-          cache-to: type=gha,mode=max,scope=${{ github.ref_name }}-${{ steps.pair.outputs.value }},ignore-error=true
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache-publish-${{ steps.pair.outputs.cache_ref }}-${{ steps.pair.outputs.value }}
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache-publish-${{ steps.pair.outputs.cache_ref }}-${{ steps.pair.outputs.value }},mode=max,ignore-error=true
 
       - name: Export digest
         run: |
@@ -255,6 +258,9 @@ jobs:
         run: |
           pair="${{ matrix.platform }}"
           echo "value=${pair//\//-}" >> "$GITHUB_OUTPUT"
+          # Each Git ref uses its own build cache.
+          cache_ref="$(printf '%s' "$GITHUB_REF" | sha256sum | cut -d' ' -f1)"
+          echo "cache_ref=$cache_ref" >> "$GITHUB_OUTPUT"
 
       - name: Build and push by digest
         id: build
@@ -268,8 +274,8 @@ jobs:
             plugin_signing_key=${{ secrets.PLUGIN_SIGNING_PRIVKEY }}
           platforms: ${{ matrix.platform }}
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.CLUSTER_IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true,oci-mediatypes=true
-          cache-from: type=gha,scope=cluster-publish-${{ steps.pair.outputs.value }}
-          cache-to: type=gha,mode=max,scope=cluster-publish-${{ steps.pair.outputs.value }},ignore-error=true
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.CLUSTER_IMAGE_NAME }}:buildcache-publish-${{ steps.pair.outputs.cache_ref }}-${{ steps.pair.outputs.value }}
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.CLUSTER_IMAGE_NAME }}:buildcache-publish-${{ steps.pair.outputs.cache_ref }}-${{ steps.pair.outputs.value }},mode=max,ignore-error=true
 
       - name: Export digest
         run: |

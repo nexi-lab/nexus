@@ -8,7 +8,6 @@ import pytest
 from fastapi import FastAPI
 
 from nexus.bricks.search.daemon import SearchDaemon
-from nexus.contracts.search_types import SearchRequest
 from nexus.grpc.search.v1 import search_pb2, search_pb2_grpc
 from nexus.lib.request_credentials import request_api_key
 from nexus.runtime.zone_runner import ZoneRegistry
@@ -27,18 +26,18 @@ async def test_http_credentials_are_isolated_on_shared_channel():
         async def Health(self, request, context):
             return search_pb2.HealthResponse()
 
-        async def Query(self, request, context):
-            if request.q == "cancel":
+        async def Stats(self, request, context):
+            if request.zone_id == "cancel":
                 cancel_started.set()
                 try:
                     await asyncio.Event().wait()
                 finally:
                     cancelled.set()
-            seen.append((request.q, dict(context.invocation_metadata()).get("authorization")))
+            seen.append((request.zone_id, dict(context.invocation_metadata()).get("authorization")))
             if len(seen) == 2:
                 both.set()
             await asyncio.wait_for(both.wait(), 5)
-            return search_pb2.QueryResponse()
+            return search_pb2.StatsResponse()
 
     server = grpc.aio.server()
     search_pb2_grpc.add_SearchServiceServicer_to_server(Receiver(), server)
@@ -50,26 +49,26 @@ async def test_http_credentials_are_isolated_on_shared_channel():
     app = FastAPI()
     app.add_middleware(RequestCredentialsMiddleware)
 
-    @app.get("/query")
-    async def query(q: str):
+    @app.get("/stats")
+    async def stats(zone_id: str):
         async def work():
-            await daemon.search(SearchRequest(query=q))
+            await daemon.get_stats(zone_id=zone_id)
             return {"ok": True}
 
-        return await run_zone_scoped(zones, q, work)
+        return await run_zone_scoped(zones, zone_id, work)
 
     try:
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app), base_url="http://test"
         ) as client:
             responses = await asyncio.gather(
-                client.get("/query?q=alice", headers={"Authorization": "Bearer sk-alice"}),
-                client.get("/query?q=bob", headers={"Authorization": "sk-bob"}),
+                client.get("/stats?zone_id=alice", headers={"Authorization": "Bearer sk-alice"}),
+                client.get("/stats?zone_id=bob", headers={"Authorization": "sk-bob"}),
             )
             assert all(response.status_code == 200 for response in responses)
             assert sorted(seen) == [("alice", "Bearer sk-alice"), ("bob", "Bearer sk-bob")]
             pending = asyncio.create_task(
-                client.get("/query?q=cancel", headers={"Authorization": "Bearer sk-cancel"})
+                client.get("/stats?zone_id=cancel", headers={"Authorization": "Bearer sk-cancel"})
             )
             await asyncio.wait_for(cancel_started.wait(), 5)
             pending.cancel()
@@ -77,10 +76,10 @@ async def test_http_credentials_are_isolated_on_shared_channel():
                 await pending
             await asyncio.wait_for(cancelled.wait(), 5)
             assert request_api_key.get() is None
-            await client.get("/query?q=anonymous")
-            await client.get("/query?q=invalid", headers={"Authorization": "Basic abc"})
+            await client.get("/stats?zone_id=anonymous")
+            await client.get("/stats?zone_id=invalid", headers={"Authorization": "Basic abc"})
             await client.get(
-                "/query?q=duplicate",
+                "/stats?zone_id=duplicate",
                 headers=[("Authorization", "Bearer a"), ("Authorization", "Bearer b")],
             )
             assert seen[2:] == [

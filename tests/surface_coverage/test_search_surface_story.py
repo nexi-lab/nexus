@@ -23,7 +23,7 @@ SUPPORTED_ROWS = {
     "search.indexing_mode",
     "search.locate",
     "search.query",
-    "search.query_batch",
+    "search.batch_query",
     "search.refresh",
     "search.reindex",
     "search.stats",
@@ -102,7 +102,7 @@ def test_user_guide_contains_search_story_inventory_and_quality_claims() -> None
 
     for needle in [
         "Search surface coverage matrix",
-        "/api/v2/search/query",
+        "/v2/search/query",
         "/v2/search/grep",
         "nexus path-context",
         "RRF",

@@ -501,13 +501,18 @@ class TestFullWorkflow:
                 "semantic_search_index via the Rust search-plugin daemon"
             )
 
-            # Step 2e: Query the mixed deployment's HTTP search endpoint.
+            # Step 2e: Query the owning host's native HTTP search endpoint.
             import httpx
 
-            search_response = httpx.get(
-                f"http://localhost:{http_port}/api/v2/search/query",
+            search_base = os.environ.get("NEXUS_SEARCH_URL", f"http://localhost:{http_port}")
+            search_response = httpx.post(
+                f"{search_base.rstrip('/')}/v2/search/query",
                 headers={"Authorization": f"Bearer {api_key}"},
-                params={"q": "authentication", "type": "keyword", "path": "/workspace/demo"},
+                json={
+                    "q": "authentication",
+                    "query_type": "keyword",
+                    "path_filter": "/workspace/demo",
+                },
                 timeout=60,
             )
             assert search_response.is_success, search_response.text

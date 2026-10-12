@@ -12,11 +12,27 @@ export interface SearchHit {
   readonly vector_score?: number;
   readonly title_score?: number;
   readonly expanded_context?: string;
+  readonly mtime_ms?: number;
+  readonly tier_boost?: number;
+  readonly recency_boost?: number;
+  readonly expansion_variant_index?: number;
 }
 
 export interface SearchResponse<T> {
   readonly results: readonly T[];
   readonly error?: string;
+}
+
+export interface SearchQuery {
+  readonly q: string;
+  readonly query_type?: "keyword" | "semantic" | "hybrid";
+  readonly path_filter?: string;
+  readonly limit?: number;
+  readonly zone_id?: string;
+}
+
+export interface SearchBatchResponse<T> {
+  readonly responses: readonly SearchResponse<T>[];
 }
 
 export interface DiscoveryStatus {
@@ -71,6 +87,14 @@ export class SearchClient {
     return this.transport.post("/v2/search/query", {
       q, query_type: queryType, path_filter: pathFilter, limit,
       zone_id: this.connection.zoneId ?? "",
+    }, this.options);
+  }
+
+  batchQuery(queries: readonly SearchQuery[]): Promise<SearchBatchResponse<SearchHit>> {
+    return this.transport.post("/v2/search/query/batch", {
+      queries: queries.map((query) => ({
+        ...query, zone_id: query.zone_id ?? this.connection.zoneId ?? "",
+      })),
     }, this.options);
   }
 

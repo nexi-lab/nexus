@@ -1,7 +1,6 @@
 """Search startup — construct SearchDaemon and wire it to the Rust
-``nexus-search-plugin`` cdylib, register VFS hooks that evict deleted /
-renamed paths from the plugin's index, and initialise the zone-search
-registry used by federated search.
+``nexus-search-plugin`` cdylib and register VFS hooks that evict deleted /
+renamed paths from the plugin's index.
 
 Writes are NOT auto-indexed (#4736): the plugin's ``NotifyFileChange``
 carries no text, so making a written file searchable is the caller's
@@ -55,17 +54,8 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
         candidate = SearchDaemon(target=target)
         await candidate.startup()
 
-        # Boot-time reachability probe.  P12 turned the daemon into a
-        # gRPC proxy to the nexus-search-plugin cdylib; a deployment
-        # that boots the FastAPI server without also loading the plugin
-        # (single-container edge-smoke topology, dev workstations, any
-        # deployment that hasn't caught up to the new sidecar contract)
-        # used to get an in-process daemon and now would fail every
-        # request with UNAVAILABLE if we left the unusable proxy in
-        # place.  Fail-soft instead: if the plugin can't be reached in
-        # bounded time, warn loudly and leave app.state.search_daemon
-        # unset so _get_search_daemon returns 503 and no code path
-        # blocks on unreachable gRPC.
+        # Publish the management client after a bounded reachability probe.
+        # An unreachable plugin leaves management disabled; routes return 503.
         try:
             await asyncio.wait_for(candidate.get_health(), timeout=5.0)
         except Exception as probe_exc:
@@ -88,7 +78,6 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
         app.state.search_daemon_enabled = True
 
         _wire_notify_hooks(app, svc)
-        _init_zone_registry(app, svc)
 
         logger.info(
             "Search Daemon started (backend=rust-plugin, target=%s)",
@@ -221,21 +210,3 @@ def search_zone_and_path(path: str, zone_id: str | None) -> tuple[str, str]:
         if path.startswith(scoped + "/"):
             return zone, path[len(scoped) :]
     return zone, path
-
-
-def _init_zone_registry(app: "FastAPI", svc: "LifespanServices") -> None:
-    """Register local zone routes for federated Search calls."""
-    from nexus.bricks.search.zone_registry import ZoneSearchRegistry
-
-    daemon = app.state.search_daemon
-    registry = ZoneSearchRegistry(default_daemon=daemon)
-    zone_manager = getattr(svc, "zone_manager", None)
-    if zone_manager is not None:
-        try:
-            zone_ids = zone_manager.list_zones()
-            for zone_id in zone_ids:
-                registry.register(zone_id, daemon)
-            logger.info("[ZONE-REGISTRY] Registered %d local zones", len(zone_ids))
-        except Exception as e:
-            logger.warning("[ZONE-REGISTRY] Failed to register zones: %s", e)
-    app.state.zone_search_registry = registry

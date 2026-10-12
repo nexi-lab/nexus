@@ -1,20 +1,7 @@
-"""``startup_search`` must fail SOFT when the nexus-search-plugin
-sidecar isn't reachable.
+"""Search management is published only after a healthy plugin probe.
 
-P12 turned ``SearchDaemon`` into a Python-side proxy for the Rust
-``nexus-search-plugin`` cdylib.  Every method dials
-``NEXUS_SEARCH_PLUGIN_TARGET`` (default ``127.0.0.1:2126``).  A
-deployment topology that boots the FastAPI server without also
-loading the plugin (single-container edge smoke, dev workstation,
-anything that hasn't caught up to the new sidecar contract) used to
-get an in-process daemon and now would leave an unusable proxy in
-``app.state`` — every subsequent request handler would UNAVAILABLE.
-
-The fix: ``startup_search`` runs a bounded ``get_health()`` probe
-before publishing the daemon.  On failure it logs a warning, tears
-the candidate down, and sets ``app.state.search_daemon = None`` so
-``_get_search_daemon`` returns 503 cleanly and no code path blocks
-on unreachable gRPC.
+A failed probe closes the client and leaves management disabled so routes
+return 503 without starting further RPCs against an unreachable host.
 """
 
 from __future__ import annotations
@@ -85,8 +72,6 @@ async def test_startup_publishes_daemon_when_plugin_healthy(monkeypatch, tmp_pat
     assert tasks == []
     assert app.state.search_daemon is fake
     assert app.state.search_daemon_enabled is True
-    assert app.state.zone_search_registry.get_daemon("local") is fake
-    assert app.state.zone_search_registry.get_capabilities("local") is None
     assert list(tmp_path.iterdir()) == []
 
 

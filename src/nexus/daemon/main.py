@@ -1059,9 +1059,6 @@ def main(
         # effective-profile gate is the defense-in-depth invariant).
         if effective_profile == "sandbox" and workspace is not None:
             _workspace_path = Path(workspace)
-            _search_registry = getattr(nx, "_search_registry", None)
-            if _search_registry is None:
-                _search_registry = getattr(nx, "zone_search_registry", None)
             _search_daemon = getattr(nx, "_search_daemon", None)
             if _search_daemon is None:
                 _search_daemon = getattr(nx, "search_daemon", None)
@@ -1071,7 +1068,6 @@ def main(
                 hub_url=hub_url,
                 hub_token=hub_token,
                 nexus_fs=nx,
-                search_registry=_search_registry,
                 search_daemon=_search_daemon,
                 health_state=_health_state,
             )

@@ -1,4 +1,4 @@
-"""Live HTTP/MCP/Python RPC -> SearchDaemon -> signed plugin authorization.
+"""Live native HTTP, SDK, RPC, MCP and Search management authorization.
 
 Requires an isolated ReBAC-enabled cluster with /docs mounted in sharedzone,
 node mTLS configured through NEXUS_SEARCH_PLUGIN_TLS_*, and an admin key file
@@ -23,10 +23,9 @@ from fastapi import FastAPI
 
 from nexus.bricks.auth.providers.static_key import StaticAPIKeyAuth
 from nexus.bricks.search.daemon import SearchDaemon
-from nexus.bricks.search.federated_search import FederatedSearchDispatcher
 from nexus.bricks.search.search_service import SearchService
 from nexus.contracts.cache_store import InMemoryCacheStore
-from nexus.contracts.search_types import SearchRequest
+from nexus.grpc.search.v1 import search_pb2, search_pb2_grpc
 from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
 from nexus.lib.request_credentials import request_api_key
 from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
@@ -86,6 +85,7 @@ async def main() -> None:
             known_zones_path=Path("/tmp/search-known-zones"),
         ),
     )
+    search = search_pb2_grpc.SearchServiceStub(channel)
     vfs = vfs_pb2_grpc.NexusVFSServiceStub(channel)
     suffix = uuid4().hex
     paths = {name: f"/docs/{name}-{suffix}.txt" for name in ("alice", "bob")}
@@ -149,14 +149,18 @@ async def main() -> None:
                     request_api_key.reset(scope)
                 await grant(name, "POST")
 
-            scope = request_api_key.set(admin)
-            try:
-                indexed_hits = await daemon.search(
-                    SearchRequest(query=needle, search_type="keyword", zone_id="sharedzone")
-                )
-                assert {hit.path for hit in indexed_hits} == set(paths.values()), indexed_hits
-            finally:
-                request_api_key.reset(scope)
+            indexed = await search.Query(
+                search_pb2.QueryRequest(
+                    q=needle,
+                    query_type=search_pb2.QUERY_TYPE_KEYWORD,
+                    zone_id="sharedzone",
+                    limit=10,
+                ),
+                metadata=(("authorization", f"Bearer {admin}"),),
+                timeout=20,
+            )
+            assert not indexed.HasField("error"), indexed.error
+            assert {hit.path for hit in indexed.results} == set(paths.values()), indexed
 
             provider = StaticAPIKeyAuth(
                 {
@@ -274,9 +278,9 @@ async def main() -> None:
                     )
 
                 async def query(name):
-                    response = await client.get(
-                        "/api/v2/search/query",
-                        params={"q": needle, "type": "keyword"},
+                    response = await rust.post(
+                        "/v2/search/query",
+                        json={"q": needle, "query_type": "keyword"},
                         headers={"Authorization": f"Bearer {keys[name]}"},
                     )
                     assert response.is_success, response.text
@@ -285,15 +289,15 @@ async def main() -> None:
                     )
 
                 await asyncio.gather(*(query(name) for name in ("alice", "bob") * 3))
-                batch = await client.post(
-                    "/api/v2/search/query/batch",
+                batch = await rust.post(
+                    "/v2/search/query/batch",
                     headers={"Authorization": f"Bearer {keys['alice']}"},
-                    json={"queries": [{"q": needle, "type": "keyword"}] * 2},
+                    json={"queries": [{"q": needle, "query_type": "keyword"}] * 2},
                 )
                 assert batch.is_success, batch.text
                 assert all(
                     [hit["path"] for hit in result["results"]] == [paths["alice"]]
-                    for result in batch.json()["queries"]
+                    for result in batch.json()["responses"]
                 ), batch.text
 
                 async def discover(name, operation, pattern, *, allowed=True):
@@ -507,14 +511,9 @@ async def main() -> None:
                 async with mcp_app.router.lifespan_context(mcp_app):
                     await asyncio.gather(mcp_http_search("alice"), mcp_http_search("bob"))
 
-                class Zones(NoPythonPolicy):
-                    async def list_accessible_zones(self, **_kwargs):
-                        return ["sharedzone"]
-
-                app.state.rebac_service = Zones()
-                federated = await client.get(
-                    "/api/v2/search/query",
-                    params={"q": needle, "type": "keyword", "federated": True},
+                federated = await rust.post(
+                    "/v2/search/query",
+                    json={"q": needle, "query_type": "keyword"},
                     headers={"Authorization": f"Bearer {keys['alice']}"},
                 )
                 assert federated.is_success, federated.text
@@ -537,21 +536,15 @@ async def main() -> None:
                     )
                     assert denied.status_code == 403, denied.text
 
-                for mode in ("low", "high", "dual", "auto"):
-                    graph = await client.get(
-                        "/api/v2/search/query",
-                        params={"q": needle, "graph_mode": mode},
-                        headers={"Authorization": f"Bearer {keys['alice']}"},
-                    )
-                    assert graph.status_code == 501, graph.text
-
-                dispatcher = FederatedSearchDispatcher(daemon, Zones())
                 scope = request_api_key.set(keys["alice"])
                 try:
-                    first = await dispatcher.search(
-                        needle, ("user", f"alice-{suffix}"), search_type="keyword"
+                    first = await rust.post(
+                        "/v2/search/query",
+                        json={"q": needle, "query_type": "keyword"},
+                        headers={"Authorization": f"Bearer {keys['alice']}"},
                     )
-                    assert [hit["path"] for hit in first.results] == [paths["alice"]]
+                    assert first.is_success, first.text
+                    assert [hit["path"] for hit in first.json()["results"]] == [paths["alice"]]
                     for call in (
                         daemon.get_stats,
                         lambda: daemon.index_documents([], zone_id="sharedzone"),
@@ -567,18 +560,21 @@ async def main() -> None:
                     await discover("alice", "grep", needle, allowed=False)
                     async with Client(mcp) as mcp_client:
                         await mcp_discovery(mcp_client, "alice", allowed=False)
-                    repeated = await dispatcher.search(
-                        needle, ("user", f"alice-{suffix}"), search_type="keyword"
+                    repeated = await rust.post(
+                        "/v2/search/query",
+                        json={"q": needle, "query_type": "keyword"},
+                        headers={"Authorization": f"Bearer {keys['alice']}"},
                     )
-                    assert repeated.results == [], repeated
+                    assert repeated.is_success, repeated.text
+                    assert repeated.json()["results"] == [], repeated
                     for route, body in (
                         (
-                            "/api/v2/search/query/batch",
-                            {"queries": [{"q": needle, "type": "keyword"}]},
+                            "/v2/search/query/batch",
+                            {"queries": [{"q": needle, "query_type": "keyword"}]},
                         ),
                         ("/api/v2/search/locate", {"path": paths["alice"]}),
                     ):
-                        response = await client.post(
+                        response = await (rust if route.endswith("batch") else client).post(
                             route,
                             json=body,
                             headers={"Authorization": f"Bearer {keys['alice']}"},
@@ -586,13 +582,13 @@ async def main() -> None:
                         if route.endswith("batch"):
                             assert (
                                 response.is_success
-                                and response.json()["queries"][0]["results"] == []
+                                and response.json()["responses"][0]["results"] == []
                             ), response.text
                         else:
                             assert response.status_code == 403, response.text
-                    response = await client.get(
-                        "/api/v2/search/query",
-                        params={"q": needle, "type": "keyword"},
+                    response = await rust.post(
+                        "/v2/search/query",
+                        json={"q": needle, "query_type": "keyword"},
                         headers={"Authorization": f"Bearer {keys['alice']}"},
                     )
                     assert response.is_success and response.json()["results"] == [], response.text
@@ -608,15 +604,15 @@ async def main() -> None:
                     )
                     assert rejected.status_code == 401, rejected.text
                 key_hashes.pop("bob")
-                revoked = await client.get(
-                    "/api/v2/search/query",
-                    params={"q": needle, "type": "keyword"},
+                revoked = await rust.post(
+                    "/v2/search/query",
+                    json={"q": needle, "query_type": "keyword"},
                     headers={"Authorization": f"Bearer {keys['bob']}"},
                 )
                 assert revoked.status_code == 401, revoked.text
-                revoked_batch = await client.post(
-                    "/api/v2/search/query/batch",
-                    json={"queries": [{"q": needle, "type": "keyword"}]},
+                revoked_batch = await rust.post(
+                    "/v2/search/query/batch",
+                    json={"queries": [{"q": needle, "query_type": "keyword"}]},
                     headers={"Authorization": f"Bearer {keys['bob']}"},
                 )
                 assert revoked_batch.status_code == 401, revoked_batch.text
@@ -642,20 +638,21 @@ async def main() -> None:
                 assert request_api_key.get() is None
                 await daemon.get_health()  # Internal boot probe still uses node mTLS.
                 for token in ("sk-never-minted", ""):
-                    scope = request_api_key.set(token)
                     try:
-                        try:
-                            await daemon.search(
-                                SearchRequest(
-                                    query=needle, search_type="keyword", zone_id="sharedzone"
-                                )
-                            )
-                        except grpc.aio.AioRpcError as exc:
-                            assert exc.code() == grpc.StatusCode.UNAUTHENTICATED, exc.code()
-                        else:
-                            raise AssertionError("Invalid bearer inherited node authority")
-                    finally:
-                        request_api_key.reset(scope)
+                        await search.Query(
+                            search_pb2.QueryRequest(
+                                q=needle,
+                                query_type=search_pb2.QUERY_TYPE_KEYWORD,
+                                zone_id="sharedzone",
+                                limit=10,
+                            ),
+                            metadata=(("authorization", f"Bearer {token}"),),
+                            timeout=20,
+                        )
+                    except grpc.aio.AioRpcError as exc:
+                        assert exc.code() == grpc.StatusCode.UNAUTHENTICATED, exc.code()
+                    else:
+                        raise AssertionError("Invalid bearer inherited node authority")
             print(
                 "Search credentials live contract passed: TCP HTTP/user/concurrency/batch/locate/RPC/MCP/admin/management/revocation"
             )

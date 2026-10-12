@@ -2657,7 +2657,7 @@ operations:
   usage_example: kernel.call_rpc("semantic_search", {"query":"auth flow","search_mode":"keyword"})
   correctness_test: tests/integration/search/test_indexed_client.py
   perf_class: hot
-  perf_link: tests/benchmarks/test_search_protocol_benchmark.py
+  perf_link: scripts/test_published_search_quality.py; docs/benchmarks/2026-04-18-sandbox-vs-gbrain.md
   gap_issue: null
   owning_issue: 4129
 - id: catalog.aspects
@@ -11373,21 +11373,24 @@ operations:
   owning_issue: null
 - id: search.batch_query
   module: search
-  summary: ''
+  summary: One authenticated BatchQuery RPC; individual-zone entries preserve order and per-query errors.
   transports:
     grpc_typed:
       name: SearchService.BatchQuery
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:62
+    http:
+      name: POST /v2/search/query/batch
+      source: packages/nexus-api-client/src/search-client.ts:94
   profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: POST /v2/search/query/batch {"queries":[{"q":"auth","zone_id":"engineering"},{"q":"billing","zone_id":"finance"}]}
+  correctness_test: packages/nexus-api-client/tests/search-client.test.ts; scripts/test_search_credentials_plugin.py; scripts/test_rust_http_search_cli.py
+  perf_class: hot
+  perf_link: scripts/test_rust_http_search_cli.py; scripts/test_published_search_quality.py
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4135
 - id: search.cli
   module: search
   summary: CLI index, query, and stats through the Rust cluster HTTP listener and native VFS.
@@ -11420,7 +11423,7 @@ operations:
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:37
     http:
       name: POST /v2/search/glob
-      source: packages/nexus-api-client/src/search-client.ts:85
+      source: packages/nexus-api-client/src/search-client.ts:109
     mcp:
       name: nexus_glob
       source: src/nexus/config/tool_profiles.yaml:1
@@ -11451,7 +11454,7 @@ operations:
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:42
     http:
       name: POST /v2/search/grep
-      source: packages/nexus-api-client/src/search-client.ts:89
+      source: packages/nexus-api-client/src/search-client.ts:113
     mcp:
       name: nexus_grep
       source: src/nexus/config/tool_profiles.yaml:1
@@ -11476,15 +11479,15 @@ operations:
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:122
     http:
       name: GET /api/v2/search/health
-      source: src/nexus/server/api/v2/routers/search.py:118
+      source: src/nexus/server/api/v2/routers/search.py:50
   profiles:
     lite: supported
     sandbox: supported
     full: supported
   usage_example: GET /api/v2/search/health
-  correctness_test: tests/integration/services/test_search_router.py::TestSearchQueryEndpoint::test_health_endpoint; tests/e2e/self_contained/test_search_surface_live_e2e.py
+  correctness_test: tests/integration/services/test_search_response_contracts.py::TestHealthResponseContract; scripts/test_search_credentials_plugin.py
   perf_class: not_perf_sensitive
-  perf_link: health probe; tests/e2e/self_contained/test_search_surface_live_e2e.py enforces live latency
+  perf_link: control operation; tests/integration/services/test_search_response_contracts.py
   gap_issue: null
   owning_issue: 4135
 - id: search.index
@@ -11499,7 +11502,7 @@ operations:
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:52
     http:
       name: POST /api/v2/search/index
-      source: src/nexus/server/api/v2/routers/search.py:658
+      source: src/nexus/server/api/v2/routers/search.py:89
   profiles:
     lite: supported
     sandbox: supported
@@ -11627,7 +11630,7 @@ operations:
     sandbox: supported
     full: supported
   usage_example: POST /api/v2/search/locate {"path":"/docs/authentication.md"}
-  correctness_test: tests/integration/services/test_search_host_authority.py; scripts/test_search_credentials_plugin.py; tests/integration/services/test_search_query_batch.py
+  correctness_test: tests/integration/services/test_search_host_authority.py; scripts/test_search_credentials_plugin.py
   perf_class: hot
   perf_link: scripts/test_search_credentials_plugin.py (locate elapsed_ms < 2000)
   gap_issue: null
@@ -11712,33 +11715,16 @@ operations:
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:47
     http:
       name: POST /v2/search/query
-      source: packages/nexus-api-client/src/search-client.ts:71
+      source: packages/nexus-api-client/src/search-client.ts:87
   profiles:
     lite: supported
     sandbox: supported
     full: supported
   usage_example: POST /v2/search/query {"q":"database migration","query_type":"hybrid","limit":5}
-  correctness_test: tests/integration/services/test_search_host_authority.py; scripts/test_search_credentials_plugin.py; tests/integration/services/test_search_query_batch.py;
-    packages/nexus-tui/tests/e2e/native-search.test.tsx; scripts/test_rust_http_search_cli.py
+  correctness_test: packages/nexus-api-client/tests/search-client.test.ts; scripts/test_search_credentials_plugin.py; packages/nexus-tui/tests/e2e/native-search.test.tsx;
+    scripts/test_rust_http_search_cli.py
   perf_class: hot
-  perf_link: tests/benchmarks/test_search_protocol_benchmark.py; docs/benchmarks/2026-04-18-sandbox-vs-gbrain.md; tests/e2e/self_contained/test_search_surface_live_e2e.py
-  gap_issue: null
-  owning_issue: 4135
-- id: search.query_batch
-  module: search
-  summary: Bulk query endpoint used by benchmarks and evaluations to run multiple daemon searches together.
-  transports:
-    http:
-      name: POST /api/v2/search/query/batch
-      source: src/nexus/server/api/v2/routers/search.py:503
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: POST /api/v2/search/query/batch {"queries":[{"q":"auth"},{"q":"billing"}]}
-  correctness_test: tests/integration/services/test_search_host_authority.py; scripts/test_search_credentials_plugin.py; tests/integration/services/test_search_query_batch.py
-  perf_class: hot
-  perf_link: tests/benchmarks/test_search_protocol_benchmark.py; docs/benchmarks/2026-04-18-sandbox-vs-gbrain.md; tests/e2e/self_contained/test_search_surface_live_e2e.py
+  perf_link: scripts/test_rust_http_search_cli.py; scripts/test_published_search_quality.py
   gap_issue: null
   owning_issue: 4135
 - id: search.refresh
@@ -11750,7 +11736,7 @@ operations:
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:57
     http:
       name: POST /api/v2/search/refresh
-      source: src/nexus/server/api/v2/routers/search.py:808
+      source: src/nexus/server/api/v2/routers/search.py:239
   profiles:
     lite: supported
     sandbox: supported
@@ -11824,7 +11810,7 @@ operations:
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:127
     http:
       name: GET /api/v2/search/stats
-      source: src/nexus/server/api/v2/routers/search.py:142
+      source: src/nexus/server/api/v2/routers/search.py:74
   profiles:
     lite: supported
     sandbox: supported
@@ -11935,10 +11921,10 @@ operations:
     sandbox: supported
     full: supported
   usage_example: 'MCP: nexus_semantic_search(query="auth flow", search_mode="hybrid", limit=5)'
-  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestSemanticSearchTool; tests/integration/bricks/search/test_federated_search.py::TestRemoteZoneSearch;
-    tests/unit/bricks/search/test_search_plugin_contract.py; tests/e2e/self_contained/test_sandbox_mcp.py; scripts/test_search_service_plugin.py
+  correctness_test: tests/integration/search/test_indexed_client.py; scripts/test_search_service_plugin.py; scripts/test_search_agent_credentials_plugin.py;
+    tests/e2e/self_contained/test_sandbox_mcp.py
   perf_class: hot
-  perf_link: tests/benchmarks/test_search_protocol_benchmark.py; docs/benchmarks/2026-04-18-sandbox-vs-gbrain.md; tests/benchmarks/bench_sandbox_federation_latency.py::TestFederatedSearchFanoutLatency
+  perf_link: scripts/test_published_search_quality.py; docs/benchmarks/2026-04-18-sandbox-vs-gbrain.md
   gap_issue: null
   owning_issue: 4129
 - id: semantic.search_index
@@ -18546,9 +18532,9 @@ parity_warnings:
 - operation_id: search.batch_query
   has:
   - grpc_typed
+  - http
   missing:
   - cli
-  - http
   - mcp
   - sdk
 - operation_id: search.cli
@@ -18685,14 +18671,6 @@ parity_warnings:
   - grpc_typed
   - http
   missing:
-  - mcp
-  - sdk
-- operation_id: search.query_batch
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
   - mcp
   - sdk
 - operation_id: search.refresh

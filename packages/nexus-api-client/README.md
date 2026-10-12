@@ -13,6 +13,7 @@ const search = new SearchClient(new FetchClient(config), {
   zoneId: config.zoneId,
 });
 const response = await search.query("needle", "keyword");
+const batch = await search.batchQuery([{ q: "needle", query_type: "keyword" }, { q: "other" }]);
 ```
 
 `NEXUS_SEARCH_URL`, `search_url` in `nexus.yaml`, or the `searchUrl` override
@@ -25,6 +26,11 @@ federation failures. Glob returns `paths`; grep returns `matches` with
 `path`, `line_number` and `line`. Discovery also reports `truncated`.
 The client preserves these wire fields regardless of the transport's key
 transformation default. `files: []` searches an empty working set.
+
+Batch replies contain `responses` in request order, each with `results` and
+an optional `error`. A batch uses one existing credential and up to 500 queries;
+each entry addresses one zone on the connected host. Omitting its `zone_id`
+uses the configured connection zone or the caller's default zone.
 
 ## Local Development
 

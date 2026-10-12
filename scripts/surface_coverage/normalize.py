@@ -40,6 +40,8 @@ _BARE_MCP_TOOL_OVERRIDES = {
     "rmdir": "filesystem.rmdir",
 }
 
+_HTTP_OPERATION_OVERRIDES = {"search.query_batch": "search.batch_query"}
+
 
 def _to_snake(s: str) -> str:
     return re.sub(r"(?<!^)(?=[A-Z])", "_", s).lower()
@@ -76,7 +78,8 @@ def normalize_http(method: str, path: str) -> str:
         raise ValueError(f"unrecognized HTTP path: {path!r}")
     module = m.group(1).replace("-", "_")
     verb_parts = [p.replace("-", "_") for p in m.group(2).split("/")]
-    return f"{module}.{'_'.join(verb_parts)}"
+    op_id = f"{module}.{'_'.join(verb_parts)}"
+    return _HTTP_OPERATION_OVERRIDES.get(op_id, op_id)
 
 
 def normalize_mcp(tool_name: str) -> str:

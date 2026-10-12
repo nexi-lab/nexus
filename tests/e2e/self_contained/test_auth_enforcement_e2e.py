@@ -79,9 +79,7 @@ class TestSearchAuthEnforcement:
         ("method", "path", "kwargs"),
         [
             ("GET", "/api/v2/search/stats", {}),
-            ("GET", "/api/v2/search/query", {"params": {"q": "needle"}}),
             ("POST", "/api/v2/search/locate", {"json": {"path": "/docs/a.md"}}),
-            ("POST", "/api/v2/search/query/batch", {"json": {"queries": [{"query": "needle"}]}}),
         ],
     )
     def test_invalid_auth_precedes_backend_configuration(
@@ -92,7 +90,7 @@ class TestSearchAuthEnforcement:
         assert response.status_code == 401
 
     def test_valid_auth_reaches_the_search_configuration_error(self, authed: TestClient) -> None:
-        response = authed.get("/api/v2/search/query", params={"q": "needle"})
+        response = authed.get("/api/v2/search/stats")
         assert response.status_code == 503
         assert "NEXUS_SEARCH_PLUGIN_TARGET" in response.json()["detail"]
 

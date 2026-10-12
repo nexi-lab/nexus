@@ -2,7 +2,7 @@
 
 These benchmarks do not require a live hub. They pin the expected cost class
 for the local control branches that wrap the real network calls:
-handshake parsing/mapping, remote-zone read dispatch, and federated search fanout.
+handshake parsing/mapping and remote-zone read dispatch.
 """
 
 from __future__ import annotations
@@ -13,11 +13,6 @@ from typing import Any
 import pytest
 
 from nexus.backends.storage.remote_zone import RemoteZoneBackend
-from nexus.bricks.search.federated_search import (
-    FederatedSearchConfig,
-    FederatedSearchDispatcher,
-)
-from nexus.bricks.search.results import BaseSearchResult
 from nexus.contracts.types import OperationContext
 from nexus.remote import federation_handshake
 
@@ -87,40 +82,6 @@ class FakeFileTransport:
         return b"company policy"
 
 
-class FakeRebac:
-    async def list_accessible_zones(self, subject: tuple[str, str]) -> list[str]:
-        assert subject == ("agent", "alice")
-        return ["local", "company", "shared"]
-
-
-class FakeSearchDaemon:
-    def get_stats(self) -> dict[str, Any]:
-        return {"fts_doc_count": 0}
-
-    async def search(
-        self,
-        query: str,
-        search_type: str = "hybrid",
-        limit: int = 10,
-        path_filter: str | None = None,
-        alpha: float = 0.5,
-        fusion_method: str = "rrf",
-        zone_id: str | None = None,
-    ) -> list[BaseSearchResult]:
-        assert query == "rate limit"
-        assert search_type == "hybrid"
-        assert path_filter is None
-        assert zone_id is not None
-        return [
-            BaseSearchResult(
-                path=f"/{zone_id}/policies/rate-limit.md",
-                chunk_text=f"{zone_id} result",
-                score=1.0,
-                zone_id=zone_id,
-            )
-        ]
-
-
 class TestSandboxFederationHandshakeLatency:
     def test_handshake_control_path_maps_zone_grants_under_5ms(
         self, monkeypatch: pytest.MonkeyPatch
@@ -158,22 +119,3 @@ class TestSandboxFederationReadLatency:
         stats = _measure_us(_run_once, iterations=1_000)
         assert stats["p99_us"] < 5_000.0, stats
         assert transport.read_calls >= 1_000
-
-
-class TestFederatedSearchFanoutLatency:
-    @pytest.mark.asyncio
-    async def test_three_zone_fanout_and_source_labels_under_20ms_synthetic(self) -> None:
-        dispatcher = FederatedSearchDispatcher(
-            daemon=FakeSearchDaemon(),
-            rebac=FakeRebac(),
-            config=FederatedSearchConfig(max_concurrent_zones=3),
-        )
-
-        async def _run_once() -> None:
-            response = await dispatcher.search("rate limit", subject=("agent", "alice"), limit=3)
-            assert set(response.zones_searched) == {"local", "company", "shared"}
-            assert {r["zone_id"] for r in response.results} == {"local", "company", "shared"}
-            assert all("zone_qualified_path" in r for r in response.results)
-
-        stats = await _measure_async_us(_run_once, iterations=200)
-        assert stats["p99_us"] < 20_000.0, stats

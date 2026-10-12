@@ -107,27 +107,6 @@ async def host_client(monkeypatch):
             await self.manage("SetZoneIndexingMode", request, context)
             return search_pb2.SetZoneIndexingModeResponse()
 
-        async def Query(self, request, context):
-            user = await self.authorize(context)
-            calls.append(("Query", user, request))
-            await asyncio.sleep(0)
-            if request.q == "failed" or (request.q == "partial" and request.zone_id == "peerzone"):
-                return search_pb2.QueryResponse(error="Backend failed")
-            return search_pb2.QueryResponse(
-                results=[
-                    search_pb2.QueryResult(
-                        path=f"/{user}.md", chunk_text="authorized", zone_id=request.zone_id
-                    )
-                ]
-            )
-
-        async def BatchQuery(self, request, context):
-            user = await self.authorize(context)
-            calls.append(("BatchQuery", user, request))
-            return search_pb2.BatchQueryResponse(
-                responses=[await self.Query(query, context) for query in request.queries]
-            )
-
         async def Locate(self, request, context):
             user = await self.authorize(context)
             calls.append(("Locate", user, request))
@@ -168,53 +147,8 @@ async def host_client(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_query_batch_and_locate_preserve_host_contracts(host_client):
+async def test_locate_preserves_host_contracts(host_client):
     client, calls, _, _ = host_client
-    responses = await asyncio.gather(
-        *[
-            client.get(
-                "/api/v2/search/query",
-                params={"q": "needle", "type": "keyword", "limit": 1},
-                headers={"Authorization": f"Bearer sk-{name}"},
-            )
-            for name in ("alice", "bob") * 3
-        ]
-    )
-    for name, response in zip(("alice", "bob") * 3, responses, strict=True):
-        assert response.status_code == 200, response.text
-        data = response.json()
-        assert [hit["path"] for hit in data["results"]] == [f"/{name}.md"]
-        assert "permission_denial_rate" not in data
-        assert set(data["latency_breakdown"]) == {"total_ms"}
-    assert all(request.limit == 1 for _, _, request in calls)
-
-    batch = await client.post(
-        "/api/v2/search/query/batch",
-        json={
-            "queries": [
-                {"q": "needle", "limit": 2},
-                {"limit": 0},
-                {"q": "failed"},
-                {"q": "needle", "graph_mode": "auto"},
-            ]
-        },
-        headers={"Authorization": "sk-bob"},
-    )
-    assert batch.status_code == 200, batch.text
-    entries = batch.json()["queries"]
-    assert entries[0]["results"][0]["path"] == "/bob.md"
-    assert entries[1]["error"]
-    assert entries[2]["error"] == "Backend failed"
-    assert entries[3]["error"] == "Graph search is not available"
-    assert "permission_filter_ms" not in batch.json()
-    _, user, request = next(call for call in calls if call[0] == "BatchQuery")
-    assert user == "bob"
-    assert [query.limit for query in request.queries] == [2, 10]
-
-    single = await client.get(
-        "/api/v2/search/query?q=failed", headers={"Authorization": "Bearer sk-alice"}
-    )
-    assert single.json()["error"] == "Backend failed"
     located = await client.post(
         "/api/v2/search/locate",
         json={"path": "/alice.md"},
@@ -233,33 +167,6 @@ async def test_query_batch_and_locate_preserve_host_contracts(host_client):
 
 
 @pytest.mark.asyncio
-async def test_federated_leg_uses_the_host_and_rejects_backend_failure(host_client):
-    client, calls, _, _ = host_client
-    for query in ("needle", "partial", "failed"):
-        response = await client.get(
-            "/api/v2/search/query",
-            params={"q": query, "federated": True},
-            headers={"Authorization": "Bearer sk-alice"},
-        )
-        assert response.status_code == 200, response.text
-        data = response.json()
-        if query == "failed":
-            assert data["zones_searched"] == []
-            assert data["zones_failed"][0]["zone_id"] == "sharedzone"
-        elif query == "partial":
-            assert data["zones_searched"] == ["sharedzone"]
-            assert [failure["zone_id"] for failure in data["zones_failed"]] == ["peerzone"]
-            assert [hit["path"] for hit in data["results"]] == ["/alice.md"]
-        else:
-            assert set(data["zones_searched"]) == {"sharedzone", "peerzone"}
-            assert {hit["zone_qualified_path"] for hit in data["results"]} == {
-                "sharedzone:/alice.md",
-                "peerzone:/alice.md",
-            }
-    assert all(user == "alice" for _, user, _ in calls)
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("code", "status"),
     [
@@ -274,12 +181,6 @@ async def test_host_rpc_failures_keep_their_http_category(host_client, code, sta
     state.error = code
     responses = [
         await client.get("/api/v2/search/stats", headers={"Authorization": "sk-alice"}),
-        await client.get("/api/v2/search/query?q=needle", headers={"Authorization": "sk-alice"}),
-        await client.post(
-            "/api/v2/search/query/batch",
-            json={"queries": [{"q": "needle"}]},
-            headers={"Authorization": "sk-alice"},
-        ),
         await client.post(
             "/api/v2/search/locate",
             json={"path": "/alice.md"},
@@ -329,15 +230,9 @@ async def test_revoked_host_key_rejects_management_with_cached_identity(host_cli
 async def test_revoked_host_key_rejects_cached_python_identity(host_client):
     client, _, state, _ = host_client
     headers = {"Authorization": "Bearer sk-alice"}
-    assert (await client.get("/api/v2/search/query?q=needle", headers=headers)).status_code == 200
     assert (await client.get("/api/v2/search/stats", headers=headers)).status_code == 200
     state.revoked = True
-    assert (await client.get("/api/v2/search/query?q=needle", headers=headers)).status_code == 401
     assert (await client.get("/api/v2/search/stats", headers=headers)).status_code == 401
-    batch = await client.post(
-        "/api/v2/search/query/batch", json={"queries": [{"q": "needle"}]}, headers=headers
-    )
-    assert batch.status_code == 401
 
 
 @pytest.mark.asyncio
@@ -374,15 +269,8 @@ async def test_stats_rejects_invalid_auth_before_using_the_node_connection(
 
 
 @pytest.mark.asyncio
-async def test_unsupported_graph_and_invalid_locate_make_no_rpc(host_client):
+async def test_invalid_locate_makes_no_rpc(host_client):
     client, calls, _, _ = host_client
-    for mode in ("low", "high", "dual", "auto"):
-        response = await client.get(
-            "/api/v2/search/query",
-            params={"q": "q", "graph_mode": mode},
-            headers={"Authorization": "sk-alice"},
-        )
-        assert response.status_code == 501
     for payload in (
         {"q": "filename"},
         {"path": "relative"},

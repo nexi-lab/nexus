@@ -23,7 +23,6 @@ from fastapi import FastAPI
 
 from nexus.bricks.auth.providers.static_key import StaticAPIKeyAuth
 from nexus.bricks.search.daemon import SearchDaemon
-from nexus.bricks.search.federated_search import FederatedSearchDispatcher
 from nexus.bricks.search.search_service import SearchService
 from nexus.contracts.cache_store import InMemoryCacheStore
 from nexus.contracts.search_types import SearchRequest
@@ -274,9 +273,9 @@ async def main() -> None:
                     )
 
                 async def query(name):
-                    response = await client.get(
-                        "/api/v2/search/query",
-                        params={"q": needle, "type": "keyword"},
+                    response = await rust.post(
+                        "/v2/search/query",
+                        json={"q": needle, "query_type": "keyword"},
                         headers={"Authorization": f"Bearer {keys[name]}"},
                     )
                     assert response.is_success, response.text
@@ -285,15 +284,15 @@ async def main() -> None:
                     )
 
                 await asyncio.gather(*(query(name) for name in ("alice", "bob") * 3))
-                batch = await client.post(
-                    "/api/v2/search/query/batch",
+                batch = await rust.post(
+                    "/v2/search/query/batch",
                     headers={"Authorization": f"Bearer {keys['alice']}"},
-                    json={"queries": [{"q": needle, "type": "keyword"}] * 2},
+                    json={"queries": [{"q": needle, "query_type": "keyword"}] * 2},
                 )
                 assert batch.is_success, batch.text
                 assert all(
                     [hit["path"] for hit in result["results"]] == [paths["alice"]]
-                    for result in batch.json()["queries"]
+                    for result in batch.json()["responses"]
                 ), batch.text
 
                 async def discover(name, operation, pattern, *, allowed=True):
@@ -507,14 +506,9 @@ async def main() -> None:
                 async with mcp_app.router.lifespan_context(mcp_app):
                     await asyncio.gather(mcp_http_search("alice"), mcp_http_search("bob"))
 
-                class Zones(NoPythonPolicy):
-                    async def list_accessible_zones(self, **_kwargs):
-                        return ["sharedzone"]
-
-                app.state.rebac_service = Zones()
-                federated = await client.get(
-                    "/api/v2/search/query",
-                    params={"q": needle, "type": "keyword", "federated": True},
+                federated = await rust.post(
+                    "/v2/search/query",
+                    json={"q": needle, "query_type": "keyword"},
                     headers={"Authorization": f"Bearer {keys['alice']}"},
                 )
                 assert federated.is_success, federated.text
@@ -537,21 +531,15 @@ async def main() -> None:
                     )
                     assert denied.status_code == 403, denied.text
 
-                for mode in ("low", "high", "dual", "auto"):
-                    graph = await client.get(
-                        "/api/v2/search/query",
-                        params={"q": needle, "graph_mode": mode},
-                        headers={"Authorization": f"Bearer {keys['alice']}"},
-                    )
-                    assert graph.status_code == 501, graph.text
-
-                dispatcher = FederatedSearchDispatcher(daemon, Zones())
                 scope = request_api_key.set(keys["alice"])
                 try:
-                    first = await dispatcher.search(
-                        needle, ("user", f"alice-{suffix}"), search_type="keyword"
+                    first = await rust.post(
+                        "/v2/search/query",
+                        json={"q": needle, "query_type": "keyword"},
+                        headers={"Authorization": f"Bearer {keys['alice']}"},
                     )
-                    assert [hit["path"] for hit in first.results] == [paths["alice"]]
+                    assert first.is_success, first.text
+                    assert [hit["path"] for hit in first.json()["results"]] == [paths["alice"]]
                     for call in (
                         daemon.get_stats,
                         lambda: daemon.index_documents([], zone_id="sharedzone"),
@@ -567,18 +555,21 @@ async def main() -> None:
                     await discover("alice", "grep", needle, allowed=False)
                     async with Client(mcp) as mcp_client:
                         await mcp_discovery(mcp_client, "alice", allowed=False)
-                    repeated = await dispatcher.search(
-                        needle, ("user", f"alice-{suffix}"), search_type="keyword"
+                    repeated = await rust.post(
+                        "/v2/search/query",
+                        json={"q": needle, "query_type": "keyword"},
+                        headers={"Authorization": f"Bearer {keys['alice']}"},
                     )
-                    assert repeated.results == [], repeated
+                    assert repeated.is_success, repeated.text
+                    assert repeated.json()["results"] == [], repeated
                     for route, body in (
                         (
-                            "/api/v2/search/query/batch",
-                            {"queries": [{"q": needle, "type": "keyword"}]},
+                            "/v2/search/query/batch",
+                            {"queries": [{"q": needle, "query_type": "keyword"}]},
                         ),
                         ("/api/v2/search/locate", {"path": paths["alice"]}),
                     ):
-                        response = await client.post(
+                        response = await (rust if route.endswith("batch") else client).post(
                             route,
                             json=body,
                             headers={"Authorization": f"Bearer {keys['alice']}"},
@@ -586,13 +577,13 @@ async def main() -> None:
                         if route.endswith("batch"):
                             assert (
                                 response.is_success
-                                and response.json()["queries"][0]["results"] == []
+                                and response.json()["responses"][0]["results"] == []
                             ), response.text
                         else:
                             assert response.status_code == 403, response.text
-                    response = await client.get(
-                        "/api/v2/search/query",
-                        params={"q": needle, "type": "keyword"},
+                    response = await rust.post(
+                        "/v2/search/query",
+                        json={"q": needle, "query_type": "keyword"},
                         headers={"Authorization": f"Bearer {keys['alice']}"},
                     )
                     assert response.is_success and response.json()["results"] == [], response.text
@@ -608,15 +599,15 @@ async def main() -> None:
                     )
                     assert rejected.status_code == 401, rejected.text
                 key_hashes.pop("bob")
-                revoked = await client.get(
-                    "/api/v2/search/query",
-                    params={"q": needle, "type": "keyword"},
+                revoked = await rust.post(
+                    "/v2/search/query",
+                    json={"q": needle, "query_type": "keyword"},
                     headers={"Authorization": f"Bearer {keys['bob']}"},
                 )
                 assert revoked.status_code == 401, revoked.text
-                revoked_batch = await client.post(
-                    "/api/v2/search/query/batch",
-                    json={"queries": [{"q": needle, "type": "keyword"}]},
+                revoked_batch = await rust.post(
+                    "/v2/search/query/batch",
+                    json={"queries": [{"q": needle, "query_type": "keyword"}]},
                     headers={"Authorization": f"Bearer {keys['bob']}"},
                 )
                 assert revoked_batch.status_code == 401, revoked_batch.text

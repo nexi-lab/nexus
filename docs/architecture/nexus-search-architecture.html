@@ -354,7 +354,7 @@ flowchart TB
 <h2 id="http">4. HTTP surface</h2>
 
 <h3>4.1 Python FastAPI in mixed deployments</h3>
-<p>Router: <code>src/nexus/server/api/v2/routers/search.py</code>. The Python server still serves <code>/api/v2/search/query</code>, query batching, health/stats, and indexed-directory management. Indexed queries use the Rust plugin; Python still adapts results and handles its own callers.</p>
+<p>Router: <code>src/nexus/server/api/v2/routers/search.py</code>. Its remaining adapters serve health, statistics, document indexing and indexed-directory management. Indexed Query and BatchQuery use the owning Rust host's HTTP and gRPC surfaces.</p>
 
 <h3>4.2 Rust axum in the cluster</h3>
 <p>Crate: <code>nexus-vfs/rust/http-api/</code>. The cluster installs this listener through <a href="https://github.com/nexi-lab/nexus-vfs/blob/main/rust/profiles/cluster/src/authorization.rs"><code>rust/profiles/cluster/src/authorization.rs</code></a>. Current routes:</p>
@@ -373,7 +373,7 @@ flowchart TB
 <h2 id="federation">5. Cross-zone federation dispatcher</h2>
 
 <p>The Rust dispatcher is implemented in <code>nexus-vfs/rust/federated-search/</code>, with shared delegation and routing types in <code>rust/search-common/</code>. The axum query handler uses the caller's readable zones and dispatches through local or remote backends before fusing results with RRF. Remote legs use <code>SearchDelegation</code>; the receiving host enforces the delegated scope.</p>
-<p>The Python <code>federated_search.py</code> remains reachable from the Python HTTP router. Its continued existence is caller-migration work, not a missing Rust dispatcher. See <a href="https://github.com/nexi-lab/nexus/blob/develop/docs/architecture/federated-search-rust-port.md">the completed port and its design history</a>.</p>
+<p>The owning Rust VFS host serves indexed Query and BatchQuery. Unpinned queries use its cross-zone dispatcher; SDK, MCP, CLI and TUI callers preserve their existing credentials. See <a href="https://github.com/nexi-lab/nexus/blob/develop/docs/architecture/federated-search.md">the current request path and state ownership</a>.</p>
 <div class="callout">
   <strong>Layer contract:</strong> cross-zone orchestration, zone discovery, and delegation belong in services outside the core plugin. The plugin owns search primitives and same-zone peer fan-out. The gRPC host owns caller authentication and permission enforcement.
 </div>

@@ -66,10 +66,8 @@ def test_issue_4130_hot_paths_link_remote_read_and_fanout_benchmarks() -> None:
 
     search = ops["semantic.search"]
     assert search.profiles["sandbox"] == ProfileStatus.SUPPORTED
-    assert "test_federated_search.py::TestRemoteZoneSearch" in search.correctness_test
-    assert "bench_sandbox_federation_latency.py::TestFederatedSearchFanoutLatency" in (
-        search.perf_link or ""
-    )
+    assert "scripts/test_search_agent_credentials_plugin.py" in search.correctness_test
+    assert "scripts/test_published_search_quality.py" in (search.perf_link or "")
 
     assert _BENCHMARK.exists()
 

@@ -340,7 +340,7 @@ class TestCanonicalSmoke:
     ) -> Generator[httpx.Client, None, None]:
         env, _cwd = stack_env
         with httpx.Client(
-            base_url=env["NEXUS_URL"],
+            base_url=env.get("NEXUS_SEARCH_URL") or env["NEXUS_URL"],
             headers={"Authorization": f"Bearer {env['NEXUS_API_KEY']}"},
             timeout=60,
         ) as client:
@@ -351,12 +351,12 @@ class TestCanonicalSmoke:
         timings: list[dict[str, Any]] = []
 
         with timed("semantic_query", timings):
-            response = search_http.get(
-                "/api/v2/search/query",
-                params={
+            response = search_http.post(
+                "/v2/search/query",
+                json={
                     "q": "How does authentication work?",
-                    "path": "/workspace/demo",
-                    "type": "semantic",
+                    "path_filter": "/workspace/demo",
+                    "query_type": "semantic",
                 },
             )
             response.raise_for_status()
@@ -398,12 +398,12 @@ class TestCanonicalSmoke:
             expected_file = qa["expected_file"]
 
             with timed(f"qa_{expected_sub}", timings):
-                response = search_http.get(
-                    "/api/v2/search/query",
-                    params={
+                response = search_http.post(
+                    "/v2/search/query",
+                    json={
                         "q": question,
-                        "path": "/workspace/demo/herb",
-                        "type": "semantic",
+                        "path_filter": "/workspace/demo/herb",
+                        "query_type": "semantic",
                         "limit": 5,
                     },
                 )

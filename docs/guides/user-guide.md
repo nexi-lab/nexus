@@ -1103,7 +1103,8 @@ Search surface coverage matrix:
 |------|-----|------------------|----------|
 | Find paths | `nexus glob "**/*.py" /workspace` | `POST /v2/search/glob`, RPC `SearchService.glob`, MCP `nexus_glob` | You need file names, not file contents. |
 | Find exact text | `nexus grep "TODO" /workspace` | `POST /v2/search/grep`, RPC `SearchService.grep`, MCP `nexus_grep` | You know the token or regex to match. |
-| Query retrieved chunks | `nexus --profile cluster search query "auth flow" --mode hybrid` | Rust HTTP: `POST /v2/search/query`; Python integration: `GET /api/v2/search/query`, RPC `SearchService.semantic_search`, MCP `nexus_semantic_search` | You need ranked chunks. |
+| Query retrieved chunks | `nexus --profile cluster search query "auth flow" --mode hybrid` | `POST /v2/search/query`, RPC `SearchService.semantic_search`, MCP `nexus_semantic_search` | You need ranked chunks. |
+| Batch indexed queries | — | `POST /v2/search/query/batch`, gRPC `SearchService.BatchQuery` | Run up to 500 queries on the connected host with one credential. Responses preserve order and per-query errors. |
 | Build or refresh indexes | `nexus --profile cluster search index`; `nexus reindex` for Python MCL replay | Rust HTTP: `POST /v2/documents/index`; Python integration: `POST /api/v2/admin/reindex`, `POST /api/v2/search/index`, `/refresh`, `/index-directory`, `/indexing-mode` | You are preparing a corpus or changing indexing scope. |
 | Make a written file searchable | `nexus --profile cluster search index <path>` for the native VFS | Rust HTTP: `POST /v2/documents/index`; Python integration: `POST /api/v2/files/write` with `"index": true`, `POST /api/v2/search/index` | Index the VFS that owns the written file. Python write+index returns an `index_seq` for confirmation through `/api/v2/search/stats`. |
 | Configure path ranking | `nexus path-context set src/nexus/bricks/search "Hybrid search brick" --weight 2` | `PUT /v2/search/path-contexts` | Store a description and adjust ranking for a path prefix. |
@@ -1163,12 +1164,13 @@ nexus --profile cluster search query "How does authentication work?" --path /wor
 nexus --profile cluster search query "database migration" --mode hybrid --limit 5
 ```
 
-For the Python HTTP integration, set `NEXUS_URL` and `NEXUS_API_KEY` to that
-server and its caller key. These requests query its VFS/index:
+Set `NEXUS_URL` to the owning host's Rust HTTP endpoint and `NEXUS_API_KEY`
+to the caller's existing key. These requests query its VFS/index:
 
 ```bash
-curl -H "Authorization: Bearer $NEXUS_API_KEY" \
-  "$NEXUS_URL/api/v2/search/query?q=database%20migration&type=hybrid&limit=5"
+curl -H "Authorization: Bearer $NEXUS_API_KEY" -H 'Content-Type: application/json' \
+  -d '{"q":"database migration","query_type":"hybrid","limit":5}' \
+  "$NEXUS_URL/v2/search/query"
 ```
 
 Hybrid search fuses exact, vector, and provider-backed sources with RRF where
@@ -1176,15 +1178,15 @@ multiple ranked lists are available. RRF makes the final order depend on rank
 agreement instead of raw score scale, which is why exact text hits and semantic
 neighbors can both appear near the top.
 
-The Python HTTP API can search several subtrees at once: repeat `path`
-(or pass a list as `path` in a `/api/v2/search/query/batch` entry). The result is one fused ranking over
-the union. Don't run one query per subtree and merge the lists by `score`:
+Use `path_filters` to search several subtrees in one query or batch entry.
+The result is one fused ranking over the union. Don't run one query per subtree and merge the lists by `score`:
 fused scores are normalised per result list, so the top hit of every list
 scores about the same.
 
 ```bash
-curl -H "Authorization: Bearer $NEXUS_API_KEY" \
-  "$NEXUS_URL/api/v2/search/query?q=revenue&type=hybrid&path=/ws/documents/&path=/ws/notes/"
+curl -H "Authorization: Bearer $NEXUS_API_KEY" -H 'Content-Type: application/json' \
+  -d '{"q":"revenue","query_type":"hybrid","path_filters":["/ws/documents/","/ws/notes/"]}' \
+  "$NEXUS_URL/v2/search/query"
 ```
 
 Use `nexus path-context` to store a description and tune ranking for a path prefix:

@@ -32,6 +32,16 @@ async function serve(status: number, reply: unknown) {
 }
 
 describe("Rust HTTP Search client", () => {
+  it("sends one batch with the caller credential and preserves positional failures", async () => {
+    const responses = [{ results: [{ path: "/docs/a", zone_id: "legal", chunk_text: "native" }] }, { results: [], error: "empty query" }];
+    const host = await serve(200, { responses });
+    const search = new SearchClient(new FetchClient({ baseUrl: host.url, apiKey: "batch-caller", maxRetries: 0 }), { zoneId: "sharedzone" });
+    expect(await search.batchQuery([{ q: "a", zone_id: "legal" }, { q: "" }])).toEqual({ responses });
+    expect(host.requests).toEqual([{
+      path: "/v2/search/query/batch", authorization: "Bearer batch-caller",
+      body: { queries: [{ q: "a", zone_id: "legal" }, { q: "", zone_id: "sharedzone" }] },
+    }]);
+  });
   it("uses the explicit host with the original credential and preserves wire attribution", async () => {
     const primary = await serve(404, {});
     const hit = { path: "/docs/a.txt", zone_id: "sharedzone", chunk_text: "native", chunk_index: 0, score: 1, keyword_score: 0.5 };

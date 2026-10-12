@@ -49,11 +49,7 @@ jobs:
       - name: Read NEXUS_VFS_REV from Cargo.toml
         id: vfs_rev
         run: |
-          sha=$(grep -oP '(?<=rev = ")[a-f0-9]{40}' Cargo.toml | sort -u | head -1)
-          if [ -z "$sha" ]; then
-            echo "::error::Could not parse nexus-vfs SHA from Cargo.toml"
-            exit 1
-          fi
+          sha=$(python3 scripts/nexus_vfs_revision.py)
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "Resolved nexus-vfs SHA: $sha"
 

@@ -45,8 +45,12 @@ jobs:
       - name: Check if nexus-vfs rev changed
         id: diff
         run: |
-          OLD_REV=$(git show HEAD~1:Cargo.toml | grep -oP '(?<=rev = ")[a-f0-9]{40}' | sort -u | head -1 || echo "")
-          NEW_REV=$(grep -oP '(?<=rev = ")[a-f0-9]{40}' Cargo.toml | sort -u | head -1)
+          PREVIOUS_CONFIG=$(mktemp -d)
+          trap 'rm -rf "$PREVIOUS_CONFIG"' EXIT
+          git show HEAD~1:Cargo.toml > "$PREVIOUS_CONFIG/Cargo.toml"
+          git show HEAD~1:Cargo.lock > "$PREVIOUS_CONFIG/Cargo.lock"
+          OLD_REV=$(python3 scripts/nexus_vfs_revision.py "$PREVIOUS_CONFIG/Cargo.toml")
+          NEW_REV=$(python3 scripts/nexus_vfs_revision.py)
           if [ "$OLD_REV" != "$NEW_REV" ] && [ -n "$NEW_REV" ]; then
             echo "rev_changed=true" >> "$GITHUB_OUTPUT"
             echo "new_rev=${NEW_REV}" >> "$GITHUB_OUTPUT"

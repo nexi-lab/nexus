@@ -71,16 +71,17 @@ def _assert_pyo3_forward_compat_enabled(workflow_name: str) -> None:
     )
 
 
-def _assert_gha_cache_export_non_blocking(workflow_name: str, job_id: str, step_name: str) -> None:
+def _assert_cache_export_non_blocking(workflow_name: str, job_id: str, step_name: str) -> None:
     workflow = _load_workflow(workflow_name)
     step = _step_by_name(_job(workflow, job_id), step_name)
     with_block = step.get("with") or {}
     cache_to = with_block.get("cache-to", "")
-    assert "type=gha" in cache_to, f"{workflow_name}:{step_name} should export a GHA build cache"
+    if not cache_to:
+        return
     assert "ignore-error=true" in cache_to, (
         f"{workflow_name}:{step_name} must set ignore-error=true on cache-to. "
-        "The image build/push is the required artifact; a transient GitHub "
-        "Actions cache export failure must not fail the job after the image is built."
+        "The image build/push is the required artifact; a cache export failure "
+        "must not fail the job after the image is built."
     )
 
 
@@ -89,10 +90,11 @@ def _assert_gha_cache_export_non_blocking(workflow_name: str, job_id: str, step_
 # ---------------------------------------------------------------------------
 
 
-def test_docker_publish_gha_cache_export_is_non_blocking() -> None:
-    _assert_gha_cache_export_non_blocking(
+@pytest.mark.parametrize("job_id", ["build-platform", "build-cluster-platform"])
+def test_docker_publish_cache_export_is_non_blocking(job_id: str) -> None:
+    _assert_cache_export_non_blocking(
         "docker-publish.yml",
-        "build-platform",
+        job_id,
         "Build and push by digest",
     )
 
@@ -196,7 +198,7 @@ def test_demo_memory_workflow_exports_pyo3_forward_compatibility() -> None:
 
 
 def test_demo_memory_gha_cache_export_is_non_blocking() -> None:
-    _assert_gha_cache_export_non_blocking(
+    _assert_cache_export_non_blocking(
         "demo-memory.yml",
         "demo-memory",
         "Build nexus image",

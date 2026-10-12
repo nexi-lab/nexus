@@ -450,6 +450,7 @@ flowchart TB
 <ul>
   <li>Rust HTTP search/document routes, bearer middleware, API-key management, and ReBAC tuple management.</li>
   <li>Rust ReBAC and Raft tuple storage; Rust cross-zone dispatcher and delegation.</li>
+  <li>Single-zone and federated HTTP queries share one parameter contract and protobuf encoder. Local and delegated remote legs preserve fusion, pooling, expansion, recency, weights and path filters.</li>
   <li>Production cluster composition sharing auth, ReBAC, TLS channels, and readiness across HTTP and gRPC.</li>
   <li>SANDBOX in-process indexing-chain removal; the Rust plugin owns indexed query and stats.</li>
   <li>Indexed Search CLI on Rust HTTP, verified with the published signed-plugin image, real credentials, isolation, and revocation.</li>
@@ -459,8 +460,8 @@ flowchart TB
 
 <h3>Remaining work</h3>
 <ul>
-  <li>Remove the Python HTTP query/federation path and complete local listing migration before deleting <code>SearchService</code> and its adapters. Remote CLI glob/grep already use typed Rust RPCs.</li>
-  <li>Resolve the epic's session-cookie requirement before retiring Python auth routes; the Rust HTTP middleware currently accepts bearer credentials.</li>
+  <li>Move durable <code>path_contexts</code> configuration loading into its native Search owner before removing the Python HTTP query/federation path. Complete local listing migration before deleting <code>SearchService</code> and its adapters. Remote CLI glob/grep already use typed Rust RPCs.</li>
+  <li>Account for the Python OAuth routes before retiring Python auth. Their <code>nexus_oauth_binding</code> cookie binds browser OAuth state; Search authenticates bearer credentials. Moss/scode already supplies bearer or mTLS credentials at the appropriate boundary.</li>
   <li>Prove the Rust deployment in a real production tenant before retiring <code>nexus-server</code>, as required by the epic.</li>
 </ul>
 <p>Passing the current CLI and published-image gates completes those increments; it does not close the whole migration epic.</p>

@@ -18,6 +18,16 @@ gRPC. Its optional Rust HTTP listener serves `/v2/search/*`,
 forwards the caller's bearer credential through the daemon's gRPC listener;
 both transports share the daemon's API-key and ReBAC stores.
 
+`POST /v2/search/query` accepts the SearchService query settings for both
+single-zone and federated requests: query type, hybrid fusion, page pooling,
+context expansion, recency, path-prefix weights and path filters. Local and
+remote legs use the same protobuf encoder. Local legs carry the caller's
+bearer; remote legs carry scoped delegation over the daemon's authenticated
+channel. An explicit `zone_id` selects one zone. An omitted zone lets a
+multi-zone credential search its authorized zones. Cross-zone result fusion
+uses the dispatcher's configuration; the request's fusion settings apply
+within each zone.
+
 The remote filesystem client's migration from HTTP/JSON-RPC to gRPC did
 not remove these HTTP routes. R10 ([#4674](https://github.com/nexi-lab/nexus/issues/4674))
 moves the server implementation into Rust while retaining an HTTP entry point.
@@ -85,6 +95,10 @@ Indexed Python HTTP query and batch routes forward the caller's credential and
 requested limits to SearchService. The host authorizes returned candidates;
 Python does not evaluate file grants again. These reads do not require a Python
 record store. Path-context ranking weights remain optional durable configuration.
+The Python routes still load those weights from `path_contexts`. Native HTTP
+and direct gRPC callers can supply `path_prefix_boosts`, but they do not yet
+load that table. Its durable configuration needs a native owner before the
+Python query and federation routes can be removed.
 Responses report observed timings; permission-denial statistics are not exposed.
 The query limit bounds the host's ranked candidate window. Live authorization
 and VFS checks can leave fewer returned hits than that limit.

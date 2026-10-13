@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import socket
 import time
 from collections.abc import Generator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -19,6 +21,7 @@ pytestmark = pytest.mark.e2e
 @dataclass
 class LiveSearchApp:
     client: TestClient
+    native: httpx.Client
     nx: Any
     headers: dict[str, str]
 
@@ -29,6 +32,11 @@ def live_search_app(
     monkeypatch: pytest.MonkeyPatch,
 ) -> Generator[LiveSearchApp, None, None]:
     configure_search_plugin(tmp_path, monkeypatch)
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        http_address = f"127.0.0.1:{listener.getsockname()[1]}"
+    monkeypatch.setenv("NEXUS_HTTP_ADDR", http_address)
+    monkeypatch.setenv("NEXUS_REBAC_ENABLED", "true")
 
     monkeypatch.setenv("NEXUS_ENFORCE_PERMISSIONS", "false")
     monkeypatch.setenv("NEXUS_SEARCH_DAEMON", "true")
@@ -63,8 +71,21 @@ def live_search_app(
             data_dir=str(tmp_path),
         )
         headers = {"Authorization": "Bearer live-search-secret"}
-        with TestClient(app, raise_server_exceptions=False) as client:
-            yield LiveSearchApp(client=client, nx=nx, headers=headers)
+        with (
+            TestClient(app, raise_server_exceptions=False) as client,
+            httpx.Client(base_url=f"http://{http_address}", timeout=30, trust_env=False) as native,
+        ):
+            deadline = time.monotonic() + 30
+            while True:
+                try:
+                    response = native.get("/v2/search/health", headers=headers)
+                    response.raise_for_status()
+                    break
+                except httpx.ConnectError:
+                    if time.monotonic() >= deadline:
+                        raise
+                    time.sleep(0.02)
+            yield LiveSearchApp(client=client, native=native, nx=nx, headers=headers)
     finally:
         close = getattr(nx, "close", None)
         if callable(close):
@@ -80,7 +101,8 @@ def _request(
     **kwargs: Any,
 ) -> tuple[Any, dict[str, Any]]:
     start = time.perf_counter()
-    response = live.client.request(method.upper(), path, headers=live.headers, **kwargs)
+    client = live.native if path.startswith("/v2/") else live.client
+    response = client.request(method.upper(), path, headers=live.headers, **kwargs)
     wall_ms = (time.perf_counter() - start) * 1000
     assert wall_ms < max_wall_ms, f"{method.upper()} {path} took {wall_ms:.1f}ms"
     try:
@@ -128,12 +150,12 @@ def test_live_write_to_searchable_contract(live_search_app: LiveSearchApp) -> No
     live.nx.mkdir("/ws", exist_ok=True)
     live.nx.write("/ws/doc.md", b"zebrafish sentinel document\n")
 
-    # refresh(update) on an existing file → indexed + seq …
+    # Read and index the current VFS file in its owning Kernel.
     r, body = _request(
         live,
         "post",
-        "/api/v2/search/refresh",
-        params={"path": "/ws/doc.md", "change_type": "update"},
+        "/v2/documents/file",
+        json={"path": "/ws/doc.md"},
         max_wall_ms=slow,
     )
     assert r.status_code == 200, body
@@ -155,8 +177,8 @@ def test_live_write_to_searchable_contract(live_search_app: LiveSearchApp) -> No
     r, body = _request(
         live,
         "post",
-        "/api/v2/search/refresh",
-        params={"path": "/ws/missing.md", "change_type": "update"},
+        "/v2/documents/file",
+        json={"path": "/ws/missing.md"},
         max_wall_ms=slow,
     )
     assert r.status_code == 404, body
@@ -167,12 +189,13 @@ def test_live_write_to_searchable_contract(live_search_app: LiveSearchApp) -> No
     r, body = _request(
         live,
         "post",
-        "/api/v2/search/refresh",
-        params={"path": "/ws/empty.md", "change_type": "update"},
+        "/v2/documents/file",
+        json={"path": "/ws/empty.md"},
         max_wall_ms=slow,
     )
     assert r.status_code == 409, body
-    assert body["detail"]["status"] == "skipped", body
+    assert body["status"] == "skipped" and body["reason"] == "empty", body
+    assert body["index_seq"] > seq, body
 
     # write + index in ONE call → served.
     r, body = _request(
@@ -218,12 +241,13 @@ def test_live_write_to_searchable_contract(live_search_app: LiveSearchApp) -> No
     # delete → deleted, and the path is no longer served.
     r, body = _request(
         live,
-        "post",
-        "/api/v2/search/refresh",
-        params={"path": "/ws/doc.md", "change_type": "delete"},
+        "delete",
+        "/v2/documents/file",
+        params={"path": "/ws/doc.md"},
         max_wall_ms=slow,
     )
     assert r.status_code == 200 and body["status"] == "deleted", body
+    assert live.nx.read("/ws/doc.md") == b"zebrafish sentinel document\n"
     q = _query(live, "zebrafish")
     assert not any(x["path"] == "/ws/doc.md" for x in q["results"]), q
 

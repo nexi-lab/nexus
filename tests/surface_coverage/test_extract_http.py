@@ -17,15 +17,18 @@ def test_native_client_routes_keep_their_canonical_operations(tmp_path: Path):
         '// return this.transport.post("/v2/search/fake", {});\n'
         'return this.transport.post("/v2/search/glob", body, this.options);\n'
         'return this.transport.post("/v2/search/grep", body, this.options);\n'
+        'return await this.transport.post("/v2/documents/file", body, this.options);\n'
     )
     routes = extract_typescript_http_client_routes(client)
     assert [(route.method, route.path, route.source) for route in routes] == [
         ("POST", "/v2/search/glob", f"{client}:2"),
         ("POST", "/v2/search/grep", f"{client}:3"),
+        ("POST", "/v2/documents/file", f"{client}:4"),
     ]
     assert [normalize_http(route.method, route.path) for route in routes] == [
         "search.glob",
         "search.grep",
+        "search.index_file",
     ]
     assert normalize_http("POST", "/api/v2/search/glob") == "search.glob"
     with pytest.raises(ValueError, match="unrecognized HTTP path"):
@@ -41,6 +44,9 @@ def test_native_client_routes_keep_their_canonical_operations(tmp_path: Path):
         ("DELETE", "directories", "remove_indexed_directory"),
         ("GET", "indexing-modes", "list_zone_indexing_modes"),
         ("PUT", "indexing-modes", "set_zone_indexing_mode"),
+        ("POST", "batch", "index_documents"),
+        ("POST", "file", "index_file"),
+        ("DELETE", "file", "notify_file_change"),
     ],
 )
 def test_native_resources_map_to_distinct_search_rpcs(tmp_path: Path, method, route, operation):

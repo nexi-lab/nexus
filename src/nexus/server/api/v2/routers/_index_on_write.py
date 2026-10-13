@@ -1,11 +1,9 @@
 """Write-to-searchable helpers (#4736).
 
 Shared by ``POST /files/write`` and ``POST /files/batch/write`` (the
-optional ``index`` option) and by ``POST /search/refresh``.  Post-P12 the
-ONLY path that puts text into the Rust search plugin is ``IndexDocuments``
-with the text inline: a VFS write does not index, and ``NotifyFileChange``
-for ``create`` / ``update`` is a no-op ack.  These helpers turn "bytes the
-server already holds" into that one call and translate the plugin's
+optional ``index`` option) and by administrative reindexing.
+These helpers pass text the server already holds to ``IndexDocuments``
+and translate the plugin's
 aggregate answer back into a per-path verdict the caller can act on.
 
 Underscore-prefixed sibling of the router modules (same convention as
@@ -83,10 +81,10 @@ IndexOption = bool | IndexOnWrite | None
 
 
 class WriteIndexResult(BaseModel):
-    """Per-path outcome of index-on-write / refresh.
+    """Per-path outcome of index-on-write.
 
     ``index_seq`` is the plugin sequence stamped after the commit that made
-    the document searchable — ``/search/stats`` ``last_index_seq >=
+    the document searchable — ``/v2/documents/stats`` ``last_index_seq >=
     index_seq`` means it is served.  ``reason`` explains a ``skipped``
     verdict; ``error`` carries the plugin failure text behind ``error``.
     """
@@ -98,15 +96,10 @@ class WriteIndexResult(BaseModel):
 
 
 def index_zone_for(auth_result: dict[str, Any] | None, *, override: str | None = None) -> str:
-    """The plugin zone every indexing call writes — and ``/search/query`` reads.
+    """The zone selected by the authenticated Python write/reindex request.
 
-    ``/search/query`` scopes to the token's ``zone_id`` (ROOT when absent),
-    so indexing anywhere else would leave a document invisible to the
-    caller's own queries.  ``/search/index``, ``/search/refresh``,
-    ``files/write`` + ``files/batch/write`` (``index: true``) and
-    ``/search/stats`` all derive their zone here so the four surfaces
-    cannot drift.  ``override`` is the files routes' ``?zone=`` parameter,
-    already gated by ``_apply_zone_override``.
+    ``override`` is the files routes' ``?zone=`` parameter, already gated
+    by ``_apply_zone_override``. The host enforces management authority.
     """
     if override:
         return override
@@ -218,7 +211,7 @@ async def index_documents_for_paths(
 
     A plugin failure yields ``status: "error"`` for every path rather
     than raising: the writes already landed, so the caller re-drives
-    indexing via ``/search/index`` instead of retrying the write.
+    indexing via ``/v2/documents/batch`` instead of retrying the write.
     """
     if not docs:
         return {}

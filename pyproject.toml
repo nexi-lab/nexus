@@ -826,6 +826,7 @@ disable_error_code = ["import-untyped", "no-any-return"]
 [tool.ruff]
 target-version = "py311"
 line-length = 100
+force-exclude = true
 exclude = [
     "benchmarks/",
     "src/nexus/core/_metadata_generated.py",  # Generated at install time
@@ -835,6 +836,8 @@ exclude = [
     "src/nexus/grpc/vfs/vfs_pb2_grpc.py",      # Generated gRPC stub
     "src/nexus/grpc/approvals/approvals_pb2.py",       # Generated gRPC stub
     "src/nexus/grpc/approvals/approvals_pb2_grpc.py",  # Generated gRPC stub
+    "src/nexus/grpc/search/v1/search_pb2.py",        # Checked against the pinned VFS proto in CI
+    "src/nexus/grpc/search/v1/search_pb2_grpc.py",   # Checked against the pinned VFS proto in CI
 ]
 
 [tool.ruff.lint]

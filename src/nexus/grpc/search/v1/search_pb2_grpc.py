@@ -69,6 +69,11 @@ class SearchServiceStub(object):
                 request_serializer=nexus_dot_search_dot_v1_dot_search__pb2.IndexDocumentsRequest.SerializeToString,
                 response_deserializer=nexus_dot_search_dot_v1_dot_search__pb2.IndexDocumentsResponse.FromString,
                 _registered_method=True)
+        self.IndexFile = channel.unary_unary(
+                '/nexus.search.v1.SearchService/IndexFile',
+                request_serializer=nexus_dot_search_dot_v1_dot_search__pb2.IndexFileRequest.SerializeToString,
+                response_deserializer=nexus_dot_search_dot_v1_dot_search__pb2.IndexFileResponse.FromString,
+                _registered_method=True)
         self.NotifyFileChange = channel.unary_unary(
                 '/nexus.search.v1.SearchService/NotifyFileChange',
                 request_serializer=nexus_dot_search_dot_v1_dot_search__pb2.NotifyFileChangeRequest.SerializeToString,
@@ -129,6 +134,21 @@ class SearchServiceStub(object):
                 request_serializer=nexus_dot_search_dot_v1_dot_search__pb2.StatsRequest.SerializeToString,
                 response_deserializer=nexus_dot_search_dot_v1_dot_search__pb2.StatsResponse.FromString,
                 _registered_method=True)
+        self.PutPathContext = channel.unary_unary(
+                '/nexus.search.v1.SearchService/PutPathContext',
+                request_serializer=nexus_dot_search_dot_v1_dot_search__pb2.PutPathContextRequest.SerializeToString,
+                response_deserializer=nexus_dot_search_dot_v1_dot_search__pb2.PathContext.FromString,
+                _registered_method=True)
+        self.ListPathContexts = channel.unary_unary(
+                '/nexus.search.v1.SearchService/ListPathContexts',
+                request_serializer=nexus_dot_search_dot_v1_dot_search__pb2.ListPathContextsRequest.SerializeToString,
+                response_deserializer=nexus_dot_search_dot_v1_dot_search__pb2.ListPathContextsResponse.FromString,
+                _registered_method=True)
+        self.DeletePathContext = channel.unary_unary(
+                '/nexus.search.v1.SearchService/DeletePathContext',
+                request_serializer=nexus_dot_search_dot_v1_dot_search__pb2.DeletePathContextRequest.SerializeToString,
+                response_deserializer=nexus_dot_search_dot_v1_dot_search__pb2.DeletePathContextResponse.FromString,
+                _registered_method=True)
 
 
 class SearchServiceServicer(object):
@@ -143,6 +163,8 @@ class SearchServiceServicer(object):
         RESPONSE paths are the full absolute VFS path (starts with `/`),
         matching `GrepMatch.path` convention across the service so callers
         decode both rpcs' path fields with one rule.
+        Recursive discovery skips VCS, dependency/build directories and temporary
+        artifacts. An explicit files set searches exactly those authorized paths.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -222,6 +244,16 @@ class SearchServiceServicer(object):
         in hand — no VFS walk).  Companion to `Index(root_path, ...)`
         for use-cases where callers already own the docs (Python
         `SearchDaemon.index_documents`).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def IndexFile(self, request, context):
+        """Read one canonical VFS file and synchronously upsert its current text.
+        The host requires management authority and resolves the owning zone.
+        Missing paths fail with NOT_FOUND. Binary content is skipped without a
+        mutation; empty text removes prior chunks and returns its commit sequence.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -321,6 +353,26 @@ class SearchServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def PutPathContext(self, request, context):
+        """Durable per-zone ranking configuration. Writes require administrator
+        credentials; an unscoped list is available only to administrators.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListPathContexts(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def DeletePathContext(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_SearchServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -358,6 +410,11 @@ def add_SearchServiceServicer_to_server(servicer, server):
                     servicer.IndexDocuments,
                     request_deserializer=nexus_dot_search_dot_v1_dot_search__pb2.IndexDocumentsRequest.FromString,
                     response_serializer=nexus_dot_search_dot_v1_dot_search__pb2.IndexDocumentsResponse.SerializeToString,
+            ),
+            'IndexFile': grpc.unary_unary_rpc_method_handler(
+                    servicer.IndexFile,
+                    request_deserializer=nexus_dot_search_dot_v1_dot_search__pb2.IndexFileRequest.FromString,
+                    response_serializer=nexus_dot_search_dot_v1_dot_search__pb2.IndexFileResponse.SerializeToString,
             ),
             'NotifyFileChange': grpc.unary_unary_rpc_method_handler(
                     servicer.NotifyFileChange,
@@ -418,6 +475,21 @@ def add_SearchServiceServicer_to_server(servicer, server):
                     servicer.Stats,
                     request_deserializer=nexus_dot_search_dot_v1_dot_search__pb2.StatsRequest.FromString,
                     response_serializer=nexus_dot_search_dot_v1_dot_search__pb2.StatsResponse.SerializeToString,
+            ),
+            'PutPathContext': grpc.unary_unary_rpc_method_handler(
+                    servicer.PutPathContext,
+                    request_deserializer=nexus_dot_search_dot_v1_dot_search__pb2.PutPathContextRequest.FromString,
+                    response_serializer=nexus_dot_search_dot_v1_dot_search__pb2.PathContext.SerializeToString,
+            ),
+            'ListPathContexts': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListPathContexts,
+                    request_deserializer=nexus_dot_search_dot_v1_dot_search__pb2.ListPathContextsRequest.FromString,
+                    response_serializer=nexus_dot_search_dot_v1_dot_search__pb2.ListPathContextsResponse.SerializeToString,
+            ),
+            'DeletePathContext': grpc.unary_unary_rpc_method_handler(
+                    servicer.DeletePathContext,
+                    request_deserializer=nexus_dot_search_dot_v1_dot_search__pb2.DeletePathContextRequest.FromString,
+                    response_serializer=nexus_dot_search_dot_v1_dot_search__pb2.DeletePathContextResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -609,6 +681,33 @@ class SearchService(object):
             '/nexus.search.v1.SearchService/IndexDocuments',
             nexus_dot_search_dot_v1_dot_search__pb2.IndexDocumentsRequest.SerializeToString,
             nexus_dot_search_dot_v1_dot_search__pb2.IndexDocumentsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def IndexFile(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.search.v1.SearchService/IndexFile',
+            nexus_dot_search_dot_v1_dot_search__pb2.IndexFileRequest.SerializeToString,
+            nexus_dot_search_dot_v1_dot_search__pb2.IndexFileResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -933,6 +1032,87 @@ class SearchService(object):
             '/nexus.search.v1.SearchService/Stats',
             nexus_dot_search_dot_v1_dot_search__pb2.StatsRequest.SerializeToString,
             nexus_dot_search_dot_v1_dot_search__pb2.StatsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def PutPathContext(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.search.v1.SearchService/PutPathContext',
+            nexus_dot_search_dot_v1_dot_search__pb2.PutPathContextRequest.SerializeToString,
+            nexus_dot_search_dot_v1_dot_search__pb2.PathContext.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListPathContexts(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.search.v1.SearchService/ListPathContexts',
+            nexus_dot_search_dot_v1_dot_search__pb2.ListPathContextsRequest.SerializeToString,
+            nexus_dot_search_dot_v1_dot_search__pb2.ListPathContextsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DeletePathContext(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.search.v1.SearchService/DeletePathContext',
+            nexus_dot_search_dot_v1_dot_search__pb2.DeletePathContextRequest.SerializeToString,
+            nexus_dot_search_dot_v1_dot_search__pb2.DeletePathContextResponse.FromString,
             options,
             channel_credentials,
             insecure,

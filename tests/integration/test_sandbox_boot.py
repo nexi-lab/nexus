@@ -167,7 +167,6 @@ async def test_sandbox_http_surface_is_restricted(
                 "/api/v2/skills/list",
                 "/api/v2/locks/list",
                 "/api/v2/catalog/list",
-                "/api/v2/search/index",
                 "/health/detailed",
                 "/metrics",
                 "/metrics/pool",
@@ -201,7 +200,7 @@ async def test_http_profiles_do_not_mutate_shared_routers(
             assert paths == {"/health", "/api/v2/features"}
         else:
             assert {
-                "/api/v2/search/index",
+                "/x402/config",
                 "/api/v2/catalog/search",
                 "/api/v2/aspects/{urn}",
                 "/api/v2/lineage/{urn}",
@@ -210,9 +209,7 @@ async def test_http_profiles_do_not_mutate_shared_routers(
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://testserver"
         ) as client:
-            response = await client.post(
-                "/api/v2/search/index", json={"documents": [{"path": "/probe.md", "text": "probe"}]}
-            )
+            response = await client.get("/x402/config")
             assert response.status_code == (404 if profile == "sandbox" else 401)
             assert response.headers.get("X-Request-ID")
 

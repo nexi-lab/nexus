@@ -93,4 +93,8 @@ export type FromWorkerMessage =
       readonly type: "error";
       readonly id: string;
       readonly message: string;
+      readonly status?: number;
+      readonly code?: string;
+      readonly body?: unknown;
+      readonly retryAfter?: number;
     };

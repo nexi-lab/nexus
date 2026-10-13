@@ -3,7 +3,6 @@
 Validates router authentication dependencies with a static API key.
 
 Covers:
-- Search (require_auth) → 401 without valid auth, before backend configuration
 - tus_uploads (require_auth) → 401 for PATCH/POST/DELETE, OPTIONS stays public
 - x402 topup/config (require_auth) → 401, webhook stays public
 - RPC dispatch method name validation (#2136)
@@ -15,7 +14,6 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from nexus.server.api.v2.routers import search
 from nexus.server.api.v2.routers.tus_uploads import create_tus_uploads_router
 from nexus.server.api.v2.routers.x402 import router as x402_router
 from nexus.server.api.v2.routers.x402 import webhook_router as x402_webhook_router
@@ -29,8 +27,6 @@ from nexus.server.api.v2.routers.x402 import webhook_router as x402_webhook_rout
 def secured_app() -> FastAPI:
     """FastAPI app with api_key set — triggers real auth checks."""
     app = FastAPI()
-
-    app.include_router(search.router)
 
     tus_public, tus_auth = create_tus_uploads_router(get_upload_service=lambda: MagicMock())
     app.include_router(tus_public, prefix="/api/v2/uploads")
@@ -66,43 +62,6 @@ def authed(secured_app: FastAPI) -> TestClient:
         headers={"Authorization": "Bearer test-secret-key-e2e"},
         raise_server_exceptions=False,
     )
-
-
-# ===========================================================================
-# Search — require_auth
-# ===========================================================================
-
-
-class TestSearchAuthEnforcement:
-    @pytest.mark.parametrize("authorization", [None, "Bearer invalid-key"])
-    @pytest.mark.parametrize(
-        ("method", "path", "kwargs"),
-        [
-            (
-                "POST",
-                "/api/v2/search/index",
-                {"json": {"documents": [{"path": "/docs/a.md", "text": "a"}]}},
-            ),
-            (
-                "POST",
-                "/api/v2/search/refresh",
-                {"params": {"path": "/docs/a.md", "change_type": "delete"}},
-            ),
-        ],
-    )
-    def test_invalid_auth_precedes_backend_configuration(
-        self, unauthed: TestClient, authorization, method, path, kwargs
-    ) -> None:
-        headers = {"Authorization": authorization} if authorization is not None else {}
-        response = unauthed.request(method, path, headers=headers, **kwargs)
-        assert response.status_code == 401
-
-    def test_valid_auth_reaches_the_search_configuration_error(self, authed: TestClient) -> None:
-        response = authed.post(
-            "/api/v2/search/index", json={"documents": [{"path": "/docs/a.md", "text": "a"}]}
-        )
-        assert response.status_code == 503
-        assert "NEXUS_SEARCH_PLUGIN_TARGET" in response.json()["detail"]
 
 
 # ===========================================================================

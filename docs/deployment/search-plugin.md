@@ -3,8 +3,7 @@
 The **Rust `nexus-search-plugin` cdylib**, hosted by
 `nexusd-cluster` and reached over gRPC, is the **sole search backend**
 for the Nexus server. A server deployment that does not run the plugin
-host boots with search disabled — the boot probe fail-softs (logs a
-warning, `/api/v2/search/*` returns 503) rather than failing the boot.
+host logs the failed Search probe during SDK startup.
 
 This page is the deployment contract: which processes you run, how
 they are wired, and what changed for corpora indexed under the
@@ -91,9 +90,9 @@ Rust HTTP discovery uses the canonical VFS `root_path` to select its mount
 and zone. An optional `zone_id` must match that mount; a mismatch returns
 HTTP 400. The revision fence uses the same zone as the gRPC host.
 
-Indexed Python HTTP query and batch routes forward the caller's credential and
-requested limits to SearchService. The host authorizes returned candidates;
-Python does not evaluate file grants again. These reads do not require a Python
+Native HTTP query and batch routes forward the caller's credential and
+requested limits to SearchService. The host authorizes returned candidates.
+These reads do not require a Python
 record store. Path-context ranking weights remain optional durable configuration.
 The Rust Search plugin loads the existing `path_contexts` SQL table for every
 entry point, including direct gRPC, batch, and each executing federated zone.
@@ -254,12 +253,99 @@ docker build \
    restart the server.
 
 3. **Workspace ownership**: route file writes and Search requests to the
-   same owning VFS. `Index` / `Refresh` read files through that VFS;
+   same owning VFS. `IndexFile`, `Index` and `Refresh` read files through that VFS;
    `IndexDocuments` accepts inline text. Query and Locate check current
    VFS existence and permissions for each indexed path, including cached
    hits. Register workspace mounts in this namespace. A shared filesystem
    volume supplies bytes; the owning VFS supplies the path metadata and
    authorization facts. Compatibility API writes must reach this same owner.
+
+### Tencent Cloud rollout proposal — awaiting confirmation
+
+The deployment has two ownership domains: the environment cluster on the
+Moss VM, and agent clusters in gVisor pods alongside sudocode. Install Search
+on the Kernel serving each domain's mounts. Agents using scode send Search
+requests to their workspace's owning Kernel. A Moss frontend hosting a scode
+session uses that session's owner and identity too.
+
+Keep gRPC as the service contract. Enable the Rust HTTP adapter only for
+callers that require HTTP; it forwards credentials to the same Search RPCs.
+Select the owner from the mounts serving the data, including when an agent
+uses workspace data hosted by the Moss VM.
+Inventory the environment/secrets endpoint separately from the execution
+cohost endpoint; Moss can configure them independently. A secrets daemon is
+the Search target only if it also owns the requested workspace mounts.
+
+Before changing either deployment:
+
+1. Finish code migration, required CI and the published-image E2E tests.
+2. Read the existing deployment configuration: binary/image digests, plugin
+   signatures, mounts and zones, persistent volumes, authentication settings,
+   ReBAC storage, callers, TLS and Raft voter topology. Record the exact target
+   changes and rollback artifacts for review. Keep credentials out of the plan.
+3. Confirm the target agent pod and test namespace, maintenance window and
+   rollback thresholds with the operator. Deployment approval covers the
+   reviewed changes and test writes.
+
+Prepare the selected runtime's candidate image in an isolated gVisor
+environment before the canary. Exercise its actual launch mode (`serve-user`
+when used), delegated owner credentials and agent/model services. Published
+cluster-image acceptance covers the base runtime; the cohost image needs
+these checks for its own composition and identity flow.
+
+After confirmation, upgrade one selected agent pod's owning daemon and its
+signed Search plugin before enabling callers of the new `IndexFile` RPC.
+Use artifacts from the same verified VFS revision. Preserve identity, keys,
+certificates, relationship data and VFS storage. Search index files and commit
+receipts need persistent storage across pod recreation. Keep the existing
+AuthN and AuthZ providers; HTTP forwards the caller's bearer, and gRPC uses
+the existing authenticated channel. HTTP listens on loopback behind the
+existing authenticated TLS ingress where required.
+
+Verify the daemon exports its resolved persistent `--data-dir` as
+`NEXUS_DATA_DIR` before loading plugins; the current cluster composition root
+does this from the same CLI value. Check the running version and resolved
+plugin store, so an older deployment cannot fall back to `./nexus-data` in an
+ephemeral working directory. Persist index facts on the retained data volume;
+keep runtime connections, admission counters and pending work in memory.
+
+Identify the actual serving executable during inventory. Agent deployments
+may use sudocode's `nexusd-cohost`, which assembles agent services through the
+cluster daemon's composition root. Preserve its service set and enabled
+features when updating the VFS dependency and signing its Search plugin.
+
+Search indexes and commit sequences belong to the serving plugin instance.
+Route indexing, queries and Stats to that same instance. Inspect load-balancer
+routing and the existing multi-node indexing strategy before accepting a
+receipt across endpoints; Raft metadata replication alone does not replicate
+the Search index. Retain this ownership when rolling nodes or moving pods.
+
+Queries retain the agent's identity and grants. Index mutations follow the
+existing administrator/node management policy. Record the indexing trigger
+and its management credential during inventory so agent writes reach the
+owning index through that authorized path.
+
+Verify write → index → query, overwrite, binary/empty outcomes, index eviction,
+permission grant/revocation, isolation between two identities and zones,
+restart recovery, cancellation and overload. Run these checks from scode/MCP
+and the actual HTTP caller. Compare resource usage and query/index latency
+against the recorded baseline, including the gVisor sandbox. Agree numerical
+thresholds from that baseline before rollout.
+
+Expand agent pods only after the selected pod passes. Upgrade the Moss VM
+cluster in a separate step and repeat the same acceptance checks for its own
+mounts. If either cluster has multiple Raft voters, restart one node at a time
+and wait for readiness while preserving quorum and membership. Reindex only
+the affected owning namespace when its corpus requires it.
+
+Rollback restores the recorded daemon/plugin artifacts and caller routing,
+while retaining VFS, authorization and Search facts. Verify the rollback
+artifacts can read stores written by the candidate before the canary; this
+change keeps the existing index schemas. Drain index mutations and take a
+consistent backup of the index and receipt for recovery. A binary rollback
+must retain acknowledged commit sequences and the current index. Do not
+remove the Python server from these deployments until its remaining APIs
+have their own migration and acceptance completed.
 
 ## Write-to-searchable contract (#4736)
 
@@ -279,33 +365,36 @@ indexed file with `index: true` or a `refresh`.
 All indexing calls are **synchronous**: the response returns after the
 plugin has committed, so there is no "queued" state to poll for.
 
-Every indexing call indexes into the caller's **token zone** — the same
-zone native indexed Query reads (the `?zone=` override on
-`files/write` wins when given) — so what you index is what your queries
-hit. `GET /v2/documents/stats?zone_id=...` selects the zone's counters under
-the host's management policy.
+Single-file indexing and eviction resolve the zone from the file's VFS mount.
+An optional `zone_id` asserts that ownership; a mismatch is rejected.
+Inline batches use the requested zone and optional per-document zones.
+The host requires management authority for index mutations and diagnostics.
 
 | Call | What it indexes | Returns |
 |---|---|---|
 | `POST /api/v2/files/write` with `"index": true` or `"index": {"text": "…"}` | The file just written, in the same request | `index.status`: `indexed` + `index.index_seq`, `skipped` + `reason`, or `error` |
 | `POST /api/v2/files/batch/write` with request-level `"index": true` and/or per-file `index` | Every requested file, one plugin round-trip after the writes land | per-result `index` verdict |
-| `POST /api/v2/search/refresh?path=P&change_type=update` | One existing path, read server-side through the VFS with the caller's permissions | 200 `{"status": "indexed", "index_seq"}`; 404 missing; 409 `{"status": "skipped", "reason"}` |
-| `POST /api/v2/search/refresh?path=P&change_type=delete` | Evicts one path (chunks dropped, tombstone recorded) | 200 `{"status": "deleted", "index_seq"}` |
-| `POST /api/v2/search/index` `{"documents": [{"path", "text"}]}` | Caller-supplied text, any number of documents | `count`, `skippedCount`, `skippedPaths`, `indexSeq` |
+| `POST /v2/documents/file` `{"path": "P"}` | Current bytes of one VFS file or stream, read by its owning Kernel | 200 `status: indexed`, `index_seq`, `zone_id`; 404 missing; 409 `status: skipped` with `reason` and the actual receipt |
+| `DELETE /v2/documents/file?path=P` | Evicts one path's index entries; retains the VFS file | 200 `status: deleted`, `index_seq`, `zone_id` |
+| `POST /v2/documents/batch` `{"documents": [{"path", "text"}]}` | Caller-supplied text, any number of documents | `indexed_count`, `skipped_count`, `skipped_paths`, `parked_paths`, `index_seq`; parked work returns 409; storage failure returns 500 |
 | `nexus search index <dir>` / plugin `Index` + `Refresh` RPCs | A directory walk through the plugin host's VFS | counts |
 | `POST /api/v2/admin/reindex` with `target` `all` or `search` (admin) | Every path in the replayed operation log: deletes evict, the rest are read server-side and indexed in bounded batches (non-UTF-8 or > 2 MiB files are `skipped`) | `search_paths_indexed` / `_deleted` / `_skipped` (+ reason histogram), `search_index_errors` + failed paths, `search_index_seq` |
 
-`index: true` on a write and `search/refresh` decode the written bytes
+`index: true` on a write and `/v2/documents/file` decode the written bytes
 as UTF-8. A binary payload is reported `skipped` with a reason instead
 of being silently acknowledged — pass `index: {"text": "<extracted
 text>"}` to index it. Empty or whitespace-only content is `skipped`
-too (409 on refresh).
+too (409 on single-file indexing). A binary skip commits nothing and returns
+`index_seq: 0`; empty text removes previous chunks and returns that commit's
+sequence. The TypeScript `IndexingClient.indexFile()` returns these skips as
+typed results, including through the TUI worker. Other HTTP errors retain
+their status, body and retry information.
 
 When `index` is requested and the search plugin is unreachable, the
 write fails with **503 before anything is written**, so a write+index
 request never half-succeeds. A plugin failure *after* the write landed
 is reported as `index.status = "error"` (HTTP 200: the write itself
-succeeded); re-drive indexing with `search/refresh` or `search/index`.
+succeeded); retry indexing with `/v2/documents/file` or `/v2/documents/batch`.
 
 ### Confirming a document is served
 
@@ -317,9 +406,9 @@ that made the batch visible. `GET /v2/documents/stats` reports:
 | Field | Meaning |
 |---|---|
 | `last_index_seq` | Sequence of the last committed index mutation. `last_index_seq >= <your index_seq>` means your batch is served. |
-| `pending` | Documents accepted by in-flight `search/index` / write+index calls and not yet returned. |
+| `pending` | Documents accepted by in-flight `IndexDocuments` / `IndexFile` work, including after caller cancellation. |
 | `last_successful_index_at_ms` | Epoch milliseconds of the last committed mutation (`0` = never). The Python SDK also exposes ISO-8601 `last_successful_index_at` and float epoch seconds `last_index_refresh`. |
-| `indexing_in_progress` | In-flight `Index` / `IndexDocuments` / `Refresh` operations (#4623). |
+| `indexing_in_progress` | In-flight `Index`, `IndexDocuments`, `IndexFile`, `Refresh` and mutating `NotifyFileChange` operations. |
 
 Stall signature — the #4725 class, index acknowledged but nothing
 served: `pending > 0` or `indexing_in_progress > 0` for longer than one
@@ -341,7 +430,7 @@ env directly.
 | `NEXUS_SEARCH_MODEL_DIR` | `<data>/plugins/search/models` | Local embedding model directory (see below) |
 | `ORT_DYLIB_PATH` | *(unset)* | Absolute path to `onnxruntime.{so,dylib,dll}`; **required** for local semantic search |
 | `NEXUS_SEARCH_BATCH_CONCURRENCY` | `4` (clamp 1..=16) | BatchQuery inner-query concurrency (#4610) |
-| `NEXUS_SEARCH_INDEX_MAX_INFLIGHT` | `8` | Shared Rust Search service cap for concurrent `Index`, `Refresh` and `IndexDocuments` operations across HTTP, gRPC and SDK clients. Read once at service startup. Overflow returns gRPC `RESOURCE_EXHAUSTED`, or HTTP `429` with `Retry-After: 5`. Cancelled callers retain their slot until accepted work finishes. `0` disables the cap; invalid or negative values use the default. |
+| `NEXUS_SEARCH_INDEX_MAX_INFLIGHT` | `8` | Shared Rust Search service cap for `Index`, `Refresh`, `IndexDocuments`, `IndexFile` and mutating `NotifyFileChange` across HTTP, gRPC and SDK clients. Create/update notifications commit nothing and consume no slot. Read once at startup. Overflow returns gRPC `RESOURCE_EXHAUSTED`, or HTTP `429` with `Retry-After: 5`. Cancelled callers retain their slot until accepted work finishes. `0` disables the cap; invalid or negative values use the default. |
 | `NEXUS_SEARCH_EMBED_API_URL` | *(unset)* | OpenAI-compatible `/v1/embeddings` endpoint; presence selects the remote embedder (#4614) |
 | `NEXUS_SEARCH_EMBED_MODEL` | — | Remote model name (required with URL) |
 | `NEXUS_SEARCH_EMBED_DIM` | — | Remote embedding dim (required with URL) |
@@ -465,7 +554,7 @@ The local tag moved from `mE5-small-v1` to `mE5-small-v2` when the
 local embedder switched to mean pooling and the e5 `query: ` /
 `passage: ` input prefixes (the `v1` vectors were CLS-pooled and
 unprefixed). Walked directories re-embed on the next refresh; corpora
-indexed through `POST /api/v2/search/index` need `nexus reindex
+indexed through `POST /v2/documents/batch` need `nexus reindex
 --target search` (or a replay of their index calls) before semantic
 results return. The old `ann-mE5-small-v1-*` directory can be deleted
 once the new one is populated.

@@ -30,13 +30,13 @@ exclude = ["nexus-fuse"]
 [workspace.dependencies]
 # All nexus-vfs crates use one revision so the host, plugins and shared
 # contracts are built together.
-contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "2667756a1973a51bd785c251a95b9ecb7d44ebff" }
-lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "2667756a1973a51bd785c251a95b9ecb7d44ebff" }
-transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "2667756a1973a51bd785c251a95b9ecb7d44ebff" }
-backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "2667756a1973a51bd785c251a95b9ecb7d44ebff", default-features = false }
-kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "2667756a1973a51bd785c251a95b9ecb7d44ebff", default-features = false }
-raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "2667756a1973a51bd785c251a95b9ecb7d44ebff", default-features = false, features = ["grpc"] }
-nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "2667756a1973a51bd785c251a95b9ecb7d44ebff" }
+contracts = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "6a29018cdc867e1f229b9473fb4418d420d4c69e" }
+lib = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "6a29018cdc867e1f229b9473fb4418d420d4c69e" }
+transport = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "6a29018cdc867e1f229b9473fb4418d420d4c69e" }
+backends = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "6a29018cdc867e1f229b9473fb4418d420d4c69e", default-features = false }
+kernel = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "6a29018cdc867e1f229b9473fb4418d420d4c69e", default-features = false }
+raft = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "6a29018cdc867e1f229b9473fb4418d420d4c69e", default-features = false, features = ["grpc"] }
+nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "6a29018cdc867e1f229b9473fb4418d420d4c69e" }
 # The cluster daemon library entry (`nexus_cluster::run_with_services`).
 # The `nexusd-cluster` binary that composes it now lives in nexus-vfs
 # (`rust/profiles/cluster/`); this workspace only pulls the library
@@ -44,19 +44,19 @@ nexus-plugin-abi = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "26677
 # decls) at compile time — the daemon itself is installed via
 # `cargo install --git nexus-vfs nexus-cluster --bin nexusd-cluster`
 # in the Dockerfiles.
-nexus-cluster = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "2667756a1973a51bd785c251a95b9ecb7d44ebff" }
+nexus-cluster = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "6a29018cdc867e1f229b9473fb4418d420d4c69e" }
 # a2a messaging substrate. `default-features = false` leaves the
 # `install` feature (which pulls raft to arm the stream-wakeup observer)
 # OFF, so nexus-side consumers link only the stamp hook and stay
 # raft-free — they reach raft through kernel.sys_* (§6.1). The substrate
 # is armed in production at cluster boot in nexus-vfs, not here.
-a2a = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "2667756a1973a51bd785c251a95b9ecb7d44ebff", default-features = false }
+a2a = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "6a29018cdc867e1f229b9473fb4418d420d4c69e", default-features = false }
 # managed-agent control plane + the shared subprocess host — RELOCATED into
 # nexus-vfs (kernel-tier) so the production nexusd-cluster carries the agent
 # control plane. `subprocess-host` enables the raw ACP-subprocess spawner (the
 # nexus-side acp path + managed-agent both use HostedSubprocess).
-managed-agent = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "2667756a1973a51bd785c251a95b9ecb7d44ebff", default-features = false }
-subprocess = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "2667756a1973a51bd785c251a95b9ecb7d44ebff" }
+managed-agent = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "6a29018cdc867e1f229b9473fb4418d420d4c69e", default-features = false }
+subprocess = { git = "https://github.com/nexi-lab/nexus-vfs", rev = "6a29018cdc867e1f229b9473fb4418d420d4c69e" }
 # Local service crate (nexus-owned).
 services = { path = "rust/services" }
 serde = { version = "1.0", features = ["derive"] }

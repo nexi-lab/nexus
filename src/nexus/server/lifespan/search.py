@@ -4,8 +4,9 @@ renamed paths from the plugin's index.
 
 Writes are NOT auto-indexed (#4736): the plugin's ``NotifyFileChange``
 carries no text, so making a written file searchable is the caller's
-explicit step (``files/write`` with ``index: true``, ``/search/refresh``
-or ``/search/index`` — see ``docs/deployment/search-plugin.md``).
+explicit step (``files/write`` with ``index: true``, native
+``/v2/documents/file`` or ``/v2/documents/batch`` — see
+``docs/deployment/search-plugin.md``).
 
 ``NEXUS_SEARCH_DAEMON`` — default auto-enable when a database URL is
 present; ``true`` forces on, ``false`` forces off.

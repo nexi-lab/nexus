@@ -125,6 +125,41 @@ describe.skipIf(!fixturePath)("native Search through the TUI worker and terminal
     }
   });
 
+  it("indexes current VFS content and preserves skip and eviction receipts through the worker", async () => {
+    const adminManager = createWorkerManager({ apiKey: fixture.adminKey, baseUrl: "http://127.0.0.1:1", maxRetries: 0 });
+    const adminClient = adminManager.client as unknown as FetchClient;
+    const indexing = new IndexingClient(adminClient, connection);
+    const search = new SearchClient(client, connection);
+    try {
+      const before = (await indexing.stats()).last_index_seq;
+      const deleted = await indexing.deleteFile(fixture.visible);
+      expect(deleted.status).toBe("deleted");
+      expect(deleted.zone_id).toBe("sharedzone");
+      expect(deleted.index_seq).toBeGreaterThan(before);
+      expect((await search.locate(fixture.visible)).indexed).toBe(false);
+      expect((await search.query(fixture.needle, "keyword")).results).toEqual([]);
+      const restored = await indexing.indexFile(fixture.visible);
+      expect(restored.status).toBe("indexed");
+      expect(restored.index_seq).toBeGreaterThan(deleted.index_seq);
+      expect((await search.query(fixture.needle, "keyword")).results.map(hit => hit.path)).toEqual([fixture.visible]);
+      const binary = await indexing.indexFile(fixture.binary);
+      expect(binary).toEqual({ status: "skipped", reason: "non_text", index_seq: 0, zone_id: "sharedzone" });
+      const empty = await indexing.indexFile(fixture.empty);
+      expect(empty.status).toBe("skipped");
+      expect(empty.reason).toBe("empty");
+      expect(empty.index_seq).toBeGreaterThan(restored.index_seq);
+      expect((await indexing.stats()).last_index_seq).toBeGreaterThanOrEqual(empty.index_seq);
+      const reader = new IndexingClient(client, connection);
+      for (const operation of [() => reader.indexFile(fixture.visible), () => reader.deleteFile(fixture.visible), () => reader.indexDocuments([{ path: fixture.visible, text: "unauthorized" }])]) {
+        let denied: unknown;
+        try { await operation(); } catch (error) { denied = error; }
+        expect(denied).toMatchObject({ status: 403 });
+      }
+    } finally {
+      try { await indexing.indexFile(fixture.visible); } finally { adminManager.terminate(); }
+    }
+  });
+
   it("reports truncation and does not return a revoked cached hit", async () => {
     const admin = new FetchClient({ baseUrl: fixture.url, apiKey: fixture.adminKey, maxRetries: 0 });
     const limited = await new SearchClient(admin, { zoneId: "sharedzone" }).glob("**/*.txt", fixture.root, { maxResults: 1 });

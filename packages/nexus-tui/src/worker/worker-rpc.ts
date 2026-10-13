@@ -10,7 +10,7 @@
  * @see §2 Worker thread isolation — Issue #3632
  */
 
-import { FetchClient } from "@nexus-ai-fs/api-client";
+import { FetchClient, NexusApiError, RateLimitError } from "@nexus-ai-fs/api-client";
 import type {
   ToWorkerMessage,
   FromWorkerMessage,
@@ -159,7 +159,10 @@ self.onmessage = async (event: MessageEvent<ToWorkerMessage>): Promise<void> => 
         post({ type: "response", id: msg.id, result });
       } catch (err) {
         const message = err instanceof Error ? err.message : "Request failed";
-        post({ type: "error", id: msg.id, message });
+        post({ type: "error", id: msg.id, message,
+          ...(err instanceof NexusApiError ? { status: err.status, code: err.code, body: err.body } : {}),
+          ...(err instanceof RateLimitError ? { retryAfter: err.retryAfter } : {}),
+        });
       } finally {
         inFlight.delete(msg.id);
       }

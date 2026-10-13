@@ -8,6 +8,7 @@ import sys
 import urllib.request
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import urlencode
 from uuid import uuid4
 
 from nexus.remote.rpc_transport import RPCTransport
@@ -65,6 +66,7 @@ def main(action: str) -> None:
         if manifest.get("keyHash"):
             http("DELETE", f"/v2/auth/keys/{manifest['keyHash']}")
         for path in manifest["created"]:
+            http("DELETE", f"/v2/documents/file?{urlencode({'path': path})}")
             transport.delete_file(path)
 
     try:
@@ -82,6 +84,8 @@ def main(action: str) -> None:
             "root": root,
             "visible": f"{root}/visible.txt",
             "hidden": f"{root}/hidden.txt",
+            "empty": f"{root}/empty.md",
+            "binary": f"{root}/binary.bin",
             "needle": f"marigold{suffix[:8]}",
             "created": [],
         }
@@ -105,6 +109,9 @@ def main(action: str) -> None:
                 "POST", "/v2/documents/batch", {"documents": documents, "zone_id": "sharedzone"}
             )
             assert indexed["indexed_count"] == len(documents)
+            for field, content in (("empty", b" \n\t"), ("binary", b"\xff\xfe")):
+                transport.write_file(manifest[field], content)
+                manifest["created"].append(manifest[field])
             manifest["grant"] = {
                 "zone": "sharedzone",
                 "object_type": "file",

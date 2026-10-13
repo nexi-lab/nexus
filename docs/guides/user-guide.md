@@ -519,8 +519,8 @@ gbrain corpus and passed the HERB QA gate at 8/8 top-5 hits.
 
 **Search surfaces:** `glob`, `glob_batch`, `grep`, `semantic_search`, and
 `semantic_search_stats` are SearchService methods. Explicit indexing uses
-`nexus search index` for the cluster native VFS, or `POST /api/v2/search/index`
-with extracted text for the Python server integration. It is not a
+`nexus search index` for a native VFS directory, `POST /v2/documents/file`
+for one VFS file, or `POST /v2/documents/batch` with extracted text. It is not a
 SearchService initialization step. CLI JSON (`--json`) exposes the returned
 result fields.
 
@@ -1112,9 +1112,9 @@ Search surface coverage matrix:
 | Find exact text | `nexus grep "TODO" /workspace` | `POST /v2/search/grep`, RPC `SearchService.grep`, MCP `nexus_grep` | You know the token or regex to match. |
 | Query retrieved chunks | `nexus --profile cluster search query "auth flow" --mode hybrid` | `POST /v2/search/query`, RPC `SearchService.semantic_search`, MCP `nexus_semantic_search` | You need ranked chunks. |
 | Batch indexed queries | — | `POST /v2/search/query/batch`, gRPC `SearchService.BatchQuery` | Run up to 500 queries on the connected host with one credential. Responses preserve order and per-query errors. |
-| Build or refresh indexes | `nexus --profile cluster search index`; `nexus reindex` for Python MCL replay | Rust HTTP: `POST /v2/documents/index`; Python integration: `POST /api/v2/admin/reindex`, `POST /api/v2/search/index`, `POST /api/v2/search/refresh` | You are preparing a corpus or replaying file mutations. |
+| Build or refresh indexes | `nexus --profile cluster search index`; `nexus reindex` for Python MCL replay | Rust HTTP: `POST /v2/documents/index`, `POST /v2/documents/refresh`, `POST /v2/documents/batch`; Python integration: `POST /api/v2/admin/reindex` | You are preparing a corpus or replaying file mutations. |
 | Configure indexing scope | — | Rust HTTP: `GET/POST/DELETE /v2/documents/directories`, `GET/PUT /v2/documents/indexing-modes` | An administrator manages durable directory registrations and zone modes on the owning host. |
-| Make a written file searchable | `nexus --profile cluster search index <path>` for the native VFS | Rust HTTP: `POST /v2/documents/index`; Python integration: `POST /api/v2/files/write` with `"index": true`, `POST /api/v2/search/index` | Index the VFS that owns the written file. Python write+index returns an `index_seq`; an administrator can confirm it against `last_index_seq` from `GET /v2/documents/stats` on that Search host. |
+| Make a written file searchable | `nexus --profile cluster search index <dir>` for a directory walk | Rust HTTP: `POST /v2/documents/file` with `{"path":"/docs/a.md"}`; inline text: `POST /v2/documents/batch`; Python integration: `POST /api/v2/files/write` with `"index": true` | Index the VFS that owns the file. Confirm the returned `index_seq` against `last_index_seq` from `GET /v2/documents/stats` on that Search host. |
 | Configure path ranking | `nexus path-context set src/nexus/bricks/search "Hybrid search brick" --weight 2` | `PUT /v2/search/path-contexts` | Store a description and adjust ranking for a path prefix. |
 
 Expected outcomes are deliberately boring:

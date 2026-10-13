@@ -42,8 +42,11 @@ _BARE_MCP_TOOL_OVERRIDES = {
 
 _HTTP_OPERATION_OVERRIDES = {"search.query_batch": "search.batch_query"}
 _HTTP_RESOURCE_OPERATIONS = {
-    ("POST", "/api/v2/search/index"): "search.index_documents",
-    ("POST", "/api/v2/search/refresh"): "search.refresh_document",
+    ("POST", "/v2/documents/index"): "search.index",
+    ("POST", "/v2/documents/refresh"): "search.refresh",
+    ("POST", "/v2/documents/batch"): "search.index_documents",
+    ("POST", "/v2/documents/file"): "search.index_file",
+    ("DELETE", "/v2/documents/file"): "search.notify_file_change",
     ("GET", "/v2/documents/stats"): "search.stats",
     ("GET", "/v2/documents/directories"): "search.list_indexed_directories",
     ("POST", "/v2/documents/directories"): "search.add_indexed_directory",

@@ -16,7 +16,7 @@
  * @see §2 Worker thread isolation — Issue #3632
  */
 
-import type { RequestOptions } from "@nexus-ai-fs/api-client";
+import { createHttpError, NexusApiError, type RequestOptions } from "@nexus-ai-fs/api-client";
 import type {
   FromWorkerMessage,
   HttpMethod,
@@ -107,7 +107,9 @@ export class WorkerFetchClient {
       if (msg.type === "response" || msg.type === "raw-response") {
         pending.resolve(msg.result);
       } else {
-        pending.reject(new Error(msg.message));
+        pending.reject(msg.status === undefined ? new Error(msg.message)
+          : msg.status > 0 ? createHttpError(msg.status, msg.message, msg.body, msg.retryAfter)
+          : new NexusApiError(msg.message, msg.status, msg.code ?? "api_error", msg.body));
       }
     };
   }

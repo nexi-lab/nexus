@@ -8,18 +8,14 @@
 
 import {
   AbortError,
-  AuthenticationError,
-  ConflictError,
-  ForbiddenError,
+  createHttpError,
   NetworkError,
   NexusApiError,
   NotFoundError,
   RateLimitError,
-  ServerError,
   TimeoutError,
 } from "./errors.js";
 import type {
-  ApiErrorResponse,
   AspectEnvelope,
   CatalogSchemaResponse,
   ColumnSearchResponse,
@@ -334,37 +330,26 @@ export class FetchClient {
    * (e.g. 402 → InsufficientCreditsError in nexus-pay-ts).
    */
   protected async buildError(response: Response): Promise<NexusApiError> {
-    let message: string;
+    let message = `HTTP ${response.status}`;
+    let body: unknown;
     try {
-      const body = (await response.json()) as ApiErrorResponse;
-      message = body.detail ?? body.error ?? `HTTP ${response.status}`;
+      body = await response.json();
+      if (body && typeof body === "object") {
+        const fields = body as Record<string, unknown>;
+        const detail = fields["detail"];
+        const nested = detail && typeof detail === "object" ? detail as Record<string, unknown> : {};
+        const text = [detail, fields["error"], fields["reason"], nested["error"], nested["reason"]]
+          .find(value => typeof value === "string");
+        if (typeof text === "string") message = text;
+      }
     } catch {
       message = `HTTP ${response.status}`;
     }
 
-    switch (response.status) {
-      case 401:
-        return new AuthenticationError(message);
-      case 403:
-        return new ForbiddenError(message);
-      case 404:
-        return new NotFoundError(message);
-      case 409:
-        return new ConflictError(message);
-      case 429: {
-        const retryAfterHeader = response.headers.get("Retry-After");
-        const retryAfter = retryAfterHeader ? parseInt(retryAfterHeader, 10) : undefined;
-        return new RateLimitError(
-          message,
-          Number.isNaN(retryAfter) ? undefined : retryAfter,
-        );
-      }
-      default:
-        if (response.status >= 500) {
-          return new ServerError(message, response.status);
-        }
-        return new NexusApiError(message, response.status, "api_error");
-    }
+    const retryAfterHeader = response.headers.get("Retry-After");
+    const retryAfter = retryAfterHeader ? parseInt(retryAfterHeader, 10) : undefined;
+    return createHttpError(response.status, message, body,
+      Number.isNaN(retryAfter) ? undefined : retryAfter);
   }
 
   private computeRetryDelay(attempt: number, lastError: Error): number {

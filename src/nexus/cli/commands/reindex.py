@@ -296,13 +296,13 @@ def _reindex_via_rest(
     if skipped:
         console.print(
             f"\n[nexus.muted]{skipped} path(s) skipped (empty, non-text or over 2 MiB) — "
-            "index these paths with /api/v2/search/index and extracted text.[/nexus.muted]"
+            "index these paths with /v2/documents/batch and extracted text.[/nexus.muted]"
         )
     if index_errors:
         console.print(
             f"\n[nexus.warning]⚠ {index_errors} path(s) failed to index — those paths "
             "will NOT appear in search results until re-indexed (files/write with "
-            "index:true, /search/refresh, or /search/index).[/nexus.warning]"
+            "index:true, /v2/documents/file, or /v2/documents/batch).[/nexus.warning]"
         )
         if first_error:
             console.print(f"First error: {first_error}")

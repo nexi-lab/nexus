@@ -268,6 +268,14 @@ on the Kernel serving each domain's mounts. Agents using scode send Search
 requests to their workspace's owning Kernel. A Moss frontend hosting a scode
 session uses that session's owner and identity too.
 
+Keep gRPC as the service contract. Enable the Rust HTTP adapter only for
+callers that require HTTP; it forwards credentials to the same Search RPCs.
+Select the owner from the mounts serving the data, including when an agent
+uses workspace data hosted by the Moss VM.
+Inventory the environment/secrets endpoint separately from the execution
+cohost endpoint; Moss can configure them independently. A secrets daemon is
+the Search target only if it also owns the requested workspace mounts.
+
 Before changing either deployment:
 
 1. Finish code migration, required CI and the published-image E2E tests.
@@ -279,6 +287,12 @@ Before changing either deployment:
    rollback thresholds with the operator. Deployment approval covers the
    reviewed changes and test writes.
 
+Prepare the selected runtime's candidate image in an isolated gVisor
+environment before the canary. Exercise its actual launch mode (`serve-user`
+when used), delegated owner credentials and agent/model services. Published
+cluster-image acceptance covers the base runtime; the cohost image needs
+these checks for its own composition and identity flow.
+
 After confirmation, upgrade one selected agent pod's owning daemon and its
 signed Search plugin before enabling callers of the new `IndexFile` RPC.
 Use artifacts from the same verified VFS revision. Preserve identity, keys,
@@ -287,6 +301,25 @@ receipts need persistent storage across pod recreation. Keep the existing
 AuthN and AuthZ providers; HTTP forwards the caller's bearer, and gRPC uses
 the existing authenticated channel. HTTP listens on loopback behind the
 existing authenticated TLS ingress where required.
+
+Verify the daemon exports its resolved persistent `--data-dir` as
+`NEXUS_DATA_DIR` before loading plugins; the current cluster composition root
+does this from the same CLI value. Check the running version and resolved
+plugin store, so an older deployment cannot fall back to `./nexus-data` in an
+ephemeral working directory. Persist index facts on the retained data volume;
+keep runtime connections, admission counters and pending work in memory.
+
+Identify the actual serving executable during inventory. Agent deployments
+may use sudocode's `nexusd-cohost`, which assembles agent services through the
+cluster daemon's composition root. Preserve its service set and enabled
+features when updating the VFS dependency and signing its Search plugin.
+
+Search indexes and commit sequences belong to the serving plugin instance.
+Route indexing, queries and Stats to that same instance. Inspect load-balancer
+routing and the existing multi-node indexing strategy before accepting a
+receipt across endpoints; Raft metadata replication alone does not replicate
+the Search index. Retain this ownership when rolling nodes or moving pods.
+
 Queries retain the agent's identity and grants. Index mutations follow the
 existing administrator/node management policy. Record the indexing trigger
 and its management credential during inventory so agent writes reach the
@@ -306,10 +339,13 @@ and wait for readiness while preserving quorum and membership. Reindex only
 the affected owning namespace when its corpus requires it.
 
 Rollback restores the recorded daemon/plugin artifacts and caller routing,
-while retaining VFS and authorization facts. Snapshot the node's Search store
-before upgrade so a format incompatibility can restore its matching index and
-receipt together. Do not remove the Python server from these deployments
-until its remaining APIs have their own migration and acceptance completed.
+while retaining VFS, authorization and Search facts. Verify the rollback
+artifacts can read stores written by the candidate before the canary; this
+change keeps the existing index schemas. Drain index mutations and take a
+consistent backup of the index and receipt for recovery. A binary rollback
+must retain acknowledged commit sequences and the current index. Do not
+remove the Python server from these deployments until its remaining APIs
+have their own migration and acceptance completed.
 
 ## Write-to-searchable contract (#4736)
 

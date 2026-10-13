@@ -80,8 +80,9 @@ mounts. Configure a local or API embedder on that host to enable semantic
 and hybrid search. The [Search deployment contract](search-plugin.md) covers
 the host process, embedding model and index configuration.
 
-The Python server connects to that host through `NEXUS_SEARCH_PLUGIN_TARGET`.
-`/api/v2/search/health` reports `disabled` if no host is connected. The host's
+The Python document indexing adapter connects to that host through
+`NEXUS_SEARCH_PLUGIN_TARGET`. Check `/v2/search/health` on the owning Rust host
+with an administrator credential. The host's
 runtime capabilities report which query modes are configured; they do not
 persist temporary model or index readiness.
 

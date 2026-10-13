@@ -122,26 +122,45 @@ and VFS checks can leave fewer returned hits than that limit.
 The Rust host also authorizes index mutations, directory/mode management and
 statistics. These operations require management authority; ordinary callers
 receive HTTP 403. Invalid or revoked caller credentials return HTTP 401.
-Python forwards the original credential and preserves the host's RPC error
-category. Refresh reads workspace bytes using the caller's VFS context before
-submitting them for indexing.
+Native HTTP handlers forward the original credential and preserve the host's
+RPC error category. The document refresh adapter reads workspace bytes using
+the caller's VFS context before submitting them for indexing.
 
-`POST /api/v2/search/locate` accepts `{"path": "/docs/file.md", "zone_id": "team"}`
+`POST /v2/search/locate` accepts `{"path": "/docs/file.md", "zone_id": "team"}`
 (`zone_id` defaults to the caller's zone) and returns `indexed`, `chunk_count`,
-`mtime_ms`, `zone_id`, and `elapsed_ms`. It queries one path's index status.
+`mtime_ms` and `zone_id`. It queries one path's index status.
 The host checks current read permission and VFS existence on each call.
+`X-Nexus-Min-Revision` uses the same revision fence as indexed Query.
 
-The current Search host reports `has_graph=false`. Explicit Python HTTP
-`graph_mode=low|high|dual|auto` requests return HTTP 501. `graph_mode=none`
-uses the ordinary keyword, semantic or hybrid pipeline. Batch entries requesting
-Graph search return a per-entry error.
+The current Search host reports `has_graph=false`. Query and BatchQuery support
+keyword, semantic and hybrid modes. Unknown HTTP request fields are rejected.
 
-`GET /api/v2/search/health` returns the host's `status`, `detail` and writer
+`GET /v2/search/health` requires management authority and returns the host's
+`status`, `detail` and writer
 liveness fields: `fts_writer_faults`, `fts_writer_unavailable`,
-`last_verified_commit_age_ms` and `dispatch_panics`. `initialized` describes
-the local transport; it can remain true while the host reports `unavailable`.
-`backend` identifies the configured transport as `rust-plugin`. A disabled
-transport reports `status=disabled`, `initialized=false` and `backend=null`.
+`last_verified_commit_age_ms` and `dispatch_panics`.
+
+### Index configuration
+
+Directory registration and indexing modes are independent RPCs. All require
+management authority and keep their durable facts in the Search plugin's store.
+
+| HTTP operation | Request | Response |
+|---|---|---|
+| `POST /v2/documents/directories` | JSON `path`, optional `zone_id` | `added`, optional `error` |
+| `DELETE /v2/documents/directories` | Query `path`, optional `zone_id` | `removed`, optional `error` |
+| `GET /v2/documents/directories` | Optional query `zone_id` | `directories` with `path`, `zone_id`, `added_at_ms`; optional `error` |
+| `PUT /v2/documents/indexing-modes` | JSON `mode`, optional `zone_id` | Optional `error` |
+| `GET /v2/documents/indexing-modes` | No body | `modes` with `zone_id`, `mode`; optional `error` |
+
+Registration and removal are idempotent: an existing or absent record returns
+`added=false` or `removed=false`. Modes are `on`, `off` and `sandbox`; an empty
+mode resets the host default. An omitted directory zone selects the host's root
+zone. The modes list contains the host's configured zone modes.
+HTTP adds no directory cache or readiness state.
+Configuration writes serialize their read/modify/save transaction and flush the
+committed file before acknowledging it. Unsupported versions and corrupt facts
+return an error and leave the stored file intact.
 
 ## Index storage and read operations
 
@@ -261,10 +280,10 @@ All indexing calls are **synchronous**: the response returns after the
 plugin has committed, so there is no "queued" state to poll for.
 
 Every indexing call indexes into the caller's **token zone** — the same
-zone `GET /api/v2/search/query` reads (the `?zone=` override on
+zone native indexed Query reads (the `?zone=` override on
 `files/write` wins when given) — so what you index is what your queries
-hit. `GET /api/v2/search/stats` is scoped the same way and echoes the
-zone as `zone_id`.
+hit. `GET /v2/documents/stats?zone_id=...` selects the zone's counters under
+the host's management policy.
 
 | Call | What it indexes | Returns |
 |---|---|---|
@@ -290,21 +309,21 @@ succeeded); re-drive indexing with `search/refresh` or `search/index`.
 
 ### Confirming a document is served
 
-Every indexing call returns the plugin's **`index_seq`**: a
+Explicit document batches, write+index and per-file refresh return the plugin's
+**`index_seq`**: a
 plugin-wide, persisted, monotonic sequence stamped *after* the commit
-that made the batch visible. `GET /api/v2/search/stats` reports:
+that made the batch visible. `GET /v2/documents/stats` reports:
 
 | Field | Meaning |
 |---|---|
 | `last_index_seq` | Sequence of the last committed index mutation. `last_index_seq >= <your index_seq>` means your batch is served. |
 | `pending` | Documents accepted by in-flight `search/index` / write+index calls and not yet returned. |
-| `last_successful_index_at` | ISO-8601 UTC instant of the last committed mutation (`null` = never). `last_index_refresh` carries the same instant as float epoch seconds. |
+| `last_successful_index_at_ms` | Epoch milliseconds of the last committed mutation (`0` = never). The Python SDK also exposes ISO-8601 `last_successful_index_at` and float epoch seconds `last_index_refresh`. |
 | `indexing_in_progress` | In-flight `Index` / `IndexDocuments` / `Refresh` operations (#4623). |
-| `zone_id` | The zone these counters describe, selected for the authenticated caller. Statistics require management authority. |
 
 Stall signature — the #4725 class, index acknowledged but nothing
 served: `pending > 0` or `indexing_in_progress > 0` for longer than one
-indexing call should take, while `last_successful_index_at` does not
+indexing call should take, while `last_successful_index_at_ms` does not
 advance. Alert on that instead of running a synthetic write probe.
 
 The sequence lives in `<data>/plugins/search/index_seq.json` and

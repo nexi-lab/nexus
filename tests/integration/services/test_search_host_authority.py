@@ -21,10 +21,6 @@ from nexus.server.middleware.request_credentials import RequestCredentialsMiddle
 _MUTATIONS = [
     ("POST", "/api/v2/search/index", {"json": {"documents": [{"path": "/alice.md", "text": "a"}]}}),
     ("POST", "/api/v2/search/refresh", {"params": {"path": "/probe.md", "change_type": "delete"}}),
-    ("POST", "/api/v2/search/index-directory", {"json": {"path": "/docs"}}),
-    ("DELETE", "/api/v2/search/index-directory", {"json": {"path": "/docs"}}),
-    ("GET", "/api/v2/search/indexed-dirs", {}),
-    ("POST", "/api/v2/search/indexing-mode", {"json": {"mode": "on"}}),
 ]
 
 
@@ -64,13 +60,6 @@ async def host_client(monkeypatch):
         async def Health(self, request, context):
             return search_pb2.HealthResponse()
 
-        async def Stats(self, request, context):
-            user = await self.authorize(context)
-            if user == "bob":
-                await context.abort(grpc.StatusCode.PERMISSION_DENIED, "Diagnostic access denied")
-            calls.append(("Stats", user, request))
-            return search_pb2.StatsResponse(fts_doc_count=7, fts_path_count=3)
-
         async def manage(self, method, request, context):
             user = await self.authorize(context)
             if user == "bob":
@@ -86,33 +75,6 @@ async def host_client(monkeypatch):
         async def NotifyFileChange(self, request, context):
             await self.manage("NotifyFileChange", request, context)
             return search_pb2.NotifyFileChangeResponse(status="accepted", index_seq=8)
-
-        async def AddIndexedDirectory(self, request, context):
-            await self.manage("AddIndexedDirectory", request, context)
-            return search_pb2.AddIndexedDirectoryResponse(added=True)
-
-        async def RemoveIndexedDirectory(self, request, context):
-            await self.manage("RemoveIndexedDirectory", request, context)
-            return search_pb2.RemoveIndexedDirectoryResponse(removed=True)
-
-        async def ListIndexedDirectories(self, request, context):
-            await self.manage("ListIndexedDirectories", request, context)
-            return search_pb2.ListIndexedDirectoriesResponse()
-
-        async def ListZoneIndexingModes(self, request, context):
-            await self.manage("ListZoneIndexingModes", request, context)
-            return search_pb2.ListZoneIndexingModesResponse()
-
-        async def SetZoneIndexingMode(self, request, context):
-            await self.manage("SetZoneIndexingMode", request, context)
-            return search_pb2.SetZoneIndexingModeResponse()
-
-        async def Locate(self, request, context):
-            user = await self.authorize(context)
-            calls.append(("Locate", user, request))
-            return search_pb2.LocateResponse(
-                indexed=True, chunk_count=2, mtime_ms=123, zone_id=request.zone_id
-            )
 
     server = grpc.aio.server()
     search_pb2_grpc.add_SearchServiceServicer_to_server(Host(), server)
@@ -147,26 +109,6 @@ async def host_client(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_locate_preserves_host_contracts(host_client):
-    client, calls, _, _ = host_client
-    located = await client.post(
-        "/api/v2/search/locate",
-        json={"path": "/alice.md"},
-        headers={"Authorization": "Bearer sk-alice"},
-    )
-    assert located.status_code == 200, located.text
-    assert located.json() | {"elapsed_ms": 0} == {
-        "indexed": True,
-        "chunk_count": 2,
-        "mtime_ms": 123,
-        "zone_id": "sharedzone",
-        "elapsed_ms": 0,
-    }
-    _, user, request = calls[-1]
-    assert (user, request.path, request.zone_id) == ("alice", "/alice.md", "sharedzone")
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("code", "status"),
     [
@@ -179,15 +121,7 @@ async def test_locate_preserves_host_contracts(host_client):
 async def test_host_rpc_failures_keep_their_http_category(host_client, code, status):
     client, _, state, _ = host_client
     state.error = code
-    responses = [
-        await client.get("/api/v2/search/stats", headers={"Authorization": "sk-alice"}),
-        await client.post(
-            "/api/v2/search/locate",
-            json={"path": "/alice.md"},
-            headers={"Authorization": "sk-alice"},
-        ),
-    ]
-    responses += await mutation_responses(client, {"Authorization": "Bearer sk-alice"})
+    responses = await mutation_responses(client, {"Authorization": "Bearer sk-alice"})
     assert [response.status_code for response in responses] == [status] * len(responses)
 
 
@@ -224,61 +158,3 @@ async def test_revoked_host_key_rejects_management_with_cached_identity(host_cli
     responses = await mutation_responses(client, headers)
     assert [response.status_code for response in responses] == [401] * len(responses)
     assert app.state.search_index_inflight == 0
-
-
-@pytest.mark.asyncio
-async def test_revoked_host_key_rejects_cached_python_identity(host_client):
-    client, _, state, _ = host_client
-    headers = {"Authorization": "Bearer sk-alice"}
-    assert (await client.get("/api/v2/search/stats", headers=headers)).status_code == 200
-    state.revoked = True
-    assert (await client.get("/api/v2/search/stats", headers=headers)).status_code == 401
-
-
-@pytest.mark.asyncio
-async def test_stats_keeps_host_authority_and_concurrent_caller_credentials(host_client):
-    client, calls, _, _ = host_client
-    responses = await asyncio.gather(
-        *[
-            client.get("/api/v2/search/stats", headers={"Authorization": f"Bearer sk-{name}"})
-            for name in ("alice", "bob") * 3
-        ]
-    )
-    for name, response in zip(("alice", "bob") * 3, responses, strict=True):
-        if name == "bob":
-            assert response.status_code == 403, response.text
-        else:
-            assert response.status_code == 200, response.text
-            assert response.json()["fts_doc_count"] == 7
-            assert response.json()["zone_id"] == "sharedzone"
-    assert [(method, user, request.zone_id) for method, user, request in calls] == [
-        ("Stats", "alice", "sharedzone")
-    ] * 3
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("authorization", [None, "Bearer invalid-key"])
-async def test_stats_rejects_invalid_auth_before_using_the_node_connection(
-    host_client, authorization
-):
-    client, calls, _, _ = host_client
-    headers = {} if authorization is None else {"Authorization": authorization}
-    response = await client.get("/api/v2/search/stats", headers=headers)
-    assert response.status_code == 401
-    assert calls == []
-
-
-@pytest.mark.asyncio
-async def test_invalid_locate_makes_no_rpc(host_client):
-    client, calls, _, _ = host_client
-    for payload in (
-        {"q": "filename"},
-        {"path": "relative"},
-        {"path": ""},
-        {"path": "/alice.md", "limit": 10},
-    ):
-        response = await client.post(
-            "/api/v2/search/locate", json=payload, headers={"Authorization": "sk-alice"}
-        )
-        assert response.status_code == 422
-    assert calls == []

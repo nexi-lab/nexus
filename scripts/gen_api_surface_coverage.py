@@ -119,10 +119,10 @@ def generate_coverage(
 
     # The native host lives in the pinned VFS runtime. Its typed HTTP client
     # records the routes used here; published-image E2E verifies that contract.
-    native_client = repo_root / "packages/nexus-api-client/src/search-client.ts"
-    for raw in extract_http.extract_typescript_http_client_routes(native_client):
-        op_id = normalize.normalize_http(raw.method, raw.path)
-        _upsert(operations, op_id, "http", f"{raw.method} {raw.path}", raw.source)
+    for native_client in sorted((repo_root / "packages/nexus-api-client/src").glob("*-client.ts")):
+        for raw in extract_http.extract_typescript_http_client_routes(native_client):
+            op_id = normalize.normalize_http(raw.method, raw.path)
+            _upsert(operations, op_id, "http", f"{raw.method} {raw.path}", raw.source)
 
     # --- MCP ---
     tp = repo_root / "src/nexus/config/tool_profiles.yaml"

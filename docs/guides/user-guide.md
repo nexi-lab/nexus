@@ -1112,8 +1112,9 @@ Search surface coverage matrix:
 | Find exact text | `nexus grep "TODO" /workspace` | `POST /v2/search/grep`, RPC `SearchService.grep`, MCP `nexus_grep` | You know the token or regex to match. |
 | Query retrieved chunks | `nexus --profile cluster search query "auth flow" --mode hybrid` | `POST /v2/search/query`, RPC `SearchService.semantic_search`, MCP `nexus_semantic_search` | You need ranked chunks. |
 | Batch indexed queries | — | `POST /v2/search/query/batch`, gRPC `SearchService.BatchQuery` | Run up to 500 queries on the connected host with one credential. Responses preserve order and per-query errors. |
-| Build or refresh indexes | `nexus --profile cluster search index`; `nexus reindex` for Python MCL replay | Rust HTTP: `POST /v2/documents/index`; Python integration: `POST /api/v2/admin/reindex`, `POST /api/v2/search/index`, `/refresh`, `/index-directory`, `/indexing-mode` | You are preparing a corpus or changing indexing scope. |
-| Make a written file searchable | `nexus --profile cluster search index <path>` for the native VFS | Rust HTTP: `POST /v2/documents/index`; Python integration: `POST /api/v2/files/write` with `"index": true`, `POST /api/v2/search/index` | Index the VFS that owns the written file. Python write+index returns an `index_seq` for confirmation through `/api/v2/search/stats`. |
+| Build or refresh indexes | `nexus --profile cluster search index`; `nexus reindex` for Python MCL replay | Rust HTTP: `POST /v2/documents/index`; Python integration: `POST /api/v2/admin/reindex`, `POST /api/v2/search/index`, `POST /api/v2/search/refresh` | You are preparing a corpus or replaying file mutations. |
+| Configure indexing scope | — | Rust HTTP: `GET/POST/DELETE /v2/documents/directories`, `GET/PUT /v2/documents/indexing-modes` | An administrator manages durable directory registrations and zone modes on the owning host. |
+| Make a written file searchable | `nexus --profile cluster search index <path>` for the native VFS | Rust HTTP: `POST /v2/documents/index`; Python integration: `POST /api/v2/files/write` with `"index": true`, `POST /api/v2/search/index` | Index the VFS that owns the written file. Python write+index returns an `index_seq`; an administrator can confirm it against `last_index_seq` from `GET /v2/documents/stats` on that Search host. |
 | Configure path ranking | `nexus path-context set src/nexus/bricks/search "Hybrid search brick" --weight 2` | `PUT /v2/search/path-contexts` | Store a description and adjust ranking for a path prefix. |
 
 Expected outcomes are deliberately boring:
@@ -1225,11 +1226,11 @@ nexusd \
   --database-url "$NEXUS_DATABASE_URL"
 ```
 
-Verify it:
+Verify the Search host using its Rust HTTP URL and an administrator's existing key:
 
 ```bash
-curl "$NEXUS_URL/api/v2/search/health"
-curl -H "Authorization: Bearer $NEXUS_API_KEY" "$NEXUS_URL/api/v2/search/stats"
+curl -H "Authorization: Bearer $NEXUS_API_KEY" "$NEXUS_URL/v2/search/health"
+curl -H "Authorization: Bearer $NEXUS_API_KEY" "$NEXUS_URL/v2/documents/stats"
 ```
 
 ### 5.6 Configure the Search host
@@ -1246,7 +1247,8 @@ use the existing gRPC channel. Pass the caller's credential on every request.
 
 Follow the [Search deployment contract](../deployment/search-plugin.md) for
 plugin loading, embeddings and per-zone index configuration. Check
-`/api/v2/search/health` for host status and writer-liveness counters.
+`GET /v2/search/health` with an administrator's credential for host status and
+writer-liveness counters.
 
 ## 6. Turn On Permissions And Policy
 

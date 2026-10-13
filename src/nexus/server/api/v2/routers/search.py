@@ -1,7 +1,4 @@
-"""Search health, statistics, document indexing and index management adapters.
-
-Calls forward the caller's credential to the Rust Search host.
-"""
+"""Explicit document indexing and per-file refresh adapters."""
 
 import logging
 import os
@@ -23,19 +20,12 @@ from nexus.server.api.v2.routers._index_on_write import (
     verdict_for_path,
 )
 from nexus.server.api.v2.routers._search_deps import _get_search_daemon
-from nexus.server.api.v2.routers._search_indexed_dirs import router as _indexed_dirs_router
-from nexus.server.api.v2.routers._search_locate import router as _locate_router
 from nexus.server.dependencies import get_operation_context, require_auth
 from nexus.server.zone_execution import run_zone_scoped
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/search", tags=["search"])
-
-
-def _get_optional_search_daemon(request: Request) -> Any:
-    """Get SearchDaemon from app.state, returning None if not enabled."""
-    return getattr(request.app.state, "search_daemon", None)
 
 
 def _get_zone_registry(request: Request) -> Any | None:
@@ -45,45 +35,6 @@ def _get_zone_registry(request: Request) -> Any | None:
 # =============================================================================
 # Endpoints
 # =============================================================================
-
-
-@router.get("/health")
-async def search_daemon_health(
-    search_daemon: Any = Depends(_get_optional_search_daemon),
-) -> dict[str, Any]:
-    """Report host health and the local transport's initialization state."""
-    if not search_daemon:
-        return {
-            "status": "disabled",
-            "detail": "Search daemon is not configured",
-            "initialized": False,
-            "backend": None,
-        }
-    try:
-        health: dict[str, Any] = await search_daemon.get_health()
-    except Exception as exc:  # plugin died after the boot probe — health must not 500
-        logger.warning("search health probe failed: %s", exc)
-        health = {"status": "unavailable", "detail": f"{type(exc).__name__}: {exc}"}
-    return {
-        **health,
-        "initialized": bool(search_daemon.is_initialized),
-        "backend": "rust-plugin",
-    }
-
-
-@router.get("/stats")
-@api_error_handler(context="read Search statistics")
-async def search_daemon_stats(
-    auth_result: dict[str, Any] = Depends(require_auth),
-    search_daemon: Any = Depends(_get_search_daemon),
-) -> dict[str, Any]:
-    """Read zone counters under the Rust host's diagnostic access policy."""
-    zone_id = index_zone_for(auth_result)
-    stats: dict[str, Any] = await search_daemon.get_stats(zone_id=zone_id)
-    stats["initialized"] = bool(getattr(search_daemon, "is_initialized", False))
-    stats.setdefault("backend", "rust-plugin")
-    stats["zone_id"] = zone_id or ROOT_ZONE_ID
-    return stats
 
 
 @router.post("/index")
@@ -183,7 +134,7 @@ def _admit_index_request(state: Any) -> None:
                 "max_inflight": cap,
                 "retry_after_seconds": INDEX_RETRY_AFTER_SECONDS,
                 "hint": (
-                    "back off and retry; poll /api/v2/search/stats "
+                    "back off and retry; poll /v2/documents/stats "
                     "(indexing_in_progress / pending) to pace submissions"
                 ),
             },
@@ -317,7 +268,3 @@ async def search_refresh_notify(
         }
 
     return await run_zone_scoped(_get_zone_registry(request), target_zone, _work)
-
-
-router.include_router(_indexed_dirs_router)
-router.include_router(_locate_router)

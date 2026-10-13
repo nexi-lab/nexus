@@ -1,5 +1,7 @@
 import type { FetchClient } from "./fetch-client.js";
 import type { RequestOptions } from "./types.js";
+import { searchRequestOptions, type SearchConnection } from "./search-connection.js";
+export type { SearchConnection } from "./search-connection.js";
 
 /** Rust HTTP Search wire types. */
 export interface SearchHit {
@@ -54,11 +56,20 @@ export interface GrepHit {
   readonly line: string;
 }
 
-export interface SearchConnection {
-  /** Owning host's HTTP URL; omitted when it shares the transport's origin. */
-  readonly url?: string;
-  /** Explicit scope. Omission lets the host select the caller's readable zones. */
-  readonly zoneId?: string;
+export interface SearchHealth {
+  readonly status: string;
+  readonly detail: string;
+  readonly fts_writer_faults: number;
+  readonly fts_writer_unavailable: number;
+  readonly last_verified_commit_age_ms: number | null;
+  readonly dispatch_panics: number;
+}
+
+export interface LocatedDocument {
+  readonly indexed: boolean;
+  readonly chunk_count: number;
+  readonly mtime_ms: number | null;
+  readonly zone_id: string;
 }
 
 export interface DiscoveryOptions {
@@ -75,7 +86,17 @@ export class SearchClient {
     private readonly transport: Pick<FetchClient, "get" | "post">,
     private readonly connection: SearchConnection = {},
   ) {
-    this.options = { transformKeys: false, ...(connection.url ? { baseUrl: connection.url } : {}) };
+    this.options = searchRequestOptions(connection);
+  }
+
+  health(): Promise<SearchHealth> {
+    return this.transport.get("/v2/search/health", this.options);
+  }
+
+  locate(path: string): Promise<LocatedDocument> {
+    return this.transport.post("/v2/search/locate", {
+      path, zone_id: this.connection.zoneId ?? "",
+    }, this.options);
   }
 
   query(

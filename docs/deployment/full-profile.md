@@ -54,8 +54,8 @@ eval $(nexus env)
 nexus status
 ```
 
-Check `/api/v2/search/health` separately to verify that the Search host is
-reachable. A healthy server can have Search disabled when no host is configured.
+Use an administrator credential to check `/v2/search/health` on the owning
+Rust host. The general server health probe does not verify Search availability.
 
 ## Auth
 

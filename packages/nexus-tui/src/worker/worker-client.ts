@@ -136,6 +136,11 @@ export class WorkerFetchClient {
     this.dedup.clear();
   }
 
+  /** Clear GET coalescing when connection configuration changes. @internal */
+  _clearDedup(): void {
+    this.dedup.clear();
+  }
+
   // ─── Core send ─────────────────────────────────────────────────────────────
 
   private send<T>(

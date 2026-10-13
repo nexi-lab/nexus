@@ -168,6 +168,21 @@ describe("WorkerFetchClient", () => {
 
   // ─── GET deduplication (Issue 14A) ───────────────────────────────────────
 
+  it("deduplicates equivalent query fields and keeps different zones separate", async () => {
+    const first = client.get("/v2/documents/directories", { query: { zone_id: "legal", limit: 3 } });
+    const equivalent = client.get("/v2/documents/directories", { query: { limit: 3, zone_id: "legal" } });
+    const otherZone = client.get("/v2/documents/directories", { query: { zone_id: "engineering", limit: 3 } });
+    await tick();
+    expect(worker.sent).toHaveLength(2);
+    const [legal, engineering] = worker.sent;
+    if (legal?.type !== "request" || engineering?.type !== "request") throw new Error("missing requests");
+    expect(legal.options?.query?.zone_id).toBe("legal");
+    expect(engineering.options?.query?.zone_id).toBe("engineering");
+    worker.reply({ type: "response", id: engineering.id, result: "engineering facts" });
+    worker.reply({ type: "response", id: legal.id, result: "legal facts" });
+    expect(await Promise.all([first, equivalent, otherZone])).toEqual(["legal facts", "legal facts", "engineering facts"]);
+  });
+
   it("concurrent identical GET requests share one in-flight promise", async () => {
     const p1 = client.get("/api/v2/same");
     const p2 = client.get("/api/v2/same");

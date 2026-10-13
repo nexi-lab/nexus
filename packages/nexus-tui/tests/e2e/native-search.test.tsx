@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
-import { FetchClient, SearchClient } from "@nexus-ai-fs/api-client";
+import { FetchClient, IndexingClient, SearchClient, type IndexingMode } from "@nexus-ai-fs/api-client";
 import { createWorkerManager } from "../../src/worker/worker-manager.js";
 import { useSearchStore } from "../../src/stores/search-store.js";
 import { SearchResults } from "../../src/panels/search/search-results.js";
@@ -72,6 +72,56 @@ describe.skipIf(!fixturePath)("native Search through the TUI worker and terminal
       expect(grep.truncated).toBe(false);
     } finally {
       adminManager.terminate();
+    }
+  });
+
+  it("preserves management scope and directory facts through the real worker", async () => {
+    const adminManager = createWorkerManager({ apiKey: fixture.adminKey, baseUrl: "http://127.0.0.1:1", maxRetries: 0 });
+    const adminClient = adminManager.client as unknown as FetchClient;
+    const indexing = new IndexingClient(adminClient, connection);
+    const directory = `${fixture.root}/configuration & facts`;
+    let previousMode: IndexingMode = "on";
+    try {
+      const existingModes = await indexing.listIndexingModes();
+      expect(existingModes.error).toBeUndefined();
+      previousMode = existingModes.modes.find(mode => mode.zone_id === "sharedzone")?.mode ?? "on";
+      const health = await new SearchClient(adminClient, connection).health();
+      expect(["healthy", "degraded"]).toContain(health.status);
+      expect(health.fts_writer_faults).toBe(0);
+      const located = await new SearchClient(client, connection).locate(fixture.visible);
+      expect(located.indexed).toBe(true);
+      expect(located.zone_id).toBe("sharedzone");
+      expect(located.chunk_count).toBeGreaterThan(0);
+      expect(await indexing.addDirectory(directory)).toEqual({ added: true });
+      expect(await indexing.addDirectory(directory)).toEqual({ added: false });
+      const listed = await indexing.listDirectories();
+      expect(listed.error).toBeUndefined();
+      const fact = listed.directories.find(entry => entry.path === directory);
+      expect(fact?.zone_id).toBe("sharedzone");
+      expect(fact?.added_at_ms).toBeGreaterThan(0);
+      expect((await indexing.listDirectories()).directories.find(entry => entry.path === directory)).toEqual(fact);
+      expect(await indexing.setIndexingMode("sandbox")).toEqual({});
+      expect((await indexing.listIndexingModes()).modes).toContainEqual({ zone_id: "sharedzone", mode: "sandbox" });
+      const stats = await indexing.stats();
+      expect(stats.error).toBeUndefined();
+      expect(stats.fts_path_count).toBeGreaterThanOrEqual(2);
+      expect(stats.last_index_seq).toBeGreaterThan(0);
+      const reader = new IndexingClient(new FetchClient({ baseUrl: "http://127.0.0.1:1", apiKey: fixture.readerKey, maxRetries: 0 }), connection);
+      for (const operation of [() => reader.stats(), () => reader.listDirectories(), () => reader.addDirectory(directory), () => reader.removeDirectory(directory), () => reader.setIndexingMode("off"), () => reader.listIndexingModes()]) {
+        let denied: unknown;
+        try { await operation(); } catch (error) { denied = error; }
+        expect(denied).toMatchObject({ status: 403 });
+      }
+      expect(await indexing.removeDirectory(directory)).toEqual({ removed: true });
+      expect(await indexing.removeDirectory(directory)).toEqual({ removed: false });
+      expect((await indexing.listDirectories()).directories.some(entry => entry.path === directory)).toBe(false);
+    } finally {
+      try {
+        await indexing.removeDirectory(directory);
+        await indexing.setIndexingMode(previousMode);
+      } finally {
+        adminManager.terminate();
+      }
     }
   });
 

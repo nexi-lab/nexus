@@ -116,6 +116,7 @@ async def host_client(monkeypatch):
         (grpc.StatusCode.PERMISSION_DENIED, 403),
         (grpc.StatusCode.UNIMPLEMENTED, 501),
         (grpc.StatusCode.UNAVAILABLE, 503),
+        (grpc.StatusCode.RESOURCE_EXHAUSTED, 429),
     ],
 )
 async def test_host_rpc_failures_keep_their_http_category(host_client, code, status):
@@ -123,6 +124,10 @@ async def test_host_rpc_failures_keep_their_http_category(host_client, code, sta
     state.error = code
     responses = await mutation_responses(client, {"Authorization": "Bearer sk-alice"})
     assert [response.status_code for response in responses] == [status] * len(responses)
+    assert all(
+        response.headers.get("Retry-After") == ("5" if status == 429 else None)
+        for response in responses
+    )
 
 
 @pytest.mark.asyncio
@@ -149,7 +154,7 @@ async def test_host_authorizes_management_without_python_policy(host_client, key
 
 @pytest.mark.asyncio
 async def test_revoked_host_key_rejects_management_with_cached_identity(host_client):
-    client, _, state, app = host_client
+    client, _, state, _ = host_client
     headers = {"Authorization": "Bearer sk-alice"}
     assert all(
         response.status_code == 200 for response in await mutation_responses(client, headers)
@@ -157,4 +162,3 @@ async def test_revoked_host_key_rejects_management_with_cached_identity(host_cli
     state.revoked = True
     responses = await mutation_responses(client, headers)
     assert [response.status_code for response in responses] == [401] * len(responses)
-    assert app.state.search_index_inflight == 0

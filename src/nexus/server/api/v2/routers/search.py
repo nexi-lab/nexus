@@ -1,7 +1,5 @@
 """Explicit document indexing and per-file refresh adapters."""
 
-import logging
-import os
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -22,8 +20,6 @@ from nexus.server.api.v2.routers._index_on_write import (
 from nexus.server.api.v2.routers._search_deps import _get_search_daemon
 from nexus.server.dependencies import get_operation_context, require_auth
 from nexus.server.zone_execution import run_zone_scoped
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/search", tags=["search"])
 
@@ -81,71 +77,11 @@ async def search_index_documents(
                 ),
             )
 
-    # Admission control (#4777): the plugin serializes index batches per
-    # zone, so every request past the first waits its turn while holding an
-    # HTTP connection for minutes.  Shed above the cap with 503 +
-    # Retry-After so clients back off instead of deepening the queue.
-    _admit_index_request(request.app.state)
-    try:
-        return await run_zone_scoped(
-            _get_zone_registry(request),
-            zone_id if zone_id != ROOT_ZONE_ID else None,
-            lambda: _index_documents_work(search_daemon, documents, zone_id),
-        )
-    finally:
-        _release_index_request(request.app.state)
-
-
-INDEX_MAX_INFLIGHT_ENV = "NEXUS_SEARCH_INDEX_MAX_INFLIGHT"
-DEFAULT_INDEX_MAX_INFLIGHT = 8
-INDEX_RETRY_AFTER_SECONDS = 5
-
-
-def index_max_inflight() -> int:
-    """Per-process cap on concurrent ``POST /search/index`` requests.
-
-    ``0`` disables admission control.  Read per request so operators can
-    tune it without a restart-time config object and tests can patch env.
-    """
-    raw = os.environ.get(INDEX_MAX_INFLIGHT_ENV, "").strip()
-    if not raw:
-        return DEFAULT_INDEX_MAX_INFLIGHT
-    try:
-        return max(0, int(raw))
-    except ValueError:
-        logger.warning(
-            "%s=%r is not an int; using %d", INDEX_MAX_INFLIGHT_ENV, raw, DEFAULT_INDEX_MAX_INFLIGHT
-        )
-        return DEFAULT_INDEX_MAX_INFLIGHT
-
-
-def _admit_index_request(state: Any) -> None:
-    """Reserve an in-flight slot or raise 503 (no await between check and
-    increment, so the counter is race-free on the single event loop)."""
-    cap = index_max_inflight()
-    inflight = int(getattr(state, "search_index_inflight", 0) or 0)
-    if cap > 0 and inflight >= cap:
-        logger.warning("search/index shed: %d requests already in flight (cap %d)", inflight, cap)
-        raise HTTPException(
-            status_code=503,
-            detail={
-                "error": "search indexing backlog: too many index requests in flight",
-                "inflight": inflight,
-                "max_inflight": cap,
-                "retry_after_seconds": INDEX_RETRY_AFTER_SECONDS,
-                "hint": (
-                    "back off and retry; poll /v2/documents/stats "
-                    "(indexing_in_progress / pending) to pace submissions"
-                ),
-            },
-            headers={"Retry-After": str(INDEX_RETRY_AFTER_SECONDS)},
-        )
-    state.search_index_inflight = inflight + 1
-
-
-def _release_index_request(state: Any) -> None:
-    inflight = int(getattr(state, "search_index_inflight", 0) or 0)
-    state.search_index_inflight = max(0, inflight - 1)
+    return await run_zone_scoped(
+        _get_zone_registry(request),
+        zone_id if zone_id != ROOT_ZONE_ID else None,
+        lambda: _index_documents_work(search_daemon, documents, zone_id),
+    )
 
 
 async def _index_documents_work(

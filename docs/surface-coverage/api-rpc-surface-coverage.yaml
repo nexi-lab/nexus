@@ -11356,21 +11356,24 @@ operations:
   owning_issue: 4137
 - id: search.add_indexed_directory
   module: search
-  summary: ''
+  summary: Register a directory for a zone; repeated registration is idempotent.
   transports:
     grpc_typed:
       name: SearchService.AddIndexedDirectory
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:97
+    http:
+      name: POST /v2/documents/directories
+      source: packages/nexus-api-client/src/indexing-client.ts:61
   profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: POST /v2/documents/directories {"path":"/docs","zone_id":"team"}
+  correctness_test: scripts/test_search_credentials_plugin.py; packages/nexus-api-client/tests/search-client.test.ts
+  perf_class: control
+  perf_link: scripts/test_search_credentials_plugin.py
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4135
 - id: search.batch_query
   module: search
   summary: One authenticated BatchQuery RPC; individual-zone entries preserve order and per-query errors.
@@ -11380,7 +11383,7 @@ operations:
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:62
     http:
       name: POST /v2/search/query/batch
-      source: packages/nexus-api-client/src/search-client.ts:94
+      source: packages/nexus-api-client/src/search-client.ts:115
   profiles:
     lite: supported
     sandbox: supported
@@ -11423,7 +11426,7 @@ operations:
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:37
     http:
       name: POST /v2/search/glob
-      source: packages/nexus-api-client/src/search-client.ts:109
+      source: packages/nexus-api-client/src/search-client.ts:130
     mcp:
       name: nexus_glob
       source: src/nexus/config/tool_profiles.yaml:1
@@ -11454,7 +11457,7 @@ operations:
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:42
     http:
       name: POST /v2/search/grep
-      source: packages/nexus-api-client/src/search-client.ts:113
+      source: packages/nexus-api-client/src/search-client.ts:134
     mcp:
       name: nexus_grep
       source: src/nexus/config/tool_profiles.yaml:1
@@ -11472,27 +11475,27 @@ operations:
   owning_issue: 4129
 - id: search.health
   module: search
-  summary: Report whether the search daemon is initialized and healthy.
+  summary: Read authenticated host health and writer liveness.
   transports:
     grpc_typed:
       name: SearchService.Health
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:122
     http:
-      name: GET /api/v2/search/health
-      source: src/nexus/server/api/v2/routers/search.py:50
+      name: GET /v2/search/health
+      source: packages/nexus-api-client/src/search-client.ts:93
   profiles:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: GET /api/v2/search/health
-  correctness_test: tests/integration/services/test_search_response_contracts.py::TestHealthResponseContract; scripts/test_search_credentials_plugin.py
-  perf_class: not_perf_sensitive
-  perf_link: control operation; tests/integration/services/test_search_response_contracts.py
+  usage_example: GET /v2/search/health
+  correctness_test: scripts/test_search_credentials_plugin.py; packages/nexus-api-client/tests/search-client.test.ts
+  perf_class: control
+  perf_link: scripts/test_search_credentials_plugin.py
   gap_issue: null
   owning_issue: 4135
 - id: search.index
   module: search
-  summary: Explicitly index supplied documents through the server-side search daemon.
+  summary: Index a VFS subtree through the owning Rust host.
   transports:
     cli:
       name: nexus search index
@@ -11500,139 +11503,94 @@ operations:
     grpc_typed:
       name: SearchService.Index
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:52
-    http:
-      name: POST /api/v2/search/index
-      source: src/nexus/server/api/v2/routers/search.py:89
   profiles:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: POST /api/v2/search/index {"documents":[{"path":"/docs/a.md","content":"..."}]}
+  usage_example: nexus search index /docs
+  correctness_test: scripts/test_rust_http_search_cli.py
+  perf_class: setup
+  perf_link: scripts/test_rust_http_search_cli.py
+  gap_issue: null
+  owning_issue: 4135
+- id: search.index_documents
+  module: search
+  summary: Index explicit document text synchronously through the owning host.
+  transports:
+    grpc_typed:
+      name: SearchService.IndexDocuments
+      source: src/nexus/grpc/search/v1/search_pb2_grpc.py:67
+    http:
+      name: POST /api/v2/search/index
+      source: src/nexus/server/api/v2/routers/search.py:40
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: POST /api/v2/search/index {"documents":[{"path":"/docs/a.md","text":"document"}]}
   correctness_test: tests/e2e/self_contained/test_search_surface_live_e2e.py
   perf_class: setup
   perf_link: tests/e2e/self_contained/test_search_surface_live_e2e.py
   gap_issue: null
   owning_issue: 4135
-- id: search.index_directory
-  module: search
-  summary: Register or unregister a directory as indexed for a zone-scoped search daemon.
-  transports:
-    http:
-      name: POST /api/v2/search/index-directory
-      source: src/nexus/server/api/v2/routers/_search_indexed_dirs.py:22
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: POST /api/v2/search/index-directory {"path":"/workspace/docs","action":"add"}
-  correctness_test: tests/e2e/self_contained/test_search_surface_live_e2e.py
-  perf_class: control
-  perf_link: control-plane or setup operation; tests/e2e/self_contained/test_search_surface_live_e2e.py enforces live latency
-  gap_issue: null
-  owning_issue: 4135
-- id: search.index_documents
-  module: search
-  summary: ''
-  transports:
-    grpc_typed:
-      name: SearchService.IndexDocuments
-      source: src/nexus/grpc/search/v1/search_pb2_grpc.py:67
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: search.indexed_dirs
-  module: search
-  summary: List zone-scoped directories currently registered for search indexing.
-  transports:
-    http:
-      name: GET /api/v2/search/indexed-dirs
-      source: src/nexus/server/api/v2/routers/_search_indexed_dirs.py:89
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: GET /api/v2/search/indexed-dirs?zone_id=root
-  correctness_test: tests/e2e/self_contained/test_search_surface_live_e2e.py
-  perf_class: control
-  perf_link: control-plane or setup operation; tests/e2e/self_contained/test_search_surface_live_e2e.py enforces live latency
-  gap_issue: null
-  owning_issue: 4135
-- id: search.indexing_mode
-  module: search
-  summary: Switch a zone between all-files and scoped-directory search indexing modes.
-  transports:
-    http:
-      name: POST /api/v2/search/indexing-mode
-      source: src/nexus/server/api/v2/routers/_search_indexed_dirs.py:114
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: POST /api/v2/search/indexing-mode {"zone_id":"root","mode":"scoped"}
-  correctness_test: tests/e2e/self_contained/test_search_surface_live_e2e.py
-  perf_class: control
-  perf_link: control-plane or setup operation; tests/e2e/self_contained/test_search_surface_live_e2e.py enforces live latency
-  gap_issue: null
-  owning_issue: 4135
 - id: search.list_indexed_directories
   module: search
-  summary: ''
+  summary: Read registered directories for one zone.
   transports:
     grpc_typed:
       name: SearchService.ListIndexedDirectories
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:107
+    http:
+      name: GET /v2/documents/directories
+      source: packages/nexus-api-client/src/indexing-client.ts:55
   profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: GET /v2/documents/directories?zone_id=team
+  correctness_test: scripts/test_search_credentials_plugin.py; packages/nexus-api-client/tests/search-client.test.ts
+  perf_class: control
+  perf_link: scripts/test_search_credentials_plugin.py
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4135
 - id: search.list_zone_indexing_modes
   module: search
-  summary: ''
+  summary: Read the host's configured zone modes under management authority.
   transports:
     grpc_typed:
       name: SearchService.ListZoneIndexingModes
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:117
+    http:
+      name: GET /v2/documents/indexing-modes
+      source: packages/nexus-api-client/src/indexing-client.ts:80
   profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: GET /v2/documents/indexing-modes
+  correctness_test: scripts/test_search_credentials_plugin.py; packages/nexus-api-client/tests/search-client.test.ts
+  perf_class: control
+  perf_link: scripts/test_search_credentials_plugin.py
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4135
 - id: search.locate
   module: search
-  summary: Inspect the Search host index status for one readable VFS path.
+  summary: Read the authorized index state of one current VFS path.
   transports:
     grpc_typed:
       name: SearchService.Locate
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:77
     http:
-      name: POST /api/v2/search/locate
-      source: src/nexus/server/api/v2/routers/_search_locate.py:29
+      name: POST /v2/search/locate
+      source: packages/nexus-api-client/src/search-client.ts:97
   profiles:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: POST /api/v2/search/locate {"path":"/docs/authentication.md"}
-  correctness_test: tests/integration/services/test_search_host_authority.py; scripts/test_search_credentials_plugin.py
-  perf_class: hot
-  perf_link: scripts/test_search_credentials_plugin.py (locate elapsed_ms < 2000)
+  usage_example: POST /v2/search/locate {"path":"/docs/a.md"}
+  correctness_test: scripts/test_search_credentials_plugin.py; packages/nexus-api-client/tests/search-client.test.ts
+  perf_class: control
+  perf_link: scripts/test_search_credentials_plugin.py
   gap_issue: null
   owning_issue: 4135
 - id: search.notify_file_change
@@ -11715,7 +11673,7 @@ operations:
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:47
     http:
       name: POST /v2/search/query
-      source: packages/nexus-api-client/src/search-client.ts:87
+      source: packages/nexus-api-client/src/search-client.ts:108
   profiles:
     lite: supported
     sandbox: supported
@@ -11729,19 +11687,33 @@ operations:
   owning_issue: 4135
 - id: search.refresh
   module: search
-  summary: Notify the daemon that a file changed so search indexes can refresh.
+  summary: Incrementally refresh an indexed VFS subtree.
   transports:
     grpc_typed:
       name: SearchService.Refresh
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:57
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: SearchService.Refresh(root_path="/docs", recursive=true)
+  correctness_test: null
+  perf_class: control
+  perf_link: null
+  gap_issue: null
+  owning_issue: 4135
+- id: search.refresh_document
+  module: search
+  summary: Notify the daemon that a file changed so search indexes can refresh.
+  transports:
     http:
       name: POST /api/v2/search/refresh
-      source: src/nexus/server/api/v2/routers/search.py:239
+      source: src/nexus/server/api/v2/routers/search.py:190
   profiles:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: POST /api/v2/search/refresh {"path":"/workspace/docs/readme.md","change_type":"update"}
+  usage_example: POST /api/v2/search/refresh?path=/docs/a.md&change_type=update
   correctness_test: tests/e2e/self_contained/test_search_surface_live_e2e.py
   perf_class: control
   perf_link: control-plane or setup operation; tests/e2e/self_contained/test_search_surface_live_e2e.py enforces live latency
@@ -11766,41 +11738,47 @@ operations:
   owning_issue: 4135
 - id: search.remove_indexed_directory
   module: search
-  summary: ''
+  summary: Remove a directory registration; an absent record returns removed=false.
   transports:
     grpc_typed:
       name: SearchService.RemoveIndexedDirectory
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:102
+    http:
+      name: DELETE /v2/documents/directories
+      source: packages/nexus-api-client/src/indexing-client.ts:67
   profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: DELETE /v2/documents/directories?path=/docs&zone_id=team
+  correctness_test: scripts/test_search_credentials_plugin.py; packages/nexus-api-client/tests/search-client.test.ts
+  perf_class: control
+  perf_link: scripts/test_search_credentials_plugin.py
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4135
 - id: search.set_zone_indexing_mode
   module: search
-  summary: ''
+  summary: Set the durable zone indexing mode; empty mode resets the default.
   transports:
     grpc_typed:
       name: SearchService.SetZoneIndexingMode
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:112
+    http:
+      name: PUT /v2/documents/indexing-modes
+      source: packages/nexus-api-client/src/indexing-client.ts:74
   profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: PUT /v2/documents/indexing-modes {"zone_id":"team","mode":"sandbox"}
+  correctness_test: scripts/test_search_credentials_plugin.py; packages/nexus-api-client/tests/search-client.test.ts
+  perf_class: control
+  perf_link: scripts/test_search_credentials_plugin.py
   gap_issue: null
-  owning_issue: null
+  owning_issue: 4135
 - id: search.stats
   module: search
-  summary: Expose search daemon and semantic indexing statistics.
+  summary: Read per-zone index counters and the committed mutation sequence.
   transports:
     cli:
       name: nexus search stats
@@ -11809,16 +11787,16 @@ operations:
       name: SearchService.Stats
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:127
     http:
-      name: GET /api/v2/search/stats
-      source: src/nexus/server/api/v2/routers/search.py:74
+      name: GET /v2/documents/stats
+      source: packages/nexus-api-client/src/indexing-client.ts:49
   profiles:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: GET /api/v2/search/stats
-  correctness_test: tests/e2e/self_contained/test_search_surface_live_e2e.py
-  perf_class: not_perf_sensitive
-  perf_link: stats endpoint; tests/e2e/self_contained/test_search_surface_live_e2e.py enforces live latency
+  usage_example: GET /v2/documents/stats?zone_id=team
+  correctness_test: scripts/test_search_credentials_plugin.py; packages/nexus-api-client/tests/search-client.test.ts
+  perf_class: control
+  perf_link: scripts/test_search_credentials_plugin.py
   gap_issue: null
   owning_issue: 4135
 - id: secrets.secrets_audit
@@ -18524,9 +18502,9 @@ parity_warnings:
 - operation_id: search.add_indexed_directory
   has:
   - grpc_typed
+  - http
   missing:
   - cli
-  - http
   - mcp
   - sdk
 - operation_id: search.batch_query
@@ -18573,56 +18551,32 @@ parity_warnings:
   has:
   - cli
   - grpc_typed
-  - http
   missing:
-  - mcp
-  - sdk
-- operation_id: search.index_directory
-  has:
   - http
-  missing:
-  - cli
-  - grpc_typed
   - mcp
   - sdk
 - operation_id: search.index_documents
   has:
   - grpc_typed
-  missing:
-  - cli
-  - http
-  - mcp
-  - sdk
-- operation_id: search.indexed_dirs
-  has:
   - http
   missing:
   - cli
-  - grpc_typed
-  - mcp
-  - sdk
-- operation_id: search.indexing_mode
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
   - mcp
   - sdk
 - operation_id: search.list_indexed_directories
   has:
   - grpc_typed
+  - http
   missing:
   - cli
-  - http
   - mcp
   - sdk
 - operation_id: search.list_zone_indexing_modes
   has:
   - grpc_typed
+  - http
   missing:
   - cli
-  - http
   - mcp
   - sdk
 - operation_id: search.locate
@@ -18676,9 +18630,17 @@ parity_warnings:
 - operation_id: search.refresh
   has:
   - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: search.refresh_document
+  has:
   - http
   missing:
   - cli
+  - grpc_typed
   - mcp
   - sdk
 - operation_id: search.reindex
@@ -18692,17 +18654,17 @@ parity_warnings:
 - operation_id: search.remove_indexed_directory
   has:
   - grpc_typed
+  - http
   missing:
   - cli
-  - http
   - mcp
   - sdk
 - operation_id: search.set_zone_indexing_mode
   has:
   - grpc_typed
+  - http
   missing:
   - cli
-  - http
   - mcp
   - sdk
 - operation_id: search.stats

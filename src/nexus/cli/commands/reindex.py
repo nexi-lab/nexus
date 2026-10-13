@@ -290,7 +290,7 @@ def _reindex_via_rest(
     if indexed or deleted:
         console.print(
             "\n[nexus.muted]Search indexing is synchronous: the paths above are served "
-            "now. To confirm, check /api/v2/search/stats last_index_seq >= "
+            "now. To confirm, check /v2/documents/stats last_index_seq >= "
             f"{index_seq if index_seq is not None else 'search_index_seq'}.[/nexus.muted]"
         )
     if skipped:

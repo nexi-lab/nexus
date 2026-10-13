@@ -100,6 +100,18 @@ def _query(live: LiveSearchApp, text: str) -> dict[str, Any]:
     return {"results": live.client.portal.call(query)}
 
 
+def _stats(live: LiveSearchApp, *, max_wall_ms: float) -> dict[str, Any]:
+    async def stats() -> dict[str, Any]:
+        return await live.nx.service("search").semantic_search_stats()
+
+    assert live.client.portal is not None
+    start = time.perf_counter()
+    result = live.client.portal.call(stats)
+    elapsed_ms = (time.perf_counter() - start) * 1000
+    assert elapsed_ms < max_wall_ms, f"Search SDK statistics took {elapsed_ms:.1f}ms"
+    return result
+
+
 def test_live_write_to_searchable_contract(live_search_app: LiveSearchApp) -> None:
     """#4736 acceptance, against the real kernel + worktree plugin.
 
@@ -129,12 +141,11 @@ def test_live_write_to_searchable_contract(live_search_app: LiveSearchApp) -> No
     seq = body["index_seq"]
 
     # … stats caught up, in the token's zone …
-    r, stats = _request(live, "get", "/api/v2/search/stats", max_wall_ms=slow)
+    stats = _stats(live, max_wall_ms=slow)
     assert stats["last_index_seq"] >= seq, stats
     assert stats["pending"] == 0, stats
     assert stats["last_successful_index_at"] is not None, stats
     assert isinstance(stats["last_index_refresh"], float), stats
-    assert "zone_id" in stats, stats
 
     # … and the document is served.
     q = _query(live, "zebrafish")
@@ -247,7 +258,7 @@ def test_live_admin_reindex_indexes_replayed_paths(live_search_app: LiveSearchAp
     for stale in ("search_paths_enqueued", "search_refresh_enqueued_at"):
         assert stale not in body, body
 
-    r, stats = _request(live, "get", "/api/v2/search/stats", max_wall_ms=slow)
+    stats = _stats(live, max_wall_ms=slow)
     assert stats["last_index_seq"] >= body["search_index_seq"], stats
 
     q = _query(live, "axolotl")

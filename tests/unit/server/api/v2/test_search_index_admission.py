@@ -94,7 +94,7 @@ def test_sheds_with_503_and_retry_after_when_at_cap(monkeypatch: pytest.MonkeyPa
     detail = response.json()["detail"]
     assert detail["inflight"] == 2
     assert detail["max_inflight"] == 2
-    assert "search/stats" in detail["hint"]
+    assert "/v2/documents/stats" in detail["hint"]
     # Shed requests must not touch the plugin or the counter.
     daemon.index_documents.assert_not_awaited()
     assert app.state.search_index_inflight == 2

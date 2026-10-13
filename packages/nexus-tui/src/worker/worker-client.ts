@@ -45,13 +45,8 @@ function serializeOptions(
   options: RequestOptions | undefined,
 ): SerializableRequestOptions | undefined {
   if (!options) return undefined;
-  const out: Record<string, unknown> = {};
-  if (options.timeout !== undefined) out.timeout = options.timeout;
-  if (options.idempotencyKey !== undefined) out.idempotencyKey = options.idempotencyKey;
-  if (options.headers !== undefined) out.headers = options.headers;
-  if (options.transformKeys !== undefined) out.transformKeys = options.transformKeys;
-  if (options.baseUrl !== undefined) out.baseUrl = options.baseUrl;
-  return Object.keys(out).length > 0 ? (out as SerializableRequestOptions) : undefined;
+  const { signal: _signal, ...out } = options;
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 function stableStringify(value: unknown): string {
@@ -138,6 +133,11 @@ export class WorkerFetchClient {
       pending.reject(error);
     }
     this.pending.clear();
+    this.dedup.clear();
+  }
+
+  /** Clear GET coalescing when connection configuration changes. @internal */
+  _clearDedup(): void {
     this.dedup.clear();
   }
 

@@ -171,6 +171,7 @@ export function createWorkerManager(initialConfig: NexusClientOptions): WorkerMa
 
     reconfigure(config: NexusClientOptions): void {
       currentConfig = config;
+      client._clearDedup();
       currentWorker?.postMessage({ type: "reconfigure", config } satisfies ToWorkerMessage);
     },
 

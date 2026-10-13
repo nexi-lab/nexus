@@ -11,6 +11,7 @@ import asyncio
 import json
 import os
 import socket
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -199,21 +200,23 @@ async def main() -> None:
             app.state.nexus_fs = Services()
 
             async with live_http_client(app) as client:
-                health = await client.get("/api/v2/search/health")
+                health = await rust.get(
+                    "/v2/search/health", headers={"Authorization": f"Bearer {admin}"}
+                )
                 assert health.is_success, health.text
                 assert health.json()["status"] in ("healthy", "degraded"), health.text
-                assert health.json()["initialized"] is True, health.text
                 assert health.json()["fts_writer_faults"] == 0, health.text
                 assert health.json()["fts_writer_unavailable"] == 0, health.text
 
                 async def stats(credential, expected_status):
-                    headers = {"X-Nexus-Zone-ID": "sharedzone"}
+                    headers = {}
                     if credential is not None:
                         headers["Authorization"] = f"Bearer {credential}"
-                    response = await client.get("/api/v2/search/stats", headers=headers)
+                    response = await rust.get(
+                        "/v2/documents/stats", params={"zone_id": "sharedzone"}, headers=headers
+                    )
                     assert response.status_code == expected_status, response.text
                     if expected_status == 200:
-                        assert response.json()["zone_id"] == "sharedzone", response.text
                         assert response.json()["fts_path_count"] == baseline[
                             "fts_path_count"
                         ] + len(paths), response.text
@@ -244,24 +247,50 @@ async def main() -> None:
                         "/api/v2/search/refresh",
                         {"params": {"path": f"{scope_path}.txt", "change_type": "delete"}},
                     ),
-                    ("POST", "/api/v2/search/index-directory", {"json": {"path": scope_path}}),
-                    ("GET", "/api/v2/search/indexed-dirs", {}),
-                    ("POST", "/api/v2/search/indexing-mode", {"json": {"mode": "on"}}),
-                    ("DELETE", "/api/v2/search/index-directory", {"json": {"path": scope_path}}),
+                    (
+                        "POST",
+                        "/v2/documents/directories",
+                        {"json": {"path": scope_path, "zone_id": "sharedzone"}},
+                    ),
+                    (
+                        "GET",
+                        "/v2/documents/directories",
+                        {"params": {"zone_id": "sharedzone"}},
+                    ),
+                    (
+                        "PUT",
+                        "/v2/documents/indexing-modes",
+                        {"json": {"mode": "on", "zone_id": "sharedzone"}},
+                    ),
+                    ("GET", "/v2/documents/indexing-modes", {}),
+                    (
+                        "DELETE",
+                        "/v2/documents/directories",
+                        {"params": {"path": scope_path, "zone_id": "sharedzone"}},
+                    ),
                 )
 
                 async def manage(method, route, kwargs, credential, status):
                     headers = {"X-Nexus-Zone-ID": "sharedzone"}
                     if credential is not None:
                         headers["Authorization"] = f"Bearer {credential}"
-                    response = await client.request(method, route, headers=headers, **kwargs)
+                    host = client if route.startswith("/api/") else rust
+                    response = await host.request(method, route, headers=headers, **kwargs)
                     assert response.status_code == status, (method, route, response.text)
                     if status == 200 and route.endswith("/index"):
                         assert response.json()["count"] == 1, response.text
                         assert response.json()["indexSeq"] > 0, response.text
-                    if status == 200 and route.endswith("/indexed-dirs"):
-                        assert scope_path in response.json()["directories"], response.text
-                        assert response.json()["zone_id"] == "sharedzone", response.text
+                    if status == 200 and method == "GET" and route.endswith("/directories"):
+                        assert any(
+                            directory["path"] == scope_path
+                            and directory["zone_id"] == "sharedzone"
+                            and directory["added_at_ms"] > 0
+                            for directory in response.json()["directories"]
+                        ), response.text
+                    if status == 200 and method == "GET" and route.endswith("/indexing-modes"):
+                        assert {"zone_id": "sharedzone", "mode": "on"} in response.json()[
+                            "modes"
+                        ], response.text
 
                 for method, route, kwargs in management:
                     await asyncio.gather(
@@ -520,17 +549,18 @@ async def main() -> None:
                 assert [hit["path"] for hit in federated.json()["results"]] == [paths["alice"]]
 
                 for name in keys:
-                    located = await client.post(
-                        "/api/v2/search/locate",
+                    started = time.perf_counter()
+                    located = await rust.post(
+                        "/v2/search/locate",
                         json={"path": paths[name]},
                         headers={"Authorization": f"Bearer {keys[name]}"},
                     )
                     assert located.is_success and located.json()["indexed"], located.text
                     assert located.json()["chunk_count"] > 0, located.text
-                    assert 0 <= located.json()["elapsed_ms"] < 2000, located.text
+                    assert time.perf_counter() - started < 2, located.text
                     other = "bob" if name == "alice" else "alice"
-                    denied = await client.post(
-                        "/api/v2/search/locate",
+                    denied = await rust.post(
+                        "/v2/search/locate",
                         json={"path": paths[other]},
                         headers={"Authorization": f"Bearer {keys[name]}"},
                     )
@@ -572,9 +602,9 @@ async def main() -> None:
                             "/v2/search/query/batch",
                             {"queries": [{"q": needle, "query_type": "keyword"}]},
                         ),
-                        ("/api/v2/search/locate", {"path": paths["alice"]}),
+                        ("/v2/search/locate", {"path": paths["alice"]}),
                     ):
-                        response = await (rust if route.endswith("batch") else client).post(
+                        response = await rust.post(
                             route,
                             json=body,
                             headers={"Authorization": f"Bearer {keys['alice']}"},

@@ -109,17 +109,6 @@ class TestIndexZoneStamping:
             ("/b.py", "delete", "zone-b"),
         ]
 
-    def test_locate_stamps_zone(self) -> None:
-        daemon, stub = _daemon_with_stub(
-            Locate=search_pb2.LocateResponse(indexed=True, chunk_count=1, zone_id="corp")
-        )
-
-        asyncio.run(daemon.locate("/a.py", zone_id="corp"))
-
-        ((method, req),) = stub.requests
-        assert method == "Locate"
-        assert req.zone_id == "corp"
-
 
 class TestRootZoneFallback:
     def test_root_zone_constant_is_what_the_http_layer_defaults_to(self) -> None:

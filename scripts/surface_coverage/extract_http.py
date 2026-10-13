@@ -32,7 +32,7 @@ def extract_typescript_http_client_routes(client_path: Path) -> list[RawHttpRout
     if not client_path.is_file():
         return []
     text = client_path.read_text(encoding="utf-8")
-    pattern = r'^[ \t]*return[ \t]+this\.transport\.(get|post)\("(/v\d+/[^"\n]+)"'
+    pattern = r'^[ \t]*return[ \t]+this\.transport\.(get|post|put|patch|delete)\("(/v\d+/[^"\n]+)"'
     return [
         RawHttpRoute(
             method=match.group(1).upper(),

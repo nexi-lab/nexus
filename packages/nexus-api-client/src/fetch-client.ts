@@ -318,7 +318,13 @@ export class FetchClient {
 
   private resolveUrl(path: string, options?: RequestOptions): string {
     const base = options?.baseUrl?.replace(/\/+$/, "") ?? this.baseUrl;
-    return `${base}${path}`;
+    const url = `${base}${path}`;
+    if (!options?.query) return url;
+    const destination = new URL(url);
+    for (const [name, value] of Object.entries(options.query)) {
+      if (value !== undefined) destination.searchParams.set(name, String(value));
+    }
+    return destination.toString();
   }
 
   /**

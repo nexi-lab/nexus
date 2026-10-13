@@ -11,18 +11,12 @@
  * @see §2 Worker thread isolation — Issue #3632
  */
 
-import type { NexusClientOptions } from "@nexus-ai-fs/api-client";
+import type { NexusClientOptions, RequestOptions } from "@nexus-ai-fs/api-client";
 
 // ─── Shared types ─────────────────────────────────────────────────────────────
 
 /** Request options that are safe to send across the message channel. */
-export interface SerializableRequestOptions {
-  readonly baseUrl?: string;
-  readonly transformKeys?: boolean;
-  readonly timeout?: number;
-  readonly idempotencyKey?: string;
-  readonly headers?: Readonly<Record<string, string>>;
-}
+export type SerializableRequestOptions = Omit<RequestOptions, "signal">;
 
 /**
  * Serialized HTTP Response for rawRequest calls.

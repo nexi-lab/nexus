@@ -35,6 +35,8 @@ export interface NexusClientOptions {
 }
 
 export interface RequestOptions {
+  /** Query fields, encoded once and overriding the same fields in the path. */
+  readonly query?: Readonly<Record<string, string | number | boolean | undefined>>;
   /** Explicit destination override for a co-owned API listener. */
   readonly baseUrl?: string;
   /** Override key transformation for an API whose wire types are used directly. */

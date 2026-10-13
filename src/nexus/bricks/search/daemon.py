@@ -203,23 +203,6 @@ class SearchDaemon:
             self._stub = search_pb2_grpc.SearchServiceStub(self._channel)
         return self._stub
 
-    # ── Indexed path lookup ────────────────────────────────────
-
-    async def locate(
-        self,
-        path: str,
-        *,
-        zone_id: str | None = None,
-    ) -> dict[str, Any]:
-        req = search_pb2.LocateRequest(path=path, zone_id=zone_id or "")
-        resp = await self._rpc("Locate", req)
-        return {
-            "indexed": resp.indexed,
-            "chunk_count": resp.chunk_count,
-            "mtime_ms": resp.mtime_ms if resp.HasField("mtime_ms") else None,
-            "zone_id": resp.zone_id,
-        }
-
     # ── Indexing ───────────────────────────────────────────────
 
     async def index_documents(
@@ -295,46 +278,6 @@ class SearchDaemon:
         if resp.HasField("error"):
             raise RuntimeError(f"plugin notify_file_change failed: {resp.error}")
         return {"status": resp.status, "index_seq": int(resp.index_seq)}
-
-    # ── Indexed-directories registry ──────────────────────────
-
-    async def add_indexed_directory(
-        self,
-        zone_id: str,
-        directory_path: str,
-    ) -> dict[str, bool]:
-        req = search_pb2.AddIndexedDirectoryRequest(path=directory_path, zone_id=zone_id)
-        resp = await self._rpc("AddIndexedDirectory", req)
-        return {"added": resp.added}
-
-    async def remove_indexed_directory(
-        self,
-        zone_id: str,
-        directory_path: str,
-    ) -> str:
-        req = search_pb2.RemoveIndexedDirectoryRequest(path=directory_path, zone_id=zone_id)
-        resp = await self._rpc("RemoveIndexedDirectory", req)
-        return "removed" if resp.removed else "not_found"
-
-    async def list_indexed_directories(self, zone_id: str) -> list[str]:
-        req = search_pb2.ListIndexedDirectoriesRequest(zone_id=zone_id)
-        resp = await self._rpc("ListIndexedDirectories", req)
-        return [d.path for d in resp.directories]
-
-    # ── Zone indexing modes ────────────────────────────────────
-
-    async def set_zone_indexing_mode(self, zone_id: str, mode: str) -> Any:
-        req = search_pb2.SetZoneIndexingModeRequest(zone_id=zone_id, mode=mode)
-        resp = await self._rpc("SetZoneIndexingMode", req)
-        if resp.HasField("error"):
-            raise ValueError(resp.error)
-        return {"zone_id": zone_id, "mode": mode}
-
-    async def get_zone_indexing_modes(self) -> dict[str, str]:
-        """Snapshot per-zone indexing modes from the plugin."""
-        req = search_pb2.ListZoneIndexingModesRequest()
-        resp = await self._rpc("ListZoneIndexingModes", req)
-        return {m.zone_id: m.mode for m in resp.modes}
 
     # ── Health + stats ────────────────────────────────────────
 

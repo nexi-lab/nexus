@@ -86,7 +86,7 @@ def test_issue_4128_tool_profile_assignment_cli_is_supported() -> None:
 
 
 def test_issue_4128_default_mcp_tool_profiles_are_packaged() -> None:
-    pyproject = tomllib.loads(_PYPROJECT.read_text())
+    pyproject = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))
     package_data = pyproject["tool"]["setuptools"]["package-data"]
 
     assert "config/*.yaml" in package_data["nexus"]

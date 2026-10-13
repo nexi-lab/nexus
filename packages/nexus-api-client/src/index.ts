@@ -16,7 +16,9 @@
 // Client
 export { FetchClient } from "./fetch-client.js";
 export { SearchClient } from "./search-client.js";
-export type { SearchHit, SearchResponse, SearchQuery, SearchBatchResponse, GlobResponse, GrepResponse, GrepHit, SearchConnection, DiscoveryOptions } from "./search-client.js";
+export type { SearchHit, SearchResponse, SearchQuery, SearchBatchResponse, GlobResponse, GrepResponse, GrepHit, SearchConnection, DiscoveryOptions, SearchHealth, LocatedDocument } from "./search-client.js";
+export { IndexingClient } from "./indexing-client.js";
+export type { IndexedDirectory, IndexedDirectories, IndexingMode, IndexingModes, IndexStatistics } from "./indexing-client.js";
 
 // SSE
 export { SseClient, RingBuffer } from "./sse-client.js";

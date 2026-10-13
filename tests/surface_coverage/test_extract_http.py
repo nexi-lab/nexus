@@ -32,6 +32,25 @@ def test_native_client_routes_keep_their_canonical_operations(tmp_path: Path):
         normalize_http("GET", "/v1/.well-known/jwks.json")
 
 
+@pytest.mark.parametrize(
+    ("method", "route", "operation"),
+    [
+        ("GET", "stats", "stats"),
+        ("GET", "directories", "list_indexed_directories"),
+        ("POST", "directories", "add_indexed_directory"),
+        ("DELETE", "directories", "remove_indexed_directory"),
+        ("GET", "indexing-modes", "list_zone_indexing_modes"),
+        ("PUT", "indexing-modes", "set_zone_indexing_mode"),
+    ],
+)
+def test_native_resources_map_to_distinct_search_rpcs(tmp_path: Path, method, route, operation):
+    path = f"/v2/documents/{route}"
+    client = tmp_path / "indexing-client.ts"
+    client.write_text(f'return this.transport.{method.lower()}("{path}", options);\n')
+    (extracted,) = extract_typescript_http_client_routes(client)
+    assert normalize_http(extracted.method, extracted.path) == f"search.{operation}"
+
+
 def test_included_router_prefixes_aliases_and_multiple_mounts(tmp_path: Path):
     (tmp_path / "child.py").write_text(
         "from fastapi import APIRouter\n"

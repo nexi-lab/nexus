@@ -41,6 +41,16 @@ _BARE_MCP_TOOL_OVERRIDES = {
 }
 
 _HTTP_OPERATION_OVERRIDES = {"search.query_batch": "search.batch_query"}
+_HTTP_RESOURCE_OPERATIONS = {
+    ("POST", "/api/v2/search/index"): "search.index_documents",
+    ("POST", "/api/v2/search/refresh"): "search.refresh_document",
+    ("GET", "/v2/documents/stats"): "search.stats",
+    ("GET", "/v2/documents/directories"): "search.list_indexed_directories",
+    ("POST", "/v2/documents/directories"): "search.add_indexed_directory",
+    ("DELETE", "/v2/documents/directories"): "search.remove_indexed_directory",
+    ("GET", "/v2/documents/indexing-modes"): "search.list_zone_indexing_modes",
+    ("PUT", "/v2/documents/indexing-modes"): "search.set_zone_indexing_mode",
+}
 
 
 def _to_snake(s: str) -> str:
@@ -73,6 +83,9 @@ def normalize_grpc_call(call_name: str) -> str:
 
 def normalize_http(method: str, path: str) -> str:
     """Map `/api/vN/` and native `/vN/` routes onto the same operation."""
+    resource = _HTTP_RESOURCE_OPERATIONS.get((method.upper(), path.rstrip("/")))
+    if resource is not None:
+        return resource
     m = re.match(r"^/(?:api/)?v\d+/([A-Za-z][A-Za-z0-9_-]*)/(.+?)/?$", path)
     if not m:
         raise ValueError(f"unrecognized HTTP path: {path!r}")

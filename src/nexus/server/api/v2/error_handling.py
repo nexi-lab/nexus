@@ -39,7 +39,11 @@ def grpc_http_exception(error: grpc.RpcError) -> HTTPException:
         grpc.StatusCode.UNAVAILABLE: 503,
         grpc.StatusCode.DEADLINE_EXCEEDED: 504,
     }.get(error.code(), 500)
-    return HTTPException(status_code=status, detail=error.details() or "Upstream RPC failed")
+    return HTTPException(
+        status_code=status,
+        detail=error.details() or "Upstream RPC failed",
+        headers={"Retry-After": "5"} if status == 429 else None,
+    )
 
 
 def api_error_handler(

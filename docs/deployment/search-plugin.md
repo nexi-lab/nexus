@@ -341,6 +341,7 @@ env directly.
 | `NEXUS_SEARCH_MODEL_DIR` | `<data>/plugins/search/models` | Local embedding model directory (see below) |
 | `ORT_DYLIB_PATH` | *(unset)* | Absolute path to `onnxruntime.{so,dylib,dll}`; **required** for local semantic search |
 | `NEXUS_SEARCH_BATCH_CONCURRENCY` | `4` (clamp 1..=16) | BatchQuery inner-query concurrency (#4610) |
+| `NEXUS_SEARCH_INDEX_MAX_INFLIGHT` | `8` | Shared Rust Search service cap for concurrent `Index`, `Refresh` and `IndexDocuments` operations across HTTP, gRPC and SDK clients. Read once at service startup. Overflow returns gRPC `RESOURCE_EXHAUSTED`, or HTTP `429` with `Retry-After: 5`. Cancelled callers retain their slot until accepted work finishes. `0` disables the cap; invalid or negative values use the default. |
 | `NEXUS_SEARCH_EMBED_API_URL` | *(unset)* | OpenAI-compatible `/v1/embeddings` endpoint; presence selects the remote embedder (#4614) |
 | `NEXUS_SEARCH_EMBED_MODEL` | — | Remote model name (required with URL) |
 | `NEXUS_SEARCH_EMBED_DIM` | — | Remote embedding dim (required with URL) |
@@ -365,15 +366,15 @@ And on the **server**:
 | `NEXUS_SEARCH_PLUGIN_TLS_CA` | *(system roots)* | CA bundle path for server verification |
 | `NEXUS_SEARCH_PLUGIN_TLS_CERT` / `_KEY` | *(unset)* | Client cert+key pair for mTLS |
 | `NEXUS_SEARCH_PLUGIN_ALLOW_INSECURE` | *(unset)* | Explicit opt-in for **plaintext to a non-loopback** target (trusted network only) — without it the server refuses the channel and boots with search disabled |
-| `NEXUS_SEARCH_INDEX_MAX_INFLIGHT` | `8` | Per-process cap on concurrent `POST /search/index` requests (#4777). The plugin serializes index batches per zone, so requests past the cap are shed with `503` + `Retry-After: 5` instead of parking on the zone mutex for minutes. `0` disables the cap. |
 | `NEXUS_SLOW_REQUEST_MS` | `10000` | Any HTTP request slower than this logs `request_completed` at WARNING with `slow_request=true`, regardless of status. `0` disables. |
 | `NEXUS_AUTH_CACHE_DEBUG` | *(unset)* | `1` logs every auth-cache get/set outcome (`[AUTH-CACHE] get hit/miss`, `set ok`, store class, payload size) at INFO — one line per request, for diagnosing a live miss rate. Cache backend errors are always fail-open (logged at WARNING, request re-authenticates against the provider). |
 | `NEXUS_AUTH_CACHE_MAX_ENTRIES` | `10000` | Size of the process-local auth-result cache used when no shared cache store (Dragonfly) is configured. Auth results are cached 15 min; key revocation flushes the cache. |
 
-**Backpressure**: a `503` from `/search/index` carries `detail.inflight`,
-`detail.max_inflight` and a `Retry-After` header. Clients should honor the
-header and pace submissions from `/search/stats` (`indexing_in_progress`,
-`pending`) rather than retrying immediately.
+**Backpressure**: HTTP `429` from an indexing operation carries
+`Retry-After: 5`; direct gRPC callers receive `RESOURCE_EXHAUSTED`.
+Clients should back off and use `/v2/documents/stats`
+(`indexing_in_progress`, `pending`) to pace submissions. The shared limit
+belongs to the Search host, so configure it on `nexusd-cluster`.
 
 **Transport security**: plaintext is only accepted to same-machine
 targets — loopback addresses and Docker's `host.docker.internal`

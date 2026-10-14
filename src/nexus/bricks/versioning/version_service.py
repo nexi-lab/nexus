@@ -322,7 +322,7 @@ class VersionService:
 
         factory = self._session_factory
 
-        def _do_rollback() -> tuple[str, int] | None:
+        def _do_rollback() -> tuple[str | None, int] | None:
             with factory() as session:
                 VersionManager.rollback(session, path, version, created_by=created_by)
                 session.commit()

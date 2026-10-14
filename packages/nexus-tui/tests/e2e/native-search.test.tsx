@@ -39,9 +39,6 @@ describe.skipIf(!fixturePath)("native Search through the TUI worker and terminal
   });
 
   it("discovery preserves directory access checks and returns readable current bytes", async () => {
-    const indexed = await searchFiles(fixture.needle, fixture.root, client, connection);
-    expect(indexed.error).toBeDefined();
-    expect(indexed.hits).toEqual([]);
     // Await worker replies before asserting: https://github.com/oven-sh/bun/issues/37189.
     let denied: unknown;
     try {

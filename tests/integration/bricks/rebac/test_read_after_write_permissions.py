@@ -1,22 +1,10 @@
-"""Read-after-write and revocation bounds for a non-admin key (Issue #4739).
+"""Immediate file reads, directory listings and revocation in the Python facade.
 
-Acceptance from the issue:
-
-- A non-admin key writes, then reads, lists and searches immediately and sees
-  the file — without waiting for the deferred permission buffer to flush.
-- Revoke a viewer: ``check`` denies, ``list`` and ``search`` exclude the file
-  immediately (well inside 1 s).
-
-The deferred buffer is configured with a one-hour flush interval so nothing
-in these tests can be explained by a background flush.  Tiger is not active
-on SQLite; its bypass/invalidation is covered by the unit suites.
-
-``list`` / ``glob`` / ``grep`` go through the search service, which is where
-ReBAC filtering for listings lives (``PermissionEnforcer.filter_list``); the
-raw ``sys_readdir`` syscall applies zone filtering only and is not asserted on.
-
-Requires the kernel subprocess; set ``NEXUS_BOOTSTRAP_MODE=static`` when the
-local ``nexusd-cluster`` build demands a bootstrap mode.
+The deferred permission buffer has a one-hour flush interval. These cases
+exercise its file ownership and listing policy through VFS. Native Search
+credentials, discovery and revocation are exercised against a signed plugin
+by scripts/test_discovery_service_plugin.py and
+scripts/test_search_agent_credentials_plugin.py.
 """
 
 from __future__ import annotations
@@ -124,8 +112,7 @@ def _file_read_check(nx: Any, ctx: OperationContext, path: str, **kw: Any) -> bo
     )
 
 
-@pytest.mark.asyncio
-async def test_non_admin_writer_sees_file_immediately(nx: Any) -> None:
+def test_non_admin_writer_sees_file_immediately(nx: Any) -> None:
     mgr = nx.service("rebac_manager")
     search = nx.service("search")
     _grant(nx, ALICE, "direct_editor", TEAM_DIR)
@@ -140,18 +127,15 @@ async def test_non_admin_writer_sees_file_immediately(nx: Any) -> None:
     assert pending in (None, 0), f"owner grant was queued instead of written: {pending}"
     assert _file_read_check(nx, ALICE, NOTES)
 
-    # read / list / glob / grep as the writer, immediately.
+    # Read and list as the writer, immediately.
     assert nx.sys_read(NOTES, context=ALICE) == b"hello nexus"
     assert NOTES in _paths(search.list(TEAM_DIR, context=ALICE))
-    assert NOTES in _paths(search.glob("*.md", TEAM_DIR, context=ALICE))
-    assert NOTES in _paths(await search.grep("hello", TEAM_DIR, context=ALICE))
 
     elapsed = time.perf_counter() - started
     assert elapsed < 5.0, f"read-after-write checks took {elapsed:.3f}s"
 
 
-@pytest.mark.asyncio
-async def test_owner_grant_does_not_depend_on_ancestor_grants(nx: Any) -> None:
+def test_owner_grant_does_not_depend_on_ancestor_grants(nx: Any) -> None:
     """The file-level tuple alone must make the writer's file visible.
 
     Alice's editor grant on the directory is revoked after the write, so any
@@ -166,11 +150,9 @@ async def test_owner_grant_does_not_depend_on_ancestor_grants(nx: Any) -> None:
     assert _file_read_check(nx, ALICE, NOTES)
     assert nx.sys_read(NOTES, context=ALICE) == b"hello nexus"
     assert NOTES in _paths(search.list(TEAM_DIR, context=ALICE))
-    assert NOTES in _paths(search.glob("*.md", TEAM_DIR, context=ALICE))
 
 
-@pytest.mark.asyncio
-async def test_revoked_viewer_is_excluded_within_one_second(nx: Any) -> None:
+def test_revoked_viewer_is_excluded_within_one_second(nx: Any) -> None:
     mgr = nx.service("rebac_manager")
     search = nx.service("search")
     _grant(nx, ALICE, "direct_editor", TEAM_DIR)
@@ -181,15 +163,12 @@ async def test_revoked_viewer_is_excluded_within_one_second(nx: Any) -> None:
     assert _file_read_check(nx, BOB, NOTES)
     assert nx.sys_read(NOTES, context=BOB) == b"hello nexus"
     assert NOTES in _paths(search.list(TEAM_DIR, context=BOB))
-    assert NOTES in _paths(search.glob("*.md", TEAM_DIR, context=BOB))
 
     assert mgr.rebac_delete(grant) is True
     revoked_at = time.perf_counter()
 
     assert not _file_read_check(nx, BOB, NOTES)
     assert NOTES not in _paths(search.list(TEAM_DIR, context=BOB))
-    assert NOTES not in _paths(search.glob("*.md", TEAM_DIR, context=BOB))
-    assert NOTES not in _paths(await search.grep("hello", TEAM_DIR, context=BOB))
     with pytest.raises(PermissionError):
         nx.sys_read(NOTES, context=BOB)
 
@@ -197,8 +176,7 @@ async def test_revoked_viewer_is_excluded_within_one_second(nx: Any) -> None:
     assert elapsed < 1.0, f"revocation took {elapsed:.3f}s to be observed"
 
 
-@pytest.mark.asyncio
-async def test_strong_consistency_context_is_honoured_end_to_end(nx: Any) -> None:
+def test_strong_consistency_context_is_honoured_end_to_end(nx: Any) -> None:
     """A strong context resolves from tuples even when the L1 holds a stale allow."""
     mgr = nx.service("rebac_manager")
     search = nx.service("search")

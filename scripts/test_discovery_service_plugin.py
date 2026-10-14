@@ -34,13 +34,7 @@ async def main() -> None:
     kernel = KernelClient(server_address=target)
     kernel._transport = transport
 
-    class NoPythonPolicy:
-        def __getattr__(self, name):
-            raise AssertionError(f"Search attempted to use Python policy or SQL: {name}")
-
-    facade = SearchService(
-        metadata_store=kernel, permission_enforcer=NoPythonPolicy(), record_store=NoPythonPolicy()
-    )
+    facade = SearchService(kernel=kernel)
     suffix = uuid4().hex[:8]
     needle = f"discovery{suffix}"
     subjects = {
@@ -277,7 +271,6 @@ async def main() -> None:
                 await asyncio.to_thread(transport.delete_file, path)
             for key_hash in hashes.values():
                 await request("DELETE", f"/v2/auth/keys/{key_hash}")
-            facade.close()
             kernel.close()
 
 

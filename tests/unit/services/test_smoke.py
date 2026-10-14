@@ -164,14 +164,9 @@ class TestSearchServiceSmoke:
         """Test SearchService can be instantiated."""
         from nexus.bricks.search.search_service import SearchService
 
-        service = SearchService(
-            metadata_store=mock_metadata,
-            permission_enforcer=None,
-            enforce_permissions=False,
-        )
+        service = SearchService(kernel=mock_metadata)
 
-        assert service.metadata == mock_metadata
-        assert service._enforce_permissions is False
+        assert service._kernel is mock_metadata
 
 
 # =============================================================================
@@ -259,7 +254,7 @@ class TestServiceIntegrationSmoke:
         )
         mcp_svc = MCPService(filesystem=None)
         oauth_svc = OAuthCredentialService(oauth_factory=None, token_manager=None)
-        search_svc = SearchService(metadata_store=mock_metadata, enforce_permissions=False)
+        search_svc = SearchService(kernel=mock_metadata)
         mount_svc = MountService(dlc=mock_dlc)
         rebac_svc = ReBACService(rebac_manager=None, enforce_permissions=False)
 

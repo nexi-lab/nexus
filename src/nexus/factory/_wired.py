@@ -197,14 +197,7 @@ def _boot_post_kernel_services(
         from nexus.bricks.search.search_service import SearchService
 
         search_service = SearchService(
-            metadata_store=nx._kernel,
-            permission_enforcer=services.get("permission_enforcer"),
-            dlc=nx._driver_coordinator,
-            rebac_manager=services.get("rebac_manager"),
-            enforce_permissions=nx._perm_config.enforce,
-            default_context=nx._init_cred,
-            record_store=getattr(nx, "_record_store", None),
-            nexus_fs=nx,
+            kernel=nx._kernel, default_context=nx._init_cred, nexus_fs=nx
         )
         logger.debug("[BOOT:WIRED] SearchService created")
     except Exception as exc:

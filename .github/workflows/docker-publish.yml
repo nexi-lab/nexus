@@ -489,11 +489,13 @@ jobs:
             -e NEXUS_API_KEY_SECRET=search-credentials-ci-only \
             -e NEXUS_CLUSTER_INIT=sharedzone \
             -e NEXUS_CLUSTER_INIT_MOUNTS=/docs=sharedzone \
-            -e NEXUS_SEARCH_MODEL_DIR=/tmp/empty-models \
+            -e ORT_DYLIB_PATH=/embedder/ort/libonnxruntime.so \
+            -e NEXUS_SEARCH_MODEL_DIR=/embedder/model \
             -e NEXUS_SEARCH_QUERY_EXPANSION=false \
             -e NEXUS_SEARCH_CONTEXTUAL_CHUNKING=false \
             -e NEXUS_SEARCH_EMBED_API_URL= \
             -v /tmp/search-path-contexts.db:/app/data/path-contexts.db \
+            -v /tmp/nexus-embedder:/embedder:ro \
             "${{ env.REGISTRY }}/${{ env.CLUSTER_IMAGE_NAME }}:${{ needs.push-cluster-manifest.outputs.version }}" \
             --data-dir /app/data --plugin-dir /plugins
           bash scripts/prepare_published_fixture.sh nexus-search-credentials-node nexus-e2e /tmp/search-credentials

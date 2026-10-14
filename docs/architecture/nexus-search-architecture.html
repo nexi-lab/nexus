@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <!--
-  Nexus Search Architecture — SSOT for the nexus-server → nexus-search-plugin
+  Nexus Search Architecture — SSOT for the clients → authenticated SearchService → nexus-search-plugin
   search stack: HTTP surface, orchestration/auth layer, Rust core plugin,
   kernel VFS.  Includes R10 pure-Rust migration arc + DT_STREAM search
   coverage + open FRs.
@@ -143,480 +143,124 @@
 </script>
 </head>
 <body>
-
 <h1>Nexus Search Architecture</h1>
-<p class="meta">SSOT for the search stack — layer contract, Rust core plugin, HTTP surface,
-cross-zone federation, DT_STREAM search coverage, pure-Rust migration arc.</p>
+<p class="meta">Current contracts and ownership. Updated 2026-10-15.</p>
+<div class="callout">Search runs in the owning Kernel's signed Rust plugin.
+The native API is <code>nexus.search.v1.SearchService</code>. Rust HTTP and language clients use that contract.
+The local acceptance checklist and recorded evidence are at
+<a href="https://s.shareone.vip/md/nexus-search-local-acceptance">Nexus Search local acceptance</a>.</div>
 
-<div class="callout">
-  <strong>Cross-references:</strong>
-  <ul style="margin:8px 0 0">
-    <li><a href="https://s.shareone.vip/s/kernel-architecture">Nexus Kernel Architecture</a> (peer doc): kernel-tier SSOT — syscall surface (Tier 1 = 11 POSIX-aligned <code>sys_*</code>), plugin ABI, DT_REG / DT_STREAM / DT_PIPE inode types, VFS dispatch. Search consumes this from outside; never modifies it.</li>
-    <li><a href="https://s.shareone.vip/s/nexus-integration-architecture">Nexus Integration Architecture</a> (peer doc): sudowork ↔ nexus ↔ sudo-code surface, agent identity, A2A messaging, transport. Search-over-DT_STREAM (§6 here) is a consumer of the DT_STREAM primitive defined there.</li>
-    <li><a href="https://s.shareone.vip/s/federation-cross-machine-runbook">Cross-Machine Federation Runbook</a> (peer doc): overlay / bootstrap / enrollment. Search's cross-plugin peer fan-out (§2.4) runs over the same overlay.</li>
-    <li><a href="https://github.com/nexi-lab/nexus-vfs/blob/main/rust/proto/nexus/search/v1/search.proto">nexus.search.v1 proto</a>: wire SSOT for every RPC in this doc.</li>
-  </ul>
-</div>
+<nav class="toc"><strong>Contents</strong><ol>
+<li><a href="#layers">Ownership</a></li><li><a href="#core">Rust implementation</a></li>
+<li><a href="#grpc">gRPC and identity</a></li><li><a href="#http">HTTP and clients</a></li>
+<li><a href="#federation">Federation</a></li><li><a href="#dt-stream">Streams and storage</a></li>
+<li><a href="#r10">Verification</a></li><li><a href="#profiles">Assembly</a></li>
+<li><a href="#decisions">Contract rules</a></li><li><a href="#open">Remaining acceptance</a></li>
+</ol></nav>
 
-<nav class="toc">
-  <strong>Contents</strong>
-  <ol>
-    <li><a href="#layers">Layer overview</a></li>
-    <li><a href="#core">Rust core plugin (SSOT for search logic)</a></li>
-    <li><a href="#grpc">gRPC surface — <code>nexus.search.v1.SearchService</code></a></li>
-    <li><a href="#http">HTTP surface &mdash; Rust cluster and Python server</a></li>
-    <li><a href="#federation">Cross-zone federation dispatcher</a></li>
-    <li><a href="#dt-stream">Search over DT_STREAM (audit / mailbox / transcripts)</a></li>
-    <li><a href="#r10">R10 pure-Rust migration arc</a></li>
-    <li><a href="#profiles">Deployment profiles</a></li>
-    <li><a href="#decisions">Decision log</a></li>
-    <li><a href="#open">Open FRs &amp; pending work</a></li>
-  </ol>
-</nav>
-
-<h2 id="layers">1. Layer overview</h2>
-
-<p>Search is a <strong>4-layer stack</strong>. Layer boundaries are enforced by the plugin ABI (§2 below): the Rust core plugin only sees the kernel VFS through <code>KernelHandle</code>'s C-ABI, and the orchestration/API layers only see the plugin through gRPC. No cross-layer imports.</p>
-
+<h2 id="layers">1. Ownership</h2>
 <pre class="mermaid">
-flowchart TB
-    subgraph API["1. API layer &mdash; HTTP"]
-        A1["<b>Python FastAPI</b><br/>src/nexus/server/api/v2/routers/search.py<br/>/api/v2/search/* &mdash; mixed deployments"]
-        A2["<b>Rust axum</b><br/>nexus-vfs/rust/http-api/<br/>/v2/search/*, /v2/documents/*,<br/>/v2/auth/keys, /v2/rebac/tuples"]
-    end
-    subgraph ORCH["2. Orchestration / Auth / ReBAC layer"]
-        O1["<b>SearchService</b> (Python)<br/>workspace list/glob/grep,<br/>indexed-query adapter and permission checks"]
-        O2["<b>FederatedSearchDispatcher</b> (Rust)<br/>nexus-vfs/rust/federated-search/<br/>cross-zone fan-out, delegation, RRF"]
-        O3["<b>SearchDaemon proxy</b> (Python)<br/>daemon.py &mdash; gRPC client"]
-        O4["<b>FederatedSearchDispatcher</b> (Python)<br/>remaining Python HTTP caller"]
-        H["<b>Rust gRPC host</b><br/>caller authentication, zone and file access<br/>shared Raft API-key and ReBAC facts"]
-    end
-    subgraph CORE["3. Rust core plugin &mdash; SSOT for indexed search"]
-        C1["<b>nexus-search-plugin</b> cdylib<br/>nexus-vfs/rust/search-plugin/<br/>nexus.search.v1.SearchService"]
-    end
-    subgraph KERN["4. Kernel VFS &mdash; nexus-vfs"]
-        K1["<b>KernelHandle</b> C-ABI<br/>sys_read / sys_readdir / sys_stat / sys_write / ..."]
-    end
-    A1 --&gt; O1
-    A1 --&gt; O4
-    A2 --&gt; H
-    A2 --&gt; O2
-    O1 --&gt; O3
-    O4 --&gt; O3
-    O3 --&gt; H
-    O2 --&gt; H
-    H --&gt; C1
-    C1 --&gt; K1
-    K1 --&gt; STORAGE["path-local FS / peer-federated / DT_STREAM log"]
+flowchart TD
+  HTTP["Rust HTTP: Search and document routes"] --> HOST["Authenticated gRPC SearchService"]
+  CLIENTS["SDK, CLI, MCP and TUI clients"] --> HOST
+  HTTP --> FED["Rust federated search"]
+  FED --> HOST
+  HOST --> PLUGIN["Signed Rust Search plugin"]
+  PLUGIN --> VFS["KernelHandle: existing VFS syscalls"]
+  HOST --> AUTH["Owning daemon: credentials and ReBAC facts"]
 </pre>
+<table><thead><tr><th>Component</th><th>Responsibility</th><th>Source</th></tr></thead><tbody>
+<tr><td>Kernel</td><td>Paths, mounts, file/stream bytes and syscall contracts.</td><td>nexus-vfs/rust/kernel</td></tr>
+<tr><td>Cluster composition</td><td>Identity, TLS, credential store, ReBAC provider, plugin lifecycle and readiness.</td><td>nexus-vfs/rust/profiles/cluster</td></tr>
+<tr><td>Search plugin</td><td>Discovery, indexing, retrieval, ranking and authorization of returned candidates.</td><td>nexus-vfs/rust/search-plugin</td></tr>
+<tr><td>Rust HTTP</td><td>HTTP parsing, caller credential forwarding, response/status mapping and caller budgets.</td><td>nexus-vfs/rust/http-api</td></tr>
+<tr><td>Python SearchService</td><td>Client adaptation and activity/dependency instrumentation. Directory listing delegates to VFS.</td><td>src/nexus/bricks/search/search_service.py</td></tr>
+</tbody></table>
 
-<h3>Layer contract</h3>
-<table>
-  <thead>
-    <tr><th>Layer</th><th>Owns</th><th>Does NOT touch</th><th>Language</th></tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td>1. API (HTTP)</td>
-      <td>Request parsing, response serialisation, HTTP-level auth, rate limiting</td>
-      <td>Search algorithms, indexing, ReBAC filtering, cross-zone routing</td>
-      <td><span class="layer-tag layer-rust">Rust</span> cluster; <span class="layer-tag layer-python">Python</span> mixed deployments</td>
-    </tr>
-    <tr>
-      <td>2. Orchestration</td>
-      <td>Auth resolution → OperationContext, ReBAC post-filter, cross-zone dispatch, profile gate, activity events</td>
-      <td>Chunking, embedding, FTS/vector primitives, kernel-tier state</td>
-      <td><span class="layer-tag layer-rust">Rust</span> cluster; <span class="layer-tag layer-python">Python</span> mixed deployments</td>
-    </tr>
-    <tr>
-      <td>3. Core plugin</td>
-      <td>All search algorithms &mdash; BM25, HNSW, hybrid fusion, chunking, embedding, macro-expand, query expansion, contextual chunking, peer fan-out, recency, prefix boost, title arm, query cache</td>
-      <td>Auth, ReBAC, cross-zone routing, HTTP</td>
-      <td><span class="layer-tag layer-rust">Rust</span> (cdylib)</td>
-    </tr>
-    <tr>
-      <td>4. Kernel VFS</td>
-      <td>The 11 Tier 1 <code>sys_*</code> syscalls, DT_REG/DT_STREAM/DT_PIPE inodes, PipeManager/StreamManager, path resolution, federation</td>
-      <td>Anything policy-shaped (glob, grep, ReBAC, chunking &mdash; all live in plugins/services)</td>
-      <td><span class="layer-tag layer-rust">Rust</span> (nexus-vfs SSOT)</td>
-    </tr>
-  </tbody>
-</table>
+<h2 id="core">2. Rust implementation</h2>
+<p><code>rust/search-plugin</code> owns VFS discovery, chunking, Tantivy keyword indexing,
+ANN vectors, embeddings, fusion and stream checkpoints. <code>rust/search-common</code> owns
+shared query/result contracts, discovery options, delegation and transport connections.
+<code>rust/federated-search</code> owns cross-zone dispatch and result fusion.</p>
+<p>Glob and grep inspect current VFS paths and bytes. Indexed keyword, semantic and hybrid
+queries use the committed search indexes. A stale index cannot replace a current-byte grep.</p>
+<p>Graph queries are unavailable (<code>has_graph=false</code>).</p>
 
-<h2 id="core">2. Rust core plugin &mdash; SSOT for search logic</h2>
+<h2 id="grpc">3. gRPC and identity</h2>
+<p>The wire contract is
+<a href="https://github.com/nexi-lab/nexus-vfs/blob/main/rust/proto/nexus/search/v1/search.proto">nexus/search/v1/search.proto</a>.
+Nexus selects one VFS revision in its workspace Cargo dependencies and verifies Cargo.lock against it.
+<code>scripts/gen_search_proto.py</code> generates/checks Python bindings directly from that revision.</p>
+<p>The host authenticates the caller using its existing bearer or certificate identity and resolves
+the operation context using the owning daemon's credential and ReBAC stores. Explicit invalid bearer
+credentials fail even alongside a valid node certificate. Zone selectors do not grant authority.</p>
+<p>Query and discovery authorize candidates before returning paths or snippets. Glob/grep additionally
+obey directory traversal requirements. Indexing, administration and diagnostics require their own
+permissions. Revocation remains effective after warming query and Locate caches.</p>
 
-<p><code>nexus-search-plugin</code> is a cdylib loaded by <code>nexusd-cluster</code> at boot via <code>--plugin-dir</code>. It exposes <code>nexus.search.v1.SearchService</code> through the Phase P plugin-as-gRPC-service routing path (plugin declares its service list via <code>nexus_plugin_grpc_services</code>; the cluster's <code>PluginProxyService</code> routes external tonic traffic at <code>/nexus.search.v1.SearchService/&lt;Method&gt;</code> into <code>nexus_service_dispatch</code>).</p>
+<h2 id="http">4. HTTP and clients</h2>
+<p>The optional Rust axum listener exposes <code>/v2/search/*</code>, <code>/v2/documents/*</code>,
+key and ReBAC management. It forwards Search operations through the authenticated gRPC contract.
+Both listeners belong to the same daemon. HTTP is an adapter for clients that use JSON.</p>
+<p>Python SDK and MCP call typed Search RPCs through the client transport. CLI Search commands and
+the TUI worker use Rust HTTP. The Python SearchService facade owns no search indexes, SQL path
+resolution, Search permission cache or listing thread pool. Its <code>list</code> method calls
+the filesystem's existing <code>sys_readdir</code>, preserving pagination and zone-view behavior.
+Connector display paths are read through VFS.</p>
+<p>Standalone Python browser login/password/OAuth compatibility still exists. Its scope must be
+settled before declaring the entire Python server retired. Production Moss/scode identities remain
+the identity source for their agents.</p>
 
-<div class="callout callout-ok">
-  <strong>SSOT status:</strong> in the <code>cluster</code> deployment profile (production), the Rust plugin is the <strong>sole</strong> search backend. Every algorithm below runs here, not in Python. The in-process SANDBOX indexing chain has been removed; workspace discovery remains in Python (&sect;8).
-</div>
+<h2 id="federation">5. Federation</h2>
+<p>Peer fan-out within a zone and cross-zone federation have separate responsibilities.
+The plugin uses peer transport for per-zone search. The Rust federated dispatcher selects authorized
+zones, validates delegation, fans out and fuses results. Each destination enforces its own authorization.
+Authenticated connection reuse does not cache a caller's authorization result.</p>
 
-<h3>2.1 Module map</h3>
-<table>
-  <thead><tr><th>Module</th><th>LoC</th><th>What it owns</th></tr></thead>
-  <tbody>
-    <tr><td><code>service.rs</code></td><td>4297</td><td>gRPC handlers for all 17 RPCs, request routing, middleware wiring</td></tr>
-    <tr><td><code>title_index.rs</code></td><td>1109</td><td>Title-arm secondary index (hybrid fusion boost)</td></tr>
-    <tr><td><code>embedder.rs</code></td><td>1089</td><td>OpenAI-compatible embedding client + batching</td></tr>
-    <tr><td><code>ann_index.rs</code></td><td>881</td><td>HNSW vector index (cosine similarity)</td></tr>
-    <tr><td><code>contextual_chunker.rs</code></td><td>867</td><td>LLM contextual chunking (per-chunk context prefix)</td></tr>
-    <tr><td><code>fts_index.rs</code></td><td>725</td><td>Tantivy BM25 FTS index</td></tr>
-    <tr><td><code>query_expansion.rs</code></td><td>713</td><td>LLM query expansion + variant fan-out</td></tr>
-    <tr><td><code>index_manager.rs</code></td><td>696</td><td>Per-zone index lifecycle (open/create/close)</td></tr>
-    <tr><td><code>fusion.rs</code></td><td>657</td><td>RRF (Reciprocal Rank Fusion), RRF-weighted, min-max</td></tr>
-    <tr><td><code>macro_expand.rs</code></td><td>526</td><td>Section-aware neighbour-window expand (<code>expand=macro</code>)</td></tr>
-    <tr><td><code>scoring.rs</code></td><td>505</td><td>Recency decay, path-prefix tier boost</td></tr>
-    <tr><td><code>query_cache.rs</code></td><td>505</td><td>Query-result LRU cache</td></tr>
-    <tr><td><code>index_state.rs</code></td><td>503</td><td>Per-index durable state (content hashes, doc counts)</td></tr>
-    <tr><td><code>peer_fanout.rs</code></td><td>469</td><td>Same-zone cross-plugin-instance fan-out (§2.4)</td></tr>
-    <tr><td><code>peer_registry.rs</code></td><td>404</td><td>Env-driven static peer list; DashMap Channel cache</td></tr>
-    <tr><td><code>chunker.rs</code></td><td>390</td><td>Markdown/text-aware chunking</td></tr>
-    <tr><td><code>embed_cache.rs</code></td><td>270</td><td>Embedding LRU (dedup identical text)</td></tr>
-    <tr><td><code>zone_modes_state.rs</code></td><td>258</td><td>Per-zone indexing-mode config (disabled/auto/manual)</td></tr>
-    <tr>
-      <td><em>plus: indexed_dirs_state, parked_state, internal_call, kernel_io, llm_chat, lib.rs</em></td>
-      <td>~1000</td>
-      <td>Plumbing (dir tracking, parked-retry queue, middleware markers, kernel FFI wrapper, HTTP LLM helper)</td>
-    </tr>
-  </tbody>
-</table>
+<h2 id="dt-stream">6. Streams and storage</h2>
+<p>DT_REG and DT_STREAM use the existing VFS read/stat contracts. Stream indexing tracks append
+progress and stable chunk indexes. Missing or incompatible checkpoints trigger reconstruction from
+current retained bytes. Restart recovery must agree with both committed keyword and vector indexes.</p>
+<p>Credentials, grants and path-context configuration use their existing durable stores. Search
+index bytes and committed sequence/checkpoint metadata support recovery. Admission permits, pending
+counts, in-progress counters, futures and live request state stay in memory. A read-only query to an
+unindexed zone does not create an index directory.</p>
 
-<h3>2.2 Why plugin, not kernel primitive</h3>
-<blockquote>
-  Grep + glob are compositions over the kernel's <code>sys_readdir</code> + <code>sys_read</code> primitives, not primitives themselves. Putting the walker + regex engine + FTS + vector into the kernel tier would grow <code>kernel/</code> with policy code that has no business next to the syscall ABI. The cdylib boundary keeps the kernel small (default: zero search logic) and lets the plugin ship its own release cadence with its own signed release chain.
-</blockquote>
+<h2 id="r10">7. Verification</h2>
+<p><code>scripts/test_search_local.py</code> runs an isolated native daemon with TLS, ReBAC,
+a signed plugin, optional real ONNX embeddings and a temporary configuration database. It reuses
+the CLI/SDK/MCP/discovery/certificate-agent scripts and executes the TUI worker and terminal renderer.
+Every journey produces a log; any failure returns a nonzero status. <code>--serve</code> supports
+manual testing against the same prepared fixture.</p>
+<p>VFS <code>production_index_admission.rs</code> controls a slow embedding provider across the
+interactive timeout boundary. It checks accepted work, cancellation, capacity, real receipts and
+restart queries. HTTP tests use a stalled TCP service to check Query/BatchQuery deadline mapping.
+Published-artifact CI combines real embeddings with the authenticated caller journeys.</p>
 
-<h3>2.3 Middleware layering (per-request)</h3>
+<h2 id="profiles">8. Assembly</h2>
+<p>Search follows the data-owning Kernel. A scode cohost composes the same cluster services through
+<code>nexus_cluster::run_with_services</code> and supplies its managed-agent runtime. All linked VFS
+crates must resolve to one revision; mixing Kernel types or plugin ABI revisions is invalid.</p>
+<p>Local candidate testing can patch the complete VFS dependency graph to one checkout. Such a
+candidate proof is recorded separately from a released scode artifact. Local verification does not
+authorize a production deployment.</p>
 
-<p>A single Query request flows through concentric middlewares inside the plugin. Each is <strong>opt-in via env</strong> and <strong>strictly outer-to-inner</strong> — never re-entered on recursive internal calls (guarded by <code>INSIDE_MIDDLEWARE</code> task-local + <code>PEER_FANOUT_MARKER_HEADER</code>):</p>
+<h2 id="decisions">9. Contract rules</h2>
+<ul><li>Search uses the existing Kernel syscall and plugin ABI.</li>
+<li>Connections own TLS and connection establishment. Request owners select operation budgets.</li>
+<li>Interactive HTTP Search RPCs use an eight-second budget. Index/refresh/retry work follows the
+caller lifecycle and keeps admission capacity while accepted work is still running.</li>
+<li>Committed index receipts report completed work. Overload, rejection, unavailable embeddings
+and deadline expiry remain explicit errors.</li>
+<li>Indexing concurrency is controlled by native Search configuration. Python profile settings do
+not advertise a second concurrency value.</li>
+<li>Existing Raft proposal, commit and apply contracts govern durable changes and recovery.</li></ul>
 
-<pre class="mermaid">
-flowchart TB
-    IN["Query RPC in"] --&gt; MW1
-    subgraph MW1["Outer: LLM query expansion"]
-        MW1D["expand original into N variants,<br/>fan out (N+1) sub-queries, fuse rrf_multi<br/>(env: NEXUS_SEARCH_QUERY_EXPANSION)"]
-    end
-    MW1 --&gt; MW2
-    subgraph MW2["Middle: peer fan-out"]
-        MW2D["send same query to peer plugins in same zone,<br/>concurrent with local branch, fuse rrf_multi<br/>(env: NEXUS_SEARCH_PEER_PLUGINS)"]
-    end
-    MW2 --&gt; MW3
-    subgraph MW3["Inner: local hybrid pipeline"]
-        MW3D["keyword arm (FTS) + semantic arm (HNSW) + title arm<br/>&mdash;&gt; fusion::rrf_multi<br/>&mdash;&gt; recency + prefix boost + query_cache<br/>&mdash;&gt; macro_expand enrichment"]
-    end
-    MW3 --&gt; OUT["QueryResponse out"]
-</pre>
-
-<h3>2.4 Peer fan-out vs cross-zone federation</h3>
-<div class="callout callout-warn">
-  <strong>Naming trap:</strong> two orthogonal concepts live near each other &mdash; do not confuse.
-</div>
-<table>
-  <thead><tr><th>Dimension</th><th><code>peer_fanout.rs</code> (Rust plugin)</th><th><code>rust/federated-search/</code> (Rust dispatcher)</th></tr></thead>
-  <tbody>
-    <tr><td><strong>Fans out to</strong></td><td>Peer plugin instances of the <strong>same zone</strong></td><td>Daemons of <strong>different zones</strong> (possibly different machines)</td></tr>
-    <tr><td><strong>Auth</strong></td><td>The originating host authorizes returned files; peer transport follows the configured TLS policy</td><td>Live ReBAC-readable zones bounded by the original credential's zone grants</td></tr>
-    <tr><td><strong>Credential</strong></td><td><code>PEER_FANOUT_MARKER_HEADER</code> (loop guard, not auth)</td><td><code>SearchDelegation</code> short-lived (30s) credential per remote zone</td></tr>
-    <tr><td><strong>Zone routing</strong></td><td>Every peer sees same query</td><td>The registry selects the zone's local or remote owning host</td></tr>
-    <tr><td><strong>Fusion</strong></td><td><code>fusion::rrf_multi</code> (Rust)</td><td>Shared RRF algorithms in <code>search-common</code></td></tr>
-  </tbody>
-</table>
-
-<h2 id="grpc">3. gRPC surface &mdash; <code>nexus.search.v1.SearchService</code></h2>
-
-<p>Wire SSOT: <code>nexus-vfs/rust/proto/nexus/search/v1/search.proto</code>. The Rust plugin, host and HTTP adapter use this schema; Python and agent clients consume its generated bindings.</p>
-
-<table>
-  <thead><tr><th>Plane</th><th>RPC</th><th>Purpose</th></tr></thead>
-  <tbody>
-    <tr><td rowspan="2">Discovery</td><td><code>Glob</code></td><td>fnmatch pattern → paths</td></tr>
-    <tr><td><code>Grep</code></td><td>regex → paths+line-hits over file/stream content</td></tr>
-    <tr><td rowspan="2">Search</td><td><code>Query</code></td><td>keyword / semantic / hybrid ranked results</td></tr>
-    <tr><td><code>BatchQuery</code></td><td>N Query requests in one RPC (embedding dedup)</td></tr>
-    <tr><td rowspan="4">Indexing</td><td><code>Index</code></td><td>walker-based re-index of a subtree</td></tr>
-    <tr><td><code>IndexDocuments</code></td><td>explicit-payload POST (HTTP-fed bytes → chunks → index)</td></tr>
-    <tr><td><code>Refresh</code></td><td>content-hash-driven incremental refresh</td></tr>
-    <tr><td><code>NotifyFileChange</code></td><td>delete indexed content; create/update require explicit document indexing</td></tr>
-    <tr><td rowspan="4">Directory tracking</td><td><code>AddIndexedDirectory</code></td><td>register a subtree for automatic Refresh</td></tr>
-    <tr><td><code>RemoveIndexedDirectory</code></td><td>drop tracking</td></tr>
-    <tr><td><code>ListIndexedDirectories</code></td><td>enumerate tracked subtrees</td></tr>
-    <tr><td><code>Locate</code></td><td>chunk-shape lookup for a single path</td></tr>
-    <tr><td rowspan="3">Parked queue</td><td><code>ParkedList</code></td><td>docs deferred by embedder-broken state</td></tr>
-    <tr><td><code>ParkedRetry</code></td><td>re-attempt indexing</td></tr>
-    <tr><td><code>ParkedDiscard</code></td><td>drop from queue</td></tr>
-    <tr><td rowspan="2">Zone mode</td><td><code>SetZoneIndexingMode</code></td><td>disabled / auto / manual per zone</td></tr>
-    <tr><td><code>ListZoneIndexingModes</code></td><td>enumerate</td></tr>
-    <tr><td rowspan="2">Meta</td><td><code>Health</code></td><td>plugin liveness</td></tr>
-    <tr><td><code>Stats</code></td><td>per-zone doc count, backend, embedder model</td></tr>
-  </tbody>
-</table>
-
-<h2 id="http">4. HTTP surface</h2>
-
-<h3>4.1 Python FastAPI in mixed deployments</h3>
-<p>Router: <code>src/nexus/server/api/v2/routers/search.py</code>. Its remaining adapters serve health, statistics, document indexing and indexed-directory management. Indexed Query and BatchQuery use the owning Rust host's HTTP and gRPC surfaces.</p>
-
-<h3>4.2 Rust axum in the cluster</h3>
-<p>Crate: <code>nexus-vfs/rust/http-api/</code>. The cluster installs this listener through <a href="https://github.com/nexi-lab/nexus-vfs/blob/main/rust/profiles/cluster/src/authorization.rs"><code>rust/profiles/cluster/src/authorization.rs</code></a>. Current routes:</p>
-<ul>
-  <li><code>GET /v2/status</code></li>
-  <li><code>GET /v2/search/glob</code> and <code>GET /v2/search/grep</code></li>
-  <li><code>POST /v2/search/query</code>, including Rust cross-zone dispatch</li>
-  <li><code>POST /v2/search/query/batch</code>, up to 500 entries with one original credential</li>
-  <li><code>POST /v2/documents/{index,refresh,batch}</code> and <code>GET /v2/documents/stats</code></li>
-  <li><code>GET/POST /v2/auth/keys</code> and <code>DELETE /v2/auth/keys/{key_hash}</code></li>
-  <li><code>GET/POST/DELETE /v2/rebac/tuples</code></li>
-</ul>
-<p>The HTTP listener requires <code>--enable-rebac</code> and binds to loopback for use behind a TLS reverse proxy. It shares the daemon's auth provider, Raft API-key and tuple stores, readiness gate, and TLS identity. HTTP search preserves the incoming bearer credential when calling the gRPC host. That host enforces zone and file access, including on cached search results.</p>
-<p><strong>HTTP and gRPC coexist:</strong> the remote filesystem transport migrated from HTTP/JSON-RPC to gRPC; R10 retains an HTTP entry point and moves its implementation into Rust. HTTP adds request/response translation rather than another search backend or credential store.</p>
-<p><code>nexus search query</code>, <code>index</code>, and <code>stats</code> call the Rust HTTP listener. CLI <code>glob</code>/<code>grep</code> still use Python <code>SearchService</code>. See <a href="https://github.com/nexi-lab/nexus/blob/develop/docs/deployment/search-plugin.md#cli-on-a-rust-cluster">deployment and CLI setup</a>.</p>
-
-<h2 id="federation">5. Cross-zone federation dispatcher</h2>
-
-<p>The Rust dispatcher is implemented in <code>nexus-vfs/rust/federated-search/</code>, with shared delegation and routing types in <code>rust/search-common/</code>. The axum query handler uses the caller's readable zones and dispatches through local or remote backends before fusing results with RRF. Remote legs use <code>SearchDelegation</code>; the receiving host enforces the delegated scope.</p>
-<p>The owning Rust VFS host serves indexed Query and BatchQuery. Unpinned queries use its cross-zone dispatcher; SDK, MCP, CLI and TUI callers preserve their existing credentials. See <a href="https://github.com/nexi-lab/nexus/blob/develop/docs/architecture/federated-search.md">the current request path and state ownership</a>.</p>
-<div class="callout">
-  <strong>Layer contract:</strong> cross-zone orchestration, zone discovery, and delegation belong in services outside the core plugin. The plugin owns search primitives and same-zone peer fan-out. The gRPC host owns caller authentication and permission enforcement.
-</div>
-
-<h2 id="dt-stream">6. Search over DT_STREAM (audit / mailbox / transcripts)</h2>
-
-<p>A DT_STREAM is a kernel-primitive append-only log &mdash; audit trails, A2A mailboxes, session transcripts (see the <a href="https://s.shareone.vip/s/nexus-integration-architecture">Integration Architecture</a> doc &sect;4.2 for the primitive). As of nexus-vfs #229 + nexus #4682, streams are searchable as first-class documents: <code>grep</code>, keyword <code>Query</code>, and semantic <code>Query</code> all see a stream's whole log the same way they see a regular file.</p>
-
-<h3>6.1 How it works &mdash; the &ldquo;host-shim collects&rdquo; posture (Phase 0)</h3>
-<p>The plugin's C-ABI <code>sys_read</code> is offset-less &mdash; it means <em>&ldquo;give me the content at path&rdquo;</em>. For DT_REG this is the file bytes. For DT_STREAM the host-side (nexus-vfs #235) now walks the stream frames to its tail and returns the deframed payload as one blob. <strong>Zero plugin-abi bump.</strong> The plugin's existing walker (which already routes <code>DT_REG</code> → chunk → index) just needs to recognise <code>DT_STREAM=4</code> as a searchable entry_type.</p>
-<p>The plugin change (PR #4682, merged) added exactly one SSOT predicate:</p>
-<pre><code>fn searchable_content_type(et: u8) -&gt; bool { et == DT_REG || et == DT_STREAM }</code></pre>
-<p>Routed through all 5 VFS-walk gates: grep, keyword-index (recursive + non-recursive), semantic-index (recursive + non-recursive). DT_DIR/DT_MOUNT stay containers; DT_PIPE stays ephemeral (destructive read).</p>
-
-<h3>6.2 Verification</h3>
-<p><code>TestSearchStreams</code> in <code>tests/e2e/docker/test_search_plugin.py</code> seeds a 7-frame wal stream whose target token sits in the <strong>6th frame</strong> plus a sibling regular file. It asserts:</p>
-<ul>
-  <li>grep finds the LATE-frame token in the stream (proves the host read the <em>whole</em> log, not frame 0)</li>
-  <li>grep also finds the early-frame token + the sibling file's token (no regression)</li>
-  <li>keyword index + Query surfaces stream content as a document</li>
-  <li>semantic Query works too (tolerant of a missing embedder)</li>
-</ul>
-
-<h3>6.3 Open FRs from first real consumer (sudocode, 2026-08-22)</h3>
-<p>sudowork's <code>sudocode</code> is the first agent hitting search-over-streams for long-term memory recall over per-session transcripts (<code>/sessions/&lt;id&gt;/transcript.jsonl</code>). Outstanding asks:</p>
-
-<table>
-  <thead><tr><th>#</th><th>Ask</th><th>Layer</th><th>Status / plan</th></tr></thead>
-  <tbody>
-    <tr>
-      <td>A</td>
-      <td>Index the full stream, not the first frame</td>
-      <td>host + plugin walker</td>
-      <td><span class="status-done">&check; Solved.</span> nexus-vfs #235 (merged 2026-08-21) makes <code>sys_read</code> collect; nexus #4682 (merged 2026-08-22) routes DT_STREAM through walker gates.</td>
-    </tr>
-    <tr>
-      <td>B</td>
-      <td>Recency signal for streams &mdash; populate <code>sys_stat.modified_at_ms</code> from last-append time</td>
-      <td>kernel (nexus-vfs)</td>
-      <td><span class="status-done">&check; Done.</span> nexus-vfs #238 (merged 2026-08-22).  <code>StreamBackend::last_append_ms() -&gt; Option&lt;i64&gt;</code> default-<code>None</code>; Memory/WAL/SHM backends stamp local wall-clock on push; <code>StreamManager::last_append_ms(path)</code> mirrors <code>tail(path)</code>; <code>sys_stat</code> DT_STREAM branch overrides <code>modified_at_ms</code> with fallback to <code>entry.modified_at_ms</code>.  Same seam as tail-as-size (nexus-vfs #227). Zero new syscall / zero ABI bump.  <em>WAL caveat: per-replica local wall-clock, not raft-replicated.</em></td>
-    </tr>
-    <tr>
-      <td>C</td>
-      <td>Append-incremental indexing &mdash; index only frames since last-indexed tail offset (O(delta), not O(n<sup>2</sup>))</td>
-      <td>plugin</td>
-      <td><span class="status-done">&check; Done.</span> nexus #4692 (merged 2026-08-23).  <code>StreamState { indexed_byte_len, next_chunk_index, mtime_ms }</code> sibling map in <code>index_state.rs</code>; <code>index_one</code> dispatches DT_STREAM to <code>index_one_stream_append</code> which chunks only the tail bytes past the checkpoint with continuing chunk_index; retention-trim (<code>new_len &lt; checkpoint</code>) wipes prior chunks + re-indexes the survivors. <code>verdict()</code> now consults both file + stream maps so a quiescent stream short-circuits before <code>sys_read</code>. 4 E2E scenarios cover happy append / no-op / multi-append monotonic / retention-trim.  No plugin-abi bump.</td>
-    </tr>
-    <tr>
-      <td>D</td>
-      <td>Record/turn-aware chunker for JSONL transcripts (chunk = one turn; <code>embed_input</code> = extracted content)</td>
-      <td>plugin</td>
-      <td><span class="status-open">Lower priority.</span> Current markdown chunker works if agents index distilled markdown notes instead. Ship as env-gated mode (e.g. <code>NEXUS_SEARCH_CHUNKER_MODE=jsonl</code>) when recall gaps become concrete.</td>
-    </tr>
-  </tbody>
-</table>
-
-<h3>6.4 Client path for a co-hosted Rust agent calling <code>Query</code></h3>
-<p>Today's answer has a gap:</p>
-<ul>
-  <li><strong>Grep / glob</strong>: in-process via <code>KernelConvenience::grep_subtree</code> (already there).</li>
-  <li><strong>Semantic / hybrid Query</strong>: no in-process convenience. Two options today:
-    <ol>
-      <li><strong>tonic client to local plugin gRPC (loopback)</strong> &mdash; same pattern the Rust <code>http-api</code> crate uses in <code>SearchBackend</code>. Recommended short-term.</li>
-      <li><strong>Add <code>KernelConvenience::semantic_search</code></strong> in nexus-vfs &mdash; long-term, needs kernel-team review because it crosses the plugin/convenience boundary (grep_subtree precedent exists but semantic requires embedder wiring in kernel tier).</li>
-    </ol>
-  </li>
-</ul>
-
-<h2 id="r10">7. R10 pure-Rust migration arc</h2>
-
-<p>Epic issue <a href="https://github.com/nexi-lab/nexus/issues/4674">#4674</a>. Goal: production nexus-server runs on the <code>cluster</code> Rust binary alone &mdash; HTTP + auth + ReBAC + orchestration all move from Python to Rust, keeping the plugin unchanged as the SSOT for search primitives.</p>
-
-<h3>Landed capabilities</h3>
-<ul>
-  <li>Rust HTTP search/document routes, bearer middleware, API-key management, and ReBAC tuple management.</li>
-  <li>Rust ReBAC and Raft tuple storage; Rust cross-zone dispatcher and delegation.</li>
-  <li>Single-zone and federated HTTP queries share one parameter contract and protobuf encoder. Local and delegated remote legs preserve fusion, pooling, expansion, recency, weights and path filters.</li>
-  <li>Production cluster composition sharing auth, ReBAC, TLS channels, and readiness across HTTP and gRPC.</li>
-  <li>SANDBOX in-process indexing-chain removal; the Rust plugin owns indexed query and stats.</li>
-  <li>Indexed Search CLI on Rust HTTP, verified with the published signed-plugin image, real credentials, isolation, and revocation.</li>
-  <li>TUI indexed queries and file discovery on Rust HTTP, using the configured owning host and existing worker credentials. Native daemon E2E covers terminal rendering, path grants, working sets, limits and revocation.</li>
-  <li>Graph HTTP callers and Zoekt integrations removed from the Python Search chain and TUI.</li>
-</ul>
-
-<h3>Remaining work</h3>
-<ul>
-  <li>Move durable <code>path_contexts</code> configuration loading into its native Search owner before removing the Python HTTP query/federation path. Complete local listing migration before deleting <code>SearchService</code> and its adapters. Remote CLI glob/grep already use typed Rust RPCs.</li>
-  <li>Account for the Python OAuth routes before retiring Python auth. Their <code>nexus_oauth_binding</code> cookie binds browser OAuth state; Search authenticates bearer credentials. Moss/scode already supplies bearer or mTLS credentials at the appropriate boundary.</li>
-  <li>Prove the Rust deployment in a real production tenant before retiring <code>nexus-server</code>, as required by the epic.</li>
-</ul>
-<p>Passing the current CLI and published-image gates completes those increments; it does not close the whole migration epic.</p>
-
-<h2 id="profiles">8. Deployment profiles</h2>
-
-<table>
-  <thead><tr><th>Deployment</th><th>Indexed search</th><th>What runs</th></tr></thead>
-  <tbody>
-    <tr>
-      <td>Rust <code>cluster</code> (production target)</td>
-      <td>Rust plugin only</td>
-      <td><code>nexusd-cluster</code> loads the signed plugin and serves gRPC, with optional Rust HTTP and ReBAC enabled.</td>
-    </tr>
-    <tr>
-      <td>Python server with plugin host</td>
-      <td>Rust plugin over gRPC</td>
-      <td>Python <code>/api/v2/*</code> and Python service callers remain supported while they migrate.</td>
-    </tr>
-    <tr>
-      <td>Python local/workspace callers</td>
-      <td>Plugin required for indexed query and stats</td>
-      <td>Python <code>SearchService</code> still serves list/glob/grep. The former in-process indexing chain is removed.</td>
-    </tr>
-  </tbody>
-</table>
-<p>Build features and Python profiles configure different processes. A local Python profile does not create a Rust indexed-search backend; the CLI must connect to the configured cluster HTTP listener.</p>
-
-<h2 id="decisions">9. Decision log</h2>
-
-<table>
-  <thead><tr><th>Date</th><th>Decision</th><th>Rationale</th></tr></thead>
-  <tbody>
-    <tr>
-      <td>2026-08-07</td>
-      <td>P12: delete Python <code>SearchDaemon</code>. Rust plugin becomes sole search backend for <code>cluster</code>.</td>
-      <td>Feature parity reached; two backends double the maintenance surface and hide divergence.</td>
-    </tr>
-    <tr>
-      <td>2026-08-15..17</td>
-      <td>Pull 3 features from Python into Rust plugin: LLM query expansion, cross-plugin peer fan-out, LLM contextual chunking.</td>
-      <td>Feature parity for the &ldquo;pure-Rust cluster search&rdquo; posture. See PRs #4661/#4662/#4663.</td>
-    </tr>
-    <tr>
-      <td>2026-08-17</td>
-      <td>10-principle audit round applied to every merged PR; residuals R1-R10 all fixed or filed as issues.</td>
-      <td>User-standing quality bar; see the audit findings folded into #4676/#4677/#4679/#4680.</td>
-    </tr>
-    <tr>
-      <td>2026-08-18</td>
-      <td>Start R10 arc: <code>rust/services/http-api/</code> crate (relocated to <code>nexus-vfs/rust/http-api/</code> in #4825).</td>
-      <td>Prove the axum + gRPC-client-cache pattern before touching auth / ReBAC / orchestration.</td>
-    </tr>
-    <tr>
-      <td>2026-08-18</td>
-      <td>Corrected R9 design: <code>sys_list_peers</code> is <strong>not</strong> a Tier 1 syscall. Peer discovery for plugins should reuse the procfs pattern (<code>/__sys__/peers/</code>) via existing <code>sys_readdir</code> + <code>sys_stat</code>. Zero ABI bump.</td>
-      <td>Kernel-architecture Tier 1 rule: POSIX-aligned, path-addressed. &ldquo;List peers&rdquo; is neither.</td>
-    </tr>
-    <tr>
-      <td>2026-08-21</td>
-      <td>Host-shim <code>sys_read</code> collects DT_STREAM into one blob (nexus-vfs #235).</td>
-      <td>Streams are searchable primitives; plugin walker gets whole log with zero plugin-abi bump.</td>
-    </tr>
-    <tr>
-      <td>2026-08-22</td>
-      <td>Plugin walker routes DT_STREAM through <code>searchable_content_type()</code> predicate (nexus #4682).</td>
-      <td>One SSOT predicate on all 5 VFS-walk gates; no per-site logic.</td>
-    </tr>
-    <tr>
-      <td>2026-08-22</td>
-      <td><code>sys_stat.modified_at_ms</code> reports DT_STREAM last-append time (nexus-vfs #238).</td>
-      <td>Same POSIX <code>st_mtime</code> semantic + same seam as tail-as-size; generic beyond search (audit / mailbox catch-up freshness all benefit); zero syscall / zero ABI bump.  Answers sudocode FR-B.</td>
-    </tr>
-    <tr>
-      <td>2026-08-23</td>
-      <td>Plugin gets append-incremental DT_STREAM indexing (nexus #4692).</td>
-      <td>Per-path <code>StreamState</code> checkpoint drops full-refresh cost from O(K&middot;N) to O(N) across K appends.  Refresh <code>verdict()</code> short-circuits quiescent streams before <code>sys_read</code>; append path continues chunk_index without wiping prior chunks; retention-trim triggers wipe + re-index recovery.  Answers sudocode FR-C.</td>
-    </tr>
-  </tbody>
-</table>
-
-<h2 id="open">10. Open FRs &amp; pending work</h2>
-
-<table>
-  <thead><tr><th>Item</th><th>Layer</th><th>Status</th></tr></thead>
-  <tbody>
-    <tr>
-      <td>sudocode FR-B: <code>sys_stat.modified_at_ms</code> for DT_STREAM</td>
-      <td>nexus-vfs kernel</td>
-      <td><span class="status-done">&check; Done</span> &mdash; nexus-vfs #238 (merged 2026-08-22)</td>
-    </tr>
-    <tr>
-      <td>sudocode FR-C: append-incremental DT_STREAM indexing (plugin P4)</td>
-      <td>plugin</td>
-      <td><span class="status-done">&check; Done</span> &mdash; nexus #4692 (merged 2026-08-23); no plugin-abi bump needed</td>
-    </tr>
-    <tr>
-      <td>sudocode FR-D: JSONL record-aware chunker mode</td>
-      <td>plugin (chunker)</td>
-      <td><span class="status-open">Lower priority</span> &mdash; env-gated; do when recall gaps become concrete</td>
-    </tr>
-    <tr>
-      <td>Co-hosted Rust agent: <code>Query</code> in-process convenience</td>
-      <td>kernel-convenience (nexus-vfs)</td>
-      <td><span class="status-open">Design open</span> &mdash; short-term use tonic loopback; long-term needs kernel-team review</td>
-    </tr>
-    <tr>
-      <td>Grep &amp; Query axum handlers</td>
-      <td>Rust http-api (R10)</td>
-      <td><span class="status-done">&check; Done</span> &mdash; PR #4693 (<code>handlers/search.rs</code>, same pattern as glob)</td>
-    </tr>
-    <tr>
-      <td>Auth middleware for axum router</td>
-      <td>Rust http-api (R10)</td>
-      <td><span class="status-done">&check; Done</span> &mdash; PR #4700 (<code>middleware/auth.rs</code>) + PR #4713 (fail-loud bind)</td>
-    </tr>
-    <tr>
-      <td>Rust ReBAC engine</td>
-      <td>New Rust crate</td>
-      <td><span class="status-done">&check; Done</span> &mdash; PRs #4721-#4735 (5-part arc); <code>nexus-rebac</code> crate + Raft tuple store + graph cache + in-crate enforcer + <code>--features rebac</code> wiring + HTTP <code>/v2/rebac/tuples</code></td>
-    </tr>
-    <tr>
-      <td>Federated dispatcher port to axum handler group</td>
-      <td>Rust http-api (R10)</td>
-      <td><span class="status-done">&check; Done</span> &mdash; Rust dispatcher and axum wiring landed across PRs #4790-#4818. The Python HTTP caller remains until its migration completes.</td>
-    </tr>
-    <tr>
-      <td><code>nexusd-cluster</code> wiring of the axum listener</td>
-      <td>nexus-vfs/rust/profiles/cluster</td>
-      <td><span class="status-done">&check; Done</span> &mdash; Cluster <code>authorization.rs</code> composes HTTP and ReBAC with the daemon's shared credentials, TLS transport, and readiness gate.</td>
-    </tr>
-    <tr>
-      <td>Deprecate Python SANDBOX chain</td>
-      <td>Python cleanup</td>
-      <td><span class="status-done">&check; Done</span> &mdash; PRs #4760-#4764 removed the in-process indexing pipeline. <code>SearchService</code> still handles workspace discovery and adapts indexed plugin results for Python callers.</td>
-    </tr>
-    <tr>
-      <td>Full <code>SearchService</code> Python delete</td>
-      <td>Python cleanup (post-R10)</td>
-      <td><span class="status-open">Open</span> &mdash; <code>src/nexus/bricks/search/search_service.py</code> still serves list/glob/grep and indexed-query adapters. Migrate its CLI, Python HTTP, and other service callers, with permission and feature coverage, before deletion.</td>
-    </tr>
-    <tr>
-      <td>Refresh this doc when statuses drift</td>
-      <td>docs</td>
-      <td><span class="status-done">&check; Done</span> &mdash; Current transport boundaries and migration status checked against the pinned nexus-vfs source (2026-10-07).</td>
-    </tr>
-  </tbody>
-</table>
-
-<footer>
-  <p>Canonical source: <a href="https://github.com/nexi-lab/nexus/blob/develop/docs/architecture/nexus-search-architecture.html">nexi-lab/nexus &middot; docs/architecture/nexus-search-architecture.html</a> on <code>develop</code>.<br>
-  Published via ShareOne remote-URL: <a href="https://s.shareone.vip/s/nexus-search-architecture">s.shareone.vip/s/nexus-search-architecture</a>.<br>
-  Edits land by merging to develop; ShareOne re-fetches automatically, no re-publish needed.</p>
-</footer>
-
+<h2 id="open">10. Remaining acceptance</h2>
+<p>Track completion, test assignments and evidence in the
+<a href="https://s.shareone.vip/md/nexus-search-local-acceptance">local acceptance checklist</a>.
+The indexing-deadline fix, cleanup CI, actual scode/cohost local workflows and browser identity scope
+must be accounted for before declaring the known mainline complete. Tencent Cloud deployment is a
+subsequent decision requiring a concrete plan agreed with the user.</p>
 </body>
 </html>

@@ -72,7 +72,6 @@ def _compute_features_info(app: "FastAPI", svc: LifespanServices) -> None:
             task_runner_workers=_pt.concurrency.task_runner_workers,
             default_http_timeout=_pt.network.default_http_timeout,
             db_pool_size=_pt.storage.db_pool_size,
-            search_max_concurrency=_pt.search.search_max_concurrency,
             heartbeat_flush_interval=_pt.background_task.heartbeat_flush_interval,
             default_max_retries=_pt.resiliency.default_max_retries,
             blob_operation_timeout=_pt.connector.blob_operation_timeout,

@@ -10,7 +10,6 @@ Domain configs:
 - ConcurrencyTuning: worker counts, thread pool sizes
 - NetworkTuning: HTTP timeouts, webhook timeouts
 - StorageTuning: write buffer, batch sizes, DB pool
-- SearchTuning: grep workers, search concurrency
 - CacheTuning: tiger cache workers, batch sizes
 - BackgroundTaskTuning: cleanup intervals, heartbeat flush
 - ResiliencyTuning: retry counts, circuit breaker thresholds
@@ -96,20 +95,6 @@ class StorageTuning:
 
     db_max_overflow: int
     """SQLAlchemy pool max overflow connections."""
-
-
-@dataclass(frozen=True)
-class SearchTuning:
-    """Listing and indexed search concurrency."""
-
-    list_parallel_workers: int
-    """Thread pool size for parallel directory listing."""
-
-    search_max_concurrency: int
-    """Semaphore limit for concurrent search/indexing operations."""
-
-    vector_pool_workers: int
-    """Thread pool size for sync vector DB operations."""
 
 
 @dataclass(frozen=True)
@@ -253,7 +238,7 @@ class PoolTuning:
 
 
 # ---------------------------------------------------------------------------
-# Composite tuning (all 10 domains)
+# Composite tuning (all domains)
 # ---------------------------------------------------------------------------
 
 
@@ -261,14 +246,13 @@ class PoolTuning:
 class ProfileTuning:
     """Composite performance tuning for a deployment profile.
 
-    Composed of 11 domain-specific slices.  Each brick receives only
+    Composed of domain-specific slices.  Each brick receives only
     the slice it needs via constructor injection in factory.py.
     """
 
     concurrency: ConcurrencyTuning
     network: NetworkTuning
     storage: StorageTuning
-    search: SearchTuning
     cache: CacheTuning
     background_task: BackgroundTaskTuning
     resiliency: ResiliencyTuning
@@ -300,11 +284,6 @@ _MINIMAL_TUNING = ProfileTuning(
         changelog_chunk_size=25,
         db_pool_size=1,
         db_max_overflow=2,
-    ),
-    search=SearchTuning(
-        list_parallel_workers=1,
-        search_max_concurrency=1,
-        vector_pool_workers=1,
     ),
     cache=CacheTuning(
         tiger_max_workers=1,
@@ -379,11 +358,6 @@ _EMBEDDED_TUNING = ProfileTuning(
         db_pool_size=3,
         db_max_overflow=5,
     ),
-    search=SearchTuning(
-        list_parallel_workers=2,
-        search_max_concurrency=2,
-        vector_pool_workers=1,
-    ),
     cache=CacheTuning(
         tiger_max_workers=1,
         tiger_batch_size=50,
@@ -456,11 +430,6 @@ _LITE_TUNING = ProfileTuning(
         changelog_chunk_size=200,
         db_pool_size=8,
         db_max_overflow=15,
-    ),
-    search=SearchTuning(
-        list_parallel_workers=4,
-        search_max_concurrency=5,
-        vector_pool_workers=1,
     ),
     cache=CacheTuning(
         tiger_max_workers=2,
@@ -535,11 +504,6 @@ _SANDBOX_TUNING = ProfileTuning(
         db_pool_size=2,
         db_max_overflow=2,
     ),
-    search=SearchTuning(
-        list_parallel_workers=2,
-        search_max_concurrency=2,
-        vector_pool_workers=0,  # no local vector backend
-    ),
     cache=CacheTuning(
         tiger_max_workers=1,
         tiger_batch_size=20,
@@ -576,11 +540,6 @@ _FULL_TUNING = ProfileTuning(
         changelog_chunk_size=500,
         db_pool_size=5,  # Issue #3997: was 20; Cloud SQL sample sizing for single-tenant
         db_max_overflow=5,  # Issue #3997: was 30; single-tenant burst headroom
-    ),
-    search=SearchTuning(
-        list_parallel_workers=10,
-        search_max_concurrency=10,
-        vector_pool_workers=2,
     ),
     cache=CacheTuning(
         tiger_max_workers=4,
@@ -654,11 +613,6 @@ _CLOUD_TUNING = ProfileTuning(
         changelog_chunk_size=1000,
         db_pool_size=30,
         db_max_overflow=50,
-    ),
-    search=SearchTuning(
-        list_parallel_workers=20,
-        search_max_concurrency=20,
-        vector_pool_workers=4,
     ),
     cache=CacheTuning(
         tiger_max_workers=8,

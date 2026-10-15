@@ -2379,6 +2379,40 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4138
+- id: auth.zone_delegations
+  module: auth
+  summary: ''
+  transports:
+    http:
+      name: POST /v2/auth/zone-delegations
+      source: src/nexus/server/api/v2/routers/zone_grants.py:277
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: auth.zone_delegations_{delegation_id}
+  module: auth
+  summary: ''
+  transports:
+    http:
+      name: GET /v2/auth/zone-delegations/{delegation_id}
+      source: src/nexus/server/api/v2/routers/zone_grants.py:321
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: auth_profiles.post
   module: auth
   summary: ''
@@ -11009,6 +11043,74 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4133
+- id: runtime.resume
+  module: uncategorized
+  summary: ''
+  transports:
+    http:
+      name: POST /v2/runtime/resume
+      source: src/nexus/server/api/v2/routers/sessions.py:656
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: runtime.runs_{pid}
+  module: uncategorized
+  summary: ''
+  transports:
+    http:
+      name: GET /v2/runtime/runs/{pid}
+      source: src/nexus/server/api/v2/routers/sessions.py:667
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: runtime.runs_{pid}_cancel
+  module: uncategorized
+  summary: ''
+  transports:
+    http:
+      name: POST /v2/runtime/runs/{pid}/cancel
+      source: src/nexus/server/api/v2/routers/sessions.py:687
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: runtime.start
+  module: uncategorized
+  summary: ''
+  transports:
+    http:
+      name: POST /v2/runtime/start
+      source: src/nexus/server/api/v2/routers/sessions.py:647
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: sandbox.cli
   module: sandbox
   summary: ''
@@ -12081,13 +12183,13 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4133
-- id: sessions.v2_runtime
+- id: sessions.v2_sessions
   module: uncategorized
   summary: ''
   transports:
     http:
-      name: POST /v2/runtime/start
-      source: src/nexus/server/api/v2/routers/sessions.py:647
+      name: POST /v2/sessions
+      source: src/nexus/server/api/v2/routers/sessions.py:279
   profiles:
     lite: supported
     sandbox: supported
@@ -12098,23 +12200,57 @@ operations:
   perf_link: control-plane operation; tests/e2e/server/test_session_runtime_p1a_e2e.py
   gap_issue: null
   owning_issue: 4846
-- id: sessions.v2_sessions
+- id: sessions.{session_id}
   module: uncategorized
+  summary: ''
+  transports:
+    http:
+      name: GET /v2/sessions/{session_id}
+      source: src/nexus/server/api/v2/routers/sessions.py:323
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: sessions.{session_id}_records
+  module: uncategorized
+  summary: ''
+  transports:
+    http:
+      name: POST /v2/sessions/{session_id}/records
+      source: src/nexus/server/api/v2/routers/sessions.py:343
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: sessions.{session_id}_tasks_{task_id}
+  module: task_manager
   summary: ''
   transports:
     http:
       name: GET /v2/sessions/{session_id}/tasks/{task_id}
       source: src/nexus/server/api/v2/routers/sessions.py:624
   profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
+    lite: unverified
+    sandbox: unverified
+    full: unverified
   usage_example: null
-  correctness_test: tests/e2e/server/test_session_runtime_p1a_e2e.py
-  perf_class: control
-  perf_link: control-plane operation; tests/e2e/server/test_session_runtime_p1a_e2e.py
+  correctness_test: null
+  perf_class: null
+  perf_link: null
   gap_issue: null
-  owning_issue: 4846
+  owning_issue: null
 - id: set.hook_count
   module: uncategorized
   summary: ''
@@ -14307,23 +14443,6 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
-- id: zone_grants.v2_auth
-  module: zone
-  summary: ''
-  transports:
-    http:
-      name: GET /v2/auth/zone-delegations/{delegation_id}
-      source: src/nexus/server/api/v2/routers/zone_grants.py:321
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/e2e/server/test_zone_v2_p0_matrix_e2e.py
-  perf_class: control
-  perf_link: control-plane operation; tests/e2e/server/test_zone_v2_p0_matrix_e2e.py
-  gap_issue: null
-  owning_issue: 4846
 - id: zone_grants.v2_zone_capabilities
   module: zone
   summary: ''
@@ -14341,7 +14460,24 @@ operations:
   perf_link: control-plane operation; tests/e2e/server/test_zone_v2_p0_matrix_e2e.py
   gap_issue: null
   owning_issue: 4846
-- id: zone_grants.v2_zone_operations
+- id: zone_mounts.{mount_id}
+  module: zone
+  summary: ''
+  transports:
+    http:
+      name: DELETE /v2/zone-mounts/{mount_id}
+      source: src/nexus/server/api/v2/routers/zone_runtime.py:114
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: zone_operations.{operation_id}
   module: zone
   summary: ''
   transports:
@@ -14349,32 +14485,15 @@ operations:
       name: GET /v2/zone-operations/{operation_id}
       source: src/nexus/server/api/v2/routers/zone_grants.py:237
   profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
+    lite: unverified
+    sandbox: unverified
+    full: unverified
   usage_example: null
-  correctness_test: tests/e2e/server/test_zone_routes_e2e.py
-  perf_class: control
-  perf_link: control-plane operation; tests/e2e/server/test_zone_routes_e2e.py
+  correctness_test: null
+  perf_class: null
+  perf_link: null
   gap_issue: null
-  owning_issue: 4846
-- id: zone_grants.v2_zones
-  module: zone
-  summary: ''
-  transports:
-    http:
-      name: GET /v2/zones/{zone_id}/grants/{grant_id}
-      source: src/nexus/server/api/v2/routers/zone_grants.py:183
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/e2e/server/test_zone_v2_p0_matrix_e2e.py
-  perf_class: control
-  perf_link: control-plane operation; tests/e2e/server/test_zone_v2_p0_matrix_e2e.py
-  gap_issue: null
-  owning_issue: 4846
+  owning_issue: null
 - id: zone_routes.api_zones
   module: zone
   summary: ''
@@ -14397,8 +14516,8 @@ operations:
   summary: ''
   transports:
     http:
-      name: DELETE /v2/zone-mounts/{mount_id}
-      source: src/nexus/server/api/v2/routers/zone_runtime.py:114
+      name: POST /v2/zone-mounts
+      source: src/nexus/server/api/v2/routers/zone_runtime.py:79
   profiles:
     lite: supported
     sandbox: supported
@@ -14414,8 +14533,8 @@ operations:
   summary: ''
   transports:
     http:
-      name: GET /v2/zone-transfers/{operation_id}
-      source: src/nexus/server/api/v2/routers/zone_runtime.py:240
+      name: POST /v2/zone-transfers
+      source: src/nexus/server/api/v2/routers/zone_runtime.py:196
   profiles:
     lite: supported
     sandbox: supported
@@ -14424,23 +14543,6 @@ operations:
   correctness_test: tests/e2e/server/test_full_profile_control_plane_e2e.py
   perf_class: control
   perf_link: control-plane operation; tests/e2e/server/test_full_profile_control_plane_e2e.py
-  gap_issue: null
-  owning_issue: 4846
-- id: zone_runtime.v2_zones
-  module: zone
-  summary: ''
-  transports:
-    http:
-      name: POST /v2/zones/{zone_id}/joins
-      source: src/nexus/server/api/v2/routers/zone_runtime.py:55
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/e2e/server/test_zone_routes_e2e.py
-  perf_class: control
-  perf_link: control-plane operation; tests/e2e/server/test_zone_routes_e2e.py
   gap_issue: null
   owning_issue: 4846
 - id: zone_runtime_service.get_runtime_capabilities
@@ -14596,13 +14698,30 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: zone_transfers.{operation_id}
+  module: zone
+  summary: ''
+  transports:
+    http:
+      name: GET /v2/zone-transfers/{operation_id}
+      source: src/nexus/server/api/v2/routers/zone_runtime.py:240
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: zones.v2_zones
   module: uncategorized
   summary: ''
   transports:
     http:
-      name: POST /v2/zones/{zone_id}:suspend
-      source: src/nexus/server/api/v2/routers/zones.py:332
+      name: POST /v2/zones
+      source: src/nexus/server/api/v2/routers/zones.py:114
   profiles:
     lite: supported
     sandbox: supported
@@ -14613,6 +14732,125 @@ operations:
   perf_link: control-plane operation; tests/e2e/server/test_zone_routes_e2e.py
   gap_issue: null
   owning_issue: 4846
+- id: zones.{zone_id}
+  module: zone
+  summary: ''
+  transports:
+    http:
+      name: PATCH /v2/zones/{zone_id}
+      source: src/nexus/server/api/v2/routers/zones.py:294
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: zones.{zone_id}:resume
+  module: zone
+  summary: ''
+  transports:
+    http:
+      name: POST /v2/zones/{zone_id}:resume
+      source: src/nexus/server/api/v2/routers/zones.py:342
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: zones.{zone_id}:suspend
+  module: zone
+  summary: ''
+  transports:
+    http:
+      name: POST /v2/zones/{zone_id}:suspend
+      source: src/nexus/server/api/v2/routers/zones.py:332
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: zones.{zone_id}_grants
+  module: zone
+  summary: ''
+  transports:
+    http:
+      name: POST /v2/zones/{zone_id}/grants
+      source: src/nexus/server/api/v2/routers/zone_grants.py:102
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: zones.{zone_id}_grants_{grant_id}
+  module: zone
+  summary: ''
+  transports:
+    http:
+      name: GET /v2/zones/{zone_id}/grants/{grant_id}
+      source: src/nexus/server/api/v2/routers/zone_grants.py:183
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: zones.{zone_id}_joins
+  module: zone
+  summary: ''
+  transports:
+    http:
+      name: POST /v2/zones/{zone_id}/joins
+      source: src/nexus/server/api/v2/routers/zone_runtime.py:55
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: zones.{zone_id}_status
+  module: zone
+  summary: ''
+  transports:
+    http:
+      name: GET /v2/zones/{zone_id}/status
+      source: src/nexus/server/api/v2/routers/zones.py:271
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 parity_warnings:
 - operation_id: access_manifests.api_v2
   has:
@@ -15540,6 +15778,22 @@ parity_warnings:
   missing:
   - grpc_typed
   - http
+  - mcp
+  - sdk
+- operation_id: auth.zone_delegations
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: auth.zone_delegations_{delegation_id}
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
   - mcp
   - sdk
 - operation_id: auth_profiles.post
@@ -18718,6 +18972,38 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
+- operation_id: runtime.resume
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: runtime.runs_{pid}
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: runtime.runs_{pid}_cancel
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: runtime.start
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
 - operation_id: sandbox.cli
   has:
   - cli
@@ -19150,7 +19436,7 @@ parity_warnings:
   - grpc_typed
   - http
   - mcp
-- operation_id: sessions.v2_runtime
+- operation_id: sessions.v2_sessions
   has:
   - http
   missing:
@@ -19158,7 +19444,23 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: sessions.v2_sessions
+- operation_id: sessions.{session_id}
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: sessions.{session_id}_records
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: sessions.{session_id}_tasks_{task_id}
   has:
   - http
   missing:
@@ -20094,14 +20396,6 @@ parity_warnings:
   - http
   - mcp
   - sdk
-- operation_id: zone_grants.v2_auth
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
 - operation_id: zone_grants.v2_zone_capabilities
   has:
   - http
@@ -20110,7 +20404,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: zone_grants.v2_zone_operations
+- operation_id: zone_mounts.{mount_id}
   has:
   - http
   missing:
@@ -20118,7 +20412,7 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: zone_grants.v2_zones
+- operation_id: zone_operations.{operation_id}
   has:
   - http
   missing:
@@ -20143,14 +20437,6 @@ parity_warnings:
   - mcp
   - sdk
 - operation_id: zone_runtime.v2_zone_transfers
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
-- operation_id: zone_runtime.v2_zones
   has:
   - http
   missing:
@@ -20230,7 +20516,71 @@ parity_warnings:
   - http
   - mcp
   - sdk
+- operation_id: zone_transfers.{operation_id}
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
 - operation_id: zones.v2_zones
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: zones.{zone_id}
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: zones.{zone_id}:resume
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: zones.{zone_id}:suspend
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: zones.{zone_id}_grants
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: zones.{zone_id}_grants_{grant_id}
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: zones.{zone_id}_joins
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: zones.{zone_id}_status
   has:
   - http
   missing:

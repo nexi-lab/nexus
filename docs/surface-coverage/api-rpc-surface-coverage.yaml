@@ -1776,7 +1776,7 @@ operations:
   transports:
     http:
       name: POST /batch/read
-      source: src/nexus/server/api/v2/routers/async_files.py:2264
+      source: src/nexus/server/api/v2/routers/async_files.py:2189
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1795,7 +1795,7 @@ operations:
   transports:
     http:
       name: POST /batch/write
-      source: src/nexus/server/api/v2/routers/async_files.py:2178
+      source: src/nexus/server/api/v2/routers/async_files.py:2103
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1814,7 +1814,7 @@ operations:
   transports:
     http:
       name: POST /copy
-      source: src/nexus/server/api/v2/routers/async_files.py:2469
+      source: src/nexus/server/api/v2/routers/async_files.py:2394
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1833,7 +1833,7 @@ operations:
   transports:
     http:
       name: POST /copy-bulk
-      source: src/nexus/server/api/v2/routers/async_files.py:2579
+      source: src/nexus/server/api/v2/routers/async_files.py:2504
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1852,7 +1852,7 @@ operations:
   transports:
     http:
       name: DELETE /delete
-      source: src/nexus/server/api/v2/routers/async_files.py:1629
+      source: src/nexus/server/api/v2/routers/async_files.py:1554
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1870,7 +1870,7 @@ operations:
   transports:
     http:
       name: GET /exists
-      source: src/nexus/server/api/v2/routers/async_files.py:1741
+      source: src/nexus/server/api/v2/routers/async_files.py:1666
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1888,7 +1888,7 @@ operations:
   transports:
     http:
       name: GET /glob
-      source: src/nexus/server/api/v2/routers/async_files.py:2658
+      source: src/nexus/server/api/v2/routers/async_files.py:2583
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1906,7 +1906,7 @@ operations:
   transports:
     http:
       name: GET /grep
-      source: src/nexus/server/api/v2/routers/async_files.py:2717
+      source: src/nexus/server/api/v2/routers/async_files.py:2642
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1925,7 +1925,7 @@ operations:
   transports:
     http:
       name: GET /list
-      source: src/nexus/server/api/v2/routers/async_files.py:1778
+      source: src/nexus/server/api/v2/routers/async_files.py:1703
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1943,7 +1943,7 @@ operations:
   transports:
     http:
       name: GET /md-structure
-      source: src/nexus/server/api/v2/routers/async_files.py:1531
+      source: src/nexus/server/api/v2/routers/async_files.py:1456
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1961,7 +1961,7 @@ operations:
   transports:
     http:
       name: GET /metadata
-      source: src/nexus/server/api/v2/routers/async_files.py:2074
+      source: src/nexus/server/api/v2/routers/async_files.py:1999
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1979,7 +1979,7 @@ operations:
   transports:
     http:
       name: POST /mkdir
-      source: src/nexus/server/api/v2/routers/async_files.py:2030
+      source: src/nexus/server/api/v2/routers/async_files.py:1955
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1997,7 +1997,7 @@ operations:
   transports:
     http:
       name: GET /read
-      source: src/nexus/server/api/v2/routers/async_files.py:988
+      source: src/nexus/server/api/v2/routers/async_files.py:960
   profiles:
     lite: supported
     sandbox: unavailable
@@ -2015,7 +2015,7 @@ operations:
   transports:
     http:
       name: GET /read-url
-      source: src/nexus/server/api/v2/routers/async_files.py:1367
+      source: src/nexus/server/api/v2/routers/async_files.py:1292
   profiles:
     lite: supported
     sandbox: unavailable
@@ -2034,7 +2034,7 @@ operations:
   transports:
     http:
       name: POST /rename
-      source: src/nexus/server/api/v2/routers/async_files.py:2424
+      source: src/nexus/server/api/v2/routers/async_files.py:2349
   profiles:
     lite: supported
     sandbox: unavailable
@@ -2052,7 +2052,7 @@ operations:
   transports:
     http:
       name: POST /rename-batch
-      source: src/nexus/server/api/v2/routers/async_files.py:2536
+      source: src/nexus/server/api/v2/routers/async_files.py:2461
   profiles:
     lite: supported
     sandbox: unavailable
@@ -2070,7 +2070,7 @@ operations:
   transports:
     http:
       name: GET /stream
-      source: src/nexus/server/api/v2/routers/async_files.py:2343
+      source: src/nexus/server/api/v2/routers/async_files.py:2268
   profiles:
     lite: supported
     sandbox: unavailable
@@ -2088,7 +2088,7 @@ operations:
   transports:
     http:
       name: POST /write
-      source: src/nexus/server/api/v2/routers/async_files.py:754
+      source: src/nexus/server/api/v2/routers/async_files.py:726
   profiles:
     lite: supported
     sandbox: unavailable
@@ -4224,7 +4224,7 @@ operations:
   transports:
     http:
       name: GET /api/v2/features
-      source: src/nexus/server/api/core/features.py:53
+      source: src/nexus/server/api/core/features.py:52
   profiles:
     lite: supported
     sandbox: supported
@@ -4706,7 +4706,7 @@ operations:
       source: src/nexus/server/_kernel_syscall_dispatch.py:52
     grpc_expose:
       name: list
-      source: src/nexus/bricks/search/search_service.py:147
+      source: src/nexus/bricks/search/search_service.py:51
   profiles:
     lite: supported
     sandbox: supported
@@ -11437,7 +11437,7 @@ operations:
       source: src/nexus/cli/commands/search.py:76
     grpc_expose:
       name: glob
-      source: src/nexus/bricks/search/search_service.py:1245
+      source: src/nexus/bricks/search/search_service.py:80
     grpc_typed:
       name: SearchService.Glob
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:37
@@ -11468,7 +11468,7 @@ operations:
       source: src/nexus/cli/commands/search.py:267
     grpc_expose:
       name: grep
-      source: src/nexus/bricks/search/search_service.py:1257
+      source: src/nexus/bricks/search/search_service.py:92
     grpc_typed:
       name: SearchService.Grep
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:42
@@ -11947,7 +11947,7 @@ operations:
   transports:
     grpc_expose:
       name: semantic_search
-      source: src/nexus/bricks/search/search_service.py:1425
+      source: src/nexus/bricks/search/search_service.py:195
     mcp:
       name: nexus_semantic_search
       source: src/nexus/config/tool_profiles.yaml:1
@@ -11968,7 +11968,7 @@ operations:
   transports:
     grpc_expose:
       name: semantic_search_index
-      source: src/nexus/bricks/search/search_service.py:1504
+      source: src/nexus/bricks/search/search_service.py:274
   profiles:
     lite: supported
     sandbox: supported
@@ -11985,7 +11985,7 @@ operations:
   transports:
     grpc_expose:
       name: semantic_search_stats
-      source: src/nexus/bricks/search/search_service.py:1527
+      source: src/nexus/bricks/search/search_service.py:297
   profiles:
     lite: supported
     sandbox: supported

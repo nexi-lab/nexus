@@ -58,8 +58,7 @@ jobs:
             echo "run=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          git fetch --no-tags --prune origin "${{ github.base_ref }}"
-          git diff --name-only "origin/${{ github.base_ref }}"...HEAD > /tmp/changed_files.txt
+          git diff --name-only "${{ github.event.pull_request.base.sha }}"...HEAD > /tmp/changed_files.txt
           cat /tmp/changed_files.txt
           if grep -Eq '^(dockerfiles/(Dockerfile\.(local-connector-plugin|nexusd-cluster|federation-test)|docker-compose\.cc-tasks-peer-shared\.yml)|rust/(backends/local-connector|services/fuse-plugin|plugin-abi)/|Cargo\.toml$|Cargo\.lock$|tests/e2e/docker/(test_cc_tasks_peer_shared_e2e|cc_tasks_share_helpers|runbook_helpers)\.py$)' /tmp/changed_files.txt; then
             echo "run=true" >> "$GITHUB_OUTPUT"

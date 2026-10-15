@@ -2,7 +2,7 @@
 
 更新日期：2026 年 10 月 15 日。本文用于逐项评论、分配测试和记录结果。
 
-当前状态：索引超时修复的 [VFS PR #442](https://github.com/nexi-lab/nexus-vfs/pull/442) 已在 19 项 CI 全绿后合并；Search 清理和组合回归的 [Nexus PR #4902](https://github.com/nexi-lab/nexus/pull/4902) 已在 53 项 CI 通过、2 项跳过后合并。常规 daemon/cohost 的本地真实模型组合、managed agent 和发布镜像验收均已通过。生产用户 pod 使用的 `serve-user` 启动模式仍需单独补验，Nexus 自带人类账号注册登录的产品契约也待确认，整条主线尚未 code complete。腾讯云部署等这些代码与验收收齐后再讨论。
+当前状态：索引超时修复的 [VFS PR #442](https://github.com/nexi-lab/nexus-vfs/pull/442) 已在 19 项 CI 全绿后合并；Search 清理和组合回归的 [Nexus PR #4902](https://github.com/nexi-lab/nexus/pull/4902) 已在 53 项 CI 通过、2 项跳过后合并。常规 daemon/cohost 的本地真实模型组合、managed agent 和发布镜像验收均已通过。固定 owner 的 `serve-user` 模式新发现的授权缺口已修复，本地真实 scode cohost 加 ONNX 模型的重启回归通过；[VFS PR #443](https://github.com/nexi-lab/nexus-vfs/pull/443) 正在执行 CI，Nexus 依赖也同步集成。Nexus 自带人类账号注册登录的产品契约仍待确认，整条主线尚未 code complete。腾讯云部署等这些代码与验收收齐后再讨论。
 
 ## 一、范围和完成标准
 
@@ -39,7 +39,7 @@ Graph HTTP API、调用方和 Zoekt 索引/诊断已清理。当前 Search 不�
 | SEARCH-13 | Stream 追加与裁剪 | 单文件/内联索引后再执行目录索引；追加只增加尾部 chunk，裁剪后旧内容消失，路径删除后重建从正确位置开始。 | 待安排 |
 | SEARCH-14 | 目录注册与索引模式 | 注册、重复注册、列出、删除、重复删除；检查幂等响应和原有时间事实。修改模式后重启，持久配置保持一致。 | 待安排 |
 | SEARCH-15 | path-context 排序配置 | 管理员设置、列出、替换、清除权重。检查排序归因变化和请求权重覆盖；普通读者不能修改配置。配置来自同一个持久表。 | 待安排 |
-| SEARCH-16 | 用户与 agent 的授权隔离 | A/B 分别只有自己文件的读取关系。通过各入口查询，互不可见；普通读者索引、管理和诊断请求返回 403，非法或撤销凭证返回 401。 | 待安排 |
+| SEARCH-16 | 用户与 agent 的授权隔离 | 共享 cluster 中，A/B 分别只有自己文件的读取关系。通过各入口查询，互不可见；普通读者索引、管理和诊断请求返回 403，非法或撤销凭证返回 401。固定 owner 的私有 Kernel 使用 SEARCH-25 的管理契约。 | 待安排 |
 | SEARCH-17 | 缓存命中后的撤销 | 先预热 Query/Locate，再撤销路径关系或 API key。后续请求不能返回缓存中的旧授权结果。 | 待安排 |
 | SEARCH-18 | 完整调用链的凭证传递 | 分别跑 HTTP、直接 gRPC、Python SDK、CLI、MCP 和 TUI。显式坏 bearer 即使搭配有效节点证书也必须失败；证书 agent 使用自己的身份。 | 待安排 |
 | SEARCH-19 | 慢索引、过载与取消 | 控制 embedding 延迟超过查询预算。已接受索引应能完成并返回实际回执；取消后容量仍属于未结束的工作。过载返回 429/Retry-After，最终容量恢复。 | 待安排 |
@@ -48,7 +48,7 @@ Graph HTTP API、调用方和 Zoekt 索引/诊断已清理。当前 Search 不�
 | SEARCH-22 | TUI 展示与错误 | 在真实 worker 和终端渲染中查询、管理索引、撤销权限。核对路径、zone、片段、截断标记；失败显示错误，不能伪装成“无结果”。 | 待安排 |
 | SEARCH-23 | 实际 scode/cohost 装配 | 用实际 scode 与 cohost 产物，在所属 Kernel 的工作区执行文件操作与 Search，核对原有证书/委托身份、跨会话隔离及撤销。 | 待安排 |
 | SEARCH-24 | Python 退役与协议 SSOT | 验证旧 Search 路由/算法不再注册或被调用；生成绑定匹配唯一 VFS proto；浏览器身份入口和残余 server 调用方有明确归属。 | 待安排 |
-| SEARCH-25 | `serve-user` 固定 owner 模式 | 使用外部颁发的短期 runtime/session 证书和签名 Search 插件；所属 owner 可管理私有索引，其他 owner 被拒绝；显式坏凭证不得被证书覆盖；重启恢复已提交索引，瞬态计数归零。保留该模式对集群管理、HTTP listener 和 CA 签发权的限制。 | 补自动回归中 |
+| SEARCH-25 | `serve-user` 固定 owner 模式 | 使用外部颁发的短期 runtime/session 证书和签名 Search 插件；所属 owner 可管理私有索引，其他 owner 被拒绝；显式坏凭证不得被证书覆盖；重启恢复已提交索引，瞬态计数归零。保留该模式对集群管理、HTTP listener 和 CA 签发权的限制。 | 本地自动回归通过，CI 待完成；人工待安排 |
 
 ## 三、2026 年 10 月 14 日已完成的本地验证
 
@@ -96,6 +96,10 @@ Graph HTTP API、调用方和 Zoekt 索引/诊断已清理。当前 Search 不�
 | 全仓 Ruff 与 Linux 平台 mypy | 通过 | 类型检查覆盖 1389 个源码文件；pre-commit 边界检查也通过 |
 | 实际 nexusd-cohost 候选装配 | 常规模式全部通过 | 同一实际 cohost 产物承载 Search；完整真实模型、身份、CLI/MCP/SDK、证书 agent 和 TUI 组合全部通过；`serve-user` 模式另验 |
 | 实际 cohost managed agent 流程 | 通过 | 本地脚本模型，经模型挂载运行；消息回复、委托上下文、持久会话恢复到新进程均通过 |
+| `serve-user` 授权缺口修复前后 | 修复前稳定失败，修复后通过 | 原 owner 对自己的文件执行索引返回 403；现按既有 RuntimeScope 验证身份并管理私有 Kernel 索引，不授予 admin/system |
+| 固定 owner 及共享集群回归 | 通过 | 71 个 cluster 库测试、75 个 transport 库测试；签名 Search 授权目标 5 通过，user-runtime 目标 11 通过、2 跳过；总数含公共 fixture 测试，不当作独立业务场景数 |
+| 实际 scode `serve-user` 加真实模型 | 通过 | 实际 cohost、外部 mTLS、签名插件；keyword/semantic/hybrid 在重启前后均命中；其他 owner、显式坏凭证和外部配置拒绝检查通过 |
+| 固定 owner 修复的 Rust 静态检查 | 通过 | transport 与 nexus-cluster 全 targets/features 的 clippy（`-D warnings`）、fmt 和 diff 检查 |
 | API/RPC surface 清单回归 | 208 通过，2 跳过 | 同步删除代码后的源码位置，工作流改接当前 typed Search 客户端测试 |
 | 发布镜像 Linux CI 中的 Search 组合验收 | 全部通过 | 真实模型、权限、SDK、CLI、证书 agent；HERB 8/8，查询 p50=50.0ms；TUI 6 通过、75 次断言，模型用例实际执行 |
 | PR 最终完整自包含 E2E | 638 通过，134 跳过 | 最终代码的实际 CI 结果；跳过项不计为通过；Search 专项另由签名插件、真实模型和身份组合验收保护 |
@@ -115,11 +119,17 @@ Graph HTTP API、调用方和 Zoekt 索引/诊断已清理。当前 Search 不�
 - `scode-cohost-managed-20261015.log`：实际 managed agent 验收，包含 `COHOST E2E OK`。
 - `cohost-search-final-20261015/run-1792047620020935000/results.json`：最终客户端源码的完整 cohost 复验，全部成功。
 - `cohost-search-artifact-sha256-20261015.json` 与 `scode-search-candidate-Cargo.lock`：已测候选产物和完整依赖证据。
+- `serve-user-search-regression-before-20261015.log`、`serve-user-search-regression-fixed-20261015.log`：owner 索引 403 的真实修复前后对照。
+- `serve-user-search-final-tests-20261015.log`、`serve-user-search-clippy-fixed-20261015.log`：固定 owner 修复的完整相关测试和静态检查。
+- `scode-serve-user-real-model-20261015.log`：实际 cohost 的固定 owner 模式和真实三种查询模式重启验收。
+- `scode-confined-search-build-verified-20261015.log`、`scode-confined-search-artifact-20261015.json`：10 个直接 VFS 依赖统一源码图校验，及本次 cohost SHA-256 `5ed0f3321bb36cd80850aa6dc99ec8db1c348e52fce1c85cb47dff4103e526bb`。
 - Nexus [PR #4902](https://github.com/nexi-lab/nexus/pull/4902)：代码清理和 CI 集成；[发布镜像 Search E2E](https://github.com/nexi-lab/nexus/actions/runs/38695711127/job/116292919317) 与[完整自包含 E2E](https://github.com/nexi-lab/nexus/actions/runs/38695711296/job/116292290200) 均通过。合并提交 `cab9e1661ac27ae19ace6e94e166157f33bdc5f2`。
 
 scode 候选基线为 `94088bd7`（0.2.31）。本地将其全部 VFS Git 依赖统一映射到同一候选 checkout，包含本次已合并的超时修复。没有修改 scode 的正式发布 tag、替换本机安装、访问生产，也没有把候选验证写成已发布产物验收。managed agent 使用脚本模型验证真实运行链路；真实 ONNX 检索模型则由 Search 组合验收执行。
 
-补验边界：`serve-user` 使用固定 owner 与外部证书，禁止启用集群管理能力和 HTTP listener。现有常规 cohost 组合结果不能代替该启动模式的 Search 验收。已开始增加真实 daemon、签名插件、owner 隔离和重启回归；在结果收齐前不宣告这部分完成。
+`serve-user` 使用固定 owner 与外部证书，禁止启用集群管理能力和 HTTP listener。Search 直接使用已有 RuntimeScope 解析出的原始 session 身份，避免重复认证丢失委托上下文；私有索引管理不要求集群管理员。外部 path-context SQL 配置的写权限仍要求管理员，证书身份也不能枚举未授权的配置。共享 cluster 的原有管理权限保持有效。未修改 Kernel syscall、插件 ABI、proto 或 Raft 行为。
+
+这次本地 cohost 候选包含 VFS `846bd8aaa7ea29ab813a0991bdf2c4be969c8964` 的相同源码；它不是已发布 scode 版本。正式 scode 仍通过匹配的 VFS release tag 选择依赖，需要在对应发布完成后再验收正式产物，不能将本地 patch graph 当作发布证据。
 
 ### 账号入口的范围说明
 
@@ -175,6 +185,7 @@ DELETE 不带 JSON body；它移除索引，VFS 文件仍然存在。
 - `packages/nexus-tui/tests/e2e/native-search.test.tsx`：真实 worker 与终端渲染；模型 fixture 必须提供，否则相应用例会跳过。
 - `tests/e2e/self_contained/test_search_surface_live_e2e.py`：文件写入/索引/查询及管理员重建。
 - VFS `rust/profiles/cluster/tests/production_index_admission.rs`：真实 daemon、HTTP、mTLS、容量、取消、重启。
+- VFS `rust/profiles/cluster/tests/user_runtime.rs` 的 `signed_search_keeps_the_owner_boundary_and_reopens_committed_indexes`：固定 owner、真实签名插件、外部 mTLS 和重启；已进入现有全 workspace CI。
 
 CI 已覆盖现有入口。PR #442 将受控慢索引和交互超时回归放入现有 Rust CI；本轮 Nexus 修改将真实模型与权限调用方装到同一 CI fixture，保护组合行为。以最终提交上的实际执行结果验收。
 
@@ -196,6 +207,16 @@ python scripts/test_search_local.py `
 
 只验证关键词链路时，用 `--keyword-only` 替换 `--model-dir` 和 `--ort-library`；该模式不算语义验收。加入 `--serve` 可保留准备好的隔离 fixture 做手动测试，按 Ctrl-C 后清理；该模式无需 Bun。不要将该脚本指向生产。
 
+### 固定 owner 模式的回归
+
+在与候选 cohost 使用同一 VFS 源码的 checkout 中运行：
+
+```text
+cargo test -p nexus-cluster --all-features --test user_runtime signed_search_keeps_the_owner_boundary_and_reopens_committed_indexes -- --nocapture
+```
+
+默认运行刚编译的 cluster 与确定性关键词 fixture。设置 `NEXUS_SEARCH_USER_RUNTIME_BINARY` 为实际 cohost 路径即可复用同一个真实链路；提供 `NEXUS_SEARCH_E2E_MODEL_DIR` 和平台对应的 ORT 动态库配置后，测试会实际断言 keyword、semantic、hybrid 在重启前后的结果。没有模型时，只算关键词验收。该模式没有 HTTP listener，前面的 HTTP 本地 runner 不能代替此项。
+
 ## 六、代码与验收待办
 
 | 编号 | 待办 | 完成证据 | 状态 |
@@ -204,9 +225,9 @@ python scripts/test_search_local.py `
 | CODE-02 | CI 保护慢索引、取消与真实提交回执 | 最终提交 CI 全绿，实际执行相应用例 | 已完成；VFS 19 项、Nexus 53 项通过 |
 | CODE-03 | 原生化后残余 Search 代码与文档清理 | 重复列表/SQL 分支和失效配置删除；架构文档与源码一致 | 已合并；Nexus PR #4902 |
 | CODE-04 | 浏览器登录/OAuth cookie 及剩余 server 调用方归属 | 保留现有身份 SSOT，替换或移除重复服务端入口后再退役 server | 待完成 |
-| CODE-05 | `serve-user` 下的 Search 装配与授权契约 | 使用固定 owner 的私有数据边界，避免要求集群管理员权限；不扩张运行时权限或增加 Kernel ABI | 补真实回归中 |
+| CODE-05 | `serve-user` 下的 Search 装配与授权契约 | 使用固定 owner 的私有数据边界；本地签名插件、owner 隔离、委托身份和真实模型重启全部通过 | VFS PR #443 的 CI 及 Nexus 依赖集成中 |
 | TEST-01 | 完整本地组合验收 | CLI、证书 agent、真实模型 TUI 全部实际执行并通过 | 已通过，含清理后实际 cohost 组合 |
-| TEST-02 | 实际 scode/cohost 本地验收 | 实际产物、所属 Kernel、原有身份和工作区的完整链路 | 常规模式本地候选通过；`serve-user` 与正式发布产物尚未验收 |
+| TEST-02 | 实际 scode/cohost 本地验收 | 实际产物、所属 Kernel、原有身份和工作区的完整链路 | 常规模式与 `serve-user` 的本地候选均通过；正式发布产物尚未验收 |
 
 ## 七、评论和结果模板
 

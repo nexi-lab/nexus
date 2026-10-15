@@ -197,6 +197,10 @@ credentials fail even alongside a valid node certificate. Zone selectors do not 
 <p>Query and discovery authorize candidates before returning paths or snippets. Glob/grep additionally
 obey directory traversal requirements. Indexing, administration and diagnostics require their own
 permissions. Revocation remains effective after warming query and Locate caches.</p>
+<p>In <code>serve-user</code>, the existing <code>RuntimeScope</code> resolves the original
+owner/session context once. That validated owner may manage the private Kernel's Search index
+without admin/system flags. Shared-cluster index management retains its administrator gate.
+External path-context SQL configuration retains its separate authorization requirements.</p>
 
 <h2 id="http">4. HTTP and clients</h2>
 <p>The optional Rust axum listener exposes <code>/v2/search/*</code>, <code>/v2/documents/*</code>,
@@ -236,6 +240,11 @@ manual testing against the same prepared fixture.</p>
 interactive timeout boundary. It checks accepted work, cancellation, capacity, real receipts and
 restart queries. HTTP tests use a stalled TCP service to check Query/BatchQuery deadline mapping.
 Published-artifact CI combines real embeddings with the authenticated caller journeys.</p>
+<p>The signed Search journey in <code>user_runtime.rs</code> checks fixed-owner authorization,
+foreign-owner refusal and committed-index recovery using the real daemon and external mTLS.
+It can select the actual scode cohost binary and real ONNX assets; with those assets it asserts
+keyword, semantic and hybrid queries before and after restart. The normal HTTP runner covers
+a different startup mode: <code>serve-user</code> has no HTTP listener.</p>
 
 <h2 id="profiles">8. Assembly</h2>
 <p>Search follows the data-owning Kernel. A scode cohost composes the same cluster services through

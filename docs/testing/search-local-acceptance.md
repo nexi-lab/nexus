@@ -2,7 +2,7 @@
 
 更新日期：2026 年 10 月 15 日。本文用于逐项评论、分配测试和记录结果。
 
-当前状态：已交付 Rust Search 及主要调用方迁移；索引超时修复的 [VFS PR #442](https://github.com/nexi-lab/nexus-vfs/pull/442) 已在 19 项 CI 全绿后合并。本地真实模型组合、实际 scode/cohost 候选装配与 managed agent 流程已通过。剩余 Nexus 清理的最终 CI 和浏览器身份入口范围尚未收齐，整条主线尚未 code complete。腾讯云部署等代码、CI 和本地验收收齐后再讨论。
+当前状态：索引超时修复的 [VFS PR #442](https://github.com/nexi-lab/nexus-vfs/pull/442) 已在 19 项 CI 全绿后合并；Search 清理和组合回归的 [Nexus PR #4902](https://github.com/nexi-lab/nexus/pull/4902) 已在 53 项 CI 通过、2 项跳过后合并。本地真实模型组合、实际 scode/cohost 候选装配、managed agent 和发布镜像验收均已通过。Nexus 自带人类账号注册登录的产品契约仍待确认，整条主线尚未 code complete。腾讯云部署等这部分代码与验收收齐后再讨论。
 
 ## 一、范围和完成标准
 
@@ -95,6 +95,10 @@ Graph HTTP API、调用方和 Zoekt 索引/诊断已清理。当前 Search 不�
 | 全仓 Ruff 与 Linux 平台 mypy | 通过 | 类型检查覆盖 1389 个源码文件；pre-commit 边界检查也通过 |
 | 实际 nexusd-cohost 候选装配 | 全部通过 | 同一实际 cohost 产物承载 Search；完整真实模型、身份、CLI/MCP/SDK、证书 agent 和 TUI 组合全部通过 |
 | 实际 cohost managed agent 流程 | 通过 | 本地脚本模型，经模型挂载运行；消息回复、委托上下文、持久会话恢复到新进程均通过 |
+| API/RPC surface 清单回归 | 208 通过，2 跳过 | 同步删除代码后的源码位置，工作流改接当前 typed Search 客户端测试 |
+| 发布镜像 Linux CI 中的 Search 组合验收 | 全部通过 | 真实模型、权限、SDK、CLI、证书 agent；HERB 8/8，查询 p50=50.0ms；TUI 6 通过、75 次断言，模型用例实际执行 |
+| PR 最终完整自包含 E2E | 638 通过，134 跳过 | 最终代码的实际 CI 结果；跳过项不计为通过；Search 专项另由签名插件、真实模型和身份组合验收保护 |
+| PR 最终全套检查 | 53 通过，2 个 job 跳过 | 最终 head `ff0481994adf13d64638f6010b726edda3e864cd`，复核无冲突后普通 merge，保留两个源提交 |
 
 第一次 TUI 运行暴露了旧测试中“hybrid 必须不可用”的断言。该断言依赖没有配置模型，与目录遍历拒绝无关，已移除。目录遍历拒绝检查仍保留，另一个真实模型用例验证 semantic/hybrid 成功。保留首次失败日志和修复后日志，不以盲目重跑代替修复。
 
@@ -108,8 +112,19 @@ Graph HTTP API、调用方和 Zoekt 索引/诊断已清理。当前 Search 不�
 - 模型和 ORT 字节已校验；使用的模型 revision 与上一轮相同。
 - `cohost-search-local-20261015/run-1792020455582786100/results.json`：实际 cohost 的完整 Search 组合验收。
 - `scode-cohost-managed-20261015.log`：实际 managed agent 验收，包含 `COHOST E2E OK`。
+- `cohost-search-final-20261015/run-1792047620020935000/results.json`：最终客户端源码的完整 cohost 复验，全部成功。
+- `cohost-search-artifact-sha256-20261015.json` 与 `scode-search-candidate-Cargo.lock`：已测候选产物和完整依赖证据。
+- Nexus [PR #4902](https://github.com/nexi-lab/nexus/pull/4902)：代码清理和 CI 集成；[发布镜像 Search E2E](https://github.com/nexi-lab/nexus/actions/runs/38695711127/job/116292919317) 与[完整自包含 E2E](https://github.com/nexi-lab/nexus/actions/runs/38695711296/job/116292290200) 均通过。合并提交 `cab9e1661ac27ae19ace6e94e166157f33bdc5f2`。
 
 scode 候选基线为 `94088bd7`（0.2.31）。本地将其全部 VFS Git 依赖统一映射到同一候选 checkout，包含本次已合并的超时修复。没有修改 scode 的正式发布 tag、替换本机安装、访问生产，也没有把候选验证写成已发布产物验收。managed agent 使用脚本模型验证真实运行链路；真实 ONNX 检索模型则由 Search 组合验收执行。
+
+### 账号入口的范围说明
+
+“Nexus 自带登录入口”指 Python server 的 `/auth/register`、`/auth/login`、`/auth/oauth/google/authorize` 等接口，以及其自己的用户表。它不是“环境 cluster 与 agent pod cluster”这两套部署的划分。
+
+2026-10-15 对腾讯云进行了只读核对：Moss 当前活动数据库中有 116 条账号记录，使用 Moss 自己的身份表；Moss VM 上未发现独立 Nexus Python 登录服务。现有权限内的 `moss-sessions` namespace 运行多种 gVisor 镜像。查询没有改动生产配置、数据或部署，也没有读取账号内容或口令。
+
+这些事实不能证明所有环境都没有 Nexus 自带登录入口的用户。Moss 现有用户与 agent 身份必须保留；Nexus 自带入口的保留/删除/迁移范围仍待对齐。当前代码里，TUI 的 `/auth/me` 身份展示也是需要处理的调用方。整条主线不能据此提前宣告完成。
 
 ## 五、本地环境准备
 
@@ -183,8 +198,8 @@ python scripts/test_search_local.py `
 | 编号 | 待办 | 完成证据 | 状态 |
 |---|---|---|---|
 | CODE-01 | 修复索引超时的契约边界 | 受控慢操作在修复前失败、修复后通过；交互请求仍有明确预算 | 已合并；VFS PR #442 |
-| CODE-02 | CI 保护慢索引、取消与真实提交回执 | 最终提交 CI 全绿，实际执行相应用例 | VFS 19 项全绿；Nexus 集成待最终 CI |
-| CODE-03 | 原生化后残余代码与文档清理 | 旧路由/算法无注册和调用；架构文档与源码一致 | 本地完成，待最终 CI/合并 |
+| CODE-02 | CI 保护慢索引、取消与真实提交回执 | 最终提交 CI 全绿，实际执行相应用例 | 已完成；VFS 19 项、Nexus 53 项通过 |
+| CODE-03 | 原生化后残余 Search 代码与文档清理 | 重复列表/SQL 分支和失效配置删除；架构文档与源码一致 | 已合并；Nexus PR #4902 |
 | CODE-04 | 浏览器登录/OAuth cookie 及剩余 server 调用方归属 | 保留现有身份 SSOT，替换或移除重复服务端入口后再退役 server | 待完成 |
 | TEST-01 | 完整本地组合验收 | CLI、证书 agent、真实模型 TUI 全部实际执行并通过 | 已通过，含清理后实际 cohost 组合 |
 | TEST-02 | 实际 scode/cohost 本地验收 | 实际产物、所属 Kernel、原有身份和工作区的完整链路 | 本地候选已通过；正式发布产物尚未验收 |

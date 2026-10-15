@@ -11462,7 +11462,7 @@ operations:
   transports:
     grpc_typed:
       name: SearchService.AddIndexedDirectory
-      source: src/nexus/grpc/search/v1/search_pb2_grpc.py:102
+      source: src/nexus/grpc/search/v1/search_pb2_grpc.py:97
     http:
       name: POST /v2/documents/directories
       source: packages/nexus-api-client/src/indexing-client.ts:120
@@ -11513,23 +11513,6 @@ operations:
   perf_link: thin HTTP CLI wrapper; query/index performance belongs to the Rust backend
   gap_issue: null
   owning_issue: 4129
-- id: search.delete_path_context
-  module: search
-  summary: ''
-  transports:
-    grpc_typed:
-      name: SearchService.DeletePathContext
-      source: src/nexus/grpc/search/v1/search_pb2_grpc.py:147
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
 - id: search.glob
   module: search
   summary: Find accessible file paths by glob pattern across CLI, HTTP, RPC, and MCP surfaces.
@@ -11598,7 +11581,7 @@ operations:
   transports:
     grpc_typed:
       name: SearchService.Health
-      source: src/nexus/grpc/search/v1/search_pb2_grpc.py:127
+      source: src/nexus/grpc/search/v1/search_pb2_grpc.py:122
     http:
       name: GET /v2/search/health
       source: packages/nexus-api-client/src/search-client.ts:93
@@ -11656,9 +11639,6 @@ operations:
   module: search
   summary: Index current VFS file bytes in the file's owning zone.
   transports:
-    grpc_typed:
-      name: SearchService.IndexFile
-      source: src/nexus/grpc/search/v1/search_pb2_grpc.py:72
     http:
       name: POST /v2/documents/file
       source: packages/nexus-api-client/src/indexing-client.ts:91
@@ -11678,7 +11658,7 @@ operations:
   transports:
     grpc_typed:
       name: SearchService.ListIndexedDirectories
-      source: src/nexus/grpc/search/v1/search_pb2_grpc.py:112
+      source: src/nexus/grpc/search/v1/search_pb2_grpc.py:107
     http:
       name: GET /v2/documents/directories
       source: packages/nexus-api-client/src/indexing-client.ts:114
@@ -11692,30 +11672,13 @@ operations:
   perf_link: scripts/test_search_credentials_plugin.py
   gap_issue: null
   owning_issue: 4135
-- id: search.list_path_contexts
-  module: search
-  summary: ''
-  transports:
-    grpc_typed:
-      name: SearchService.ListPathContexts
-      source: src/nexus/grpc/search/v1/search_pb2_grpc.py:142
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
 - id: search.list_zone_indexing_modes
   module: search
   summary: Read the host's configured zone modes under management authority.
   transports:
     grpc_typed:
       name: SearchService.ListZoneIndexingModes
-      source: src/nexus/grpc/search/v1/search_pb2_grpc.py:122
+      source: src/nexus/grpc/search/v1/search_pb2_grpc.py:117
     http:
       name: GET /v2/documents/indexing-modes
       source: packages/nexus-api-client/src/indexing-client.ts:139
@@ -11735,7 +11698,7 @@ operations:
   transports:
     grpc_typed:
       name: SearchService.Locate
-      source: src/nexus/grpc/search/v1/search_pb2_grpc.py:82
+      source: src/nexus/grpc/search/v1/search_pb2_grpc.py:77
     http:
       name: POST /v2/search/locate
       source: packages/nexus-api-client/src/search-client.ts:97
@@ -11755,7 +11718,7 @@ operations:
   transports:
     grpc_typed:
       name: SearchService.NotifyFileChange
-      source: src/nexus/grpc/search/v1/search_pb2_grpc.py:77
+      source: src/nexus/grpc/search/v1/search_pb2_grpc.py:72
     http:
       name: DELETE /v2/documents/file
       source: packages/nexus-api-client/src/indexing-client.ts:108
@@ -11775,7 +11738,7 @@ operations:
   transports:
     grpc_typed:
       name: SearchService.ParkedDiscard
-      source: src/nexus/grpc/search/v1/search_pb2_grpc.py:97
+      source: src/nexus/grpc/search/v1/search_pb2_grpc.py:92
   profiles:
     lite: unverified
     sandbox: unverified
@@ -11792,7 +11755,7 @@ operations:
   transports:
     grpc_typed:
       name: SearchService.ParkedList
-      source: src/nexus/grpc/search/v1/search_pb2_grpc.py:87
+      source: src/nexus/grpc/search/v1/search_pb2_grpc.py:82
   profiles:
     lite: unverified
     sandbox: unverified
@@ -11809,24 +11772,7 @@ operations:
   transports:
     grpc_typed:
       name: SearchService.ParkedRetry
-      source: src/nexus/grpc/search/v1/search_pb2_grpc.py:92
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: search.put_path_context
-  module: search
-  summary: ''
-  transports:
-    grpc_typed:
-      name: SearchService.PutPathContext
-      source: src/nexus/grpc/search/v1/search_pb2_grpc.py:137
+      source: src/nexus/grpc/search/v1/search_pb2_grpc.py:87
   profiles:
     lite: unverified
     sandbox: unverified
@@ -11901,7 +11847,7 @@ operations:
   transports:
     grpc_typed:
       name: SearchService.RemoveIndexedDirectory
-      source: src/nexus/grpc/search/v1/search_pb2_grpc.py:107
+      source: src/nexus/grpc/search/v1/search_pb2_grpc.py:102
     http:
       name: DELETE /v2/documents/directories
       source: packages/nexus-api-client/src/indexing-client.ts:126
@@ -11921,7 +11867,7 @@ operations:
   transports:
     grpc_typed:
       name: SearchService.SetZoneIndexingMode
-      source: src/nexus/grpc/search/v1/search_pb2_grpc.py:117
+      source: src/nexus/grpc/search/v1/search_pb2_grpc.py:112
     http:
       name: PUT /v2/documents/indexing-modes
       source: packages/nexus-api-client/src/indexing-client.ts:133
@@ -11944,7 +11890,7 @@ operations:
       source: src/nexus/cli/commands/search.py:677
     grpc_typed:
       name: SearchService.Stats
-      source: src/nexus/grpc/search/v1/search_pb2_grpc.py:132
+      source: src/nexus/grpc/search/v1/search_pb2_grpc.py:127
     http:
       name: GET /v2/documents/stats
       source: packages/nexus-api-client/src/indexing-client.ts:78
@@ -19223,14 +19169,6 @@ parity_warnings:
   - http
   - mcp
   - sdk
-- operation_id: search.delete_path_context
-  has:
-  - grpc_typed
-  missing:
-  - cli
-  - http
-  - mcp
-  - sdk
 - operation_id: search.glob
   has:
   - cli
@@ -19273,10 +19211,10 @@ parity_warnings:
   - sdk
 - operation_id: search.index_file
   has:
-  - grpc_typed
   - http
   missing:
   - cli
+  - grpc_typed
   - mcp
   - sdk
 - operation_id: search.list_indexed_directories
@@ -19285,14 +19223,6 @@ parity_warnings:
   - http
   missing:
   - cli
-  - mcp
-  - sdk
-- operation_id: search.list_path_contexts
-  has:
-  - grpc_typed
-  missing:
-  - cli
-  - http
   - mcp
   - sdk
 - operation_id: search.list_zone_indexing_modes
@@ -19336,14 +19266,6 @@ parity_warnings:
   - mcp
   - sdk
 - operation_id: search.parked_retry
-  has:
-  - grpc_typed
-  missing:
-  - cli
-  - http
-  - mcp
-  - sdk
-- operation_id: search.put_path_context
   has:
   - grpc_typed
   missing:

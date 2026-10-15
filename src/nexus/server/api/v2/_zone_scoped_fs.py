@@ -335,9 +335,6 @@ class _ZoneScopedSearch:
         )
         return self._view._unscope_entries(list(result)) if result is not None else result
 
-    def resolve_physical_path(self, path: str, *args: Any, **kwargs: Any) -> Any:
-        return self._svc.resolve_physical_path(self._view.scope(path), *args, **kwargs)
-
     def __getattr__(self, name: str) -> Any:
         return getattr(self._svc, name)
 

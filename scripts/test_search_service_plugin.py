@@ -10,18 +10,12 @@ import asyncio
 import os
 from pathlib import Path
 from types import SimpleNamespace
-from typing import NoReturn
 from uuid import uuid4
 
 from nexus.bricks.search.daemon import SearchDaemon
 from nexus.bricks.search.search_service import SearchService
 from nexus.lib.request_credentials import request_api_key
 from nexus.remote.rpc_transport import RPCTransport
-
-
-class NoSqlSearch:
-    def session_factory(self) -> NoReturn:
-        raise AssertionError("Indexed search must not read the SQL record store")
 
 
 async def main() -> None:
@@ -36,9 +30,7 @@ async def main() -> None:
     text = "marigold constellation search contract"
     transport = RPCTransport(target, auth_token=admin, tls_config=tls, timeout=15)
     daemon = SearchDaemon(target=target)
-    service = SearchService(
-        metadata_store=transport, record_store=NoSqlSearch(), enforce_permissions=False
-    )
+    service = SearchService(kernel=transport)
     created = False
     context = SimpleNamespace(zone_id="sharedzone")
     credential_scope = request_api_key.set(admin)
@@ -80,7 +72,6 @@ async def main() -> None:
         if created:
             await asyncio.to_thread(transport.delete_file, path)
             await daemon.notify_file_change(path, "delete", zone_id="sharedzone")
-        service.close()
         await daemon.shutdown()
         transport.close()
         request_api_key.reset(credential_scope)

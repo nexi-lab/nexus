@@ -2,7 +2,6 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
-from unittest.mock import MagicMock
 
 import grpc
 import pytest
@@ -86,20 +85,10 @@ def indexed():
         transport = RPCTransport(f"127.0.0.1:{port}", auth_token="operator-key")
         kernel = KernelClient(server_address=f"127.0.0.1:{port}")
         kernel._transport = transport
-        enforcer = MagicMock()
-        records = MagicMock()
-        service = SearchService(
-            metadata_store=kernel,
-            permission_enforcer=enforcer,
-            record_store=records,
-        )
+        service = SearchService(kernel=kernel)
         try:
             yield host, transport, RemoteServiceProxy(transport.call_rpc, "search"), service
-            enforcer.assert_not_called()
-            assert not enforcer.method_calls
-            records.session_factory.assert_not_called()
         finally:
-            service.close()
             kernel.close()
             server.stop(0).wait()
 

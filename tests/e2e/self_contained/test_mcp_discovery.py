@@ -120,13 +120,12 @@ def discovery():
         port = server.add_insecure_port("127.0.0.1:0")
         server.start()
         kernel = KernelClient(server_address=f"127.0.0.1:{port}", auth_token="ambient-admin")
-        service = SearchService(metadata_store=kernel, enforce_permissions=False)
+        service = SearchService(kernel=kernel)
         nx = SearchNexus(service)
         try:
             kernel.open()
             yield host, nx
         finally:
-            service.close()
             kernel.close()
             server.stop(0).wait()
 

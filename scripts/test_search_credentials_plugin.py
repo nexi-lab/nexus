@@ -141,7 +141,7 @@ async def main() -> None:
                     for name, key in keys.items()
                 }
             )
-            service = SearchService(metadata_store=transport)
+            service = SearchService(kernel=transport)
 
             class Services:
                 def service(self, name):

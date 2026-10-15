@@ -134,6 +134,26 @@ def _stats(live: LiveSearchApp, *, max_wall_ms: float) -> dict[str, Any]:
     return result
 
 
+def test_display_path_read_uses_vfs(live_search_app: LiveSearchApp) -> None:
+    live = live_search_app
+    path = "/mnt/display/message.md"
+    content = "# Visible\n\nmarigold message\n"
+    live.nx.mkdir("/mnt/display", parents=True, exist_ok=True)
+    live.nx.write(path, content.encode())
+    response, body = _request(
+        live, "get", "/api/v2/files/read", params={"path": path, "include_metadata": True}
+    )
+    assert response.status_code == 200, body
+    assert body["content"] == content
+    assert body["size"] == len(content.encode())
+    assert body["content_id"]
+    response, body = _request(
+        live, "get", "/api/v2/files/read", params={"path": path, "section": "Missing"}
+    )
+    assert response.status_code == 404, body
+    assert content not in response.text
+
+
 def test_live_write_to_searchable_contract(live_search_app: LiveSearchApp) -> None:
     """#4736 acceptance, against the real kernel + worktree plugin.
 
@@ -149,6 +169,8 @@ def test_live_write_to_searchable_contract(live_search_app: LiveSearchApp) -> No
 
     live.nx.mkdir("/ws", exist_ok=True)
     live.nx.write("/ws/doc.md", b"zebrafish sentinel document\n")
+
+    assert "/ws/doc.md" in live.nx.service("search").list("/ws", recursive=True)
 
     # Read and index the current VFS file in its owning Kernel.
     r, body = _request(

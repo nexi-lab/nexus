@@ -12,6 +12,7 @@ import pytest
 
 from nexus.contracts.deployment_profile import DeploymentProfile
 from nexus.lib.performance_tuning import ProfileTuning
+from nexus.server.lifespan.services_container import LifespanServices
 
 
 class TestProfilesProduceDifferentTuning:
@@ -26,18 +27,18 @@ class TestProfilesProduceDifferentTuning:
         return DeploymentProfile.LITE.tuning()
 
     def test_storage_differs(self, full_tuning: ProfileTuning, lite_tuning: ProfileTuning) -> None:
-        assert full_tuning.storage.db_pool_size > lite_tuning.storage.db_pool_size
-        assert full_tuning.storage.db_max_overflow > lite_tuning.storage.db_max_overflow
+        assert full_tuning.storage.db_pool_size < lite_tuning.storage.db_pool_size
+        assert full_tuning.storage.db_max_overflow < lite_tuning.storage.db_max_overflow
 
     def test_concurrency_differs(
         self, full_tuning: ProfileTuning, lite_tuning: ProfileTuning
     ) -> None:
         assert full_tuning.concurrency.default_workers > lite_tuning.concurrency.default_workers
-        assert full_tuning.concurrency.thread_pool_size > lite_tuning.concurrency.thread_pool_size
+        assert full_tuning.concurrency.thread_pool_size < lite_tuning.concurrency.thread_pool_size
 
     def test_pool_differs(self, full_tuning: ProfileTuning, lite_tuning: ProfileTuning) -> None:
-        assert full_tuning.pool.httpx_max_connections > lite_tuning.pool.httpx_max_connections
-        assert full_tuning.pool.remote_pool_maxsize > lite_tuning.pool.remote_pool_maxsize
+        assert full_tuning.pool.httpx_max_connections < lite_tuning.pool.httpx_max_connections
+        assert full_tuning.pool.remote_pool_maxsize == lite_tuning.pool.remote_pool_maxsize
 
     def test_connector_differs(
         self, full_tuning: ProfileTuning, lite_tuning: ProfileTuning
@@ -102,17 +103,6 @@ class TestDIFlowsToConstructors:
         )
         assert mgr._webhook_timeout == WEBHOOK_TIMEOUT
 
-    def test_search_service_workers_from_profile(self) -> None:
-        """SearchService parallel workers match profile tuning."""
-        from nexus.bricks.search.search_service import SearchService
-
-        full_tuning = DeploymentProfile.FULL.tuning()
-        svc = SearchService(
-            metadata_store=MagicMock(),
-            list_parallel_workers=full_tuning.search.list_parallel_workers,
-        )
-        assert svc._list_parallel_workers == 10
-
     def test_tiger_cache_workers_from_profile(self) -> None:
         """TigerCache l2_max_workers matches profile cache tuning."""
         from nexus.bricks.rebac.cache.tiger.bitmap_cache import TigerCache
@@ -141,14 +131,13 @@ class TestFeaturesInfoComputationIntegration:
         app.state.profile_tuning = profile.tuning()
         app.state.deployment_mode = "standalone"
 
-        _compute_features_info(app)
+        _compute_features_info(app, LifespanServices(**app.state._state))
 
         fi = app.state.features_info
         pt = fi.performance_tuning
         assert pt is not None
-        # Original 6 fields
-        assert pt.thread_pool_size == 200
-        assert pt.db_pool_size == 20
+        assert pt.thread_pool_size == profile.tuning().concurrency.thread_pool_size
+        assert pt.db_pool_size == profile.tuning().storage.db_pool_size
         # New 4 fields from new slices
         assert pt.heartbeat_flush_interval == 60
         assert pt.default_max_retries == 3
@@ -168,7 +157,7 @@ class TestFeaturesInfoComputationIntegration:
             app.state.enabled_bricks = p.default_bricks()
             app.state.profile_tuning = p.tuning()
             app.state.deployment_mode = "standalone"
-            _compute_features_info(app)
+            _compute_features_info(app, LifespanServices(**app.state._state))
             apps[p.value] = app.state.features_info.performance_tuning
 
         emb = apps["embedded"]

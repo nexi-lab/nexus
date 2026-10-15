@@ -3,7 +3,6 @@
 import json
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, cast
-from unittest.mock import MagicMock
 
 import grpc
 import pytest
@@ -57,10 +56,7 @@ async def test_mcp_search_preserves_plugin_results_and_errors(
         port = server.add_insecure_port("127.0.0.1:0")
         server.start()
         kernel = KernelClient(server_address=f"127.0.0.1:{port}", auth_token="mcp-key")
-        records = MagicMock()
-        service = SearchService(
-            metadata_store=kernel, record_store=records, enforce_permissions=False
-        )
+        service = SearchService(kernel=kernel)
         try:
             kernel.open()
             mcp = await create_mcp_server(nx=cast(NexusFS, SearchNexus(service)))
@@ -94,8 +90,6 @@ async def test_mcp_search_preserves_plugin_results_and_errors(
                 assert "internal fixture diagnostic" not in failure
                 assert "_InactiveRpcError" not in failure
                 assert len(host.calls) == before + 1
-            records.session_factory.assert_not_called()
         finally:
-            service.close()
             kernel.close()
             server.stop(0).wait()

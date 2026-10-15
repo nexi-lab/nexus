@@ -151,10 +151,10 @@ jobs:
         run: |
           uv run --no-sync pytest tests/integration/search/test_discovery_client.py -q -o "addopts="
 
-      - name: Verify listing facade contracts
+      - name: Verify indexed Search clients over TCP
         if: needs.detect-changes.outputs.code_changed == 'true'
         run: |
-          uv run --no-sync pytest tests/integration/services/test_search_service.py -q -o "addopts="
+          uv run --no-sync pytest tests/integration/search/test_indexed_client.py -q -o "addopts="
 
       - name: Verify benchmark collection
         if: needs.detect-changes.outputs.code_changed == 'true' && matrix.os == 'ubuntu-latest'

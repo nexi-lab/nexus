@@ -131,34 +131,6 @@ def _apply_zone_override(
     return _dc.replace(context, zone_id=zone)
 
 
-async def _read_connector_by_physical_path(
-    fs: Any,
-    display_path: str,
-    physical_path: str,  # noqa: ARG001 — kept for caller signature; see below
-    context: Any,
-) -> bytes | None:
-    """Read a connector file through the §2.5 syscall surface.
-
-    The kernel resolves a connector display path (``/mnt/...``) to its
-    physical backend location internally at read time via the mount/route
-    layer — so the service tier reads the display path through sys_read,
-    never poking ``route.backend.read_content`` on the kernel-internal
-    ObjectStore (KERNEL-ARCHITECTURE.md §2.5). Returns None on any failure
-    so the caller can fall back to the standard fs.read() path.
-
-    physical_path stays in the signature only because the caller still
-    resolves it as a "is this a real connector file" guard; the kernel no
-    longer needs it handed in.
-    """
-    try:
-        content = await _call_sync_or_async(fs.sys_read, display_path, context=context)
-    except Exception:
-        return None
-    if isinstance(content, bytes):
-        return content
-    return bytes(content) if content else None
-
-
 def _to_file_item(entry: dict[str, Any], prefix: str) -> "FileItemResponse":
     """Convert a sys_readdir details dict to a FileItemResponse.
 
@@ -1231,53 +1203,6 @@ def create_async_files_router(
                                 status_code=304,
                                 headers={"ETag": f'"{meta_cid}"'},
                             )
-
-                # Issue #3266: For connector display paths (/mnt/*), resolve
-                # virtual_path → physical_path via search service and read
-                # directly from the connector backend. This avoids passing
-                # a backend-relative path into fs.read() which expects VFS paths.
-                connector_content: bytes | None = None
-                if path.startswith("/mnt/"):
-                    search = fs.service("search")
-                    if search is not None:
-                        resolve_fn = getattr(search, "resolve_physical_path", None)
-                        physical: str | None = resolve_fn(path) if resolve_fn else None
-                        if physical:
-                            connector_content = await _read_connector_by_physical_path(
-                                fs,
-                                path,
-                                physical,
-                                context,
-                            )
-
-                if connector_content is not None:
-                    # Connector fast path — apply section filtering before returning.
-                    if section and path.endswith(".md"):
-                        partial = _md_partial_read(fs, path, connector_content, section, block_type)
-                        if partial is not None:
-                            partial_str, partial_enc = _encode_read_payload(partial, encoding)
-                            return Response(
-                                content=ReadResponse(
-                                    content=partial_str, encoding=partial_enc
-                                ).model_dump_json(),
-                                media_type="application/json",
-                            )
-                    content_str, enc_str = _encode_read_payload(connector_content, encoding)
-                    if include_metadata:
-                        resp = ReadResponse(
-                            content=content_str,
-                            encoding=enc_str,
-                            content_id=None,
-                            version=None,
-                            modified_at=None,
-                            size=len(connector_content),
-                        )
-                    else:
-                        resp = ReadResponse(content=content_str, encoding=enc_str)
-                    return Response(
-                        content=resp.model_dump_json(),
-                        media_type="application/json",
-                    )
 
                 # Standard VFS read — off the event loop (#4777).
                 result = await _call_sync_or_async(

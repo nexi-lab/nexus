@@ -112,7 +112,6 @@ class TestFeaturesEndpointWithTuning:
         assert pt["task_runner_workers"] == 4
         assert pt["default_http_timeout"] == 30.0
         assert pt["db_pool_size"] == 5
-        assert pt["search_max_concurrency"] == 10
 
     def test_full_features_includes_new_slices(self, app_full_profile: FastAPI) -> None:
         client = TestClient(app_full_profile)
@@ -134,7 +133,6 @@ class TestFeaturesEndpointWithTuning:
         assert pt["default_workers"] == 2
         assert pt["task_runner_workers"] == 2
         assert pt["db_pool_size"] == 8
-        assert pt["search_max_concurrency"] == 5
 
     def test_lite_features_new_slices_differ(self, app_lite_profile: FastAPI) -> None:
         client = TestClient(app_lite_profile)
@@ -162,7 +160,6 @@ class TestFeaturesEndpointWithTuning:
             "task_runner_workers",
             "default_http_timeout",
             "db_pool_size",
-            "search_max_concurrency",
             "heartbeat_flush_interval",
             "default_max_retries",
             "blob_operation_timeout",
@@ -194,7 +191,6 @@ class TestTuningViaEnvVar:
         assert tuning.concurrency.default_workers == 8
         assert tuning.concurrency.thread_pool_size == 400
         assert tuning.storage.db_pool_size == 30
-        assert tuning.search.search_max_concurrency == 20
         # New slices
         assert tuning.background_task.heartbeat_flush_interval == 30
         assert tuning.resiliency.default_max_retries == 5
@@ -204,11 +200,6 @@ class TestTuningViaEnvVar:
 
 class TestBackwardCompatibility:
     """Existing module-level constants still work as fallback defaults."""
-
-    def test_list_parallel_workers_constant(self) -> None:
-        from nexus.bricks.search.search_service import LIST_PARALLEL_WORKERS
-
-        assert LIST_PARALLEL_WORKERS == 10  # FULL profile default
 
     def test_webhook_timeout_constant(self) -> None:
         from nexus.server.subscriptions.manager import WEBHOOK_TIMEOUT
@@ -232,18 +223,6 @@ class TestDIWiring:
 
         mgr = SubscriptionManager(session_factory=MagicMock(), webhook_timeout=5.0)
         assert mgr._webhook_timeout == 5.0
-
-    def test_search_service_accepts_parallel_workers(self) -> None:
-        """SearchService constructor accepts custom parallel worker counts."""
-        from unittest.mock import MagicMock
-
-        from nexus.bricks.search.search_service import SearchService
-
-        svc = SearchService(
-            metadata_store=MagicMock(),
-            list_parallel_workers=20,
-        )
-        assert svc._list_parallel_workers == 20
 
     def test_tiger_cache_accepts_l2_max_workers(self) -> None:
         """TigerCache constructor accepts custom l2_max_workers."""

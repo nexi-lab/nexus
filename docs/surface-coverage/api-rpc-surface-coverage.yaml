@@ -11656,9 +11656,6 @@ operations:
   module: search
   summary: Index current VFS file bytes in the file's owning zone.
   transports:
-    grpc_typed:
-      name: SearchService.IndexFile
-      source: src/nexus/grpc/search/v1/search_pb2_grpc.py:72
     http:
       name: POST /v2/documents/file
       source: packages/nexus-api-client/src/indexing-client.ts:89
@@ -11735,7 +11732,7 @@ operations:
   transports:
     grpc_typed:
       name: SearchService.Locate
-      source: src/nexus/grpc/search/v1/search_pb2_grpc.py:82
+      source: src/nexus/grpc/search/v1/search_pb2_grpc.py:77
     http:
       name: POST /v2/search/locate
       source: packages/nexus-api-client/src/search-client.ts:98
@@ -11755,7 +11752,7 @@ operations:
   transports:
     grpc_typed:
       name: SearchService.NotifyFileChange
-      source: src/nexus/grpc/search/v1/search_pb2_grpc.py:77
+      source: src/nexus/grpc/search/v1/search_pb2_grpc.py:72
     http:
       name: DELETE /v2/documents/file
       source: packages/nexus-api-client/src/indexing-client.ts:106
@@ -19172,14 +19169,6 @@ parity_warnings:
   - http
   - mcp
   - sdk
-- operation_id: search.delete_path_context
-  has:
-  - grpc_typed
-  missing:
-  - cli
-  - http
-  - mcp
-  - sdk
 - operation_id: search.glob
   has:
   - cli
@@ -19222,10 +19211,10 @@ parity_warnings:
   - sdk
 - operation_id: search.index_file
   has:
-  - grpc_typed
   - http
   missing:
   - cli
+  - grpc_typed
   - mcp
   - sdk
 - operation_id: search.list_indexed_directories
@@ -19234,14 +19223,6 @@ parity_warnings:
   - http
   missing:
   - cli
-  - mcp
-  - sdk
-- operation_id: search.list_path_contexts
-  has:
-  - grpc_typed
-  missing:
-  - cli
-  - http
   - mcp
   - sdk
 - operation_id: search.list_zone_indexing_modes

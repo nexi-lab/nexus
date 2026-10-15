@@ -2657,7 +2657,7 @@ operations:
   usage_example: kernel.call_rpc("semantic_search", {"query":"auth flow","search_mode":"keyword"})
   correctness_test: tests/integration/search/test_indexed_client.py
   perf_class: hot
-  perf_link: tests/benchmarks/test_search_protocol_benchmark.py
+  perf_link: scripts/test_published_search_quality.py; docs/benchmarks/2026-04-18-sandbox-vs-gbrain.md
   gap_issue: null
   owning_issue: 4129
 - id: catalog.aspects

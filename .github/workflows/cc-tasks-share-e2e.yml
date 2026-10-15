@@ -81,8 +81,7 @@ jobs:
             echo "run=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          git fetch --no-tags --prune origin "${{ github.base_ref }}"
-          git diff --name-only "origin/${{ github.base_ref }}"...HEAD > /tmp/changed_files.txt
+          git diff --name-only "${{ github.event.pull_request.base.sha }}"...HEAD > /tmp/changed_files.txt
           cat /tmp/changed_files.txt
           # Workflow file itself intentionally not in the regex —
           # editing this YAML alone should not force a full Docker

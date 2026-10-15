@@ -64,8 +64,7 @@ jobs:
             exit 0
           fi
 
-          git fetch --no-tags --prune origin "${{ github.base_ref }}"
-          git diff --name-only "origin/${{ github.base_ref }}"...HEAD > /tmp/federation_changed_files.txt
+          git diff --name-only "${{ github.event.pull_request.base.sha }}"...HEAD > /tmp/federation_changed_files.txt
           cat /tmp/federation_changed_files.txt
 
           # Note: the workflow file itself is intentionally NOT in this regex.

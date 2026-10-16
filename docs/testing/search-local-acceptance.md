@@ -1,8 +1,8 @@
 # Nexus Search 功能与本地验收清单
 
-更新日期：2026 年 10 月 15 日。本文用于逐项评论、分配测试和记录结果。
+更新日期：2026 年 10 月 17 日。本文用于逐项评论、分配测试和记录结果。
 
-当前状态：索引超时修复的 [VFS PR #442](https://github.com/nexi-lab/nexus-vfs/pull/442) 已在 19 项 CI 全绿后合并；Search 清理和组合回归的 [Nexus PR #4902](https://github.com/nexi-lab/nexus/pull/4902) 已在 53 项 CI 通过、2 项跳过后合并。常规 daemon/cohost 的本地真实模型组合、managed agent 和发布镜像验收均已通过。固定 owner 的 `serve-user` 模式新发现的授权缺口已修复，本地真实 scode cohost 加 ONNX 模型的重启回归通过；[VFS PR #443](https://github.com/nexi-lab/nexus-vfs/pull/443) 正在执行 CI，Nexus 依赖也同步集成。Nexus 自带人类账号注册登录的产品契约仍待确认，整条主线尚未 code complete。腾讯云部署等这些代码与验收收齐后再讨论。
+当前状态：索引超时修复的 [VFS PR #442](https://github.com/nexi-lab/nexus-vfs/pull/442)、Search 清理的 [Nexus PR #4902](https://github.com/nexi-lab/nexus/pull/4902)、固定 owner 授权修复的 [VFS PR #443](https://github.com/nexi-lab/nexus-vfs/pull/443) 和依赖集成的 [Nexus PR #4904](https://github.com/nexi-lab/nexus/pull/4904) 均在最终 CI 全绿后合并，合并后工作流也已通过。常规 daemon/cohost 与 `serve-user` 的本地真实模型及重启验收均通过。原生 HTTP 当前身份接口的 [VFS PR #447](https://github.com/nexi-lab/nexus-vfs/pull/447) 已在 19 项 CI 全绿后合并。前端发现了真实 HTTP 消费者及历史 Google 固定凭证登录问题，迁移范围已明确包含浏览器前端和人类账号入口；相关前端修复仍在候选分支验证。Google/密码账号的完整 Rust 服务端及剩余前端接口迁移尚未完成，整条主线尚未 code complete。腾讯云部署等这些代码与验收收齐后再讨论。
 
 ## 一、范围和完成标准
 
@@ -48,7 +48,7 @@ Graph HTTP API、调用方和 Zoekt 索引/诊断已清理。当前 Search 不�
 | SEARCH-22 | TUI 展示与错误 | 在真实 worker 和终端渲染中查询、管理索引、撤销权限。核对路径、zone、片段、截断标记；失败显示错误，不能伪装成“无结果”。 | 待安排 |
 | SEARCH-23 | 实际 scode/cohost 装配 | 用实际 scode 与 cohost 产物，在所属 Kernel 的工作区执行文件操作与 Search，核对原有证书/委托身份、跨会话隔离及撤销。 | 待安排 |
 | SEARCH-24 | Python 退役与协议 SSOT | 验证旧 Search 路由/算法不再注册或被调用；生成绑定匹配唯一 VFS proto；浏览器身份入口和残余 server 调用方有明确归属。 | 待安排 |
-| SEARCH-25 | `serve-user` 固定 owner 模式 | 使用外部颁发的短期 runtime/session 证书和签名 Search 插件；所属 owner 可管理私有索引，其他 owner 被拒绝；显式坏凭证不得被证书覆盖；重启恢复已提交索引，瞬态计数归零。保留该模式对集群管理、HTTP listener 和 CA 签发权的限制。 | 本地自动回归通过，CI 待完成；人工待安排 |
+| SEARCH-25 | `serve-user` 固定 owner 模式 | 使用外部颁发的短期 runtime/session 证书和签名 Search 插件；所属 owner 可管理私有索引，其他 owner 被拒绝；显式坏凭证不得被证书覆盖；重启恢复已提交索引，瞬态计数归零。保留该模式对集群管理、HTTP listener 和 CA 签发权的限制。 | 本地与最终 CI 通过；人工待安排 |
 
 ## 三、2026 年 10 月 14 日已完成的本地验证
 
@@ -137,7 +137,32 @@ scode 候选基线为 `94088bd7`（0.2.31）。本地将其全部 VFS Git 依赖
 
 2026-10-15 对腾讯云进行了只读核对：Moss 当前活动数据库中有 116 条账号记录，使用 Moss 自己的身份表；Moss VM 上未发现独立 Nexus Python 登录服务。现有权限内的 `moss-sessions` namespace 运行多种 gVisor 镜像。查询没有改动生产配置、数据或部署，也没有读取账号内容或口令。
 
-这些事实不能证明所有环境都没有 Nexus 自带登录入口的用户。Moss 现有用户与 agent 身份必须保留；Nexus 自带入口的保留/删除/迁移范围仍待对齐。当前代码里，TUI 的 `/auth/me` 身份展示也是需要处理的调用方。整条主线不能据此提前宣告完成。
+这些事实不能证明所有环境都没有 Nexus 自带登录入口的用户。Moss 现有用户与 agent 身份必须保留。后续确认 `nexi-lab/nexus-frontend` 使用账号注册、Google OAuth、文件和管理 HTTP 接口；`nexi-lab/nexus-ui` 也使用 HTTP API，并保留 Python server 启动调用。用户已确认 Python server 退役必须包含前端迁移；不能按“没有消费者”删除这些入口。当前代码里，TUI 的 `/auth/me` 身份展示也是需要处理的调用方。
+
+### 浏览器身份迁移及验收边界
+
+原生 `GET /v2/auth/whoami` 直接投影 HTTP/gRPC 共用认证策略已经解析出的身份。它不增加账号表、权限算法、缓存或 Kernel syscall，响应使用 `Cache-Control: no-store`。真实 TLS daemon 回归已验证管理员、普通用户和 service 身份、伪造身份参数、未知凭证、缓存预热后撤销，以及重启后凭证与撤销结果。HTTP API 全部 183 个测试、cluster 身份目标 5 个测试和相关 clippy 已通过；目标计数包含公共 fixture 测试。
+
+前端候选 [nexus-frontend PR #26](https://github.com/nexi-lab/nexus-frontend/pull/26) 已删除 Google 按钮使用的固定凭证和客户端 Google SDK。授权从用户选择的 Nexus 服务端发起，回调由服务端验证，成功后使用该账号自己的 Nexus 凭证。所有登录完成路径统一提交身份状态，替换旧凭证；管理权限从当前原生身份接口读取，缓存里的管理员标记不作为依据。OAuth 调试信息和重复凭证副本不再写入 localStorage。该 PR 保持草稿，完整 Rust 账号后端与其余前端消费者迁移收齐前不合并，不触发前端主分支的 Firebase 部署。
+
+| 编号 | 本地测试安排 | 通过标准 |
+|---|---|---|
+| AUTH-01 | 输入 Nexus 地址和有效/失效 API key | 有效凭证经原生 whoami 验证；失效凭证拒绝，不能进入已登录页面 |
+| AUTH-02 | 已有 Google 用户登录，浏览器先保存另一账号凭证 | 发起授权不带旧凭证；服务端验证回调后替换旧账号；当前身份来自新凭证 |
+| AUTH-03 | 新 Google 用户确认账号信息 | 确认前不持有 Nexus 登录凭证；确认后才建立当前身份 |
+| AUTH-04 | 缺少绑定 cookie、state 不符、服务端拒绝、OAuth 未配置或返回无效 URL | 显示失败，不产生登录凭证；state 不符时不向服务端提交授权码 |
+| AUTH-05 | 修改浏览器缓存的管理员标记、保存已撤销凭证 | 不能获得管理入口权限；撤销凭证被服务端拒绝并清掉本地登录态 |
+| AUTH-06 | 连接器 OAuth 回调，包括 state 不符 | 保留当前 Nexus 身份；成功清理临时 state；失败不交换授权码；不持久化回调调试数据 |
+
+浏览器回归使用实际 Chrome、生产构建的 React 页面和本地 HTTP 协议 fixture；Google 页面跳转被受控模拟。12 个用例全部通过，禁用重试，包含登录页实际下载的 JavaScript 小于 1 MiB 的检查；相同用例已接入 Linux Chromium PR CI。登录页此前会同步加载约 16 MB 的文件/Office 代码，受保护页面现按需加载。这能证明前端凭证、cookie、回调及加载契约，不能代替真实 Google 身份交换或 Rust 账号后端验收。独立 ai-dev-browser 已实测未配置错误、失效/有效 key 登录和普通用户访问管理页被拒绝；自建浏览器已关闭，临时 profile 已清理。真实 Google/账号迁移收齐后，还需对完整 Rust 链路再次执行这些用例。
+
+本轮新增本地证据仍位于同一个 artifact 目录：
+
+- `browser-identity-first-20261016.log`、`browser-identity-http-tests-20261016.log`、`browser-identity-clippy-20261016.log`：原生身份与 HTTP 测试及静态检查。
+- `browser-identity-nexus-tests-20261016.log`：依赖集成后 177 个 Nexus Rust 服务层测试通过；原生 proto 绑定也与新锁定版本一致。
+- `frontend-browser-production-20261017.log`：12 个生产构建浏览器回归，13.1 秒，零重试。
+- `frontend-build-split-20261016.log`、`frontend-lint-final-20261016.log`、`frontend-frozen-install-final-20261017.log`：最终构建、相关代码 lint、统一 lockfile 冷安装契约。
+- `frontend-google-unconfigured-final-20261016.png`、`frontend-key-rejected-20261016.png`、`frontend-admin-denied-20261016.png`：独立 ai-dev-browser 的实际页面证据。登录与权限后端使用本地受控 fixture，未访问真实 Google 或生产。
 
 ## 五、本地环境准备
 
@@ -224,8 +249,8 @@ cargo test -p nexus-cluster --all-features --test user_runtime signed_search_kee
 | CODE-01 | 修复索引超时的契约边界 | 受控慢操作在修复前失败、修复后通过；交互请求仍有明确预算 | 已合并；VFS PR #442 |
 | CODE-02 | CI 保护慢索引、取消与真实提交回执 | 最终提交 CI 全绿，实际执行相应用例 | 已完成；VFS 19 项、Nexus 53 项通过 |
 | CODE-03 | 原生化后残余 Search 代码与文档清理 | 重复列表/SQL 分支和失效配置删除；架构文档与源码一致 | 已合并；Nexus PR #4902 |
-| CODE-04 | 浏览器登录/OAuth cookie 及剩余 server 调用方归属 | 保留现有身份 SSOT，替换或移除重复服务端入口后再退役 server | 待完成 |
-| CODE-05 | `serve-user` 下的 Search 装配与授权契约 | 使用固定 owner 的私有数据边界；本地签名插件、owner 隔离、委托身份和真实模型重启全部通过 | VFS PR #443 的 CI 及 Nexus 依赖集成中 |
+| CODE-04 | 浏览器登录/OAuth cookie 及剩余 server 调用方迁移 | 保留现有身份 SSOT，完成浏览器与账号服务端迁移后再退役 server | 范围已确认；原生身份接口已合并，前端修复验证中，完整 Rust 账号后端及剩余消费方未完成 |
+| CODE-05 | `serve-user` 下的 Search 装配与授权契约 | 使用固定 owner 的私有数据边界；本地签名插件、owner 隔离、委托身份和真实模型重启全部通过 | 已完成并合并；VFS PR #443 与 Nexus PR #4904 的源提交及合并后 CI 均通过 |
 | TEST-01 | 完整本地组合验收 | CLI、证书 agent、真实模型 TUI 全部实际执行并通过 | 已通过，含清理后实际 cohost 组合 |
 | TEST-02 | 实际 scode/cohost 本地验收 | 实际产物、所属 Kernel、原有身份和工作区的完整链路 | 常规模式与 `serve-user` 的本地候选均通过；正式发布产物尚未验收 |
 

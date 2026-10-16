@@ -105,7 +105,7 @@
       "kind": "ZoneGrantCreateRequest",
       "schema_id": "https://contracts.sudo.dev/schemas/auth/v1/zone-grant-create-request.schema.json",
       "schema_path": "contracts/auth/v1/zone-grant-create-request.schema.json",
-      "schema_digest": "sha256:afe4b2add6651356831ac492b5e979f2ba9eff712640d3481e741dad63e87d33",
+      "schema_digest": "sha256:936ba43a5b7802f33ba960004a8cf8926d4a4beba88254dc0eae7d59d3a716ff",
       "semantic_adr_refs": [
         "sudostack/docs/adr/ADR-002-zone-and-tenancy-model.md"
       ],
@@ -151,7 +151,7 @@
       "kind": "ZoneOperation",
       "schema_id": "https://contracts.sudo.dev/schemas/auth/v1/zone-operation.schema.json",
       "schema_path": "contracts/auth/v1/zone-operation.schema.json",
-      "schema_digest": "sha256:ed7dd7852e3b70ee80e99bce2a09b96ec047d99b880f063f5fcb40f8fc9f53f9",
+      "schema_digest": "sha256:c27982a36147f7fb4f86e4e34eb60c99b330c3fc1ee8d0563a43ffa75c713b9e",
       "semantic_adr_refs": [
         "sudostack/docs/adr/ADR-002-zone-and-tenancy-model.md"
       ],

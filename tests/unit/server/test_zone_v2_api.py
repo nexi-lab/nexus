@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import sessionmaker
 
 from nexus.remote.zone_runtime_client import RuntimeReceipt
+from nexus.server.api.v2.routers.sessions import router as sessions_router
 from nexus.server.api.v2.routers.zone_grants import router as grants_router
 from nexus.server.api.v2.routers.zone_runtime import router as runtime_router
 from nexus.server.api.v2.routers.zones import router as zones_router
@@ -66,9 +67,10 @@ class Runtime:
         )
 
 
-def _app() -> FastAPI:
+def _app(with_sessions: bool = False) -> FastAPI:
     from nexus.storage.models import auth as auth_models
     from nexus.storage.models import session_v1 as session_models
+    from nexus.storage.models import task_v1 as task_models
     from nexus.storage.models import zone_v1 as zone_models
 
     engine = sa.create_engine(
@@ -76,8 +78,15 @@ def _app() -> FastAPI:
     )
     auth_models.ZoneModel.__table__.create(engine)
     session_models.SessionModel.__table__.create(engine)
-    with engine.begin() as connection:
-        connection.exec_driver_sql("CREATE TABLE task_attempts (attempt_id TEXT PRIMARY KEY)")
+    if with_sessions:
+        task_models.TaskSpecModel.__table__.create(engine)
+        task_models.TaskResolutionModel.__table__.create(engine)
+        task_models.TaskAttemptModel.__table__.create(engine)
+        session_models.SessionZoneDependencyModel.__table__.create(engine)
+        session_models.SessionDataRecordModel.__table__.create(engine)
+    else:
+        with engine.begin() as connection:
+            connection.exec_driver_sql("CREATE TABLE task_attempts (attempt_id TEXT PRIMARY KEY)")
     session_models.SessionRuntimeRunModel.__table__.create(engine)
     for model in (
         zone_models.ZoneGrantModel,
@@ -97,6 +106,8 @@ def _app() -> FastAPI:
     app.include_router(grants_router)
     app.include_router(runtime_router)
     app.include_router(legacy_zone_router)
+    if with_sessions:
+        app.include_router(sessions_router)
     arm_zone_services(
         app,
         session_factory=factory,
@@ -517,3 +528,222 @@ def test_worker_survives_one_iteration_failure(monkeypatch) -> None:
 
     asyncio.run(run())
     assert worker.calls >= 2
+
+
+# ── token zone boundary / narrow-path authorization regressions ─────────────
+
+
+def _seed_zone(app: FastAPI, zone_id: str) -> None:
+    from datetime import UTC, datetime
+
+    from nexus.storage.models.auth import ZoneModel
+
+    factory = app.state.zone_session_factory
+    now = datetime.now(UTC)
+    with factory() as s:
+        s.add(
+            ZoneModel(
+                zone_id=zone_id,
+                name=zone_id,
+                phase="Active",
+                canonical_status="active",
+                created_by={"subject_type": "user", "subject_id": "usr-admin"},
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        s.commit()
+
+
+def test_zone_binding_boundary_requires_a_verified_delegation() -> None:
+    """A non-empty X-Nexus-Zone-Delegation used to skip ZONE_OUT_OF_TOKEN_SCOPE
+    without ever being validated: any fabricated header crossed the token
+    boundary whenever a direct grant held for the target zone."""
+    from datetime import UTC, datetime, timedelta
+
+    from nexus.storage.models import ZoneDelegationModel, ZoneGrantModel
+    from nexus.storage.models.zone_v1 import ZoneAuthorizationEpochModel
+
+    app = _app()
+    _seed_zone(app, "zone-a")
+    _seed_zone(app, "zone-b")
+    factory = app.state.zone_session_factory
+    now = datetime.now(UTC)
+    with factory() as s:
+        # a DIRECT grant for the user on zone-b (the pre-fix bypass surface)
+        s.add(
+            ZoneGrantModel(
+                grant_id="grant-direct",
+                zone_id="zone-b",
+                grantee={"subject_type": "user", "subject_id": "usr-1"},
+                capabilities=["zone.grants.manage"],
+                resource_prefixes=None,
+                source_type="manual",
+                source_id="seed-direct",
+                issued_by={"subject_type": "user", "subject_id": "usr-admin"},
+                reason="seed",
+                policy_version="p1",
+                revision="r1",
+                status="active",
+                created_at=now,
+            )
+        )
+        s.add(ZoneAuthorizationEpochModel(zone_id="zone-b", epoch=1, advanced_at=now))
+        # a VALID delegation on zone-b for the same user
+        s.add(
+            ZoneDelegationModel(
+                delegation_id="dlg-ok",
+                user_id="usr-1",
+                org_id="org-1",
+                membership_version="mv1",
+                zone_id="zone-b",
+                grant_id="grant-direct",
+                grant_revision="r1",
+                epoch=1,
+                audience="nexus-api",
+                status="active",
+                purpose="data-access",
+                scope_rules=[{"capability": "zone.grants.manage", "resource_prefixes": ["/"]}],
+                issued_at=now,
+                expires_at=now + timedelta(hours=1),
+            )
+        )
+        s.commit()
+    app.dependency_overrides[require_auth] = lambda: {
+        "authenticated": True,
+        "is_admin": False,
+        "subject_type": "user",
+        "subject_id": "usr-1",
+        "zone_id": "zone-a",  # the token is bound to zone-a only
+    }
+    with TestClient(app) as client:
+        no_header = client.get("/v2/zones/zone-b/grants")
+        assert no_header.status_code == 403
+        assert no_header.json()["detail"]["code"] == "ZONE_OUT_OF_TOKEN_SCOPE"
+
+        fabricated = client.get(
+            "/v2/zones/zone-b/grants", headers={"X-Nexus-Zone-Delegation": "bogus"}
+        )
+        assert fabricated.status_code == 403
+        assert fabricated.json()["detail"]["code"] == "ZONE_OUT_OF_TOKEN_SCOPE"
+
+        verified = client.get(
+            "/v2/zones/zone-b/grants", headers={"X-Nexus-Zone-Delegation": "dlg-ok"}
+        )
+        assert verified.status_code == 200, verified.text
+
+
+def test_start_run_authorizes_on_the_session_path() -> None:
+    """zone_active_check used to authorize on "/" — a grant scoped to
+    /sessions never covered it, so start_run 403'd (RESOURCE_RELATION_DENIED)
+    despite a valid delegation on the exact session path."""
+    from datetime import UTC, datetime, timedelta
+
+    from nexus.storage.models import ZoneDelegationModel, ZoneGrantModel
+    from nexus.storage.models.session_v1 import SessionModel
+    from nexus.storage.models.zone_v1 import ZoneAuthorizationEpochModel
+
+    app = _app(with_sessions=True)
+    # the unit fixture arms no kernel fs; the implicit-task ledger only
+    # needs the writer callable to be present (path, bytes, zone_id -> int)
+    from nexus.services.zones.session_tasks import SessionTaskService
+
+    app.state.session_task_service = SessionTaskService(
+        app.state.zone_session_factory, fs_writer=lambda path, data, zone_id: len(data)
+    )
+    _seed_zone(app, "zone-run")
+    factory = app.state.zone_session_factory
+    now = datetime.now(UTC)
+    owner = {"subject_type": "user", "subject_id": "usr-1"}
+    with factory() as s:
+        s.add(
+            SessionModel(
+                session_id="sess-1",
+                home_zone_id="zone-run",
+                owner=owner,
+                state="active",
+                created_by=owner,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        s.add(
+            ZoneGrantModel(
+                grant_id="grant-run",
+                zone_id="zone-run",
+                grantee={"subject_type": "organization", "subject_id": "org-1"},
+                capabilities=["zone.data.write", "zone.runtime.execute"],
+                resource_prefixes=["/sessions"],  # narrow: does NOT cover "/"
+                source_type="manual",
+                source_id="seed-run",
+                issued_by={"subject_type": "user", "subject_id": "usr-admin"},
+                reason="seed",
+                policy_version="p1",
+                revision="r1",
+                status="active",
+                created_at=now,
+            )
+        )
+        s.add(ZoneAuthorizationEpochModel(zone_id="zone-run", epoch=1, advanced_at=now))
+        s.add(
+            ZoneDelegationModel(
+                delegation_id="dlg-run",
+                user_id="usr-1",
+                org_id="org-1",
+                membership_version="mv1",
+                zone_id="zone-run",
+                grant_id="grant-run",
+                grant_revision="r1",
+                epoch=1,
+                audience="nexus-api",
+                status="active",
+                purpose="data-access",
+                scope_rules=[
+                    {
+                        "capability": "zone.runtime.execute",
+                        "resource_prefixes": ["/sessions/sess-1"],
+                    }
+                ],
+                issued_at=now,
+                expires_at=now + timedelta(hours=1),
+            )
+        )
+        s.commit()
+    app.dependency_overrides[require_auth] = lambda: {
+        "authenticated": True,
+        "is_admin": False,
+        "subject_type": "user",
+        "subject_id": "usr-1",
+    }
+    with TestClient(app) as client:
+        resp = client.post(
+            "/v2/runtime/start",
+            json={"pid": "run-1", "session_id": "sess-1", "delegation_ref": "dlg-run"},
+        )
+        assert resp.status_code == 201, resp.text
+
+
+def test_grant_prefix_column_budget_is_enforced_at_validation() -> None:
+    """Grant prefixes feed a 255-char projection column as '{prefix}/*', so
+    anything beyond 253 chars must die as a 422 at the validation layer —
+    not as a projection failure after the grant row exists."""
+    app = _app()
+    _seed_zone(app, "zone-pfx")
+    with TestClient(app) as client:
+        headers = {"Idempotency-Key": "pfx-budget"}
+        body = {
+            "grantee": {"subject_type": "user", "subject_id": "usr-1"},
+            "capabilities": ["zone.data.read"],
+            "reason": "prefix budget probe",
+        }
+        at_budget = dict(body, resource_prefixes=["/" + "a" * 252])  # 253 chars
+        ok = client.post("/v2/zones/zone-pfx/grants", headers=headers, json=at_budget)
+        assert ok.status_code == 202, ok.text
+
+        over_budget = dict(body, resource_prefixes=["/" + "a" * 253])  # 254 chars
+        rejected = client.post(
+            "/v2/zones/zone-pfx/grants",
+            headers={**headers, "Idempotency-Key": "pfx-budget-2"},
+            json=over_budget,
+        )
+        assert rejected.status_code == 422, rejected.text

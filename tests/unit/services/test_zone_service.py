@@ -1558,3 +1558,99 @@ def test_mount_observed_state_only_follows_runtime_receipt(session_factory):
         mount = s.execute(sa.select(ZoneMountModel)).scalar_one()
         assert mount.desired_state == "mounted"
         assert mount.observed_state == "mounted"
+
+
+def _rearm_runtime_outbox(session_factory) -> None:
+    """Backoff would stall the next due-query for 5*2^(n-1) seconds; clear
+    the retry schedule and lease so the next pump picks the row up now."""
+    from nexus.storage.models import ZoneRuntimeOutboxModel
+
+    with session_factory() as s:
+        s.execute(
+            sa.update(ZoneRuntimeOutboxModel).values(
+                next_retry_at=None, lease_owner=None, lease_expires_at=None
+            )
+        )
+        s.commit()
+
+
+class _JoinFailsRuntime(FakeRuntime):
+    """Creates succeed, joins answer with an indeterminate failure."""
+
+    def join_zone(self, *, zone_id, peers, ctx) -> RuntimeReceipt:
+        self.calls.append("join")
+        return RuntimeReceipt(ok=False, error="indeterminate")
+
+
+def test_join_retry_exhaustion_keeps_active_zone_alive(session_factory):
+    """Join used to reuse action="create", so a join that exhausted its
+    outbox retries dragged an ACTIVE zone row to failed."""
+    runtime = _JoinFailsRuntime()
+    svc = make_service(session_factory, runtime)
+    _active_zone(svc, session_factory)  # create/status run through this runtime
+    result = svc.request_join(
+        "team-test-zone", peers=[], learner=False, idempotency_key="join-1", principal=PRINCIPAL
+    )
+    assert result.state == "queued"  # joins ride the outbox, no inline leg
+    worker = ZoneOperationWorker(session_factory, runtime, svc)
+    for _ in range(8):
+        worker.pump_once()  # the 8th pump exhausts MAX_ATTEMPTS
+        _rearm_runtime_outbox(session_factory)
+    with session_factory() as s:
+        from nexus.storage.models import ZoneOperationModel
+        from nexus.storage.models.auth import ZoneModel
+
+        op = (
+            s.execute(sa.select(ZoneOperationModel).where(ZoneOperationModel.action == "join"))
+            .scalars()
+            .one()
+        )
+        assert op.action == "join"
+        assert op.state == "failed"
+        assert op.retryable is False
+        # the failure was the join, not the zone: the row stays active
+        assert s.get(ZoneModel, "team-test-zone").canonical_status == "active"
+    # every dispatch genuinely re-drove the runtime (8 pumps)
+    assert runtime.calls.count("join") == 8
+
+
+class _MountFailsRuntime(FakeRuntime):
+    """Creates succeed, mounts answer with an indeterminate failure."""
+
+    def mount(self, *, parent_zone_id, target_zone_id, path, ctx) -> RuntimeReceipt:
+        self.calls.append("mount")
+        return RuntimeReceipt(ok=False, error="indeterminate")
+
+
+def test_retryable_mount_failure_reinvokes_the_runtime(session_factory):
+    """A failed-but-retryable operation was short-circuited on re-dispatch,
+    so the outbox spun its retry timer without ever re-invoking the
+    runtime (mirrors _pump_create's terminal-state rule)."""
+    runtime = _MountFailsRuntime()
+    svc = make_service(session_factory, runtime)
+    _active_zone(svc, session_factory)
+    _active_zone(svc, session_factory, "mount-target")
+    runtime.calls.clear()  # zone creates also went through this runtime
+    svc.request_mount(
+        parent_zone_id="team-test-zone",
+        target_zone_id="mount-target",
+        path="/team",
+        idempotency_key="mount-2",
+        principal=PRINCIPAL,
+    )
+    assert runtime.calls == ["mount"]  # the inline execution already failed once
+    worker = ZoneOperationWorker(session_factory, runtime, svc)
+    with session_factory() as s:
+        from nexus.storage.models import ZoneOperationModel
+
+        op = (
+            s.execute(sa.select(ZoneOperationModel).where(ZoneOperationModel.action == "mount"))
+            .scalars()
+            .one()
+        )
+        assert op.state == "failed"
+        assert op.retryable is True
+    _rearm_runtime_outbox(session_factory)
+    worker.pump_once()
+    # the second dispatch genuinely re-entered the runtime
+    assert runtime.calls == ["mount", "mount"]

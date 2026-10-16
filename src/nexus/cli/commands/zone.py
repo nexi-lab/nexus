@@ -638,7 +638,7 @@ def wait_operation_cmd(
             op = api_call(remote_url, remote_api_key, "GET", f"/v2/zone-operations/{operation_id}")
             state = str(op.get("state") or "")
             console.print(f"operation {operation_id}: {state} ({op.get('step', '')})")
-            if state in ("succeeded", "failed"):
+            if state == "succeeded" or (state == "failed" and not op.get("retryable")):
                 if state == "failed":
                     raise RuntimeError(f"operation {operation_id} failed: {op.get('error')}")
                 return

@@ -268,7 +268,6 @@ class ZoneOperationWorker:
                     select(ZoneOperationModel).where(
                         ZoneOperationModel.action == "create",
                         ZoneOperationModel.state.in_(("queued", "running")),
-                        ~ZoneOperationModel.step.like("zone.join%"),
                         or_(
                             ZoneOperationModel.lease_owner.is_(None),
                             ZoneOperationModel.lease_expires_at.is_(None),

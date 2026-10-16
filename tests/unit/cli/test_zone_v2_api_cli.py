@@ -72,3 +72,47 @@ def test_mount_and_unmount_use_operation_api(monkeypatch) -> None:
         ("GET", "/v2/zone-mounts?zone_id=root"),
         ("DELETE", "/v2/zone-mounts/mount-1"),
     ]
+
+
+def test_wait_keeps_polling_through_retryable_failures(monkeypatch) -> None:
+    """A failed-but-retryable operation is mid-retry, not terminal: wait
+    must keep polling instead of reporting it as the final failure."""
+    poll = [
+        {"state": "running", "step": "zone.mount", "retryable": True},
+        {
+            "state": "failed",
+            "step": "zone.mount",
+            "retryable": True,
+            "error": {"code": "ZONE_RUNTIME_UNAVAILABLE"},
+        },
+        {"state": "succeeded", "step": "zone.mount.read-back", "retryable": False},
+    ]
+
+    def fake_call(remote_url, remote_api_key, method, path, **kwargs):
+        return poll.pop(0)
+
+    monkeypatch.setattr(zone_module, "api_call", fake_call)
+    result = CliRunner().invoke(
+        zone_module.zone,
+        ["wait", "op-1", "--remote-url", "http://localhost:2026"],
+    )
+    assert result.exit_code == 0, result.output
+    assert "succeeded" in result.output
+
+
+def test_wait_reports_a_terminal_failure(monkeypatch) -> None:
+    def fake_call(remote_url, remote_api_key, method, path, **kwargs):
+        return {
+            "state": "failed",
+            "step": "zone.mount",
+            "retryable": False,
+            "error": {"code": "ZONE_RUNTIME_REJECTED", "message": "nope"},
+        }
+
+    monkeypatch.setattr(zone_module, "api_call", fake_call)
+    result = CliRunner().invoke(
+        zone_module.zone,
+        ["wait", "op-1", "--remote-url", "http://localhost:2026"],
+    )
+    assert result.exit_code != 0
+    assert "operation op-1 failed" in result.output

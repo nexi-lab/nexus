@@ -161,10 +161,15 @@ impl PasswordVaultServiceImpl {
         let root = root.trim_end_matches('/');
         let backend_name = backend.name().to_string();
 
+        // Trusted service-init path: mount as the vault service identity
+        // (admin + system), matching the context SecretStorage builds.
+        let ctx = kernel::kernel::OperationContext::new("password-vault", "root", true, None, true);
+
         // Mount the backend at root.
         kernel
             .sys_setattr(
                 root,
+                &ctx,
                 /* DT_MOUNT */ 2,
                 &backend_name,
                 Some(backend),

@@ -85,6 +85,15 @@ class NexusAppState:
     sandbox_auth_service: Any = None
     agent_event_log: Any = None
     transactional_snapshot_service: Any = None
+    zone_application_service: Any = None
+    zone_authorization_service: Any = None
+    zone_session_factory: Any = None
+    zone_runtime: Any = None
+    zone_control_readiness: dict[str, Any] = field(default_factory=dict)
+    zone_worker_stop: Any = None
+    moss_membership_verifier: Any = None
+    zone_transfer_policy: Any = None
+    zone_transfer_executor: Any = None
 
     # === Realtime ===
     subscription_manager: Any = None

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://contracts.sudo.dev/schemas/auth/v1/zone-operation.schema.json",
   "title": "ZoneOperation",
-  "description": "Async operation tracking create/patch/suspend/resume/grant/revoke/mount/unmount/transfer/deprovision. A network timeout moves the caller to unknown-and-poll-operation; it never justifies a new idempotency key to rebuild the resource.",
+  "description": "Async operation tracking create/join/patch/suspend/resume/grant/revoke/mount/unmount/transfer/deprovision. A network timeout moves the caller to unknown-and-poll-operation; it never justifies a new idempotency key to rebuild the resource.",
   "type": "object",
   "properties": {
     "api_version": {
@@ -16,7 +16,7 @@
       "minLength": 1
     },
     "action": {
-      "enum": ["create", "patch", "suspend", "resume", "grant", "revoke", "mount", "unmount", "transfer", "deprovision"]
+      "enum": ["create", "join", "patch", "suspend", "resume", "grant", "revoke", "mount", "unmount", "transfer", "deprovision"]
     },
     "zone_id": {
       "$ref": "https://nexus-vfs.dev/contracts/zone-id/existing-zone-id-ref.schema.gen.json"

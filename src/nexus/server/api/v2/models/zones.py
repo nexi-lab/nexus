@@ -16,6 +16,7 @@ from nexus.contracts.zone_v1 import (
     CAPABILITY_PATTERN,
     RFC3339_PATTERN,
     ExistingZoneIdRefStr,
+    GrantResourcePrefixStr,
     PrincipalRef,
     ResourceRef,
     TenantZoneIdCreateStr,
@@ -120,7 +121,7 @@ class GrantCreateBody(BaseModel):
 
     grantee: PrincipalRef
     capabilities: list[Annotated[str, Field(pattern=CAPABILITY_PATTERN)]] = Field(min_length=1)
-    resource_prefixes: list[ZonePathStr] | None = None
+    resource_prefixes: list[GrantResourcePrefixStr] | None = None
     source: ZoneGrantSource | None = None
     reason: str = Field(min_length=1)
     policy_version: str | None = None

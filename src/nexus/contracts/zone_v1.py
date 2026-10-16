@@ -108,6 +108,22 @@ ZonePathStr = Annotated[
     str, AfterValidator(lambda v: _via_owned("common/v1/zone-path.schema.json", v))
 ]
 
+
+def _grant_prefix_within_projection_budget(value: str) -> str:
+    """Grant projection stores '{prefix}/*' in a 255-char ReBAC object column."""
+    if len(value) > 253:
+        raise ValueError("grant resource prefix exceeds the 253-char projection column budget")
+    return value
+
+
+#: Grant resource prefix: a ZonePath that must also fit the projection's
+#: storage budget (prefix + "/*" against a 255-char object column).
+GrantResourcePrefixStr = Annotated[
+    str,
+    AfterValidator(lambda v: _via_owned("common/v1/zone-path.schema.json", v)),
+    AfterValidator(_grant_prefix_within_projection_budget),
+]
+
 #: Product-reserved zone ids (zone-create admission semantics). Mirrors
 #: nexus.bricks.auth.constants.RESERVED_ZONE_IDS (auth's own copy serves the
 #: auth layer's historical checks; this copy keeps the zone contract layer
@@ -354,7 +370,7 @@ class ZoneGrantCreateRequest(BaseModel):
     kind: Literal["ZoneGrantCreateRequest"]
     grantee: PrincipalRef
     capabilities: list[Annotated[str, Field(pattern=CAPABILITY_PATTERN)]] = Field(min_length=1)
-    resource_prefixes: list[ZonePathStr] | None = None
+    resource_prefixes: list[GrantResourcePrefixStr] | None = None
     source: ZoneGrantSource | None = None
     reason: str = Field(min_length=1)
     policy_version: str | None = Field(default=None, min_length=1)
@@ -439,6 +455,7 @@ class ZoneOperation(BaseModel):
     operation_id: str = Field(min_length=1)
     action: Literal[
         "create",
+        "join",
         "patch",
         "suspend",
         "resume",

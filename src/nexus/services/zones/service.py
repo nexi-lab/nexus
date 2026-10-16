@@ -1322,7 +1322,7 @@ class ZoneApplicationService:
     ) -> OperationResult:
         self._require_principal(principal)
         return self._queue_runtime_operation(
-            action="create",
+            action="join",
             event_type="zone.join",
             zone_id=zone_id,
             idempotency_key=idempotency_key,
@@ -1812,7 +1812,10 @@ class ZoneApplicationService:
             op = session.get(ZoneOperationModel, operation_id)
             if op is None:
                 return OperationResult(operation_id, "failed", "operation-missing", False)
-            if op.state in ("succeeded", "failed"):
+            # Terminal means terminal; a failed-but-retryable operation is NOT
+            # terminal (same rule as _pump_create) — outbox retries must be
+            # able to re-drive it instead of spinning on a dead operation.
+            if op.state == "succeeded" or (op.state == "failed" and not op.retryable):
                 return OperationResult(op.operation_id, op.state, op.step, op.retryable)
             op.state = "running"
             op.step = event_type

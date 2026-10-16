@@ -26,7 +26,15 @@
     "resource_prefixes": {
       "type": "array",
       "items": {
-        "$ref": "https://contracts.sudo.dev/schemas/common/v1/zone-path.schema.json"
+        "description": "A ZonePath further capped at 253 chars: grant projection writes '{prefix}/*' into a 255-char ReBAC object column.",
+        "allOf": [
+          {
+            "$ref": "https://contracts.sudo.dev/schemas/common/v1/zone-path.schema.json"
+          },
+          {
+            "maxLength": 253
+          }
+        ]
       }
     },
     "source": {

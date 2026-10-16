@@ -257,7 +257,7 @@ def zone_worker(app: FastAPI) -> Any:
                     principal=Principal(subject_type="organization", subject_id=delegation.org_id),
                     zone_id=zone_id,
                     capability="zone.runtime.execute",
-                    resource_path="/",
+                    resource_path=f"/sessions/{session_id}",
                 )
                 return bool(allowed)
         except MembershipUnreachable:
@@ -330,6 +330,12 @@ def _rebac_bindings(
         subject_type, subject_id = subject.split(":", 1)
         parts = [part for part in path.split("/") if part]
         targets = [path]
+        # The prefix itself is covered by its own wildcard projection
+        # (write() stores "{prefix}/*"): grant semantics include the path
+        # itself, so the target list must too — without this, a grant on
+        # /docs authorizes /docs/file but not /docs.
+        if path != "/":
+            targets.append(f"{path.rstrip('/')}/*")
         targets.extend(f"/{'/'.join(parts[:depth])}/*" for depth in range(len(parts) - 1, 0, -1))
         targets.append("/*")
         return any(

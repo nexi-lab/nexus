@@ -491,6 +491,9 @@ def _start(
                 auth_result,
                 zone_id=zone_id,
                 capability="zone.runtime.execute",
+                # same narrow path as require_runtime_delegation above — a
+                # "/" default here would reject grants scoped to /sessions/*
+                resource_path=f"/sessions/{session_id}",
                 # body-carried delegation refs are as valid as header ones
                 # (_runtime_delegation_ref resolved both at ingress)
                 delegation_ref=delegation_ref,

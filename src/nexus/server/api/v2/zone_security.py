@@ -230,6 +230,75 @@ def require_runtime_delegation(
         raise HTTPException(status_code=503, detail="zone authorization unavailable") from exc
 
 
+def _verify_boundary_delegation(
+    request: Request,
+    auth_result: dict[str, Any],
+    *,
+    delegation_id: str,
+    zone_id: str,
+    capability: str,
+    resource_path: str | None,
+) -> Any:
+    """Cross-binding gate: the token-boundary exemption is a VERIFIED
+    delegation, never a non-empty reference.  Deterministic verification
+    failures (missing delegation, wrong zone, wrong owner, scope miss)
+    collapse to ZONE_OUT_OF_TOKEN_SCOPE so no validation detail leaks
+    across the boundary; membership unavailability stays a 503.  Returns
+    None when the delegation holds and the regular decision chain below
+    should proceed."""
+    from nexus.services.zones.authz import Decision
+    from nexus.storage.models import ZoneDelegationModel
+
+    authz = getattr(request.app.state, "zone_authorization_service", None)
+    factory = getattr(request.app.state, "zone_session_factory", None)
+    if authz is None or factory is None:
+        raise HTTPException(status_code=503, detail="zone authorization unavailable")
+    try:
+        with factory() as session:
+            row = session.get(ZoneDelegationModel, delegation_id)
+            principal = principal_from_auth(auth_result)
+            if (
+                row is None
+                or row.zone_id != zone_id
+                or (
+                    not auth_result.get("is_admin", False)
+                    and (principal.subject_type != "user" or principal.subject_id != row.user_id)
+                )
+            ):
+                return Decision(
+                    False,
+                    code="ZONE_OUT_OF_TOKEN_SCOPE",
+                    reason="token is bound to other zones",
+                )
+            delegated = authz.verify_delegation(
+                session,
+                delegation_id=delegation_id,
+                audience="nexus-api",
+                capability=capability,
+                resource_path=resource_path,
+            )
+            if delegated.code == "MEMBERSHIP_UNAVAILABLE":
+                raise HTTPException(
+                    status_code=503,
+                    detail={
+                        "code": delegated.code,
+                        "message": delegated.reason,
+                        "retryable": True,
+                    },
+                )
+            if not delegated:
+                return Decision(
+                    False,
+                    code="ZONE_OUT_OF_TOKEN_SCOPE",
+                    reason="token is bound to other zones",
+                )
+            return None
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="zone authorization unavailable") from exc
+
+
 def zone_capability_decision(
     request: Request,
     auth_result: dict[str, Any],
@@ -245,19 +314,31 @@ def zone_capability_decision(
     # an explicit delegation for this zone: a delegation is a named, TTL- and
     # prefix-scoped grant for exactly this decision, which is a stronger
     # statement than the token's ambient binding (cross-zone execution, p0
-    # §15b). The delegation itself is still verified below.
+    # §15b). The delegation itself is verified up front — a non-empty
+    # reference alone never crosses the boundary.
     explicit_delegation = (delegation_ref or "").strip() or request.headers.get(
         "X-Nexus-Zone-Delegation"
     )
     bound = _token_zone_binding(auth_result)
-    if bound is not None and zone_id not in bound and not explicit_delegation:
+    if bound is not None and zone_id not in bound:
         from nexus.services.zones.authz import Decision
 
-        return Decision(
-            False,
-            code="ZONE_OUT_OF_TOKEN_SCOPE",
-            reason="token is bound to other zones",
+        if not explicit_delegation:
+            return Decision(
+                False,
+                code="ZONE_OUT_OF_TOKEN_SCOPE",
+                reason="token is bound to other zones",
+            )
+        boundary = _verify_boundary_delegation(
+            request,
+            auth_result,
+            delegation_id=explicit_delegation,
+            zone_id=zone_id,
+            capability=capability,
+            resource_path=resource_path,
         )
+        if boundary is not None:
+            return boundary
     if auth_result.get("is_admin", False):
         from nexus.services.zones.authz import Decision
 

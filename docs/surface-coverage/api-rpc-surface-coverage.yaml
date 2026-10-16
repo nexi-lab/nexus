@@ -11049,7 +11049,7 @@ operations:
   transports:
     http:
       name: POST /v2/runtime/resume
-      source: src/nexus/server/api/v2/routers/sessions.py:656
+      source: src/nexus/server/api/v2/routers/sessions.py:659
   profiles:
     lite: unverified
     sandbox: unverified
@@ -11066,7 +11066,7 @@ operations:
   transports:
     http:
       name: GET /v2/runtime/runs/{pid}
-      source: src/nexus/server/api/v2/routers/sessions.py:667
+      source: src/nexus/server/api/v2/routers/sessions.py:670
   profiles:
     lite: unverified
     sandbox: unverified
@@ -11083,7 +11083,7 @@ operations:
   transports:
     http:
       name: POST /v2/runtime/runs/{pid}/cancel
-      source: src/nexus/server/api/v2/routers/sessions.py:687
+      source: src/nexus/server/api/v2/routers/sessions.py:690
   profiles:
     lite: unverified
     sandbox: unverified
@@ -11100,7 +11100,7 @@ operations:
   transports:
     http:
       name: POST /v2/runtime/start
-      source: src/nexus/server/api/v2/routers/sessions.py:647
+      source: src/nexus/server/api/v2/routers/sessions.py:650
   profiles:
     lite: unverified
     sandbox: unverified
@@ -12291,7 +12291,7 @@ operations:
   transports:
     http:
       name: GET /v2/sessions/{session_id}/tasks/{task_id}
-      source: src/nexus/server/api/v2/routers/sessions.py:624
+      source: src/nexus/server/api/v2/routers/sessions.py:627
   profiles:
     lite: unverified
     sandbox: unverified

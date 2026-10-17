@@ -44,6 +44,11 @@ def arguments() -> argparse.Namespace:
     parser.add_argument(
         "--serve", action="store_true", help="Keep the prepared fixtures until Ctrl-C"
     )
+    parser.add_argument(
+        "--rts-ui-checkout",
+        type=Path,
+        help="Run the production nexus-ui Search journey against the isolated daemon",
+    )
     args = parser.parse_args()
     for name in ("kernel_binary", "plugin_library"):
         path = getattr(args, name).resolve()
@@ -54,7 +59,7 @@ def arguments() -> argparse.Namespace:
         parser.error("--model-dir requires --ort-library")
     if args.frontend_checkout and "http://127.0.0.1:4173" not in args.browser_origin:
         parser.error("--frontend-checkout requires --browser-origin http://127.0.0.1:4173")
-    if not args.bun and not (args.serve or args.frontend_checkout):
+    if not args.bun and not (args.serve or args.frontend_checkout or args.rts_ui_checkout):
         parser.error("Bun is required; provide --bun")
     return args
 
@@ -289,6 +294,11 @@ def main() -> int:
                             )
                             env[key] = str(destination)
                     if len(prepared) == (1 if args.keyword_only else 2):
+                        browser_env = (
+                            {"NEXUS_TEST_CHROME": os.environ["NEXUS_TEST_CHROME"]}
+                            if "NEXUS_TEST_CHROME" in os.environ
+                            else None
+                        )
                         if args.frontend_checkout:
                             frontend = args.frontend_checkout.resolve()
                             if not run(
@@ -306,15 +316,27 @@ def main() -> int:
                                     str(output / "native-browser"),
                                 ],
                                 cwd=frontend,
-                                overrides=(
-                                    {"NEXUS_TEST_CHROME": os.environ["NEXUS_TEST_CHROME"]}
-                                    if "NEXUS_TEST_CHROME" in os.environ
-                                    else None
-                                ),
+                                overrides=browser_env,
                             ):
                                 raise RuntimeError(
                                     f"Native browser acceptance failed; inspect {output}"
                                 )
+                        if args.rts_ui_checkout and not run(
+                            "native-rts-search",
+                            [
+                                shutil.which("node") or "node",
+                                "tests/native/search.mjs",
+                                "--http-url",
+                                env["NEXUS_SEARCH_TEST_HTTP"],
+                                "--search-fixture",
+                                str(root / "keyword.json"),
+                                "--output-dir",
+                                str(output / "native-rts-search"),
+                            ],
+                            cwd=args.rts_ui_checkout.resolve(),
+                            overrides=browser_env,
+                        ):
+                            raise RuntimeError(f"Native RTS Search failed; inspect {output}")
                         if args.serve:
                             print(
                                 f"HTTP: {env['NEXUS_SEARCH_TEST_HTTP']}\ngRPC: {env['NEXUS_SEARCH_PLUGIN_TARGET']}"
@@ -325,7 +347,7 @@ def main() -> int:
                             )
                             while True:
                                 time.sleep(0.5)
-                        elif not args.frontend_checkout:
+                        elif not (args.frontend_checkout or args.rts_ui_checkout):
                             run(
                                 "tui",
                                 [

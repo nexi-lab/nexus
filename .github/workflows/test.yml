@@ -259,7 +259,26 @@ jobs:
           pnpm run build
           pnpm exec playwright install --with-deps chromium
 
-      - name: Verify browser identity against the native daemon
+      - name: Checkout the RTS Search consumer
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: nexi-lab/nexus-ui
+          ref: 5492315a7381b874dc8d1d6f41bdc8e5ffe9e1da
+          path: nexus-ui
+
+      - name: Set up the RTS package manager
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: nexus-ui/package.json
+
+      - name: Install the RTS browser consumer
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        working-directory: nexus-ui
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify browser consumers against the native daemon
         if: needs.detect-changes.outputs.code_changed == 'true'
         timeout-minutes: 10
         run: |
@@ -269,7 +288,8 @@ jobs:
             --output-dir "$RUNNER_TEMP/native-browser" \
             --keyword-only \
             --browser-origin http://127.0.0.1:4173 \
-            --frontend-checkout "$GITHUB_WORKSPACE/nexus-frontend"
+            --frontend-checkout "$GITHUB_WORKSPACE/nexus-frontend" \
+            --rts-ui-checkout "$GITHUB_WORKSPACE/nexus-ui"
 
       - name: Upload browser acceptance evidence
         if: failure() && needs.detect-changes.outputs.code_changed == 'true'
@@ -279,6 +299,7 @@ jobs:
           path: |
             ${{ runner.temp }}/native-browser/run-*/results.json
             ${{ runner.temp }}/native-browser/run-*/native-browser/
+            ${{ runner.temp }}/native-browser/run-*/native-rts-search/
           retention-days: 7
 
       # Pre-build the nexus-server image once with buildx + GHA layer cache.

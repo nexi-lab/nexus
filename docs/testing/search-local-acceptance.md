@@ -217,9 +217,27 @@ PR #4909 的最终提交 `bb53e7ea6012e3a27d8efbeab9ba1596598585e1` 在 34 项�
 
 证据位于本轮本地验收目录：`vfs-native-files-root-metadata-before-20261017.log`、`vfs-stat-batch-live-stream-before-20261017.log` 保留两项修复前失败；`vfs-kernel-stat-regressions-20261017.log`、`vfs-native-files-ssot-final-20261017.log`、`vfs-native-files-http-final-20261017.log` 和 `vfs-native-files-all-targets-clippy-20261017.log` 记录最终 Rust 验证。`frontend-file-size-browser-final-20261017.log` 记录 28 项浏览器回归；`native-browser-file-size-final-20261017/run-1792231342108154400/results.json` 及其 `native-browser/native-browser-result.json`、`native-file-editor.png` 保留真实组合结果。
 
-VFS #449 的最终源提交 `3af52281a84cb6ef824208bb5ae8b9445cd31fc2` 在 19 项检查、七个工作流全部一次通过后普通合并，合并提交 `5ce4bb35487a46affc3f98ab34612d24c106b362` 保留两个父提交，合并树与测试源树一致。合并后工作流另行核对。[Nexus PR #4914](https://github.com/nexi-lab/nexus/pull/4914) 固定同一 VFS 源版本及最新前端，保护真实 Linux 组合；最终 CI 以该 PR 为准。
+VFS #449 的最终源提交 `3af52281a84cb6ef824208bb5ae8b9445cd31fc2` 在 19 项检查、七个工作流全部一次通过后普通合并，合并提交 `5ce4bb35487a46affc3f98ab34612d24c106b362` 保留两个父提交，合并树与测试源树一致；七个合并后工作流也全部通过。[Nexus PR #4914](https://github.com/nexi-lab/nexus/pull/4914) 固定同一 VFS 源版本及最新前端，49 项检查成功、两项发布步骤按配置跳过后普通合并。合并提交 `8df80346af82007ca27068a43fca9360bf0cfa71` 同样保留两个父提交，合并树与测试源树一致；合并后 CI 继续核对。
 
 前端 #26 继续保持草稿，尚未触发 Firebase 发布。账号后端及其余业务消费者仍待迁移；本轮文件操作完成不代表整条 Python server 退役主线已 code complete。
+
+### nexus-ui 的原生 Search 消费者
+
+[nexus-ui PR #83](https://github.com/nexi-lab/nexus-ui/pull/83) 将 RTS 界面的查询接到 `POST /v2/search/query`，统计接到 `GET /v2/documents/stats`。Oracle Shrine 的 Query 现在提供实际输入框，显示原生路径、zone 和 chunk 原文；Stats/Census 区分路径数与 chunk 数，资源栏使用 `fts_path_count`。删除旧 Search DTO、GET 查询、未使用的 expansion/health 包装以及未执行后端操作的 Refresh 按钮。HTTP 状态错误和响应中的应用错误都会显示，失败不会沿用旧结果。
+
+六项生产构建 Chromium 回归本地通过，零重试，覆盖 Unicode、特殊字符、原文安全展示、原生统计字段、401/403/503、应用错误及随后恢复为空结果。真实 Rust 组合另通过八个步骤、三组浏览器断言：原 bearer 经 Next 代理到 Rust；只显示获授权文件；撤销关系后即时消失；撤销凭证后显示 401 并清除旧结果。世界视图的旧 monitoring 响应使用受控夹具，Search 响应直接来自实际 daemon；这不代表 monitoring 已迁移。
+
+首次真实组合暴露 Node `fetch` 拒绝 4190 端口，已统一改用 4192，并保留探针错误详情；没有通过延长等待掩盖原因。证据为 `native-rts-search-20261017/run-1792233617757917100/native-rts-search/result.json`（失败）和 `native-rts-search-final-20261017/run-1792233796645587400/results.json`、`native-rts-search/result.json`、`native-rts-search.png`（通过）。测试单独创建和撤销身份，不改共享测试身份；含临时凭证的 `.next` 构建在结束时清除。
+
+两个生产浏览器消费端进一步共用同一实际 daemon 验证，九个步骤、十五组浏览器断言全部通过；证据为 `native-both-browsers-20261017/run-1792233983105187400/results.json` 及其两个浏览器结果文件。RTS 最终源版本 `5492315a7381b874dc8d1d6f41bdc8e5ffe9e1da` 的 Linux CI 六项浏览器回归通过后，PR #83 普通合并为 `d1aaa9d13af0e9b3333d8dafbe5594b76edcefda`，合并树与测试源树一致，合并后 CI 同样通过。
+
+RTS 仓库为私有，Nexus CI 的默认 token 无法跨仓库检出，首次配套 CI 返回 `Repository not found`，该次 CI 未执行真实组合。RTS 的真实 Rust 验收移至自身仓库 CI，使用同一公共 Nexus fixture 和构建脚本；Nexus 中现有普通前端 CI 继续运行。最终 CI 状态以配套 PR 为准。
+
+| 编号 | 手工验收 | 预期 |
+| --- | --- | --- |
+| RTS-SEARCH-01 | 配好旧 monitoring 与 Rust HTTP 地址，选 Oracle Shrine → Query，输入已索引文件中的唯一词 | 只显示可读文件的路径、zone 和实际 chunk 文本 |
+| RTS-SEARCH-02 | 使用有权限的身份点击 Stats/Census，并比较资源栏 | 显示真实路径数和 chunk 数；资源栏取路径数；统计失败不能显示成功或零 |
+| RTS-SEARCH-03 | 同一浏览器依次撤销文件关系、再撤销凭证后重查 | 先不再返回该文件；随后显示 401，旧结果清空 |
 
 ### scode 正式依赖与安装装配
 
@@ -368,7 +386,7 @@ CODE-04 的剩余范围：
 
 - 人类账号的 Rust 服务端：注册、密码登录及变更、邮件验证、profile 和 Google OAuth。保留现有账号和 bcrypt 数据；provider 与 provider subject 绑定保持唯一，不按 email 自动合并身份。授权与撤销继续使用原生身份体系。
 - `nexus-frontend` 的基础文件操作已迁移；管理、workspace、agent、sandbox、memory、skills 注册及连接器业务调用方仍待迁移。移除没有调用的包装方法，并不代表对应业务端点可以删除。
-- `nexus-ui` 的 Search 请求/响应、统计和健康字段，以及 Python server 启动入口；TUI 的其他面板和可选功能元数据。
+- `nexus-ui` 的 monitoring/健康模型、Python server 启动入口及其余业务接口；Search 请求、响应和统计已迁移，最终组合 CI 仍需核对。TUI 的其他面板和可选功能元数据也尚未完成。
 - 收齐这些调用方和账号后端，删除其替代的 Python 服务端，再跑完整用户旅程和 CI。上述事项完成前，整条 Python server 退役主线仍未 code complete。
 
 ## 七、评论和结果模板

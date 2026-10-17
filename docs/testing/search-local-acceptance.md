@@ -2,7 +2,7 @@
 
 更新日期：2026 年 10 月 17 日。本文用于逐项评论、分配测试和记录结果。
 
-当前状态：慢索引、Search 服务端清理、固定 owner 授权、原生 whoami/CORS、TUI 身份迁移，以及 scode 正式 VFS pin/checksum/proto 集成均已在最终 CI 通过后合并，保留全部提交历史。实际 Linux CI 已运行最新生产前端与 Rust HTTP 的浏览器链路。前端 PR #26 保持草稿，14 个浏览器用例已通过本地与 Linux CI；原生组合的八个步骤和五组浏览器断言也已通过。Google/密码账号的完整 Rust 服务端及剩余前端接口迁移尚未完成，整条主线尚未 code complete。腾讯云部署等这些代码与验收收齐后再讨论。
+当前状态：慢索引、Search 服务端清理、固定 owner 授权、原生 whoami/CORS、TUI 身份迁移，以及 scode 正式 VFS pin/checksum/proto 集成均已在最终 CI 通过后合并，保留全部提交历史。实际 Linux CI 已运行生产前端与 Rust HTTP 的浏览器链路。前端 PR #26 保持草稿；新增文件搜索迁移已有 19 个本地浏览器用例、原生组合八个步骤和九组浏览器断言通过，最终 CI 以 PR 为准。Google/密码账号的完整 Rust 服务端及剩余前端接口迁移尚未完成，整条主线尚未 code complete。腾讯云部署等这些代码与验收收齐后再讨论。
 
 合并后验收补充：Nexus #4909 和 #4910 的合并后工作流均已通过；scode #970 的共享服务 E2E 四个平台全部通过，Rust CI 的其余任务通过，但真实模型 ACP subagent 测试在接收消息 120 秒后失败。当次网关仅返回心跳；测试夹具的 `env_clear()` 丢弃了 CI 配置的 90 秒 API 空闲预算，子进程回退到 300 秒，未能在夹具截止前执行现有流恢复。
 
@@ -15,7 +15,7 @@
 
 [scode PR #973](https://github.com/sudoprivacy/sudocode/pull/973) 将 controller 验收统一为一次完整工作流的十分钟预算，预算跨模型往返和审批共享；运行时仍负责单请求空闲保护，包含编译与全部实时用例的 CI job 上限为三十分钟。真实 Kernel/mailbox 回归验证预算到期后不再消费消息；真实 CLI 回归验证缺失模型会失败退出、只请求一次，并保留明确错误。Azure 实测改为只等待一次进程结束，再从持久会话验证真实文件结果与最终答案。两个原有协议夹具、新增错误路径、provider 探针子进程回归、fmt/YAML/clippy 均已通过本地验证；本地未执行需要凭据的 Azure 实测。
 
-该候选提交 `79afe8e7228eba4dc9872a4f1a65f7ccc61a67c2` 的[真实 CI](https://github.com/sudoprivacy/sudocode/actions/runs/39014392744) 仍在验证。新增探针分别记录 CI 凭证可见的模型目录和实际路由结果；目录里存在模型不代表渠道可用。Azure 依赖尚待复核，生产渠道配置与腾讯云部署均未修改。
+该候选提交 `79afe8e7228eba4dc9872a4f1a65f7ccc61a67c2` 的[真实 CI](https://github.com/sudoprivacy/sudocode/actions/runs/39014392744/job/117343371452) 已通过 GPT stdio/WebSocket/subagent、Claude 原生 subagent，以及两个真实模型 mailbox 工作流；mailbox 两例合计 28.66 秒。Linux/Windows 的 Azure 文件验收仍失败。新增探针确认这次 CI 凭证可见 82 个模型，没有 Azure 模型，两个实际协议路由均返回 `400 model_not_found`。目录与路由分开记录；不将模型目录当作可用性证明。#973 保持草稿，等待对齐 Azure 测试依赖；生产渠道配置与腾讯云部署均未修改。
 
 ## 一、范围和完成标准
 
@@ -184,6 +184,14 @@ scode 候选基线为 `94088bd7`（0.2.31）。本地将其全部 VFS Git 依赖
 
 后续设置页修复 `0909281db2c801dea04aeadff9a3fd2fc859b545`：有效原生 API key 原先仍被设置页要求账号 JWT 的重复判断跳回登录页。现在复用应用的身份验证边界，显示原生 whoami 的 subject、服务器地址及掩码凭证，支持退出；账号密码和删号操作仅供账号登录使用。修复前真实浏览器稳定失败，修复后完整 14 项浏览器用例通过，16 秒、零重试，最终 Linux CI 也已通过。原生浏览器组合的八个步骤也全部通过，五组断言包括设置页的真实 subject、管理员页面拒绝、预热凭证撤销后的 CORS 401 与退出，以及另一用户继续有效。临时 fixture 已清理。
 
+### 前端文件搜索迁移
+
+前端候选 `0764e0b260d871657f3817f5459d6e7a316c1a41` 将实际文件浏览器的名称/内容搜索迁至 Rust `POST /v2/search/glob` 和 `/v2/search/grep`，直接使用当前客户端的 bearer。删除原有 Python RPC 包装与旧响应类型，保留原生 `paths`、`matches`、行号和 `truncated` 契约。结果只有一份内存状态；切换查询、模式、目录或身份会丢弃旧结果及尚未结束请求的回写。错误单独展示，服务失败不再显示成“无结果”；超过 100 条的结果提示缩小范围。
+
+本地生产构建与完整 19 项 Chromium 回归均通过、零重试。五个新增用例验证实际请求路径、当前身份、中文及特殊字符、同文件多次命中、截断提示、HTTP 与应用错误、真正空结果，以及清空查询后的迟到响应。真实 Rust 组合又测出单文件授权不能枚举 `/` 的边界：浏览器正确展示 403；为目录单独提交读取关系后，只能看见另有文件授权的文档，未授权的同内容文件被过滤；预热后撤销文件关系，结果立即消失。没有修改 Kernel、ReBAC 或 Raft 契约来放宽此限制。
+
+实际原生组合的八个步骤和九组浏览器断言均已通过，保留结果与截图。检查截图后另修正了长原生身份挤压页头品牌的布局，候选 `60baa6f858b46803232a11f5e18a9e5cbb406bc2` 保留全部历史；其生产构建及全部八个原生步骤、九组浏览器断言也已再次通过，fixture 已清理。最终 CI 以 PR 为准。前端 #26 继续保持草稿；文件 CRUD、账号后端及其他 `/api/nfs/*` 消费方仍未完成迁移。
+
 [Nexus PR #4909](https://github.com/nexi-lab/nexus/pull/4909) 将原生浏览器 CI 的前端固定版本推进到该 `0909281` 提交，以同一个 runner 保护最新设置页和身份断言。整条前端迁移未完成，前端仍保持草稿；这个 CI 固定版本更新不触发前端 Firebase 部署。
 
 PR #4909 的最终提交 `bb53e7ea6012e3a27d8efbeab9ba1596598585e1` 在 34 项检查通过、1 项部署工作按配置跳过后普通合并，合并提交 `be5a12f80dfc4e084101ffb4de52f555cf783e8b`。实际 Linux self-contained job 为 638 通过、134 跳过；日志确认检出 `0909281`，生产浏览器构建及原生身份步骤均成功。仅失败时上传附件的步骤正常跳过。
@@ -214,6 +222,9 @@ Nexus PR #4907 的 15 项合并后工作流、#4908 的 10 项合并后工作流
 - `scode-integrated-engine-host-git-path-tests-20261017.log`、`scode-integrated-fs-artifacts-tests-20261017.log`：合并 main 后的 engine-host、runtime、真实 Kernel 文件与版本绑定回归。
 - `scode-integrated-production-build-20261017.log`、`scode-integrated-install-live-20261017.log`、`scode-integrated-cohost-live-20261017.log`、`scode-integrated-owner-real-model-20261017.log`：合并 main 后的生产构建、CLI 八组验证、完整 cohost 和真实模型 owner Search。
 - `native-browser-settings-20261017/run-1792209739281755200/results.json` 与其 `native-browser/native-browser-result.json`：最新前端的八个原生步骤和五组浏览器断言，包括设置页；fixture 已清理。
+- `frontend-native-search-final-browser-20261017.log`：19 项实际 Chromium 回归通过，28.4 秒、零重试；`frontend-native-search-header-build-20261017.log`：最终前端生产构建通过。
+- `native-browser-search-head-20261017/run-1792224171295302600/results.json` 与其 `native-browser/native-browser-result.json`：前端 `60baa6f858b46803232a11f5e18a9e5cbb406bc2` 的八个原生步骤和九组浏览器断言；同目录保留真实文件搜索截图，fixture 已清理。
+- `scode-973-mailbox-live-ci-20261017.log`、`scode-973-provider-contract-20261017/provider-usage-contract.json`、`scode-973-live-windows-20261017.log`、`scode-973-live-linux-20261017.log`：真实 GPT/Claude/mailbox 通过，Azure 两协议及两平台的渠道失败仍可见。
 - `linux-script-exec-contract-20261017.log`、`scode-native-skill-open-writer-windows-20261017.log`：Linux exec 写句柄排斥的稳定复现与修正后的 Windows 场景；`linux-cohost-diagnostic-20261017/signature-dev-timing.log`、`signature-optimized-timing.log`：同输入、同信任根签名校验的 41.67 秒与 1.84 秒对照。
 - `linux-cohost-diagnostic-20261017/native-workspace-final-tests.log`、`exact-debug-cohost-startup.log`、`canonical-owner-final.log`：实际 Linux 工作区与 cohost 签名、外部 mTLS、owner 隔离和重启验证。`scode-owner-final-ci-20261017.log`、`native-browser-settings-final-ci-20261017.log`：最终源码提交的实际 Linux CI 日志。
 - `frontend-build-split-20261016.log`、`frontend-lint-final-20261016.log`、`frontend-frozen-install-final-20261017.log`：最终构建、相关代码 lint、统一 lockfile 的 frozen 安装核对。

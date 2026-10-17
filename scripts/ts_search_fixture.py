@@ -91,6 +91,7 @@ def main(action: str) -> None:
         }
         try:
             subject = f"ts-reader-{suffix}"
+            manifest["subject"] = subject
             minted = http(
                 "POST",
                 "/v2/auth/keys",

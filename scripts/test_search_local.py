@@ -300,6 +300,8 @@ def main() -> int:
                                     env["NEXUS_SEARCH_TEST_HTTP"],
                                     "--admin-key-file",
                                     str(credential),
+                                    "--search-fixture",
+                                    str(root / "keyword.json"),
                                     "--output-dir",
                                     str(output / "native-browser"),
                                 ],

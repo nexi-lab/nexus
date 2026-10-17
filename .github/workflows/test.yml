@@ -36,6 +36,7 @@ jobs:
               - 'src/**'
               - 'tests/**'
               - 'rust/**'
+              - 'scripts/**'
               - 'pyproject.toml'
               - 'Cargo.*'
               - '.github/workflows/**'
@@ -227,6 +228,58 @@ jobs:
           echo "NEXUS_SEARCH_PLUGIN_LIBRARY=$CARGO_TARGET_DIR/release/libnexus_search_plugin.so" >> "$GITHUB_ENV"
           echo "$CARGO_TARGET_DIR/release" >> "$GITHUB_PATH"
           sudo ln -sf "$CARGO_TARGET_DIR/release/nexusd-cluster" /usr/local/bin/nexus-cluster
+
+      - name: Checkout the browser identity consumer
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: nexi-lab/nexus-frontend
+          ref: 393f3a57270e276d9a84d7eeaa845e21cd767b6c
+          path: nexus-frontend
+
+      - name: Set up the frontend package manager
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: nexus-frontend/package.json
+
+      - name: Set up Node.js
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: nexus-frontend/pnpm-lock.yaml
+
+      - name: Build the production frontend and install Chromium
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        working-directory: nexus-frontend
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
+          pnpm exec playwright install --with-deps chromium
+
+      - name: Verify browser identity against the native daemon
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        timeout-minutes: 10
+        run: |
+          uv run --no-sync python scripts/test_search_local.py \
+            --kernel-binary "$NEXUS_KERNEL_BINARY" \
+            --plugin-library "$NEXUS_SEARCH_PLUGIN_LIBRARY" \
+            --output-dir "$RUNNER_TEMP/native-browser" \
+            --keyword-only \
+            --browser-origin http://127.0.0.1:4173 \
+            --frontend-checkout "$GITHUB_WORKSPACE/nexus-frontend"
+
+      - name: Upload browser acceptance evidence
+        if: failure() && needs.detect-changes.outputs.code_changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-browser-identity-failure
+          path: |
+            ${{ runner.temp }}/native-browser/run-*/results.json
+            ${{ runner.temp }}/native-browser/run-*/native-browser/
+          retention-days: 7
 
       # Pre-build the nexus-server image once with buildx + GHA layer cache.
       # The ``running_nexus`` fixture in tests/e2e/self_contained/conftest.py

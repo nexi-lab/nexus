@@ -256,7 +256,9 @@ RTS 查询与统计统一读取构建配置 `NEXT_PUBLIC_NEXUS_ZONE_ID`，未配
 
 有效批次仍返回 counts、逐路径 skips 和真实 `index_seq`；应用错误仍通过原错误通道返回。真实 daemon 用例新增混合有效/空内容、精确 skips、重启后查询和损坏存储的失败响应。本地插件 336 项、HTTP 186 项、Python 调用方 28 项、SDK 127 项、TUI worker 2 项及 Chromium 7 项通过；协议绑定检查、覆盖清单生成/校验及相关回归通过。
 
-最终实际 daemon、签名插件、mTLS、权限与重启三组 15 项通过；相关四个 crate 全部 target 的严格 Clippy 通过。两个生产浏览器消费者再连接同一实际 daemon 验证，九个步骤、十五组浏览器断言全部通过，截图已核对，临时身份和含凭证的构建已清理。证据为 `search-index-outcomes-native-daemon-final-20261017.log`、`search-index-outcomes-clippy-20261017.log`、`native-both-durable-contract-20261017/run-1792240424711344000/results.json` 及浏览器结果文件。本次组合使用关键词模式，不增加真实模型验收声明；最终 CI 以配套 PR 为准。
+最终三条实际 daemon、签名插件、mTLS、权限与重启旅程通过；对应测试目标合计 15 项，包含公共辅助测试。相关四个 crate 全部 target 的严格 Clippy 通过。两个生产浏览器消费者再连接同一实际 daemon 验证，九个步骤、十五组浏览器断言全部通过，截图已核对，临时身份和含凭证的构建已清理。证据为 `search-index-outcomes-native-daemon-final-20261017.log`、`search-index-outcomes-clippy-20261017.log`、`native-both-durable-contract-20261017/run-1792240424711344000/results.json` 及浏览器结果文件。本次组合使用关键词模式，不增加真实模型验收声明；最终 CI 以配套 PR 为准。
+
+配套 [Nexus #4917](https://github.com/nexi-lab/nexus/pull/4917) 的 CI 暴露了 StackStore 编排单测调用本机真实 Docker、超过 5 秒预算的问题。该组单测现在为本地动作提供受控完成、延迟与失败输入，结束后恢复原动作；新增断言验证所有刷新结束后才更新时间戳。测试预算保持不变。Windows 完整 TUI 测试 1224 项通过、18 项按平台或环境跳过，证据为 `nexus-4917-typescript-failure-20261017.log` 和 `nexus-tui-full-suite-after-stack-fixture-20261017.log`。真实 Rust 的独立 CI 验收继续保留。
 
 ### scode 正式依赖与安装装配
 

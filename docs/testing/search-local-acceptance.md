@@ -8,6 +8,15 @@
 
 [scode PR #971](https://github.com/sudoprivacy/sudocode/pull/971) 修复预算传递，并加入同一 ACP 夹具和真实 CLI 子进程的回归：修复前在 30 秒内无法恢复，修复后 6.68 秒完成，恢复前后请求完全相同；原有四种流格式的心跳恢复回归也通过。[真实模型 CI](https://github.com/sudoprivacy/sudocode/actions/runs/39009309234/job/117328180177) 已在候选提交 `b065ca49bbd54f2ba278ac91a75e603fe08cf5c0` 实际通过 GPT stdio/WebSocket/subagent、Claude 原生 subagent、新增心跳回归及两个真实模型 cohost mailbox 用例。完整 PR 检查和合并状态以该 PR 为准。
 
+随后对合并提交 `9dd7139766131d1e69707bf5646f6f1d5404f367` 的核对又发现两类问题，当前不能将合并后验收记为全部通过：
+
+- GPT/Claude ACP 测试已通过，但 mailbox 的完整任务在 120 秒被夹具截断；模型在第 93 秒仍返回工具参数，尚未触发运行时的单请求空闲保护。
+- Windows/Linux 的真实 Azure 文件用例均收到 SudoRouter `400 model_not_found`：`deepseek-v3.2-azure` 在 auto 分组没有可用渠道。该结果来自真实 provider 响应，不能记作文件功能通过，也不能靠重跑隐藏。
+
+[scode PR #973](https://github.com/sudoprivacy/sudocode/pull/973) 将 controller 验收统一为一次完整工作流的十分钟预算，预算跨模型往返和审批共享；运行时仍负责单请求空闲保护，包含编译与全部实时用例的 CI job 上限为三十分钟。真实 Kernel/mailbox 回归验证预算到期后不再消费消息；真实 CLI 回归验证缺失模型会失败退出、只请求一次，并保留明确错误。Azure 实测改为只等待一次进程结束，再从持久会话验证真实文件结果与最终答案。两个原有协议夹具、新增错误路径、provider 探针子进程回归、fmt/YAML/clippy 均已通过本地验证；本地未执行需要凭据的 Azure 实测。
+
+该候选提交 `79afe8e7228eba4dc9872a4f1a65f7ccc61a67c2` 的[真实 CI](https://github.com/sudoprivacy/sudocode/actions/runs/39014392744) 仍在验证。新增探针分别记录 CI 凭证可见的模型目录和实际路由结果；目录里存在模型不代表渠道可用。Azure 依赖尚待复核，生产渠道配置与腾讯云部署均未修改。
+
 ## 一、范围和完成标准
 
 Search 的执行后端是 owning Kernel 中的 Rust Search plugin。gRPC 是原生契约；可选 Rust HTTP 入口转发到同一套 gRPC，保留调用者凭证。Python SDK、CLI、MCP 的客户端适配可以保留；被 Rust 替代的服务端算法、路由和状态不能继续成为第二套实现。

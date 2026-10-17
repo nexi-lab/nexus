@@ -11,16 +11,16 @@ import { useGlobalStore } from "../../src/stores/global-store.js";
 import type { FetchClient } from "@nexus-ai-fs/api-client";
 
 const DEFAULT_USER_INFO = {
+  subject_type: "user",
+  subject_id: "user-1",
   user_id: "user-1",
-  email: "test@example.com",
-  username: "testuser",
-  display_name: "Test User",
-  avatar_url: null,
-  is_global_admin: false,
-  primary_auth_method: "api_key",
+  agent_id: null,
+  zone_id: "root",
+  is_admin: false,
+  zone_perms: [],
 };
 
-const DEFAULT_HEALTH = { status: "ready", uptime_seconds: 100 };
+const DEFAULT_HEALTH = { status: "ok", version: "0.10.1" };
 const DEFAULT_FEATURES = {
   profile: "full",
   mode: "standalone",
@@ -33,14 +33,10 @@ const DEFAULT_FEATURES = {
 function createMockClient(overrides: {
   health?: () => Promise<unknown>;
   features?: () => Promise<unknown>;
-  authMe?: () => Promise<unknown>;
 } = {}): FetchClient {
   return {
     get: mock(async (url: string) => {
-      if (url === "/auth/me") {
-        return overrides.authMe ? overrides.authMe() : DEFAULT_USER_INFO;
-      }
-      if (url === "/healthz/ready") {
+      if (url === "/v2/status") {
         return overrides.health ? overrides.health() : DEFAULT_HEALTH;
       }
       if (url === "/api/v2/features") {
@@ -55,16 +51,17 @@ function createMockClient(overrides: {
 /** Mock fetch for the dedicated auth client created inside testConnection. */
 function createMockFetch(overrides: {
   authMe?: () => Promise<unknown>;
+  status?: number;
 } = {}): typeof globalThis.fetch {
   return (async (input: string | URL | Request) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-    if (url.includes("/auth/me")) {
+    if (url.includes("/v2/auth/whoami")) {
       if (overrides.authMe) {
         try {
           const data = await overrides.authMe();
           return new Response(JSON.stringify(data), { status: 200, headers: { "content-type": "application/json" } });
         } catch (e) {
-          return new Response(JSON.stringify({ detail: String(e) }), { status: 401, headers: { "content-type": "application/json" } });
+          return new Response(JSON.stringify({ detail: String(e) }), { status: overrides.status ?? 401, headers: { "content-type": "application/json" } });
         }
       }
       return new Response(JSON.stringify(DEFAULT_USER_INFO), { status: 200, headers: { "content-type": "application/json" } });
@@ -88,31 +85,24 @@ describe("Connection Lifecycle", () => {
       mode: null,
       featuresLoaded: false,
       featuresLastFetched: 0,
+      config: { apiKey: "fixture-key", baseUrl: "http://127.0.0.1:1", fetch: createMockFetch({ authMe: async () => { throw new Error("No identity"); } }) },
     });
   });
 
   describe("happy path: disconnected → connecting → connected", () => {
-    it("testConnection populates userInfo via deferred /auth/me", async () => {
+    it("testConnection populates userInfo via deferred /v2/auth/whoami", async () => {
       const client = createMockClient();
       const config = { ...useGlobalStore.getState().config, fetch: createMockFetch(), transformKeys: false };
       useGlobalStore.setState({ client, config });
 
       await useGlobalStore.getState().testConnection();
-      // Give deferred /auth/me time to settle
+      // Give deferred /v2/auth/whoami time to settle
       await new Promise((r) => setTimeout(r, 10));
 
       const state = useGlobalStore.getState();
       expect(state.connectionStatus).toBe("connected");
       expect(state.connectionError).toBeNull();
-      expect(state.userInfo).toEqual({
-        user_id: "user-1",
-        email: "test@example.com",
-        username: "testuser",
-        display_name: "Test User",
-        avatar_url: null,
-        is_global_admin: false,
-        primary_auth_method: "api_key",
-      });
+      expect(state.userInfo).toEqual(DEFAULT_USER_INFO);
     });
 
     it("testConnection does not overwrite zoneId (set via setIdentity, not health)", async () => {
@@ -124,13 +114,13 @@ describe("Connection Lifecycle", () => {
       expect(useGlobalStore.getState().zoneId).toBe("my-zone");
     });
 
-    it("testConnection sets serverVersion from features response", async () => {
+    it("testConnection sets serverVersion from the native status response", async () => {
       const client = createMockClient();
       useGlobalStore.setState({ client });
 
       await useGlobalStore.getState().testConnection();
 
-      expect(useGlobalStore.getState().serverVersion).toBe("0.9.0");
+      expect(useGlobalStore.getState().serverVersion).toBe("0.10.1");
     });
 
     it("transitions through connecting state", async () => {
@@ -155,7 +145,6 @@ describe("Connection Lifecycle", () => {
     it("network error sets error status when health fails", async () => {
       const client = createMockClient({
         health: async () => { throw new Error("ECONNREFUSED"); },
-        authMe: async () => { throw new Error("ECONNREFUSED"); },
       });
       useGlobalStore.setState({ client });
 
@@ -170,7 +159,6 @@ describe("Connection Lifecycle", () => {
     it("timeout sets error status when health fails", async () => {
       const client = createMockClient({
         health: async () => { throw new Error("Request timed out"); },
-        authMe: async () => { throw new Error("Request timed out"); },
       });
       useGlobalStore.setState({ client });
 
@@ -184,12 +172,12 @@ describe("Connection Lifecycle", () => {
 
   describe("auth failures (non-fatal when health passes)", () => {
     it("401 unauthorized still connects if health passes", async () => {
-      const client = createMockClient({
-        authMe: async () => { throw new Error("Unauthorized (401)"); },
-      });
-      useGlobalStore.setState({ client });
+      const client = createMockClient();
+      const config = { ...useGlobalStore.getState().config, fetch: createMockFetch({ authMe: async () => { throw new Error("Unauthorized"); } }) };
+      useGlobalStore.setState({ client, config });
 
       await useGlobalStore.getState().testConnection();
+      await new Promise<void>((resolve) => setImmediate(resolve));
 
       const state = useGlobalStore.getState();
       expect(state.connectionStatus).toBe("connected");
@@ -197,12 +185,12 @@ describe("Connection Lifecycle", () => {
     });
 
     it("403 forbidden still connects if health passes", async () => {
-      const client = createMockClient({
-        authMe: async () => { throw new Error("Forbidden (403)"); },
-      });
-      useGlobalStore.setState({ client });
+      const client = createMockClient();
+      const config = { ...useGlobalStore.getState().config, fetch: createMockFetch({ status: 403, authMe: async () => { throw new Error("Forbidden"); } }) };
+      useGlobalStore.setState({ client, config });
 
       await useGlobalStore.getState().testConnection();
+      await new Promise<void>((resolve) => setImmediate(resolve));
 
       const state = useGlobalStore.getState();
       expect(state.connectionStatus).toBe("connected");
@@ -228,7 +216,6 @@ describe("Connection Lifecycle", () => {
       // First: fail (health must also fail for error status)
       const failClient = createMockClient({
         health: async () => { throw new Error("Connection refused"); },
-        authMe: async () => { throw new Error("Connection refused"); },
       });
       useGlobalStore.setState({ client: failClient });
       await useGlobalStore.getState().testConnection();
@@ -242,17 +229,9 @@ describe("Connection Lifecycle", () => {
       expect(useGlobalStore.getState().connectionStatus).toBe("connected");
       expect(useGlobalStore.getState().connectionError).toBeNull();
 
-      // Deferred /auth/me populates userInfo after settling
+      // Deferred /v2/auth/whoami populates userInfo after settling
       await new Promise((r) => setTimeout(r, 10));
-      expect(useGlobalStore.getState().userInfo).toEqual({
-        user_id: "user-1",
-        email: "test@example.com",
-        username: "testuser",
-        display_name: "Test User",
-        avatar_url: null,
-        is_global_admin: false,
-        primary_auth_method: "api_key",
-      });
+      expect(useGlobalStore.getState().userInfo).toEqual(DEFAULT_USER_INFO);
     });
   });
 
@@ -260,7 +239,6 @@ describe("Connection Lifecycle", () => {
     it("handles string throws when health fails", async () => {
       const client = createMockClient({
         health: async () => { throw "raw string error"; },
-        authMe: async () => { throw "raw string error"; },
       });
       useGlobalStore.setState({ client });
 
@@ -276,7 +254,6 @@ describe("Connection Lifecycle", () => {
     it("server error on health sets error status", async () => {
       const client = createMockClient({
         health: async () => { throw new Error("Internal Server Error (500)"); },
-        authMe: async () => { throw new Error("Internal Server Error (500)"); },
       });
       useGlobalStore.setState({ client });
 

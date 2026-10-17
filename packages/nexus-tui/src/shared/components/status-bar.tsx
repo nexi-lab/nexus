@@ -51,12 +51,12 @@ export function StatusBar() {
     const ui = userInfo();
     const cfg = config();
     const parts: string[] = [];
-    if (ui?.display_name ?? ui?.username) {
-      parts.push(ui!.display_name ?? ui!.username!);
+    if (ui) {
+      parts.push(`${ui.subject_type}:${ui.subject_id}`);
     } else if (cfg.agentId) {
       parts.push(`agent:${cfg.agentId}`);
     }
-    if (cfg.subject && cfg.subject !== cfg.agentId) {
+    if (!ui && cfg.subject && cfg.subject !== cfg.agentId) {
       parts.push(`sub:${cfg.subject}`);
     }
     return parts;

@@ -60,6 +60,17 @@ export interface ApiErrorResponse {
   readonly error_code?: string;
 }
 
+/** Authenticated request context returned by GET /v2/auth/whoami. */
+export interface NativeIdentity {
+  readonly subject_type: string;
+  readonly subject_id: string;
+  readonly user_id: string;
+  readonly agent_id: string | null;
+  readonly zone_id: string;
+  readonly is_admin: boolean;
+  readonly zone_perms: readonly (readonly [string, string])[];
+}
+
 export interface PaginatedResponse<T> {
   readonly items: readonly T[];
   readonly total: number;

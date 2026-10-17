@@ -20,6 +20,7 @@ describe("GlobalStore", () => {
       mode: null,
       featuresLoaded: false,
       featuresLastFetched: 0,
+      config: { apiKey: "fixture-key", baseUrl: "http://127.0.0.1:1", fetch: (async () => Response.json(null)) as typeof fetch },
     });
   });
 
@@ -176,7 +177,7 @@ describe("GlobalStore", () => {
         useGlobalStore.setState({ config: configured, client });
         const activeClient = useGlobalStore.getState().client;
         await useGlobalStore.getState().testConnection();
-        expect(requests).toEqual(["/healthz/ready", "/api/v2/features"]);
+        expect(requests).toEqual(["/v2/status"]);
         expect(unexpectedFetch).not.toHaveBeenCalled();
         expect(useGlobalStore.getState().config).toEqual(configured);
         expect(useGlobalStore.getState().client).toBe(activeClient);
@@ -343,12 +344,11 @@ describe("GlobalStore", () => {
 
   describe("testConnection", () => {
     it("sets connected on health success", async () => {
-      const mockHealth = { status: "ready", uptime_seconds: 100 };
+      const mockHealth = { status: "ok", version: "0.10.1" };
 
-      // testConnection calls client.get 2 times: health, features.
-      // Deferred /auth/me fires as a 3rd call but falls through to default mock (undefined).
+      // Native status establishes the connection; feature metadata is optional.
       const mockGet = mock()
-        .mockResolvedValueOnce(mockHealth)     // health (/healthz/ready)
+        .mockResolvedValueOnce(mockHealth)     // health (/v2/status)
         .mockResolvedValueOnce(null);          // features
 
       const mockFetchClient = { get: mockGet } as unknown as FetchClient;
@@ -361,28 +361,8 @@ describe("GlobalStore", () => {
       expect(state.connectionError).toBeNull();
     });
 
-    it("sets connected when health passes but deferred auth/me fails", async () => {
-      const mockHealth = { status: "ready", uptime_seconds: 10 };
-      const mockGet = mock()
-        .mockResolvedValueOnce(mockHealth)     // health OK
-        .mockResolvedValueOnce(null)           // features
-        .mockRejectedValueOnce(new Error("Auth not configured")); // deferred auth/me fails
-
-      const mockFetchClient = { get: mockGet } as unknown as FetchClient;
-      useGlobalStore.setState({ client: mockFetchClient });
-
-      await useGlobalStore.getState().testConnection();
-      // Give deferred /auth/me time to settle
-      await new Promise((r) => setTimeout(r, 10));
-      const state = useGlobalStore.getState();
-
-      // Server is connected if health passes, even when auth/me fails
-      expect(state.connectionStatus).toBe("connected");
-      expect(state.userInfo).toBeNull();
-    });
-
     it("sets error status when health fails", async () => {
-      // All 3 calls fail (server unreachable) → health is null → error
+      // Native status fails when the server is unreachable.
       const mockFetchClient = {
         get: mock(async () => {
           throw new Error("Network error");

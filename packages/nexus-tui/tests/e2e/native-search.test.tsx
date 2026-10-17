@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import { FetchClient, IndexingClient, SearchClient, type IndexingMode } from "@nexus-ai-fs/api-client";
 import { createWorkerManager } from "../../src/worker/worker-manager.js";
 import { useSearchStore } from "../../src/stores/search-store.js";
+import { useGlobalStore } from "../../src/stores/global-store.js";
+import { StatusBar } from "../../src/shared/components/status-bar.js";
 import { SearchResults } from "../../src/panels/search/search-results.js";
 import { searchFiles } from "../../src/panels/files/file-search.js";
 import { testRender } from "../helpers/render.js";
@@ -18,6 +20,42 @@ describe.skipIf(!fixturePath)("native Search through the TUI worker and terminal
   const connection = fixture ? { url: fixture.url, zoneId: "sharedzone" } : undefined;
 
   afterAll(() => manager?.terminate());
+
+  it("connects to the native daemon and renders its authenticated identity", async () => {
+    const config = {
+      apiKey: fixture.readerKey, baseUrl: fixture.url, maxRetries: 0,
+      agentId: "forged-operator", subject: "user:forged-operator", transformKeys: false,
+    };
+    const identityManager = createWorkerManager(config);
+    const expected = fixture.grant.subject_id;
+    try {
+      useGlobalStore.setState({ config, client: identityManager.client as unknown as FetchClient, userInfo: null });
+      const resolved = new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => { unsubscribe(); reject(new Error("Native identity did not resolve")); }, 8000);
+        const unsubscribe = useGlobalStore.subscribe((state) => {
+          if (state.userInfo) { clearTimeout(timeout); unsubscribe(); resolve(); }
+        });
+      });
+      await useGlobalStore.getState().testConnection();
+      await resolved;
+      const state = useGlobalStore.getState();
+      expect(state.connectionStatus).toBe("connected");
+      expect(state.serverVersion).toBeTruthy();
+      expect(state.userInfo).toMatchObject({ subject_type: "user", subject_id: expected, user_id: expected, is_admin: false });
+      const setup = await testRender(() => <StatusBar />, { width: 240, height: 2 });
+      try {
+        await setup.renderOnce();
+        expect(setup.captureCharFrame()).toContain(`user:${expected}`);
+        expect(setup.captureCharFrame()).not.toContain("forged-operator");
+      } finally {
+        setup.renderer.destroy();
+      }
+    } finally {
+      useGlobalStore.getState().setConnectionStatus("disconnected");
+      useGlobalStore.setState({ client: null });
+      identityManager.terminate();
+    }
+  });
 
   it("renders an authorized native chunk without Python response fields", async () => {
     useSearchStore.setState({ searchMode: "keyword" });

@@ -237,10 +237,7 @@ class SearchDaemon:
             raise RuntimeError(f"plugin index_documents failed: {resp.error}")
         return {
             "indexed": resp.indexed_count,
-            "skipped": list(resp.parked_paths),
-            # Content-level skips (empty/whitespace docs, chunkless
-            # docs) — distinct from the projection-wait ``skipped``
-            # paths above, which drive the route's 409.
+            # Content skips are reported separately from committed documents.
             "skipped_count": resp.skipped_count,
             # #4736: WHICH paths were content-skipped, so write+index
             # can answer per document, and the plugin-wide sequence

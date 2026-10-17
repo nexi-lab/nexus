@@ -85,7 +85,7 @@ def verify_publication(base_url: str, api_key: str, target: str) -> None:
             {"documents": documents, "zone_id": "sharedzone"},
         )
         assert indexed["indexed_count"] == len(documents), indexed
-        assert indexed["skipped_count"] == 0 and not indexed["parked_paths"], indexed
+        assert indexed["skipped_count"] == 0 and not indexed["skipped_paths"], indexed
         assert indexed["index_seq"] > 0, indexed
         stats = http(base_url, api_key, "/v2/documents/stats?zone_id=sharedzone")
         assert stats["last_index_seq"] >= indexed["index_seq"], stats

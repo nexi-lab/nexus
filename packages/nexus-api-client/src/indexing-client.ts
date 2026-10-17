@@ -13,7 +13,6 @@ export interface IndexDocument {
 export interface DocumentBatchResult {
   readonly indexed_count: number;
   readonly skipped_count: number;
-  readonly parked_paths: readonly string[];
   readonly skipped_paths: readonly string[];
   readonly index_seq: number;
 }
@@ -53,7 +52,6 @@ export interface IndexStatistics {
   readonly fts_doc_count: number;
   readonly fts_path_count: number;
   readonly ann_chunk_count: number;
-  readonly parked_count: number;
   readonly backend: string;
   readonly embedding_model: string;
   readonly indexing_in_progress: number;

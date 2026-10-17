@@ -3,7 +3,7 @@
  * and server health details.
  */
 
-import { describe, it, expect, beforeEach, mock } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
 import { useStackStore } from "../../src/stores/stack-store.js";
 import type { FetchClient } from "@nexus-ai-fs/api-client";
 
@@ -128,17 +128,55 @@ describe("StackStore", () => {
   // ===========================================================================
 
   describe("refreshAll", () => {
+    const localActions = {
+      fetchContainers: useStackStore.getState().fetchContainers,
+      fetchConfig: useStackStore.getState().fetchConfig,
+      fetchState: useStackStore.getState().fetchState,
+    };
+
+    beforeEach(() => {
+      useStackStore.setState({
+        fetchContainers: mock(async () => {}),
+        fetchConfig: mock(async () => {}),
+        fetchState: mock(async () => {}),
+      });
+    });
+
+    afterEach(() => {
+      useStackStore.setState(localActions);
+    });
+
     it("updates lastRefreshed timestamp", async () => {
       const before = Date.now();
-      // refreshAll will call fetchContainers, fetchConfig, fetchState which may
-      // fail in test env (no Docker, no nexus.yaml), but that's fine — they
-      // handle errors gracefully and lastRefreshed should still be set.
       await useStackStore.getState().refreshAll(null);
       const after = Date.now();
 
       const { lastRefreshed } = useStackStore.getState();
       expect(lastRefreshed).toBeGreaterThanOrEqual(before);
       expect(lastRefreshed).toBeLessThanOrEqual(after);
+    });
+
+    it("waits for every refresh to settle before updating the timestamp", async () => {
+      let release!: () => void;
+      const pending = new Promise<void>((resolve) => { release = resolve; });
+      const fetchContainers = mock(async () => { throw new Error("Docker unavailable"); });
+      const fetchConfig = mock(() => pending);
+      const fetchState = mock(async () => {});
+      useStackStore.setState({ fetchContainers, fetchConfig, fetchState });
+      const before = Date.now();
+      const refresh = useStackStore.getState().refreshAll(null);
+      try {
+        await Promise.resolve();
+        expect(fetchContainers).toHaveBeenCalledTimes(1);
+        expect(fetchConfig).toHaveBeenCalledTimes(1);
+        expect(fetchState).toHaveBeenCalledTimes(1);
+        expect(useStackStore.getState().lastRefreshed).toBe(0);
+      } finally {
+        release();
+        await refresh;
+      }
+      expect(useStackStore.getState().lastRefreshed).toBeGreaterThanOrEqual(before);
+      expect(useStackStore.getState().lastRefreshed).toBeLessThanOrEqual(Date.now());
     });
 
     it("calls fetchHealth when client is provided", async () => {

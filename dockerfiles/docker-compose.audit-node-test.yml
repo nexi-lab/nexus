@@ -94,7 +94,8 @@ services:
   witness:
     build:
       context: ..
-      dockerfile: dockerfiles/Dockerfile.raft-witness
+      dockerfile: dockerfiles/Dockerfile.nexusd-cluster
+      target: witness
     image: nexus-raft-witness:latest
     container_name: nexus-audit-witness
     hostname: witness

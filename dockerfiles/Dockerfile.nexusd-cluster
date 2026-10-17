@@ -11,6 +11,12 @@
 #       -f dockerfiles/Dockerfile.nexusd-cluster \
 #       -t nexusd-cluster:latest .
 #
+#   Witness from the same source and builder:
+#     docker build --target witness \
+#       --build-context nexus-vfs-src=../nexus-vfs \
+#       -f dockerfiles/Dockerfile.nexusd-cluster \
+#       -t nexus-raft-witness:latest .
+#
 #   CI:
 #     The workflow runs `actions/checkout@v4` against nexi-lab/nexus-vfs
 #     at the SHA parsed from `Cargo.toml`'s workspace dep rev, then
@@ -40,6 +46,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # locate it via `../../proto`).
 COPY --from=nexus-vfs-src . /build/nexus-vfs
 
+ENV CARGO_TARGET_DIR=/build/target
+
 # `--locked` respects the source tree's `Cargo.lock` instead of
 # re-resolving dependency versions from scratch.  Without it, `cargo
 # install` ignores the lockfile and picks the newest semver-compatible
@@ -54,16 +62,20 @@ RUN cargo install \
     --path /build/nexus-vfs/rust/profiles/cluster \
     --features http-api --bin nexusd-cluster
 
-# ---------- Production image ----------
-FROM debian:bookworm-slim
+FROM builder AS witness-builder
+
+RUN --network=none cargo install \
+    --offline --locked \
+    --path /build/nexus-vfs/rust/raft --bin nexus-witness
+
+# ---------- Runtime base ----------
+FROM debian:bookworm-slim AS runtime-base
 
 # bash: the compose healthcheck uses `bash -c '</dev/tcp/localhost/2126'`
 # ca-certificates: outbound TLS for any remote backend driver calls
 RUN apt-get update && \
     apt-get install -y --no-install-recommends bash ca-certificates && \
     rm -rf /var/lib/apt/lists/*
-
-COPY --from=builder /usr/local/cargo/bin/nexusd-cluster /usr/local/bin/
 
 # Non-root runtime user
 #
@@ -78,12 +90,29 @@ RUN useradd -r -m -u 1000 -s /bin/bash nexus && \
     chown -R nexus:nexus /app
 
 USER nexus
+
+EXPOSE 2126
+
+FROM runtime-base AS witness
+
+COPY --from=witness-builder /usr/local/cargo/bin/nexus-witness /usr/local/bin/
+RUN mkdir -p /home/nexus/data
+
+ENV NEXUS_BIND_ADDR=0.0.0.0:2126 \
+    NEXUS_DATA_DIR=/home/nexus/data \
+    RUST_LOG=info,nexus_raft=debug
+
+ENTRYPOINT ["nexus-witness"]
+
+# ---------- Cluster runtime (default target) ----------
+FROM runtime-base AS runtime
+
+COPY --from=builder /usr/local/cargo/bin/nexusd-cluster /usr/local/bin/
+
 WORKDIR /app
 
 ENV NEXUS_BIND_ADDR=0.0.0.0:2126 \
     NEXUS_DATA_DIR=/app/data \
     RUST_LOG=info,nexus_raft=info
-
-EXPOSE 2126
 
 ENTRYPOINT ["nexusd-cluster"]

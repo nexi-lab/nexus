@@ -62,7 +62,7 @@ Graph HTTP API、调用方和 Zoekt 索引/诊断已清理。当前 Search 不�
 | SEARCH-23 | 实际 scode/cohost 装配 | 用实际 scode 与 cohost 产物，在所属 Kernel 的工作区执行文件操作与 Search，核对原有证书/委托身份、跨会话隔离及撤销。 | 待安排 |
 | SEARCH-24 | Python 退役与协议 SSOT | 验证旧 Search 路由/算法不再注册或被调用；生成绑定匹配唯一 VFS proto；浏览器身份入口和残余 server 调用方有明确归属。 | 待安排 |
 | SEARCH-25 | `serve-user` 固定 owner 模式 | 使用外部颁发的短期 runtime/session 证书和签名 Search 插件；所属 owner 可管理私有索引，其他 owner 被拒绝；显式坏凭证不得被证书覆盖；重启恢复已提交索引，瞬态计数归零。保留该模式对集群管理、HTTP listener 和 CA 签发权的限制。 | 本地与最终 CI 通过；人工待安排 |
-| BROWSER-01 | 文件浏览、编辑及重命名 | 用候选前端连接本地原生 daemon，打开含中文和 `&` 的文件名。编辑保存、重命名后再次保存；内容只写到新路径，旧路径保持不存在。 | 自动化通过；人工待安排 |
+| BROWSER-01 | 文件浏览、编辑及重命名 | 用候选前端连接本地原生 daemon，打开含中文和 `&` 的文件名。编辑保存、重命名后再次保存；内容只写到新路径，旧路径保持不存在。大小显示实际 UTF-8 字节数，空文件显示 0 bytes。 | 自动化通过；人工待安排 |
 | BROWSER-02 | 原始二进制上传与下载 | 上传包含 0–255 各字节的文件后下载，比较完整字节；内容看似 JSON 且含 `error` 的文本文件也必须能正常读取。 | 自动化通过；人工待安排 |
 | BROWSER-03 | 新建和递归删除目录 | 在折叠目录中直接选择“New File”，输入框应显示；删除包含当前选中文件的目录后，文件视图清空，导航回到父目录。 | 自动化通过；人工待安排 |
 | BROWSER-04 | 切换凭证后的缓存隔离 | A 退出后在同一页面登录 B；A 的目录、内容和迟到响应均不得出现在 B 的界面。 | 自动化通过；人工待安排 |
@@ -203,9 +203,11 @@ PR #4909 的最终提交 `bb53e7ea6012e3a27d8efbeab9ba1596598585e1` 在 34 项�
 
 ### 前端原生文件操作与缓存隔离
 
-前端候选 `d77221798b4364d8f38111086e52492b8dfed540` 已将文件列表、元数据、读写、建目录、重命名和删除统一接入 [VFS PR #449](https://github.com/nexi-lab/nexus-vfs/pull/449) 的原生 `/v2/files` 与 `/v2/directories`。所有操作复用当前客户端的 bearer；文件体直接传原始字节，删除重复的 Python 文件 RPC 和 base64 包装。目录列表使用一次 Readdir 和一次 BatchStat；元数据辅助查询只有 404 被解释为不存在，403/503 继续报错。
+前端候选 `fdb6b3a1bc3470b5027689f08976443a1c359201` 已将文件列表、元数据、读写、建目录、重命名和删除统一接入 [VFS PR #449](https://github.com/nexi-lab/nexus-vfs/pull/449) 的原生 `/v2/files` 与 `/v2/directories`。所有操作复用当前客户端的 bearer；文件体直接传原始字节，删除重复的 Python 文件 RPC 和 base64 包装。目录列表使用一次 Readdir 和一次 BatchStat；元数据辅助查询只有 404 被解释为不存在，403/503 继续报错。
 
-真实浏览器先复现 A 退出后 B 仍看到 A 的 30 秒查询缓存。查询客户端和挂载视图现随服务器/凭证一起替换，旧请求被取消并丢弃缓存；凭证不写进查询 key。另修复重命名后编辑器仍使用旧路径、折叠目录的新建输入框不显示，以及删除目录后选中文件和导航未清空的问题。浏览器对文件和根目录的失败均明确展示。
+真实浏览器先复现 A 退出后 B 仍看到 A 的 30 秒查询缓存。查询客户端和挂载视图现随服务器/凭证一起替换，旧查询被取消并丢弃缓存；凭证不写进查询 key。另修复重命名后编辑器仍使用旧路径、折叠目录的新建输入框不显示，以及删除目录后选中文件和导航未清空的问题。浏览器对文件和根目录的失败均明确展示。
+
+截图复核又发现保存后仍显示选中时的旧文件大小；修复前浏览器断言稳定失败。现直接显示本次读取的字节数，覆盖 UTF-8 和零字节文件，写入后也刷新父目录元数据。三个页面共用连接边界，解码仅接受原生字节并按内容变化计算，删除失效的兼容分支；没有新增元数据请求。
 
 实际 Rust 组合又复现跨挂载的 BatchStat 使用第一个挂载的存储读取整批路径，触发路由断言并返回 HTTP 500；同一入口还把 stream 容量 65536 当成实时长度 19。现按每个路径的既有挂载路由分组，每个挂载做一次批量读取，保持输入顺序、重复项和缺失位置；批量与单路径 Stat 共享实时字段计算。不改变 syscall/protobuf/plugin ABI，不增加持久状态或 Raft 写入。
 
@@ -213,7 +215,9 @@ PR #4909 的最终提交 `bb53e7ea6012e3a27d8efbeab9ba1596598585e1` 在 34 项�
 
 生产前端直连实际本地 Rust daemon/plugin 的八个步骤和十二组浏览器断言全部通过，未替换网络响应。除原有身份、CORS、撤销和 Search 断言外，还验证中文及特殊字符文件名、看似错误 JSON 的正常文件、编辑及重命名后再次保存、完整二进制上传下载、新建目录及递归删除后的视图/导航。临时文件、凭证、关系和 daemon 均已清理，保留日志与截图。
 
-证据位于本轮本地验收目录：`vfs-native-files-root-metadata-before-20261017.log`、`vfs-stat-batch-live-stream-before-20261017.log` 保留两项修复前失败；`vfs-kernel-stat-regressions-20261017.log`、`vfs-native-files-ssot-final-20261017.log`、`vfs-native-files-http-final-20261017.log` 和 `vfs-native-files-all-targets-clippy-20261017.log` 记录最终 Rust 验证。`frontend-native-files-source-final-browser-20261017.log` 记录 28 项浏览器回归；`native-browser-files-final-20261017/run-1792230274100247300/results.json` 及其 `native-browser/native-browser-result.json`、`native-file-editor.png` 保留真实组合结果。
+证据位于本轮本地验收目录：`vfs-native-files-root-metadata-before-20261017.log`、`vfs-stat-batch-live-stream-before-20261017.log` 保留两项修复前失败；`vfs-kernel-stat-regressions-20261017.log`、`vfs-native-files-ssot-final-20261017.log`、`vfs-native-files-http-final-20261017.log` 和 `vfs-native-files-all-targets-clippy-20261017.log` 记录最终 Rust 验证。`frontend-file-size-browser-final-20261017.log` 记录 28 项浏览器回归；`native-browser-file-size-final-20261017/run-1792231342108154400/results.json` 及其 `native-browser/native-browser-result.json`、`native-file-editor.png` 保留真实组合结果。
+
+VFS #449 的最终源提交 `3af52281a84cb6ef824208bb5ae8b9445cd31fc2` 在 19 项检查、七个工作流全部一次通过后普通合并，合并提交 `5ce4bb35487a46affc3f98ab34612d24c106b362` 保留两个父提交，合并树与测试源树一致。合并后工作流另行核对。[Nexus PR #4914](https://github.com/nexi-lab/nexus/pull/4914) 固定同一 VFS 源版本及最新前端，保护真实 Linux 组合；最终 CI 以该 PR 为准。
 
 前端 #26 继续保持草稿，尚未触发 Firebase 发布。账号后端及其余业务消费者仍待迁移；本轮文件操作完成不代表整条 Python server 退役主线已 code complete。
 

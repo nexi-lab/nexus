@@ -31,6 +31,17 @@ def arguments() -> argparse.Namespace:
     mode.add_argument("--keyword-only", action="store_true")
     parser.add_argument("--ort-library", type=Path)
     parser.add_argument(
+        "--browser-origin",
+        action="append",
+        default=[],
+        help="Allow this frontend origin in the isolated HTTP fixture (repeatable)",
+    )
+    parser.add_argument(
+        "--frontend-checkout",
+        type=Path,
+        help="Run the production frontend's browser identity journey; --serve keeps the fixture open",
+    )
+    parser.add_argument(
         "--serve", action="store_true", help="Keep the prepared fixtures until Ctrl-C"
     )
     args = parser.parse_args()
@@ -41,7 +52,9 @@ def arguments() -> argparse.Namespace:
         setattr(args, name, path)
     if args.model_dir and (not args.ort_library or not args.ort_library.is_file()):
         parser.error("--model-dir requires --ort-library")
-    if not args.bun and not args.serve:
+    if args.frontend_checkout and "http://127.0.0.1:4173" not in args.browser_origin:
+        parser.error("--frontend-checkout requires --browser-origin http://127.0.0.1:4173")
+    if not args.bun and not (args.serve or args.frontend_checkout):
         parser.error("Bun is required; provide --bun")
     return args
 
@@ -159,6 +172,8 @@ def main() -> int:
                 DATABASE_URL=f"sqlite:///{database.as_posix()}",
                 RUST_LOG="info,h2=warn,hyper=warn,tower=warn,tonic=warn",
             )
+            if args.browser_origin:
+                env["NEXUS_HTTP_ALLOWED_ORIGINS"] = ",".join(args.browser_origin)
             if args.model_dir:
                 env["NEXUS_SEARCH_MODEL_DIR"] = str(args.model_dir.resolve())
                 env["ORT_DYLIB_PATH"] = str(args.ort_library.resolve())
@@ -274,6 +289,30 @@ def main() -> int:
                             )
                             env[key] = str(destination)
                     if len(prepared) == (1 if args.keyword_only else 2):
+                        if args.frontend_checkout:
+                            frontend = args.frontend_checkout.resolve()
+                            if not run(
+                                "native-browser",
+                                [
+                                    shutil.which("node") or "node",
+                                    "tests/native/browser-identity.mjs",
+                                    "--http-url",
+                                    env["NEXUS_SEARCH_TEST_HTTP"],
+                                    "--admin-key-file",
+                                    str(credential),
+                                    "--output-dir",
+                                    str(output / "native-browser"),
+                                ],
+                                cwd=frontend,
+                                overrides=(
+                                    {"NEXUS_TEST_CHROME": os.environ["NEXUS_TEST_CHROME"]}
+                                    if "NEXUS_TEST_CHROME" in os.environ
+                                    else None
+                                ),
+                            ):
+                                raise RuntimeError(
+                                    f"Native browser acceptance failed; inspect {output}"
+                                )
                         if args.serve:
                             print(
                                 f"HTTP: {env['NEXUS_SEARCH_TEST_HTTP']}\ngRPC: {env['NEXUS_SEARCH_PLUGIN_TARGET']}"
@@ -284,7 +323,7 @@ def main() -> int:
                             )
                             while True:
                                 time.sleep(0.5)
-                        else:
+                        elif not args.frontend_checkout:
                             run(
                                 "tui",
                                 [

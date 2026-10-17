@@ -124,7 +124,23 @@ jobs:
           cache-from: type=gha,scope=federation-e2e
           cache-to: type=gha,scope=federation-e2e,mode=max
 
-      - name: Build witness + federation-test images
+      - name: Build witness from the shared pinned builder
+        if: steps.federation_changes.outputs.run == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: dockerfiles/Dockerfile.nexusd-cluster
+          target: witness
+          build-contexts: |
+            nexus-vfs-src=nexus-vfs-src
+          load: true
+          tags: nexus-raft-witness:latest
+          cache-from: |
+            type=gha,scope=federation-e2e
+            type=gha,scope=federation-e2e-witness
+          cache-to: type=gha,scope=federation-e2e-witness,mode=max
+
+      - name: Build federation-test image
         if: steps.federation_changes.outputs.run == 'true'
         # BUILDX_BUILDER=default forces this compose build to use the
         # docker-daemon builder rather than setup-buildx-action@v3's
@@ -142,7 +158,7 @@ jobs:
           BUILDX_BUILDER: default
         run: |
           docker compose -f dockerfiles/docker-compose.federation-runbook.yml build \
-            witness test
+            test
 
       - name: Start federation cluster
         if: steps.federation_changes.outputs.run == 'true'

@@ -260,6 +260,8 @@ RTS 查询与统计统一读取构建配置 `NEXT_PUBLIC_NEXUS_ZONE_ID`，未配
 
 配套 [Nexus #4917](https://github.com/nexi-lab/nexus/pull/4917) 的 CI 暴露了 StackStore 编排单测调用本机真实 Docker、超过 5 秒预算的问题。该组单测现在为本地动作提供受控完成、延迟与失败输入，结束后恢复原动作；新增断言验证所有刷新结束后才更新时间戳。测试预算保持不变。Windows 完整 TUI 测试 1224 项通过、18 项按平台或环境跳过，证据为 `nexus-4917-typescript-failure-20261017.log` 和 `nexus-tui-full-suite-after-stack-fixture-20261017.log`。真实 Rust 的独立 CI 验收继续保留。
 
+修复后的 Linux TUI CI 1228 项通过、14 项按条件跳过；原时间戳用例耗时 0.20 ms，证据为 `nexus-4917-typescript-success-20261017.log`。随后 Federation 在运行测试前构建 witness 镜像时，重复下载 Rust 依赖遭遇 `static.crates.io:443` 连接失败。新的 witness target 复用 cluster 的固定源码、builder 与编译目录，并在禁网环境中离线编译；两个 Compose 调用方同步切换。Raft 运行代码与启动参数保持原样。该构建修复的本地 Docker 和最终 CI 验证仍在进行，证据从 `nexus-4917-federation-failure-20261017.log` 开始保留。
+
 ### scode 正式依赖与安装装配
 
 [scode PR #970](https://github.com/sudoprivacy/sudocode/pull/970) 将全部十个 VFS 直接依赖统一到已发布的 `v0.8.18`，实际解析提交 `80e9fe4c0e69e762137765b555a9ee6a7a97d6f8`，包含固定 owner Search 授权修复。与最新 main 普通合并后保留 0.2.33 的原生工作区实现和全部提交历史。这个发布版本不包含后续新增的 whoami/CORS，不能把 scode 的 Search 依赖验收与最新浏览器接口混为一项。

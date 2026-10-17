@@ -167,9 +167,11 @@ scode 候选基线为 `94088bd7`（0.2.31）。本地将其全部 VFS Git 依赖
 
 [Nexus PR #4908](https://github.com/nexi-lab/nexus/pull/4908) 将连接检查和身份展示分别接到 `/v2/status`、`/v2/auth/whoami`。共享 TypeScript 客户端提供原生身份类型，状态栏直接显示服务端 subject。连接只等待 status；身份与可选功能元数据异步加载，切换服务器会清除旧服务器信息。实际 daemon、TLS、ReBAC、签名插件、worker 和终端 renderer 已跑通 AUTH-08：关键词目标 6 通过、76 次断言，1 个真实模型用例因本轮 keyword-only 模式跳过。完整 TUI 套件 1223 通过、18 跳过，共享 API 客户端 127 通过，类型检查通过。并发回归覆盖慢功能接口、稳定 worker 对象下切换凭证、旧连接失败晚到以及断开后的身份响应；旧判断在切换 Bob 后稳定错误写回 Alice，修复后四项均通过。相应 native E2E 已进入现有发布镜像 CI，API 客户端、TUI 和 fixture 的修改会触发它。最终提交 `b3d8ce38eed1f05ae5f9898aedcab331b6873bf6` 的 52 项检查通过、2 项按配置跳过后普通合并。可选功能元数据和其他 TUI 面板的迁移仍未完成。
 
-前端最新候选 `e5603ef494f90a28d8d4f31ff18cd5a2571fdbcb` 的生产构建与 13 个真实 Chromium 用例均通过，Linux 浏览器 CI 同样通过，零重试。新增用例覆盖密码变更：旧请求字段 `old_password` 稳定失败，改为账号契约的 `current_password` 后，错误旧密码被拒绝、正确变更成功且身份保持。删除了未使用的重复 profile 页面、两个 profile getter 和 17 个无调用的 API 包装方法；删除前结合 TypeScript 引用与全源码检索核对，保留经动态调用仍在使用的方法。原生浏览器组合另在前端 `a28fa40df8b4015241fbcd8d361a21564881375f` 上通过全部八个步骤。Nexus CI 的跨仓库前端固定版本仍为上述 `393f3a5`；整套前端迁移完成时还需更新该固定版本并验收。
+前端候选 `e5603ef494f90a28d8d4f31ff18cd5a2571fdbcb` 的生产构建与 13 个真实 Chromium 用例均通过，Linux 浏览器 CI 同样通过，零重试。新增用例覆盖密码变更：旧请求字段 `old_password` 稳定失败，改为账号契约的 `current_password` 后，错误旧密码被拒绝、正确变更成功且身份保持。删除了未使用的重复 profile 页面、两个 profile getter 和 17 个无调用的 API 包装方法；删除前结合 TypeScript 引用与全源码检索核对，保留经动态调用仍在使用的方法。原生浏览器组合另在前端 `a28fa40df8b4015241fbcd8d361a21564881375f` 上通过全部八个步骤。
 
 后续设置页修复 `0909281db2c801dea04aeadff9a3fd2fc859b545`：有效原生 API key 原先仍被设置页要求账号 JWT 的重复判断跳回登录页。现在复用应用的身份验证边界，显示原生 whoami 的 subject、服务器地址及掩码凭证，支持退出；账号密码和删号操作仅供账号登录使用。修复前真实浏览器稳定失败，修复后完整 14 项浏览器用例通过，16 秒、零重试，最终 Linux CI 也已通过。原生浏览器组合的八个步骤也全部通过，五组断言包括设置页的真实 subject、管理员页面拒绝、预热凭证撤销后的 CORS 401 与退出，以及另一用户继续有效。临时 fixture 已清理。
+
+[Nexus PR #4909](https://github.com/nexi-lab/nexus/pull/4909) 将原生浏览器 CI 的前端固定版本推进到该 `0909281` 提交，以同一个 runner 保护最新设置页和身份断言。整条前端迁移未完成，前端仍保持草稿；这个 CI 固定版本更新不触发前端 Firebase 部署。
 
 ### scode 正式依赖与安装装配
 

@@ -2,7 +2,7 @@
 
 更新日期：2026 年 10 月 17 日。本文用于逐项评论、分配测试和记录结果。
 
-当前状态：慢索引、Search 服务端清理、固定 owner 授权、原生 whoami/CORS、TUI 身份迁移，以及 scode 正式 VFS pin/checksum/proto 集成均已在最终 CI 通过后合并，保留全部提交历史。实际 Linux CI 已运行生产前端与 Rust HTTP 的浏览器链路。前端 PR #26 保持草稿；新增文件搜索迁移已有 19 个本地浏览器用例、原生组合八个步骤和九组浏览器断言通过，最终 CI 以 PR 为准。Google/密码账号的完整 Rust 服务端及剩余前端接口迁移尚未完成，整条主线尚未 code complete。腾讯云部署等这些代码与验收收齐后再讨论。
+当前状态：慢索引、Search 服务端清理、固定 owner 授权、原生 whoami/CORS、TUI 身份迁移及 scode 正式依赖装配已合并。前端 PR #26 的原生文件操作与查询缓存隔离已有 28 项本地 Chromium 回归和真实 Rust 组合八个步骤、十二组浏览器断言通过；配套 VFS PR #449 及最终 CI 以各 PR 为准。前端保持草稿，Google/密码账号的完整 Rust 服务端及剩余业务接口迁移尚未完成，整条主线尚未 code complete。腾讯云部署等代码与本地验收收齐后再讨论。
 
 合并后验收补充：Nexus #4909 和 #4910 的合并后工作流均已通过；scode #970 的共享服务 E2E 四个平台全部通过，Rust CI 的其余任务通过，但真实模型 ACP subagent 测试在接收消息 120 秒后失败。当次网关仅返回心跳；测试夹具的 `env_clear()` 丢弃了 CI 配置的 90 秒 API 空闲预算，子进程回退到 300 秒，未能在夹具截止前执行现有流恢复。
 
@@ -62,6 +62,11 @@ Graph HTTP API、调用方和 Zoekt 索引/诊断已清理。当前 Search 不�
 | SEARCH-23 | 实际 scode/cohost 装配 | 用实际 scode 与 cohost 产物，在所属 Kernel 的工作区执行文件操作与 Search，核对原有证书/委托身份、跨会话隔离及撤销。 | 待安排 |
 | SEARCH-24 | Python 退役与协议 SSOT | 验证旧 Search 路由/算法不再注册或被调用；生成绑定匹配唯一 VFS proto；浏览器身份入口和残余 server 调用方有明确归属。 | 待安排 |
 | SEARCH-25 | `serve-user` 固定 owner 模式 | 使用外部颁发的短期 runtime/session 证书和签名 Search 插件；所属 owner 可管理私有索引，其他 owner 被拒绝；显式坏凭证不得被证书覆盖；重启恢复已提交索引，瞬态计数归零。保留该模式对集群管理、HTTP listener 和 CA 签发权的限制。 | 本地与最终 CI 通过；人工待安排 |
+| BROWSER-01 | 文件浏览、编辑及重命名 | 用候选前端连接本地原生 daemon，打开含中文和 `&` 的文件名。编辑保存、重命名后再次保存；内容只写到新路径，旧路径保持不存在。 | 自动化通过；人工待安排 |
+| BROWSER-02 | 原始二进制上传与下载 | 上传包含 0–255 各字节的文件后下载，比较完整字节；内容看似 JSON 且含 `error` 的文本文件也必须能正常读取。 | 自动化通过；人工待安排 |
+| BROWSER-03 | 新建和递归删除目录 | 在折叠目录中直接选择“New File”，输入框应显示；删除包含当前选中文件的目录后，文件视图清空，导航回到父目录。 | 自动化通过；人工待安排 |
+| BROWSER-04 | 切换凭证后的缓存隔离 | A 退出后在同一页面登录 B；A 的目录、内容和迟到响应均不得出现在 B 的界面。 | 自动化通过；人工待安排 |
+| BROWSER-05 | 文件及目录错误 | 测试 403、撤销凭证和服务不可用。界面明确展示错误，不能把失败当成空目录或不存在的文件。 | 自动化通过；人工待安排 |
 
 ## 三、2026 年 10 月 14 日已完成的本地验证
 
@@ -190,11 +195,27 @@ scode 候选基线为 `94088bd7`（0.2.31）。本地将其全部 VFS Git 依赖
 
 本地生产构建与完整 19 项 Chromium 回归均通过、零重试。五个新增用例验证实际请求路径、当前身份、中文及特殊字符、同文件多次命中、截断提示、HTTP 与应用错误、真正空结果，以及清空查询后的迟到响应。真实 Rust 组合又测出单文件授权不能枚举 `/` 的边界：浏览器正确展示 403；为目录单独提交读取关系后，只能看见另有文件授权的文档，未授权的同内容文件被过滤；预热后撤销文件关系，结果立即消失。没有修改 Kernel、ReBAC 或 Raft 契约来放宽此限制。
 
-实际原生组合的八个步骤和九组浏览器断言均已通过，保留结果与截图。检查截图后另修正了长原生身份挤压页头品牌的布局，候选 `60baa6f858b46803232a11f5e18a9e5cbb406bc2` 保留全部历史；其生产构建及全部八个原生步骤、九组浏览器断言也已再次通过，fixture 已清理。最终 CI 以 PR 为准。前端 #26 继续保持草稿；文件 CRUD、账号后端及其他 `/api/nfs/*` 消费方仍未完成迁移。
+实际原生组合的八个步骤和九组浏览器断言均已通过，保留结果与截图。检查截图后另修正了长原生身份挤压页头品牌的布局，候选 `60baa6f858b46803232a11f5e18a9e5cbb406bc2` 保留全部历史；其生产构建及全部八个原生步骤、九组浏览器断言也已再次通过，fixture 已清理。最终 CI 以 PR 为准。前端 #26 继续保持草稿；后续文件 CRUD 迁移见下一节，账号后端及其他 `/api/nfs/*` 消费方仍未完成迁移。
 
 [Nexus PR #4909](https://github.com/nexi-lab/nexus/pull/4909) 将原生浏览器 CI 的前端固定版本推进到该 `0909281` 提交，以同一个 runner 保护最新设置页和身份断言。整条前端迁移未完成，前端仍保持草稿；这个 CI 固定版本更新不触发前端 Firebase 部署。
 
 PR #4909 的最终提交 `bb53e7ea6012e3a27d8efbeab9ba1596598585e1` 在 34 项检查通过、1 项部署工作按配置跳过后普通合并，合并提交 `be5a12f80dfc4e084101ffb4de52f555cf783e8b`。实际 Linux self-contained job 为 638 通过、134 跳过；日志确认检出 `0909281`，生产浏览器构建及原生身份步骤均成功。仅失败时上传附件的步骤正常跳过。
+
+### 前端原生文件操作与缓存隔离
+
+前端候选 `d77221798b4364d8f38111086e52492b8dfed540` 已将文件列表、元数据、读写、建目录、重命名和删除统一接入 [VFS PR #449](https://github.com/nexi-lab/nexus-vfs/pull/449) 的原生 `/v2/files` 与 `/v2/directories`。所有操作复用当前客户端的 bearer；文件体直接传原始字节，删除重复的 Python 文件 RPC 和 base64 包装。目录列表使用一次 Readdir 和一次 BatchStat；元数据辅助查询只有 404 被解释为不存在，403/503 继续报错。
+
+真实浏览器先复现 A 退出后 B 仍看到 A 的 30 秒查询缓存。查询客户端和挂载视图现随服务器/凭证一起替换，旧请求被取消并丢弃缓存；凭证不写进查询 key。另修复重命名后编辑器仍使用旧路径、折叠目录的新建输入框不显示，以及删除目录后选中文件和导航未清空的问题。浏览器对文件和根目录的失败均明确展示。
+
+实际 Rust 组合又复现跨挂载的 BatchStat 使用第一个挂载的存储读取整批路径，触发路由断言并返回 HTTP 500；同一入口还把 stream 容量 65536 当成实时长度 19。现按每个路径的既有挂载路由分组，每个挂载做一次批量读取，保持输入顺序、重复项和缺失位置；批量与单路径 Stat 共享实时字段计算。不改变 syscall/protobuf/plugin ABI，不增加持久状态或 Raft 写入。
+
+本轮本地验证：Kernel 库与集成回归 504 项通过，HTTP 回归 187 项通过、一个原有 doctest 按配置忽略，真实 daemon 文件/权限/重启目标 5 项通过，相关全部 target 的严格 Clippy 和生产前端构建通过。前端 28 项 Chromium 回归通过，零重试；最终 CI 状态以对应 PR 为准。
+
+生产前端直连实际本地 Rust daemon/plugin 的八个步骤和十二组浏览器断言全部通过，未替换网络响应。除原有身份、CORS、撤销和 Search 断言外，还验证中文及特殊字符文件名、看似错误 JSON 的正常文件、编辑及重命名后再次保存、完整二进制上传下载、新建目录及递归删除后的视图/导航。临时文件、凭证、关系和 daemon 均已清理，保留日志与截图。
+
+证据位于本轮本地验收目录：`vfs-native-files-root-metadata-before-20261017.log`、`vfs-stat-batch-live-stream-before-20261017.log` 保留两项修复前失败；`vfs-kernel-stat-regressions-20261017.log`、`vfs-native-files-ssot-final-20261017.log`、`vfs-native-files-http-final-20261017.log` 和 `vfs-native-files-all-targets-clippy-20261017.log` 记录最终 Rust 验证。`frontend-native-files-source-final-browser-20261017.log` 记录 28 项浏览器回归；`native-browser-files-final-20261017/run-1792230274100247300/results.json` 及其 `native-browser/native-browser-result.json`、`native-file-editor.png` 保留真实组合结果。
+
+前端 #26 继续保持草稿，尚未触发 Firebase 发布。账号后端及其余业务消费者仍待迁移；本轮文件操作完成不代表整条 Python server 退役主线已 code complete。
 
 ### scode 正式依赖与安装装配
 
@@ -302,7 +323,7 @@ python scripts/test_search_local.py `
 
 只验证关键词链路时，用 `--keyword-only` 替换 `--model-dir` 和 `--ort-library`；该模式不算语义验收。加入 `--serve` 可保留准备好的隔离 fixture 做手动测试，按 Ctrl-C 后清理；该模式无需 Bun。不要将该脚本指向生产。
 
-验证 AUTH-07 时，先在前端候选 checkout 中运行 `pnpm install --frozen-lockfile`、`pnpm run build` 和 `pnpm exec playwright install chromium`，再执行：
+验证 AUTH-07 和 BROWSER-01 至 BROWSER-05 时，先在前端候选 checkout 中运行 `pnpm install --frozen-lockfile`、`pnpm run build` 和 `pnpm exec playwright install chromium`，再执行：
 
 ```powershell
 python scripts/test_search_local.py `
@@ -342,7 +363,7 @@ cargo test -p nexus-cluster --all-features --test user_runtime signed_search_kee
 CODE-04 的剩余范围：
 
 - 人类账号的 Rust 服务端：注册、密码登录及变更、邮件验证、profile 和 Google OAuth。保留现有账号和 bcrypt 数据；provider 与 provider subject 绑定保持唯一，不按 email 自动合并身份。授权与撤销继续使用原生身份体系。
-- `nexus-frontend` 的文件、管理、workspace、agent、sandbox、memory、skills 和连接器调用方。移除没有调用的包装方法，并不代表对应业务端点可以删除。
+- `nexus-frontend` 的基础文件操作已迁移；管理、workspace、agent、sandbox、memory、skills 注册及连接器业务调用方仍待迁移。移除没有调用的包装方法，并不代表对应业务端点可以删除。
 - `nexus-ui` 的 Search 请求/响应、统计和健康字段，以及 Python server 启动入口；TUI 的其他面板和可选功能元数据。
 - 收齐这些调用方和账号后端，删除其替代的 Python 服务端，再跑完整用户旅程和 CI。上述事项完成前，整条 Python server 退役主线仍未 code complete。
 

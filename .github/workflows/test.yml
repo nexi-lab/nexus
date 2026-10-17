@@ -234,7 +234,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: nexi-lab/nexus-frontend
-          ref: 60baa6f858b46803232a11f5e18a9e5cbb406bc2
+          ref: d77221798b4364d8f38111086e52492b8dfed540
           path: nexus-frontend
 
       - name: Set up the frontend package manager

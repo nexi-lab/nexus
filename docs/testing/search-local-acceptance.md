@@ -2,7 +2,7 @@
 
 更新日期：2026 年 10 月 17 日。本文用于逐项评论、分配测试和记录结果。
 
-当前状态：索引超时修复的 [VFS PR #442](https://github.com/nexi-lab/nexus-vfs/pull/442)、Search 清理的 [Nexus PR #4902](https://github.com/nexi-lab/nexus/pull/4902)、固定 owner 授权修复的 [VFS PR #443](https://github.com/nexi-lab/nexus-vfs/pull/443) 和依赖集成的 [Nexus PR #4904](https://github.com/nexi-lab/nexus/pull/4904) 均在最终 CI 全绿后合并，合并后工作流也已通过。常规 daemon/cohost 与 `serve-user` 的本地真实模型及重启验收均通过。原生 HTTP 当前身份接口的 [VFS PR #447](https://github.com/nexi-lab/nexus-vfs/pull/447) 已在 19 项 CI 全绿后合并。前端发现了真实 HTTP 消费者及历史 Google 固定凭证登录问题，迁移范围已明确包含浏览器前端和人类账号入口；相关前端修复仍在候选分支验证。Google/密码账号的完整 Rust 服务端及剩余前端接口迁移尚未完成，整条主线尚未 code complete。腾讯云部署等这些代码与验收收齐后再讨论。
+当前状态：慢索引、Search 服务端清理、固定 owner 授权、原生 whoami/CORS 和 TUI 身份迁移均已在最终 CI 通过后合并，保留全部提交历史。实际 Linux CI 已运行 Rust HTTP 与生产构建前端的浏览器链路。scode 正式 VFS pin 和版本绑定 checksum 正在 PR #970 验收；前端 PR #26 保持草稿，14 个浏览器用例已通过本地与 Linux CI。Google/密码账号的完整 Rust 服务端及剩余前端接口迁移尚未完成，整条主线尚未 code complete。腾讯云部署等这些代码与验收收齐后再讨论。
 
 ## 一、范围和完成标准
 
@@ -137,7 +137,7 @@ scode 候选基线为 `94088bd7`（0.2.31）。本地将其全部 VFS Git 依赖
 
 2026-10-15 对腾讯云进行了只读核对：Moss 当前活动数据库中有 116 条账号记录，使用 Moss 自己的身份表；Moss VM 上未发现独立 Nexus Python 登录服务。现有权限内的 `moss-sessions` namespace 运行多种 gVisor 镜像。查询没有改动生产配置、数据或部署，也没有读取账号内容或口令。
 
-这些事实不能证明所有环境都没有 Nexus 自带登录入口的用户。Moss 现有用户与 agent 身份必须保留。后续确认 `nexi-lab/nexus-frontend` 使用账号注册、Google OAuth、文件和管理 HTTP 接口；`nexi-lab/nexus-ui` 也使用 HTTP API，并保留 Python server 启动调用。用户已确认 Python server 退役必须包含前端迁移；不能按“没有消费者”删除这些入口。当前代码里，TUI 的 `/auth/me` 身份展示也是需要处理的调用方。
+这些事实不能证明所有环境都没有 Nexus 自带登录入口的用户。Moss 现有用户与 agent 身份必须保留。后续确认 `nexi-lab/nexus-frontend` 使用账号注册、Google OAuth、文件和管理 HTTP 接口；`nexi-lab/nexus-ui` 也使用 HTTP API，并保留 Python server 启动调用。用户已确认 Python server 退役必须包含前端迁移；不能按“没有消费者”删除这些入口。TUI 当前身份展示现已通过 PR #4908 迁至原生 whoami；其他面板仍需逐项迁移。
 
 ### 浏览器身份迁移及验收边界
 
@@ -157,20 +157,49 @@ scode 候选基线为 `94088bd7`（0.2.31）。本地将其全部 VFS Git 依赖
 | AUTH-06 | 连接器 OAuth 回调，包括 state 不符 | 保留当前 Nexus 身份；成功清理临时 state；失败不交换授权码；不持久化回调调试数据 |
 | AUTH-07 | 生产构建前端直接连接 Rust HTTP | 允许的准确 origin 可预检并读取身份；普通用户进入管理页被拒；预热凭证撤销后收到可读的 401、回到登录页并清除凭证；另一用户仍可登录 |
 | AUTH-08 | TUI 连接和当前身份展示 | 原生 status 可建立连接；状态栏显示 whoami 解析出的真实 subject，伪造请求 header 不改变身份；切换凭证、重连和断开后，旧响应不得回写 |
+| AUTH-09 | API key 用户访问设置页及退出 | 展示服务端验证的 subject 和服务器地址；凭证默认掩码；账号密码与删号按钮不出现；退出清理当前登录凭证 |
 
 浏览器回归使用实际 Chrome、生产构建的 React 页面和本地 HTTP 协议 fixture；Google 页面跳转被受控模拟。12 个用例全部通过，禁用重试，包含登录页实际下载的 JavaScript 小于 1 MiB 的检查；相同用例已接入 Linux Chromium PR CI。登录页此前会同步加载约 16 MB 的文件/Office 代码，受保护页面现按需加载。这能证明前端凭证、cookie、回调及加载契约，不能代替真实 Google 身份交换或 Rust 账号后端验收。独立 ai-dev-browser 已实测未配置错误、失效/有效 key 登录和普通用户访问管理页被拒绝；自建浏览器已关闭，临时 profile 已清理。真实 Google/账号迁移收齐后，还需对完整 Rust 链路再次执行这些用例。
 
 真实 Rust 链路也已完成 AUTH-07：隔离 daemon、签名 Search 插件、TLS、ReBAC 和真实 Chrome 全部启用；生产前端通过原生 HTTP 签发的临时用户凭证登录。四项浏览器断言组全部通过，撤销响应确认是带正确 CORS header 的 401；SearchService、HTTP/SDK/MCP/CLI、证书 agent 及 fixture 清理的八个步骤全部返回 0。浏览器步骤耗时约 4.3 秒，未重试。验收自动关闭自建进程并清除临时凭证，保留脱敏结果与截图。此前中断留下的私有 fixture 目录也已清理。
 
-原生浏览器链路已装配进 [Nexus PR #4907](https://github.com/nexi-lab/nexus/pull/4907) 的自包含 CI，复用 Cargo 统一锁定 revision 构建的 daemon/plugin，并锁定前端提交 `393f3a57270e276d9a84d7eeaa845e21cd767b6c`。脚本变更会触发 CI；失败只上传脱敏结果和截图。这份 CI 装配仍需最终提交上的实际执行确认。前端 PR 继续保持草稿，Google 身份提供方仍由协议 fixture 模拟；完整 Rust Google/密码账号后端尚未完成。
+原生浏览器链路已通过 [Nexus PR #4907](https://github.com/nexi-lab/nexus/pull/4907) 的实际 Linux 自包含 CI，复用 Cargo 统一锁定 revision 构建的 daemon/plugin，并锁定前端提交 `393f3a57270e276d9a84d7eeaa845e21cd767b6c`。脚本变更会触发 CI；失败只上传脱敏结果和截图。该 CI job 共 638 通过、134 跳过，原生浏览器步骤成功；最终提交 `47fc73cfe60a4f4fba89f5b1e3c5c94828151cf6` 的 49 项检查通过、2 项按配置跳过后普通合并，保留全部提交历史。前端 PR 继续保持草稿，Google 身份提供方仍由协议 fixture 模拟；完整 Rust Google/密码账号后端尚未完成。
 
-TUI 候选 [Nexus PR #4908](https://github.com/nexi-lab/nexus/pull/4908) 将连接检查和身份展示分别接到 `/v2/status`、`/v2/auth/whoami`。共享 TypeScript 客户端提供原生身份类型，状态栏直接显示服务端 subject。连接只等待 status；身份与可选功能元数据异步加载，切换服务器会清除旧服务器信息。实际 daemon、TLS、ReBAC、签名插件、worker 和终端 renderer 已跑通 AUTH-08：关键词目标 6 通过、76 次断言，1 个真实模型用例因本轮 keyword-only 模式跳过。完整 TUI 套件 1223 通过、18 跳过，共享 API 客户端 127 通过，类型检查通过。并发回归覆盖慢功能接口、稳定 worker 对象下切换凭证、旧连接失败晚到以及断开后的身份响应；旧判断在切换 Bob 后稳定错误写回 Alice，修复后四项均通过。相应 native E2E 已进入现有发布镜像 CI，API 客户端、TUI 和 fixture 的修改会触发它。PR 仍待最终 CI；可选功能元数据和其他 TUI 面板的迁移仍未完成。
+[Nexus PR #4908](https://github.com/nexi-lab/nexus/pull/4908) 将连接检查和身份展示分别接到 `/v2/status`、`/v2/auth/whoami`。共享 TypeScript 客户端提供原生身份类型，状态栏直接显示服务端 subject。连接只等待 status；身份与可选功能元数据异步加载，切换服务器会清除旧服务器信息。实际 daemon、TLS、ReBAC、签名插件、worker 和终端 renderer 已跑通 AUTH-08：关键词目标 6 通过、76 次断言，1 个真实模型用例因本轮 keyword-only 模式跳过。完整 TUI 套件 1223 通过、18 跳过，共享 API 客户端 127 通过，类型检查通过。并发回归覆盖慢功能接口、稳定 worker 对象下切换凭证、旧连接失败晚到以及断开后的身份响应；旧判断在切换 Bob 后稳定错误写回 Alice，修复后四项均通过。相应 native E2E 已进入现有发布镜像 CI，API 客户端、TUI 和 fixture 的修改会触发它。最终提交 `b3d8ce38eed1f05ae5f9898aedcab331b6873bf6` 的 52 项检查通过、2 项按配置跳过后普通合并。可选功能元数据和其他 TUI 面板的迁移仍未完成。
+
+前端候选 `e5603ef494f90a28d8d4f31ff18cd5a2571fdbcb` 的生产构建与 13 个真实 Chromium 用例均通过，Linux 浏览器 CI 同样通过，零重试。新增用例覆盖密码变更：旧请求字段 `old_password` 稳定失败，改为账号契约的 `current_password` 后，错误旧密码被拒绝、正确变更成功且身份保持。删除了未使用的重复 profile 页面、两个 profile getter 和 17 个无调用的 API 包装方法；删除前结合 TypeScript 引用与全源码检索核对，保留经动态调用仍在使用的方法。原生浏览器组合另在前端 `a28fa40df8b4015241fbcd8d361a21564881375f` 上通过全部八个步骤。
+
+后续设置页修复 `0909281db2c801dea04aeadff9a3fd2fc859b545`：有效原生 API key 原先仍被设置页要求账号 JWT 的重复判断跳回登录页。现在复用应用的身份验证边界，显示原生 whoami 的 subject、服务器地址及掩码凭证，支持退出；账号密码和删号操作仅供账号登录使用。修复前真实浏览器稳定失败，修复后完整 14 项浏览器用例通过，16 秒、零重试，最终 Linux CI 也已通过。原生浏览器组合的八个步骤也全部通过，五组断言包括设置页的真实 subject、管理员页面拒绝、预热凭证撤销后的 CORS 401 与退出，以及另一用户继续有效。临时 fixture 已清理。
+
+[Nexus PR #4909](https://github.com/nexi-lab/nexus/pull/4909) 将原生浏览器 CI 的前端固定版本推进到该 `0909281` 提交，以同一个 runner 保护最新设置页和身份断言。整条前端迁移未完成，前端仍保持草稿；这个 CI 固定版本更新不触发前端 Firebase 部署。
+
+### scode 正式依赖与安装装配
+
+[scode PR #970](https://github.com/sudoprivacy/sudocode/pull/970) 将全部十个 VFS 直接依赖统一到已发布的 `v0.8.18`，实际解析提交 `80e9fe4c0e69e762137765b555a9ee6a7a97d6f8`，包含固定 owner Search 授权修复。与最新 main 普通合并后保留 0.2.33 的原生工作区实现和全部提交历史。这个发布版本不包含后续新增的 whoami/CORS，不能把 scode 的 Search 依赖验收与最新浏览器接口混为一项。
+
+同时修正实际安装失败：选择的 Kernel 版本已前进，原安装清单仍持有旧版本的同名归档 checksum。现在 checksum 按 release tag 与归档名绑定，Cargo pin 唯一决定 Kernel 版本，下载和构建校验都使用该版本。缺少对应 checksum 会在编译时失败，归档本身仍严格验 hash。官方 release 的六个归档 digest 已核对，Linux 镜像实际下载也与官方一致；负向编译验证稳定拒绝陈旧清单，验证后已恢复原文件。
+
+正式依赖在合并 main 前已通过完整生产 cohost features 构建、Windows 实际 CLI 下载/安装与签名插件、Vault、文件、session、重启和安装修复八组验证，以及签名 Search 插件、外部 mTLS、真实模型下的 keyword/semantic/hybrid、owner 隔离及重启恢复。合并 0.2.33 后已重新通过 36 个 engine-host 测试、720 个 runtime 单元测试、27 个真实 Kernel 文件测试和 1 个版本绑定测试；完整生产 features 构建、实际 Windows CLI 八组验证、完整 cohost 消息/委托/会话恢复链路，以及真实模型 owner Search 与重启也再次通过。移除本地 proto 中没有上游实现或调用的 Chmod 声明后，协议与锁定 VFS 源逐字节一致，4 个客户端测试和生产构建通过。Linux CI 的脚本执行和开发构建签名校验问题仍在修复验收，尚不列为该 PR 最终完成。
+
+CI 复用 VFS 唯一锁定版本中的 canonical owner Search 测试，直接驱动本仓库构建的 cohost，覆盖签名插件、owner/其他 owner、坏 bearer 和重启恢复。另修正了旧 cohost 夹具错误：普通 agent 身份只用于消息收发，会话生命周期由测试环境的 operator 执行，并断言普通 agent 不能自行创建会话。没有放宽原生授权判断或修改 Kernel ABI。该 PR 仍需最终 CI 全绿；本轮不创建 release tag、不覆盖本机已安装 scode、不修改腾讯云部署。
+
+Linux 验收又识别并修正两项问题。共享工作区夹具将刚写入的脚本直接交给 exec，遇到并发 spawn 暂时继承写句柄时会产生 `ETXTBSY`。现按 skill 声明统一通过 `sh` 解释器运行，并在测试中故意保持写句柄打开；Windows 回归通过，Linux 回归继续执行。签名启动超时来自开发构建的 SHA-2：同一个 135 MiB 插件，三个内置信任根和一个测试根完整验证耗时 41.67 秒，超过 30 秒启动预算。只优化开发构建中 Ed25519 使用的 SHA-2 后，同一输入和信任根耗时 1.84 秒。签名算法、信任根、完整文件校验和启动预算均保持原契约；真实 cohost 的最终 Linux E2E 和 CI 仍在验收。
+
+Nexus PR #4907 的 15 项合并后工作流、#4908 的 10 项合并后工作流已全部通过。scode 的历史检查接受保留全部父历史的普通合并，仍要求包含当前 main 且没有冲突标记。经用户确认，分支保护只将旧检查名替换为 `Verify PR history`，回读确认 `strict=true`、其他必需检查和 GitHub App 均保留，总计仍为 10 项。
 
 本轮新增本地证据仍位于同一个 artifact 目录：
 
 - `browser-identity-first-20261016.log`、`browser-identity-http-tests-20261016.log`、`browser-identity-clippy-20261016.log`：原生身份与 HTTP 测试及静态检查。
 - `browser-identity-nexus-tests-20261016.log`：依赖集成后 177 个 Nexus Rust 服务层测试通过；原生 proto 绑定也与新锁定版本一致。
 - `frontend-browser-production-20261017.log`：12 个生产构建浏览器回归，13.1 秒，零重试。
+- `frontend-password-contract-before-20261017.log`、`frontend-password-contract-fixed-20261017.log`：密码请求契约的修复前后证据；`frontend-api-cleanup-build-20261017.log`、`frontend-api-cleanup-browser-20261017.log`：删除旧包装方法后的生产构建与 13 个浏览器用例，12.5 秒、零重试。
+- `frontend-key-settings-before-20261017.log`、`frontend-key-settings-fixed-20261017.log`：API key 设置页修复前后的浏览器日志、截图和 trace，最终 14 项用例通过。
+- `native-browser-complete-ci-20261017.log`：Nexus PR #4907 的实际自包含 Linux CI，包含原生浏览器步骤。
+- `scode-release-owner-real-model-20261017.log`、`scode-release-install-live-20261017.log`：正式 VFS pin、合并 main 前的真实模型 owner Search 和 Windows CLI 八组实际安装验证。
+- `scode-integrated-engine-host-git-path-tests-20261017.log`、`scode-integrated-fs-artifacts-tests-20261017.log`：合并 main 后的 engine-host、runtime、真实 Kernel 文件与版本绑定回归。
+- `scode-integrated-production-build-20261017.log`、`scode-integrated-install-live-20261017.log`、`scode-integrated-cohost-live-20261017.log`、`scode-integrated-owner-real-model-20261017.log`：合并 main 后的生产构建、CLI 八组验证、完整 cohost 和真实模型 owner Search。
+- `native-browser-settings-20261017/run-1792209739281755200/results.json` 与其 `native-browser/native-browser-result.json`：最新前端的八个原生步骤和五组浏览器断言，包括设置页；fixture 已清理。
+- `linux-script-exec-contract-20261017.log`、`scode-native-skill-open-writer-windows-20261017.log`：Linux exec 写句柄排斥的稳定复现与修正后的 Windows 场景；`linux-cohost-diagnostic-20261017/signature-dev-timing.log`、`signature-optimized-timing.log`：同输入、同信任根签名校验的 41.67 秒与 1.84 秒对照。
 - `frontend-build-split-20261016.log`、`frontend-lint-final-20261016.log`、`frontend-frozen-install-final-20261017.log`：最终构建、相关代码 lint、统一 lockfile 的 frozen 安装核对。
 - `browser-cors-before-20261017.log`、`browser-cors-native-fixed-20261017.log`：跨域缺失的真实 TLS daemon 修复前后对照；`browser-cors-http-tests-20261017.log`、`browser-cors-clippy-20261017.log`：187 个 HTTP 测试及静态检查。
 - `native-browser-20261017/run-1792198584783839000/results.json` 与 `native-browser/native-browser-result.json`：实际 Rust HTTP 和生产构建前端的全部步骤及四项浏览器断言组；同目录保留管理页拒绝、撤销后登录页截图。
@@ -279,8 +308,9 @@ cargo test -p nexus-cluster --all-features --test user_runtime signed_search_kee
 | CODE-03 | 原生化后残余 Search 代码与文档清理 | 重复列表/SQL 分支和失效配置删除；架构文档与源码一致 | 已合并；Nexus PR #4902 |
 | CODE-04 | 浏览器登录/OAuth cookie 及剩余 server 调用方迁移 | 保留现有身份 SSOT，完成浏览器与账号服务端迁移后再退役 server | 范围已确认；原生身份接口已合并，前端修复验证中，完整 Rust 账号后端及剩余消费方未完成 |
 | CODE-05 | `serve-user` 下的 Search 装配与授权契约 | 使用固定 owner 的私有数据边界；本地签名插件、owner 隔离、委托身份和真实模型重启全部通过 | 已完成并合并；VFS PR #443 与 Nexus PR #4904 的源提交及合并后 CI 均通过 |
+| CODE-06 | scode 正式依赖、安装 checksum 与协议一致性 | 十个直接依赖使用同一发布源，checksum 按 release 绑定，proto 与上游一致，真实 CLI/cohost 经过验证 | PR #970 已实现；最终 Linux CI 验收中 |
 | TEST-01 | 完整本地组合验收 | CLI、证书 agent、真实模型 TUI 全部实际执行并通过 | 已通过，含清理后实际 cohost 组合 |
-| TEST-02 | 实际 scode/cohost 本地验收 | 实际产物、所属 Kernel、原有身份和工作区的完整链路 | 常规模式与 `serve-user` 的本地候选均通过；正式发布产物尚未验收 |
+| TEST-02 | 实际 scode/cohost 本地验收 | 实际产物、所属 Kernel、原有身份和工作区的完整链路 | 正式 VFS pin 的 Windows CLI/cohost 与真实模型 owner/restart 已通过；最终 Linux 验收中；尚未发布新的 scode 产品版本 |
 
 ## 七、评论和结果模板
 

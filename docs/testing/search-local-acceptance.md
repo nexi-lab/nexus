@@ -4,6 +4,8 @@
 
 当前状态：慢索引、Search 服务端清理、固定 owner 授权、原生 whoami/CORS、TUI 身份迁移，以及 scode 正式 VFS pin/checksum/proto 集成均已在最终 CI 通过后合并，保留全部提交历史。实际 Linux CI 已运行最新生产前端与 Rust HTTP 的浏览器链路。前端 PR #26 保持草稿，14 个浏览器用例已通过本地与 Linux CI；原生组合的八个步骤和五组浏览器断言也已通过。Google/密码账号的完整 Rust 服务端及剩余前端接口迁移尚未完成，整条主线尚未 code complete。腾讯云部署等这些代码与验收收齐后再讨论。
 
+合并后验收补充：Nexus #4909 和 #4910 的合并后工作流均已通过；scode #970 的共享服务 E2E 四个平台全部通过，Rust CI 的其余任务通过，但真实模型 ACP subagent 测试在接收消息 120 秒后失败。当次网关仅返回心跳；测试夹具的 `env_clear()` 丢弃了 CI 配置的 90 秒 API 空闲预算，子进程回退到 300 秒，未能在夹具截止前执行现有流恢复。[scode PR #971](https://github.com/sudoprivacy/sudocode/pull/971) 修复预算传递，并加入同一 ACP 夹具和真实 CLI 子进程的回归：修复前在 30 秒内无法恢复，修复后 6.68 秒完成，恢复前后请求完全相同；原有四种流格式的心跳恢复回归也通过。最终真实模型 CI 尚在执行，当前不能将这项合并后验收记为全部通过。
+
 ## 一、范围和完成标准
 
 Search 的执行后端是 owning Kernel 中的 Rust Search plugin。gRPC 是原生契约；可选 Rust HTTP 入口转发到同一套 gRPC，保留调用者凭证。Python SDK、CLI、MCP 的客户端适配可以保留；被 Rust 替代的服务端算法、路由和状态不能继续成为第二套实现。

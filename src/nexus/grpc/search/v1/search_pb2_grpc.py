@@ -84,21 +84,6 @@ class SearchServiceStub(object):
                 request_serializer=nexus_dot_search_dot_v1_dot_search__pb2.LocateRequest.SerializeToString,
                 response_deserializer=nexus_dot_search_dot_v1_dot_search__pb2.LocateResponse.FromString,
                 _registered_method=True)
-        self.ParkedList = channel.unary_unary(
-                '/nexus.search.v1.SearchService/ParkedList',
-                request_serializer=nexus_dot_search_dot_v1_dot_search__pb2.ParkedListRequest.SerializeToString,
-                response_deserializer=nexus_dot_search_dot_v1_dot_search__pb2.ParkedListResponse.FromString,
-                _registered_method=True)
-        self.ParkedRetry = channel.unary_unary(
-                '/nexus.search.v1.SearchService/ParkedRetry',
-                request_serializer=nexus_dot_search_dot_v1_dot_search__pb2.ParkedRetryRequest.SerializeToString,
-                response_deserializer=nexus_dot_search_dot_v1_dot_search__pb2.ParkedRetryResponse.FromString,
-                _registered_method=True)
-        self.ParkedDiscard = channel.unary_unary(
-                '/nexus.search.v1.SearchService/ParkedDiscard',
-                request_serializer=nexus_dot_search_dot_v1_dot_search__pb2.ParkedDiscardRequest.SerializeToString,
-                response_deserializer=nexus_dot_search_dot_v1_dot_search__pb2.ParkedDiscardResponse.FromString,
-                _registered_method=True)
         self.AddIndexedDirectory = channel.unary_unary(
                 '/nexus.search.v1.SearchService/AddIndexedDirectory',
                 request_serializer=nexus_dot_search_dot_v1_dot_search__pb2.AddIndexedDirectoryRequest.SerializeToString,
@@ -280,28 +265,6 @@ class SearchServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def ParkedList(self, request, context):
-        """Parked-doc queue mgmt — Python's indexing pipeline "parks"
-        documents that hit a transient failure (writer full, projection
-        race, embedder blip) for later retry.  Three ops mirror the
-        Python router endpoints:
-        """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def ParkedRetry(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def ParkedDiscard(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
     def AddIndexedDirectory(self, request, context):
         """Indexed-directory metadata surface — Python's UI-facing list
         of "which directories are we indexing".  The Rust plugin
@@ -425,21 +388,6 @@ def add_SearchServiceServicer_to_server(servicer, server):
                     servicer.Locate,
                     request_deserializer=nexus_dot_search_dot_v1_dot_search__pb2.LocateRequest.FromString,
                     response_serializer=nexus_dot_search_dot_v1_dot_search__pb2.LocateResponse.SerializeToString,
-            ),
-            'ParkedList': grpc.unary_unary_rpc_method_handler(
-                    servicer.ParkedList,
-                    request_deserializer=nexus_dot_search_dot_v1_dot_search__pb2.ParkedListRequest.FromString,
-                    response_serializer=nexus_dot_search_dot_v1_dot_search__pb2.ParkedListResponse.SerializeToString,
-            ),
-            'ParkedRetry': grpc.unary_unary_rpc_method_handler(
-                    servicer.ParkedRetry,
-                    request_deserializer=nexus_dot_search_dot_v1_dot_search__pb2.ParkedRetryRequest.FromString,
-                    response_serializer=nexus_dot_search_dot_v1_dot_search__pb2.ParkedRetryResponse.SerializeToString,
-            ),
-            'ParkedDiscard': grpc.unary_unary_rpc_method_handler(
-                    servicer.ParkedDiscard,
-                    request_deserializer=nexus_dot_search_dot_v1_dot_search__pb2.ParkedDiscardRequest.FromString,
-                    response_serializer=nexus_dot_search_dot_v1_dot_search__pb2.ParkedDiscardResponse.SerializeToString,
             ),
             'AddIndexedDirectory': grpc.unary_unary_rpc_method_handler(
                     servicer.AddIndexedDirectory,
@@ -762,87 +710,6 @@ class SearchService(object):
             '/nexus.search.v1.SearchService/Locate',
             nexus_dot_search_dot_v1_dot_search__pb2.LocateRequest.SerializeToString,
             nexus_dot_search_dot_v1_dot_search__pb2.LocateResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def ParkedList(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/nexus.search.v1.SearchService/ParkedList',
-            nexus_dot_search_dot_v1_dot_search__pb2.ParkedListRequest.SerializeToString,
-            nexus_dot_search_dot_v1_dot_search__pb2.ParkedListResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def ParkedRetry(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/nexus.search.v1.SearchService/ParkedRetry',
-            nexus_dot_search_dot_v1_dot_search__pb2.ParkedRetryRequest.SerializeToString,
-            nexus_dot_search_dot_v1_dot_search__pb2.ParkedRetryResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def ParkedDiscard(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/nexus.search.v1.SearchService/ParkedDiscard',
-            nexus_dot_search_dot_v1_dot_search__pb2.ParkedDiscardRequest.SerializeToString,
-            nexus_dot_search_dot_v1_dot_search__pb2.ParkedDiscardResponse.FromString,
             options,
             channel_credentials,
             insecure,

@@ -229,7 +229,9 @@ VFS #449 的最终源提交 `3af52281a84cb6ef824208bb5ae8b9445cd31fc2` 在 19 �
 
 首次真实组合暴露 Node `fetch` 拒绝 4190 端口，已统一改用 4192，并保留探针错误详情；没有通过延长等待掩盖原因。证据为 `native-rts-search-20261017/run-1792233617757917100/native-rts-search/result.json`（失败）和 `native-rts-search-final-20261017/run-1792233796645587400/results.json`、`native-rts-search/result.json`、`native-rts-search.png`（通过）。测试单独创建和撤销身份，不改共享测试身份；含临时凭证的 `.next` 构建在结束时清除。
 
-现有 Linux 原生浏览器 CI 继续复用同一 daemon、签名插件和 fixture，加入 RTS 消费者的固定版本。RTS 界面、普通前端和 daemon 的最终组合与 CI 状态以对应 PR 为准。
+两个生产浏览器消费端进一步共用同一实际 daemon 验证，九个步骤、十五组浏览器断言全部通过；证据为 `native-both-browsers-20261017/run-1792233983105187400/results.json` 及其两个浏览器结果文件。RTS 最终源版本 `5492315a7381b874dc8d1d6f41bdc8e5ffe9e1da` 的 Linux CI 六项浏览器回归通过后，PR #83 普通合并为 `d1aaa9d13af0e9b3333d8dafbe5594b76edcefda`，合并树与测试源树一致，合并后 CI 同样通过。
+
+RTS 仓库为私有，Nexus CI 的默认 token 无法跨仓库检出，首次配套 CI 返回 `Repository not found`，该次 CI 未执行真实组合。RTS 的真实 Rust 验收移至自身仓库 CI，使用同一公共 Nexus fixture 和构建脚本；Nexus 中现有普通前端 CI 继续运行。最终 CI 状态以配套 PR 为准。
 
 | 编号 | 手工验收 | 预期 |
 | --- | --- | --- |

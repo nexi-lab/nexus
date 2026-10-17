@@ -212,21 +212,7 @@ jobs:
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}/target
         run: |
-          REV=$(python3 scripts/nexus_vfs_revision.py)
-          fixture_source="$RUNNER_TEMP/nexus-vfs-search-fixture"
-          git init "$fixture_source"
-          git -C "$fixture_source" remote add origin https://github.com/nexi-lab/nexus-vfs.git
-          git -C "$fixture_source" fetch --depth=1 origin "$REV"
-          git -C "$fixture_source" checkout --detach FETCH_HEAD
-          uv run --no-project --with grpcio-tools==1.80.0 python \
-            scripts/gen_search_proto.py --vfs-checkout "$fixture_source" --check
-          cargo build --locked --release --manifest-path "$fixture_source/Cargo.toml" \
-            -p nexus-cluster -p nexus-search-plugin --features nexus-cluster/http-api
-          test -x "$CARGO_TARGET_DIR/release/nexusd-cluster"
-          test -f "$CARGO_TARGET_DIR/release/libnexus_search_plugin.so"
-          echo "NEXUS_KERNEL_BINARY=$CARGO_TARGET_DIR/release/nexusd-cluster" >> "$GITHUB_ENV"
-          echo "NEXUS_SEARCH_PLUGIN_LIBRARY=$CARGO_TARGET_DIR/release/libnexus_search_plugin.so" >> "$GITHUB_ENV"
-          echo "$CARGO_TARGET_DIR/release" >> "$GITHUB_PATH"
+          bash scripts/build_search_fixture.sh
           sudo ln -sf "$CARGO_TARGET_DIR/release/nexusd-cluster" /usr/local/bin/nexus-cluster
 
       - name: Checkout the browser identity consumer
@@ -259,26 +245,7 @@ jobs:
           pnpm run build
           pnpm exec playwright install --with-deps chromium
 
-      - name: Checkout the RTS Search consumer
-        if: needs.detect-changes.outputs.code_changed == 'true'
-        uses: actions/checkout@v4
-        with:
-          repository: nexi-lab/nexus-ui
-          ref: 5492315a7381b874dc8d1d6f41bdc8e5ffe9e1da
-          path: nexus-ui
-
-      - name: Set up the RTS package manager
-        if: needs.detect-changes.outputs.code_changed == 'true'
-        uses: pnpm/action-setup@v4
-        with:
-          package_json_file: nexus-ui/package.json
-
-      - name: Install the RTS browser consumer
-        if: needs.detect-changes.outputs.code_changed == 'true'
-        working-directory: nexus-ui
-        run: pnpm install --frozen-lockfile
-
-      - name: Verify browser consumers against the native daemon
+      - name: Verify browser identity against the native daemon
         if: needs.detect-changes.outputs.code_changed == 'true'
         timeout-minutes: 10
         run: |
@@ -288,8 +255,7 @@ jobs:
             --output-dir "$RUNNER_TEMP/native-browser" \
             --keyword-only \
             --browser-origin http://127.0.0.1:4173 \
-            --frontend-checkout "$GITHUB_WORKSPACE/nexus-frontend" \
-            --rts-ui-checkout "$GITHUB_WORKSPACE/nexus-ui"
+            --frontend-checkout "$GITHUB_WORKSPACE/nexus-frontend"
 
       - name: Upload browser acceptance evidence
         if: failure() && needs.detect-changes.outputs.code_changed == 'true'
@@ -299,7 +265,6 @@ jobs:
           path: |
             ${{ runner.temp }}/native-browser/run-*/results.json
             ${{ runner.temp }}/native-browser/run-*/native-browser/
-            ${{ runner.temp }}/native-browser/run-*/native-rts-search/
           retention-days: 7
 
       # Pre-build the nexus-server image once with buildx + GHA layer cache.

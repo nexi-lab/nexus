@@ -143,7 +143,7 @@ scode 候选基线为 `94088bd7`（0.2.31）。本地将其全部 VFS Git 依赖
 
 原生 `GET /v2/auth/whoami` 直接投影 HTTP/gRPC 共用认证策略已经解析出的身份。它不增加账号表、权限算法、缓存或 Kernel syscall，响应使用 `Cache-Control: no-store`。真实 TLS daemon 回归已验证管理员、普通用户和 service 身份、伪造身份参数、未知凭证、缓存预热后撤销，以及重启后凭证与撤销结果。[VFS PR #447](https://github.com/nexi-lab/nexus-vfs/pull/447) 和依赖集成的 [Nexus PR #4906](https://github.com/nexi-lab/nexus/pull/4906) 均在最终 CI 全绿后普通合并，保留全部历史。
 
-实际浏览器直连时发现 Rust HTTP 缺少跨域响应。已通过 [VFS PR #448](https://github.com/nexi-lab/nexus-vfs/pull/448) 补齐：`NEXUS_HTTP_ALLOWED_ORIGINS` 只接受明确的 HTTP/HTTPS origin；默认关闭跨域，配置中任一无效值会拒绝启动。允许列表覆盖预检、成功和错误响应，并暴露现有 revision header。CORS 不替代凭证认证、授权或 OAuth 的浏览器绑定。该 PR 的 19 项最终检查全部通过后普通合并；合并后工作流仍在核对。HTTP API 全部 187 个测试、真实 TLS 身份目标 5 个测试，以及相关全 targets/features clippy 和 fmt 均已通过；目标计数包含公共 fixture 测试。
+实际浏览器直连时发现 Rust HTTP 缺少跨域响应。已通过 [VFS PR #448](https://github.com/nexi-lab/nexus-vfs/pull/448) 补齐：`NEXUS_HTTP_ALLOWED_ORIGINS` 只接受明确的 HTTP/HTTPS origin；默认关闭跨域，配置中任一无效值会拒绝启动。允许列表覆盖预检、成功和错误响应，并暴露现有 revision header。CORS 不替代凭证认证、授权或 OAuth 的浏览器绑定。该 PR 的 19 项最终检查全部通过后普通合并，7 项合并后工作流也已全部通过。HTTP API 全部 187 个测试、真实 TLS 身份目标 5 个测试，以及相关全 targets/features clippy 和 fmt 均已通过；目标计数包含公共 fixture 测试。
 
 前端候选 [nexus-frontend PR #26](https://github.com/nexi-lab/nexus-frontend/pull/26) 已删除 Google 按钮使用的固定凭证和客户端 Google SDK。授权从用户选择的 Nexus 服务端发起，回调由服务端验证，成功后使用该账号自己的 Nexus 凭证。所有登录完成路径统一提交身份状态，替换旧凭证；管理权限从当前原生身份接口读取，缓存里的管理员标记不作为依据。OAuth 调试信息和重复凭证副本不再写入 localStorage。该 PR 保持草稿，完整 Rust 账号后端与其余前端消费者迁移收齐前不合并，不触发前端主分支的 Firebase 部署。
 
@@ -156,12 +156,15 @@ scode 候选基线为 `94088bd7`（0.2.31）。本地将其全部 VFS Git 依赖
 | AUTH-05 | 修改浏览器缓存的管理员标记、保存已撤销凭证 | 不能获得管理入口权限；撤销凭证被服务端拒绝并清掉本地登录态 |
 | AUTH-06 | 连接器 OAuth 回调，包括 state 不符 | 保留当前 Nexus 身份；成功清理临时 state；失败不交换授权码；不持久化回调调试数据 |
 | AUTH-07 | 生产构建前端直接连接 Rust HTTP | 允许的准确 origin 可预检并读取身份；普通用户进入管理页被拒；预热凭证撤销后收到可读的 401、回到登录页并清除凭证；另一用户仍可登录 |
+| AUTH-08 | TUI 连接和当前身份展示 | 原生 status 可建立连接；状态栏显示 whoami 解析出的真实 subject，伪造请求 header 不改变身份；切换凭证、重连和断开后，旧响应不得回写 |
 
 浏览器回归使用实际 Chrome、生产构建的 React 页面和本地 HTTP 协议 fixture；Google 页面跳转被受控模拟。12 个用例全部通过，禁用重试，包含登录页实际下载的 JavaScript 小于 1 MiB 的检查；相同用例已接入 Linux Chromium PR CI。登录页此前会同步加载约 16 MB 的文件/Office 代码，受保护页面现按需加载。这能证明前端凭证、cookie、回调及加载契约，不能代替真实 Google 身份交换或 Rust 账号后端验收。独立 ai-dev-browser 已实测未配置错误、失效/有效 key 登录和普通用户访问管理页被拒绝；自建浏览器已关闭，临时 profile 已清理。真实 Google/账号迁移收齐后，还需对完整 Rust 链路再次执行这些用例。
 
 真实 Rust 链路也已完成 AUTH-07：隔离 daemon、签名 Search 插件、TLS、ReBAC 和真实 Chrome 全部启用；生产前端通过原生 HTTP 签发的临时用户凭证登录。四项浏览器断言组全部通过，撤销响应确认是带正确 CORS header 的 401；SearchService、HTTP/SDK/MCP/CLI、证书 agent 及 fixture 清理的八个步骤全部返回 0。浏览器步骤耗时约 4.3 秒，未重试。验收自动关闭自建进程并清除临时凭证，保留脱敏结果与截图。此前中断留下的私有 fixture 目录也已清理。
 
-原生浏览器链路已装配进 Nexus 的自包含 CI，复用 Cargo 统一锁定 revision 构建的 daemon/plugin，并锁定前端提交 `393f3a57270e276d9a84d7eeaa845e21cd767b6c`。脚本变更会触发 CI；失败只上传脱敏结果和截图。这份 CI 装配仍需最终提交上的实际执行确认。前端 PR 继续保持草稿，Google 身份提供方仍由协议 fixture 模拟；完整 Rust Google/密码账号后端尚未完成。
+原生浏览器链路已装配进 [Nexus PR #4907](https://github.com/nexi-lab/nexus/pull/4907) 的自包含 CI，复用 Cargo 统一锁定 revision 构建的 daemon/plugin，并锁定前端提交 `393f3a57270e276d9a84d7eeaa845e21cd767b6c`。脚本变更会触发 CI；失败只上传脱敏结果和截图。这份 CI 装配仍需最终提交上的实际执行确认。前端 PR 继续保持草稿，Google 身份提供方仍由协议 fixture 模拟；完整 Rust Google/密码账号后端尚未完成。
+
+TUI 候选 [Nexus PR #4908](https://github.com/nexi-lab/nexus/pull/4908) 将连接检查和身份展示分别接到 `/v2/status`、`/v2/auth/whoami`。共享 TypeScript 客户端提供原生身份类型，状态栏直接显示服务端 subject。连接只等待 status；身份与可选功能元数据异步加载，切换服务器会清除旧服务器信息。实际 daemon、TLS、ReBAC、签名插件、worker 和终端 renderer 已跑通 AUTH-08：关键词目标 6 通过、76 次断言，1 个真实模型用例因本轮 keyword-only 模式跳过。完整 TUI 套件 1223 通过、18 跳过，共享 API 客户端 127 通过，类型检查通过。并发回归覆盖慢功能接口、稳定 worker 对象下切换凭证、旧连接失败晚到以及断开后的身份响应；旧判断在切换 Bob 后稳定错误写回 Alice，修复后四项均通过。相应 native E2E 已进入现有发布镜像 CI，API 客户端、TUI 和 fixture 的修改会触发它。PR 仍待最终 CI；可选功能元数据和其他 TUI 面板的迁移仍未完成。
 
 本轮新增本地证据仍位于同一个 artifact 目录：
 
@@ -171,6 +174,8 @@ scode 候选基线为 `94088bd7`（0.2.31）。本地将其全部 VFS Git 依赖
 - `frontend-build-split-20261016.log`、`frontend-lint-final-20261016.log`、`frontend-frozen-install-final-20261017.log`：最终构建、相关代码 lint、统一 lockfile 的 frozen 安装核对。
 - `browser-cors-before-20261017.log`、`browser-cors-native-fixed-20261017.log`：跨域缺失的真实 TLS daemon 修复前后对照；`browser-cors-http-tests-20261017.log`、`browser-cors-clippy-20261017.log`：187 个 HTTP 测试及静态检查。
 - `native-browser-20261017/run-1792198584783839000/results.json` 与 `native-browser/native-browser-result.json`：实际 Rust HTTP 和生产构建前端的全部步骤及四项浏览器断言组；同目录保留管理页拒绝、撤销后登录页截图。
+- `tui-native-identity-20261017/run-1792199081878571000/results.json`：实际原生 TUI 组合验收，所有八个步骤成功；`06-tui.log` 包含真实身份和终端断言。
+- `tui-identity-race-before-20261017.log`、`tui-native-identity-full-final-20261017.log`、`tui-native-api-client-tests-20261017.log`：并发错误的修复前对照、最终 TUI 套件和共享客户端回归。
 - `frontend-google-unconfigured-final-20261016.png`、`frontend-key-rejected-20261016.png`、`frontend-admin-denied-20261016.png`：独立 ai-dev-browser 的实际页面证据。登录与权限后端使用本地受控 fixture，未访问真实 Google 或生产。
 
 ## 五、本地环境准备

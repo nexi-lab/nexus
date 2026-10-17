@@ -17,6 +17,12 @@ listener, set `NEXUS_SEARCH_URL`, `search_url` in `nexus.yaml`, or
 Search host and file server must share workspace ownership and authorization.
 The API worker forwards the existing credential to that host.
 
+Connection readiness uses `GET /v2/status`. The status bar resolves the current
+credential through `GET /v2/auth/whoami` and displays that server principal.
+Identity responses from a previous credential, reconnect, or disconnected
+client are discarded. Identity and optional feature metadata do not block
+connection readiness.
+
 The Search panel displays native chunks and zone attribution. File explorer
 search supports `g:` glob, `r:` grep and indexed queries, and shows access
 errors and discovery result limits.
@@ -49,3 +55,6 @@ codes.
 The published-image CI also runs `tests/e2e/native-search.test.tsx` against
 Rust hosts with TLS, per-file grants, credential revocation and a local
 embedding model.
+It also verifies native connection readiness and renders the authenticated
+principal while ignoring forged identity headers. Changes to the shared API
+client or TUI trigger this native regression in PR CI.

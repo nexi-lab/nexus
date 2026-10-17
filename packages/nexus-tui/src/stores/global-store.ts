@@ -3,7 +3,7 @@
  */
 
 import { createStore as create } from "./create-store.js";
-import type { NexusClientOptions } from "@nexus-ai-fs/api-client";
+import type { NativeIdentity, NexusClientOptions } from "@nexus-ai-fs/api-client";
 import { FetchClient, resolveConfig } from "@nexus-ai-fs/api-client";
 import { categorizeError } from "./create-api-action.js";
 import { useErrorStore } from "./error-store.js";
@@ -19,6 +19,7 @@ import { useErrorStore } from "./error-store.js";
  */
 let _clientFactory: (config: NexusClientOptions) => FetchClient = (config) =>
   new FetchClient(config);
+let connectionAttempt = 0;
 
 /**
  * Override the HTTP client factory. Call this once before initConfig(), passing
@@ -54,17 +55,6 @@ export interface FeaturesResponse {
   readonly rate_limit_enabled: boolean;
 }
 
-/** Response from GET /auth/me */
-export interface UserInfo {
-  readonly user_id: string;
-  readonly email: string;
-  readonly username: string | null;
-  readonly display_name: string | null;
-  readonly avatar_url: string | null;
-  readonly is_global_admin: boolean;
-  readonly primary_auth_method: string | null;
-}
-
 export interface GlobalState {
   // Connection
   readonly connectionStatus: ConnectionStatus;
@@ -80,7 +70,7 @@ export interface GlobalState {
   readonly serverVersion: string | null;
   readonly zoneId: string | null;
   readonly uptime: number | null;
-  readonly userInfo: UserInfo | null;
+  readonly userInfo: NativeIdentity | null;
 
   // Features (from GET /api/v2/features)
   readonly enabledBricks: readonly string[];
@@ -121,7 +111,11 @@ export const useGlobalStore = create<GlobalState>((set, get) => ({
   initConfig: (overrides) => {
     const config = resolveConfig({ transformKeys: false, ...overrides });
     const client = _clientFactory(config);
-    set({ config, client, userInfo: null, connectionStatus: client ? "connecting" : "disconnected" });
+    set({
+      config, client, userInfo: null, connectionStatus: client ? "connecting" : "disconnected",
+      serverVersion: null, uptime: null, zoneId: null, enabledBricks: [],
+      profile: null, mode: null, featuresLoaded: false, featuresLastFetched: 0,
+    });
 
     if (client) {
       get().testConnection();
@@ -129,68 +123,44 @@ export const useGlobalStore = create<GlobalState>((set, get) => ({
   },
 
   testConnection: async () => {
-    const client = get().client;
+    const { client, config } = get();
+    const attempt = ++connectionAttempt;
+    const isCurrent = () => get().client === client && get().config === config && attempt === connectionAttempt;
     if (!client) {
       set({ connectionStatus: "disconnected", connectionError: null, userInfo: null });
       return;
     }
 
-    set({ connectionStatus: "connecting", connectionError: null });
+    set({ connectionStatus: "connecting", connectionError: null, userInfo: null });
 
     try {
-      // Connection check (Decision 5A): health + features only. /auth/me is deferred
-      // until AFTER connection succeeds to avoid blocking Bun's per-host connection
-      // pool (some servers hang on /auth/me indefinitely, starving all other requests).
-      const fast = { timeout: 8_000 };
+      const health = await client.get<{ status: string; version: string }>(
+        "/v2/status", { timeout: 8_000 },
+      ).catch(() => null);
+      if (!isCurrent()) return;
 
-      const [health, features] = await Promise.all([
-        client.get<{ status?: string; uptime_seconds?: number }>(
-          "/healthz/ready", fast,
-        ).catch(() => null),
-        client.get<FeaturesResponse>("/api/v2/features", fast).catch(() => null),
-      ]);
-
-      if (!health) {
+      if (health?.status !== "ok") {
         throw new Error("Server health check failed");
       }
 
-      // Note: zoneId is not set here — no health/readiness endpoint provides it.
-      // The old /api/v2/bricks/health never returned zone_id either (its response
-      // was { total, active, failed, bricks }). zoneId is set via setIdentity()
-      // when the user explicitly configures a zone, or defaults to "root".
       set({
-        serverVersion: features?.version ?? get().serverVersion,
-        uptime: health.uptime_seconds ?? get().uptime,
-        userInfo: null,
+        serverVersion: health.version,
       });
-      if (features) {
-        get().setFeatures(features);
-      }
 
-      // Route through setConnectionStatus so the connection-based feature refresh
-      // fires on reconnects too.  The TTL guard in refreshFeatures() prevents a
-      // double-fetch when setFeatures() was already called above.
+      // Optional feature metadata and identity do not delay connection readiness.
       get().setConnectionStatus("connected");
 
-      // Deferred /auth/me: populate identity in status bar without blocking connection.
-      // Use a dedicated no-retry client so a hung auth endpoint cannot contend
-      // with normal traffic on the shared connection pool.
-      const cfg = get().config;
-      const activeClient = get().client;
-      if (activeClient) {
-        void (async () => {
-          try {
-            const authClient = new FetchClient({ ...cfg, maxRetries: 0, timeout: 4_000 });
-            const info = await authClient.get<UserInfo>("/auth/me");
-            // Only apply if this client is still the active one (guards against
-            // stale writes after reconnect / identity switch).
-            if (info && get().client === activeClient && get().connectionStatus === "connected") {
-              set({ userInfo: info });
-            }
-          } catch { /* non-critical: status bar falls back to agentId */ }
-        })();
-      }
+      void (async () => {
+        try {
+          const authClient = new FetchClient({ ...config, transformKeys: false, maxRetries: 0, timeout: 4_000 });
+          const info = await authClient.get<NativeIdentity>("/v2/auth/whoami");
+          if (info && isCurrent() && get().connectionStatus === "connected") {
+            set({ userInfo: info });
+          }
+        } catch { /* Identity remains unavailable when the credential is rejected. */ }
+      })();
     } catch (err) {
+      if (!isCurrent()) return;
       const message = err instanceof Error ? err.message : "Connection test failed";
       set({
         connectionStatus: "error",
@@ -211,14 +181,13 @@ export const useGlobalStore = create<GlobalState>((set, get) => ({
   },
 
   setConnectionStatus: (status, error) => {
+    if (status === "disconnected" || status === "error") ++connectionAttempt;
     const previous = get().connectionStatus;
     // Clear stale identity when leaving connected state so the status bar
     // never shows a previous principal during reconnect/disconnect flows.
     const clearIdentity = previous === "connected" && status !== "connected" ? { userInfo: null } : {};
     set({ connectionStatus: status, connectionError: error ?? null, ...clearIdentity });
     // Refresh features whenever a connection is (re-)established.
-    // The TTL guard in refreshFeatures() prevents a double-fetch when
-    // testConnection() already called setFeatures() moments ago.
     if (status === "connected" && previous !== "connected") {
       void get().refreshFeatures();
     }
@@ -257,21 +226,14 @@ export const useGlobalStore = create<GlobalState>((set, get) => ({
   },
 
   refreshFeatures: async () => {
-    const { client, featuresLastFetched } = get();
+    const { client, config, featuresLastFetched } = get();
     if (!client) return;
     // TTL: skip if fetched within the last 30 seconds (Decision 13A — bumped from 10s;
     // now a reconnect-storm guard rather than a panel-switch guard)
     if (Date.now() - featuresLastFetched < 30_000) return;
     try {
-      const features = await client.get<{
-        profile: string;
-        mode: string;
-        enabled_bricks: string[];
-        disabled_bricks: string[];
-        version: string | null;
-        rate_limit_enabled: boolean;
-      }>("/api/v2/features");
-      get().setFeatures(features);
+      const features = await client.get<FeaturesResponse>("/api/v2/features");
+      if (get().client === client && get().config === config) get().setFeatures(features);
     } catch {
       // Non-critical: use last known state
     }

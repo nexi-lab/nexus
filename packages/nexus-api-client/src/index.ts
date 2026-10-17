@@ -45,6 +45,7 @@ export {
 // Types
 export type {
   NexusClientOptions,
+  NativeIdentity,
   RequestOptions,
   ApiErrorResponse,
   PaginatedResponse,

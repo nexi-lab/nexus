@@ -8,9 +8,15 @@ on:
       - 'rust/services/proto/nexus/accounts/**'
       - 'src/nexus/bricks/auth/providers/database_local.py'
       - 'src/nexus/bricks/auth/providers/local.py'
-      - 'src/nexus/storage/models/auth.py'
+      - 'src/nexus/bricks/auth/providers/base.py'
+      - 'src/nexus/bricks/auth/user_queries.py'
+      - 'src/nexus/storage/models/**'
       - 'scripts/test_rust_accounts.py'
       - 'Cargo.*'
+      - 'rust-toolchain.toml'
+      - '.cargo/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
       - '.github/workflows/accounts.yml'
   push:
     branches: [main, develop]
@@ -19,9 +25,15 @@ on:
       - 'rust/services/proto/nexus/accounts/**'
       - 'src/nexus/bricks/auth/providers/database_local.py'
       - 'src/nexus/bricks/auth/providers/local.py'
-      - 'src/nexus/storage/models/auth.py'
+      - 'src/nexus/bricks/auth/providers/base.py'
+      - 'src/nexus/bricks/auth/user_queries.py'
+      - 'src/nexus/storage/models/**'
       - 'scripts/test_rust_accounts.py'
       - 'Cargo.*'
+      - 'rust-toolchain.toml'
+      - '.cargo/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
       - '.github/workflows/accounts.yml'
 
 concurrency:

@@ -1,8 +1,8 @@
 # Nexus Search 功能与本地验收清单
 
-更新日期：2026 年 10 月 17 日。本文用于逐项评论、分配测试和记录结果。
+更新日期：2026 年 10 月 18 日。本文用于逐项评论、分配测试和记录结果。
 
-当前状态：慢索引、Search 服务端清理、固定 owner 授权、原生 whoami/CORS、TUI 身份迁移及 scode 正式依赖装配已合并。VFS #449 和 Nexus #4914 的原生文件装配、nexus-ui #83 的 Search 及 #84 的真实 Rust 浏览器 CI 也已合并。前端 #26 的文件操作和缓存隔离有 28 项 Chromium 回归及十二组原生浏览器断言通过；它继续保持草稿。统计错误及 zone 一致性另见下文。Google/密码账号的完整 Rust 服务端、其余业务接口和遗留状态清理尚未完成，整条主线尚未 code complete。腾讯云部署等代码与本地验收收齐后再讨论。
+当前状态：慢索引、Search 服务端清理、固定 owner 授权、原生 whoami/CORS、TUI 身份迁移及 scode 正式依赖装配已合并。原生文件装配、RTS Search 及其真实 Rust 浏览器 CI、统计故障语义、zone 一致性和无生产者的索引队列清理也已合并。前端 #26 的文件操作和缓存隔离有 28 项 Chromium 回归及十二组原生浏览器断言通过；它继续保持草稿。Google/密码账号的完整 Rust 服务端、其余业务接口和 Python server 退役尚未完成，整条主线尚未 code complete。腾讯云部署等代码与本地验收收齐后再讨论。
 
 合并后验收补充：Nexus #4909 和 #4910 的合并后工作流均已通过；scode #970 的共享服务 E2E 四个平台全部通过，Rust CI 的其余任务通过，但真实模型 ACP subagent 测试在接收消息 120 秒后失败。当次网关仅返回心跳；测试夹具的 `env_clear()` 丢弃了 CI 配置的 90 秒 API 空闲预算，子进程回退到 300 秒，未能在夹具截止前执行现有流恢复。
 
@@ -252,17 +252,21 @@ RTS 查询与统计统一读取构建配置 `NEXT_PUBLIC_NEXUS_ZONE_ID`，未配
 
 ### 索引契约与持久状态清理
 
-[VFS #451](https://github.com/nexi-lab/nexus-vfs/pull/451) 删除没有入队方的 parked sidecar、三个管理 RPC 和未使用的统计/批次字段。protobuf 中保留已删除字段的编号与名称，防止复用；Kernel syscall、插件 ABI、Raft 和索引恢复协议均未修改。Python 绑定由同一 Cargo pin 的协议生成，SDK、TUI、RTS 类型和 API 覆盖清单同步清理。后续部署需要使用同一组候选客户端与服务端。
+[VFS #451](https://github.com/nexi-lab/nexus-vfs/pull/451) 删除没有入队方的 parked sidecar、三个管理 RPC 和未使用的统计/批次字段。protobuf 中保留已删除字段的编号与名称，防止复用；Kernel syscall、插件 ABI、Raft 和索引恢复协议均未修改。Python 绑定由同一 Cargo pin 的协议生成，SDK、TUI、RTS 类型和 API 覆盖清单同步清理。配套 [Nexus #4917](https://github.com/nexi-lab/nexus/pull/4917) 和 [UI #86](https://github.com/nexi-lab/nexus-ui/pull/86) 均已合并；后续部署需要使用同一组客户端与服务端。
 
 有效批次仍返回 counts、逐路径 skips 和真实 `index_seq`；应用错误仍通过原错误通道返回。真实 daemon 用例新增混合有效/空内容、精确 skips、重启后查询和损坏存储的失败响应。本地插件 336 项、HTTP 186 项、Python 调用方 28 项、SDK 127 项、TUI worker 2 项及 Chromium 7 项通过；协议绑定检查、覆盖清单生成/校验及相关回归通过。
 
-最终三条实际 daemon、签名插件、mTLS、权限与重启旅程通过；对应测试目标合计 15 项，包含公共辅助测试。相关四个 crate 全部 target 的严格 Clippy 通过。两个生产浏览器消费者再连接同一实际 daemon 验证，九个步骤、十五组浏览器断言全部通过，截图已核对，临时身份和含凭证的构建已清理。证据为 `search-index-outcomes-native-daemon-final-20261017.log`、`search-index-outcomes-clippy-20261017.log`、`native-both-durable-contract-20261017/run-1792240424711344000/results.json` 及浏览器结果文件。本次组合使用关键词模式，不增加真实模型验收声明；最终 CI 以配套 PR 为准。
+最终三条实际 daemon、签名插件、mTLS、权限与重启旅程通过；对应测试目标合计 15 项，包含公共辅助测试。相关四个 crate 全部 target 的严格 Clippy 通过。两个生产浏览器消费者再连接同一实际 daemon 验证，九个步骤、十五组浏览器断言全部通过，截图已核对，临时身份和含凭证的构建已清理。证据为 `search-index-outcomes-native-daemon-final-20261017.log`、`search-index-outcomes-clippy-20261017.log`、`native-both-durable-contract-20261017/run-1792240424711344000/results.json` 及浏览器结果文件。本次组合使用关键词模式，不增加真实模型验收声明。
 
 配套 [Nexus #4917](https://github.com/nexi-lab/nexus/pull/4917) 的 CI 暴露了 StackStore 编排单测调用本机真实 Docker、超过 5 秒预算的问题。该组单测现在为本地动作提供受控完成、延迟与失败输入，结束后恢复原动作；新增断言验证所有刷新结束后才更新时间戳。测试预算保持不变。Windows 完整 TUI 测试 1224 项通过、18 项按平台或环境跳过，证据为 `nexus-4917-typescript-failure-20261017.log` 和 `nexus-tui-full-suite-after-stack-fixture-20261017.log`。真实 Rust 的独立 CI 验收继续保留。
 
-修复后的 Linux TUI CI 1228 项通过、14 项按条件跳过；原时间戳用例耗时 0.20 ms，证据为 `nexus-4917-typescript-success-20261017.log`。随后 Federation 在运行测试前构建 witness 镜像时，重复下载 Rust 依赖遭遇 `static.crates.io:443` 连接失败。新的 witness target 复用 cluster 的固定源码、builder 与编译目录，并在禁网环境中离线编译；两个 Compose 调用方同步切换。Raft 运行代码与启动参数保持原样。该构建修复的本地 Docker 和最终 CI 验证仍在进行，证据从 `nexus-4917-federation-failure-20261017.log` 开始保留。
+修复后的 Linux TUI CI 1228 项通过、14 项按条件跳过；原时间戳用例耗时 0.20 ms，证据为 `nexus-4917-typescript-success-20261017.log`。随后 Federation 在运行测试前构建 witness 镜像时，重复下载 Rust 依赖遭遇 `static.crates.io:443` 连接失败。新的 witness target 复用 cluster 的固定源码、builder 与编译目录，并在禁网环境中离线编译；两个 Compose 调用方同步切换。Raft 运行代码与启动参数保持原样。失败日志 `nexus-4917-federation-failure-20261017.log` 与修复后的成功日志均保留。
 
-本地冷构建 witness 已成功，禁网阶段实际离线编译 142 秒，证据为 `federation-witness-shared-builder-local-20261017.log`。测试 runner 同步改为复制同一份已校验的 Search 绑定，删除远端 proto 下载、重复代码生成和对应编译工具依赖。cluster 与 runner 镜像将使用本轮独立标签做三节点验收，避免覆盖本机已有镜像；最终结果仍以收齐的日志和 CI 为准。
+本地 cluster、witness 和 runner 三个镜像均已构建成功。witness 冷构建的禁网阶段实际离线编译 142 秒，证据为 `federation-witness-shared-builder-local-20261017.log`。测试 runner 复制同一份已校验的 Search 绑定，删除远端 proto 下载、重复代码生成和对应编译工具依赖。
+
+三套新镜像使用本轮独立标签完成实际三节点验收：17 项全部通过，耗时 112.92 秒，覆盖离线加入、双向逐字节读写、重启恢复与一致性契约。最终源提交的 Linux Federation CI 独立通过同一组 17 项，耗时 46.42 秒。两次均未重跑测试，沿用串行 runner 的一项既有 marker 提示。证据为 `federation-shared-builder-local-e2e-20261017.log` 和 `nexus-4917-federation-success-20261018.log`。本轮三容器、三个数据卷及独立网络已删除，并验证资源列表为空；清理证据为 `federation-shared-builder-cleanup-final-20261018.json`。
+
+VFS #451 最终源提交的 19 项检查和七个工作流全部通过，合并后七个工作流也全部通过。Nexus #4917 最终源提交 `ef7cc66f438d434fcff443c08e469038fcfa5ad3` 的 54 项检查、二十个工作流全部通过，两项发布任务按配置跳过；UI #86 的浏览器和实际 Rust 浏览器检查全部通过。三者均普通合并，完整保留提交历史；两个新合并提交的文件树与各自已测试源提交完全一致。
 
 ### scode 正式依赖与安装装配
 
@@ -405,7 +409,7 @@ cargo test -p nexus-cluster --all-features --test user_runtime signed_search_kee
 | CODE-05 | `serve-user` 下的 Search 装配与授权契约 | 使用固定 owner 的私有数据边界；本地签名插件、owner 隔离、委托身份和真实模型重启全部通过 | 已完成并合并；VFS PR #443 与 Nexus PR #4904 的源提交及合并后 CI 均通过 |
 | CODE-06 | scode 正式依赖、安装 checksum 与协议一致性 | 十个直接依赖使用同一发布源，checksum 按 release 绑定，proto 与上游一致，真实 CLI/cohost 经过验证 | PR #970 已在最终 CI 全绿后合并；Windows 与 Linux 本地验收通过 |
 | CODE-07 | 统计故障语义与消费者 zone 一致性 | 实际损坏存储错误、正常 zone、诊断事实及浏览器回归；同一作用域查询和统计 | 已合并；VFS #450、UI #85、Nexus #4916 的最终源提交 CI 全绿，保留全部历史 |
-| CODE-08 | 遗留派生状态和无生产者的契约清理 | 核对消费者，删除不需要的持久化、协议和对应无效测试 | 本地已通过，含实际 daemon 和两个生产浏览器；VFS #451 及配套装配等待最终 CI |
+| CODE-08 | 遗留派生状态和无生产者的契约清理 | 核对消费者，删除不需要的持久化、协议和对应无效测试 | 已在最终源提交 CI 全绿后合并；VFS #451、Nexus #4917、UI #86，含实际 daemon、两个生产浏览器及三节点 Federation 验收 |
 | TEST-01 | 完整本地组合验收 | CLI、证书 agent、真实模型 TUI 全部实际执行并通过 | 已通过，含清理后实际 cohost 组合 |
 | TEST-02 | 实际 scode/cohost 本地验收 | 实际产物、所属 Kernel、原有身份和工作区的完整链路 | 正式 VFS pin 的 Windows CLI/cohost、真实模型 owner/restart 和 Linux 隔离/重启均通过；尚未发布新的 scode 产品版本 |
 

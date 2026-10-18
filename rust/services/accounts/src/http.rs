@@ -2,7 +2,7 @@
 
 use axum::{
     extract::{rejection::JsonRejection, DefaultBodyLimit, State},
-    http::{HeaderMap, StatusCode},
+    http::{header::CACHE_CONTROL, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
@@ -21,7 +21,15 @@ pub fn router(service: AccountService) -> Router {
         .route("/auth/me", get(profile).patch(update_profile))
         .route("/auth/change-password", post(change_password))
         .layer(DefaultBodyLimit::max(32 * 1024))
+        .layer(axum::middleware::map_response(no_store))
         .with_state(service)
+}
+
+async fn no_store(mut response: Response) -> Response {
+    response
+        .headers_mut()
+        .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
 }
 
 enum AccountError {

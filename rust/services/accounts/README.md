@@ -25,7 +25,7 @@ The default listeners are `127.0.0.1:12015` for gRPC and `127.0.0.1:12016` for H
 | `PATCH /auth/me` | `AccountsService.UpdateProfile` |
 | `POST /auth/change-password` | `AccountsService.ChangePassword` |
 
-Profile and password requests carry `Authorization: Bearer <account JWT>`. The native daemon continues to own file credentials and ReBAC grants. This component does not issue file API keys or treat account JWT claims as file grants.
+Profile and password requests carry `Authorization: Bearer <account JWT>`. All HTTP responses use `Cache-Control: no-store`. The native daemon continues to own file credentials and ReBAC grants. This component does not issue file API keys or treat account JWT claims as file grants.
 
 ## Acceptance
 

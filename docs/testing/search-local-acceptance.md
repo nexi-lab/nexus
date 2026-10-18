@@ -159,20 +159,20 @@ scode 候选基线为 `94088bd7`（0.2.31）。本地将其全部 VFS Git 依赖
 
 ### Rust 账号服务的本地兼容验收（2026-10-18）
 
-本轮实现 `rust/services/accounts`：`Login`、`GetProfile`、`UpdateProfile`、`ChangePassword` 四个 gRPC 方法，以及调用同一服务方法的四个 HTTP 入口。现有 SQL `users` 表保存账号事实，沿用原 user ID、bcrypt 成本及 JWT 格式。原生 daemon 继续管理文件凭证和 ReBAC；账号 JWT 不自动换成文件权限。该组件目前只监听本机回环地址，尚未装配到前端或部署。
+本轮通过草稿 [Nexus PR #4919](https://github.com/nexi-lab/nexus/pull/4919) 实现 `rust/services/accounts`：`Login`、`GetProfile`、`UpdateProfile`、`ChangePassword` 四个 gRPC 方法，以及调用同一服务方法的四个 HTTP 入口。现有 SQL `users` 表保存账号事实，沿用原 user ID、bcrypt 成本及 JWT 格式。原生 daemon 继续管理文件凭证和 ReBAC；账号 JWT 不自动换成文件权限。该组件目前只监听本机回环地址，尚未装配到前端或部署。
 
 | 编号 | 已完成的本地测试 | 结果 |
 |---|---|---|
 | ACCOUNT-01 | Python 原实现创建账号和 JWT，实际 Rust 进程分别经 HTTP、gRPC 读取资料 | SQLite、PostgreSQL 均通过，账号 ID、zone 保持 |
 | ACCOUNT-02 | Rust 登录签发 JWT，由 Python 原实现验签 | 两种数据库均通过 |
 | ACCOUNT-03 | Rust 更新资料和密码，Python 读取同一行并用新密码登录 | 两种数据库均通过；旧密码失效，原有 metadata 保持 |
-| ACCOUNT-04 | 错误身份、签名、算法、用途、管理员字段注入及数据库故障 | 实际 Rust 网络测试通过；客户端收到拒绝或明确不可用，不降级绕过 |
+| ACCOUNT-04 | 错误身份、签名、算法、用途、管理员字段注入及数据库故障 | 实际 Rust 网络测试通过；客户端收到拒绝或明确不可用，不降级绕过；HTTP 成功和错误响应均禁止缓存 |
 | ACCOUNT-05 | 重启 Rust 进程，再读取资料、登录和停用账号 | 两种数据库均通过；停用立即拒绝原有效 token；仅存在 `users` 表 |
 | ACCOUNT-06 | 同一旧密码快照并发改密、取消 bcrypt 请求后检查容量 | Rust 确定性回归通过；已提交改密不能被覆盖，未结束的工作继续占用容量 |
 
 Rust 共 8 项测试通过，`fmt`、全 targets 严格 Clippy 和 Python Ruff 通过。两种数据库各有 6 组真实进程兼容验收通过。同样的跨语言流程已加入 `Rust Accounts` CI；最终 CI 状态以账号服务 PR 为准。
 
-本机证据位于 `C:/Users/songym/.codex/artifacts/search-http-batch-r10/`：`accounts-current-test-20261018.log`、`accounts-clippy-20261018.log`、`accounts-sqlite-final-20261018/result.json`、`accounts-postgres-final-20261018/result.json`。首次跨语言验收因独立 Python 环境的 protobuf 编译器和运行库版本不匹配，在创建数据库前失败；匹配到 CI 使用的工具版本后通过，失败日志保留。
+本机证据位于 `C:/Users/songym/.codex/artifacts/search-http-batch-r10/`：`accounts-no-store-test-20261018.log`、`accounts-no-store-clippy-20261018.log`、`accounts-sqlite-no-store-20261018/result.json`、`accounts-postgres-no-store-20261018/result.json`。首次跨语言验收因独立 Python 环境的 protobuf 编译器和运行库版本不匹配，在创建数据库前失败；匹配到 CI 使用的工具版本后通过，失败日志保留。
 
 仍沿用现有无服务端 session 的 JWT 契约：改密不会撤销已经签发且未到期的 token，停用账号会拒绝它们。后续仍需注册、邮件验证、Google OAuth、原生文件凭证交换、网关/前端集成和 Python 路由删除，之后再跑完整浏览器账号流程。本轮结果不代表整条身份迁移已完成。
 

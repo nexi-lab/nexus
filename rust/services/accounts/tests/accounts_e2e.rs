@@ -167,17 +167,16 @@ async fn grpc_and_http_share_existing_identity_profile_and_password_facts() {
     assert!(!user.is_global_admin);
 
     let http = reqwest::Client::new();
-    let profile: UserProfile = http
+    let response = http
         .get(format!("{}/auth/me", fixture.http_url))
         .bearer_auth(&session.token)
         .send()
         .await
         .unwrap()
         .error_for_status()
-        .unwrap()
-        .json()
-        .await
         .unwrap();
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    let profile: UserProfile = response.json().await.unwrap();
     assert_eq!(profile, user);
     let updated: UserProfile = http
         .patch(format!("{}/auth/me", fixture.http_url))
@@ -390,6 +389,7 @@ async fn invalid_mutations_preserve_existing_password_and_profile() {
         .await
         .unwrap();
     assert_eq!(response.status(), reqwest::StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(response.headers()["cache-control"], "no-store");
     grpc.login(LoginRequest {
         identifier: "alice".into(),
         password: PASSWORD.into(),
@@ -492,6 +492,7 @@ async fn ambiguous_identifiers_are_rejected_and_storage_failures_are_visible() {
         .await
         .unwrap();
     assert_eq!(response.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(response.headers()["cache-control"], "no-store");
     assert_eq!(
         response.json::<Value>().await.unwrap()["detail"],
         "Account database is unavailable"

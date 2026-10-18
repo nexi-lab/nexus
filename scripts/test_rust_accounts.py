@@ -49,10 +49,12 @@ def request(
     )
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
-        with opener.open(req, timeout=15) as response:
-            return response.status, json.load(response)
+        response = opener.open(req, timeout=15)
     except urllib.error.HTTPError as error:
-        return error.code, json.load(error)
+        response = error
+    with response:
+        assert response.headers.get("Cache-Control") == "no-store"
+        return response.status, json.load(response)
 
 
 @contextmanager

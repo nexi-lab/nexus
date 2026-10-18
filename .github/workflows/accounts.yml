@@ -1,0 +1,107 @@
+name: Rust Accounts
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'rust/services/accounts/**'
+      - 'rust/services/proto/nexus/accounts/**'
+      - 'src/nexus/bricks/auth/providers/database_local.py'
+      - 'src/nexus/bricks/auth/providers/local.py'
+      - 'src/nexus/bricks/auth/providers/base.py'
+      - 'src/nexus/bricks/auth/user_queries.py'
+      - 'src/nexus/storage/models/**'
+      - 'scripts/test_rust_accounts.py'
+      - 'Cargo.*'
+      - 'rust-toolchain.toml'
+      - '.cargo/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/accounts.yml'
+  push:
+    branches: [main, develop]
+    paths:
+      - 'rust/services/accounts/**'
+      - 'rust/services/proto/nexus/accounts/**'
+      - 'src/nexus/bricks/auth/providers/database_local.py'
+      - 'src/nexus/bricks/auth/providers/local.py'
+      - 'src/nexus/bricks/auth/providers/base.py'
+      - 'src/nexus/bricks/auth/user_queries.py'
+      - 'src/nexus/storage/models/**'
+      - 'scripts/test_rust_accounts.py'
+      - 'Cargo.*'
+      - 'rust-toolchain.toml'
+      - '.cargo/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/accounts.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  accounts:
+    name: Accounts SQLite and PostgreSQL E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: accounts-fixture-password
+          POSTGRES_USER: accounts_fixture
+          POSTGRES_DB: nexus_accounts_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: accounts
+      - name: Rust format, lint and actual network journeys
+        run: |
+          cargo fmt --all --check
+          cargo clippy --locked -p nexus-accounts --all-targets -- -D warnings
+          cargo test --locked -p nexus-accounts
+          cargo build --locked -p nexus-accounts --bin nexusd-accounts
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - uses: astral-sh/setup-uv@v3
+      - name: Install the Python account compatibility reference
+        env:
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: '1'
+        run: |
+          uv venv --python 3.14
+          uv pip install -e '.[test,postgres]' 'grpcio-tools==1.80.0'
+      - name: Existing Python SQLite accounts through the real Rust binary
+        run: |
+          uv run --no-sync python scripts/test_rust_accounts.py \
+            --binary target/debug/nexusd-accounts \
+            --output-dir "$RUNNER_TEMP/accounts-sqlite"
+      - name: Existing Python PostgreSQL accounts through the same Rust binary
+        env:
+          ACCOUNTS_TEST_DATABASE_URL: postgresql+psycopg2://accounts_fixture:accounts-fixture-password@127.0.0.1:5432/nexus_accounts_test
+        run: |
+          uv run --no-sync python scripts/test_rust_accounts.py \
+            --binary target/debug/nexusd-accounts \
+            --postgres-test-url "$ACCOUNTS_TEST_DATABASE_URL" \
+            --output-dir "$RUNNER_TEMP/accounts-postgres"
+      - name: Retain acceptance results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-account-acceptance
+          path: |
+            ${{ runner.temp }}/accounts-sqlite/
+            ${{ runner.temp }}/accounts-postgres/
+          if-no-files-found: ignore
+          retention-days: 7

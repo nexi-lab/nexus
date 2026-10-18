@@ -49,6 +49,28 @@ def _daemon_with_stub(**responses):
 
 
 class TestIndexZoneStamping:
+    def test_index_documents_preserves_committed_receipt_and_content_skips(self) -> None:
+        daemon, _ = _daemon_with_stub(
+            IndexDocuments=search_pb2.IndexDocumentsResponse(
+                indexed_count=1,
+                skipped_count=1,
+                skipped_paths=["/empty.md"],
+                index_seq=7,
+            )
+        )
+        result = asyncio.run(
+            daemon.index_documents(
+                [{"path": "/a.md", "text": "gentian"}, {"path": "/empty.md", "text": ""}],
+                zone_id="corp",
+            )
+        )
+        assert result == {
+            "indexed": 1,
+            "skipped_count": 1,
+            "skipped_paths": ["/empty.md"],
+            "index_seq": 7,
+        }
+
     def test_index_documents_stamps_request_and_every_document(self) -> None:
         daemon, stub = _daemon_with_stub(
             IndexDocuments=search_pb2.IndexDocumentsResponse(indexed_count=2, index_seq=1)

@@ -47,7 +47,7 @@ Graph HTTP API、调用方和 Zoekt 索引/诊断已清理。当前 Search 不�
 | SEARCH-08 | 单文件索引与更新 | 写文件后显式索引，查询应立即可见；改写后再次索引，新内容替代旧内容，返回正的真实 `index_seq`。单纯写文件不代表已自动完成索引。 | 待安排 |
 | SEARCH-09 | 空文件、二进制与缺失路径 | 二进制跳过：`non_text`、序号 0；空内容跳过：`empty`，清除旧索引并返回实际提交序号；缺失路径明确报错。 | 待安排 |
 | SEARCH-10 | 目录 Index 与 Refresh | 对目录执行首次索引和变更刷新，核对实际可查询内容及返回计数；存储失败不能返回成功。 | 待安排 |
-| SEARCH-11 | 内联批量索引 | 混合有效、空内容和失败输入，核对 indexed/skipped/parked 及真实提交回执。部分未完成要明确报错，不能只报告 accepted。 | 待安排 |
+| SEARCH-11 | 内联批量索引 | 混合有效、空内容和失败输入，核对 indexed/skipped、逐路径 skips 及真实提交回执。失败要明确报错，不能只报告 accepted。 | 待安排 |
 | SEARCH-12 | 仅删除索引 | 用 bodyless DELETE 移除某路径索引。Query 不再命中、Locate 为未索引；VFS 原文件仍能读取，并可重新索引。 | 待安排 |
 | SEARCH-13 | Stream 追加与裁剪 | 单文件/内联索引后再执行目录索引；追加只增加尾部 chunk，裁剪后旧内容消失，路径删除后重建从正确位置开始。 | 待安排 |
 | SEARCH-14 | 目录注册与索引模式 | 注册、重复注册、列出、删除、重复删除；检查幂等响应和原有时间事实。修改模式后重启，持久配置保持一致。 | 待安排 |
@@ -250,6 +250,20 @@ RTS 查询与统计统一读取构建配置 `NEXT_PUBLIC_NEXUS_ZONE_ID`，未配
 
 该 zone 候选与统计修复的真实组合再次通过八个步骤、三组浏览器断言，直接核对请求中的 zone、原 bearer、实际文件隔离和关系/凭证撤销。证据为 `nexus-ui-zone-stats-browser-20261017.log`、`native-rts-zone-stats-final-20261017/run-1792236939157217500/results.json` 及其 `native-rts-search/result.json`。临时身份、fixture 和浏览器构建已清理。
 
+### 索引契约与持久状态清理
+
+[VFS #451](https://github.com/nexi-lab/nexus-vfs/pull/451) 删除没有入队方的 parked sidecar、三个管理 RPC 和未使用的统计/批次字段。protobuf 中保留已删除字段的编号与名称，防止复用；Kernel syscall、插件 ABI、Raft 和索引恢复协议均未修改。Python 绑定由同一 Cargo pin 的协议生成，SDK、TUI、RTS 类型和 API 覆盖清单同步清理。后续部署需要使用同一组候选客户端与服务端。
+
+有效批次仍返回 counts、逐路径 skips 和真实 `index_seq`；应用错误仍通过原错误通道返回。真实 daemon 用例新增混合有效/空内容、精确 skips、重启后查询和损坏存储的失败响应。本地插件 336 项、HTTP 186 项、Python 调用方 28 项、SDK 127 项、TUI worker 2 项及 Chromium 7 项通过；协议绑定检查、覆盖清单生成/校验及相关回归通过。
+
+最终三条实际 daemon、签名插件、mTLS、权限与重启旅程通过；对应测试目标合计 15 项，包含公共辅助测试。相关四个 crate 全部 target 的严格 Clippy 通过。两个生产浏览器消费者再连接同一实际 daemon 验证，九个步骤、十五组浏览器断言全部通过，截图已核对，临时身份和含凭证的构建已清理。证据为 `search-index-outcomes-native-daemon-final-20261017.log`、`search-index-outcomes-clippy-20261017.log`、`native-both-durable-contract-20261017/run-1792240424711344000/results.json` 及浏览器结果文件。本次组合使用关键词模式，不增加真实模型验收声明；最终 CI 以配套 PR 为准。
+
+配套 [Nexus #4917](https://github.com/nexi-lab/nexus/pull/4917) 的 CI 暴露了 StackStore 编排单测调用本机真实 Docker、超过 5 秒预算的问题。该组单测现在为本地动作提供受控完成、延迟与失败输入，结束后恢复原动作；新增断言验证所有刷新结束后才更新时间戳。测试预算保持不变。Windows 完整 TUI 测试 1224 项通过、18 项按平台或环境跳过，证据为 `nexus-4917-typescript-failure-20261017.log` 和 `nexus-tui-full-suite-after-stack-fixture-20261017.log`。真实 Rust 的独立 CI 验收继续保留。
+
+修复后的 Linux TUI CI 1228 项通过、14 项按条件跳过；原时间戳用例耗时 0.20 ms，证据为 `nexus-4917-typescript-success-20261017.log`。随后 Federation 在运行测试前构建 witness 镜像时，重复下载 Rust 依赖遭遇 `static.crates.io:443` 连接失败。新的 witness target 复用 cluster 的固定源码、builder 与编译目录，并在禁网环境中离线编译；两个 Compose 调用方同步切换。Raft 运行代码与启动参数保持原样。该构建修复的本地 Docker 和最终 CI 验证仍在进行，证据从 `nexus-4917-federation-failure-20261017.log` 开始保留。
+
+本地冷构建 witness 已成功，禁网阶段实际离线编译 142 秒，证据为 `federation-witness-shared-builder-local-20261017.log`。测试 runner 同步改为复制同一份已校验的 Search 绑定，删除远端 proto 下载、重复代码生成和对应编译工具依赖。cluster 与 runner 镜像将使用本轮独立标签做三节点验收，避免覆盖本机已有镜像；最终结果仍以收齐的日志和 CI 为准。
+
 ### scode 正式依赖与安装装配
 
 [scode PR #970](https://github.com/sudoprivacy/sudocode/pull/970) 将全部十个 VFS 直接依赖统一到已发布的 `v0.8.18`，实际解析提交 `80e9fe4c0e69e762137765b555a9ee6a7a97d6f8`，包含固定 owner Search 授权修复。与最新 main 普通合并后保留 0.2.33 的原生工作区实现和全部提交历史。这个发布版本不包含后续新增的 whoami/CORS，不能把 scode 的 Search 依赖验收与最新浏览器接口混为一项。
@@ -390,8 +404,8 @@ cargo test -p nexus-cluster --all-features --test user_runtime signed_search_kee
 | CODE-04 | 浏览器登录/OAuth cookie 及剩余 server 调用方迁移 | 保留现有身份 SSOT，完成浏览器与账号服务端迁移后再退役 server | 范围已确认；原生身份接口已合并，前端修复验证中，完整 Rust 账号后端及剩余消费方未完成 |
 | CODE-05 | `serve-user` 下的 Search 装配与授权契约 | 使用固定 owner 的私有数据边界；本地签名插件、owner 隔离、委托身份和真实模型重启全部通过 | 已完成并合并；VFS PR #443 与 Nexus PR #4904 的源提交及合并后 CI 均通过 |
 | CODE-06 | scode 正式依赖、安装 checksum 与协议一致性 | 十个直接依赖使用同一发布源，checksum 按 release 绑定，proto 与上游一致，真实 CLI/cohost 经过验证 | PR #970 已在最终 CI 全绿后合并；Windows 与 Linux 本地验收通过 |
-| CODE-07 | 统计故障语义与消费者 zone 一致性 | 实际损坏存储错误、正常 zone、诊断事实及浏览器回归；同一作用域查询和统计 | 本地通过；VFS #450 及依赖装配 CI 继续核对 |
-| CODE-08 | 遗留派生状态和无生产者的契约清理 | 核对 parked 队列等消费者，删除不需要的持久化与对应无效测试 | 待完成；Rust parked 队列仍使用 sidecar，当前 Rust 索引流程没有入队调用 |
+| CODE-07 | 统计故障语义与消费者 zone 一致性 | 实际损坏存储错误、正常 zone、诊断事实及浏览器回归；同一作用域查询和统计 | 已合并；VFS #450、UI #85、Nexus #4916 的最终源提交 CI 全绿，保留全部历史 |
+| CODE-08 | 遗留派生状态和无生产者的契约清理 | 核对消费者，删除不需要的持久化、协议和对应无效测试 | 本地已通过，含实际 daemon 和两个生产浏览器；VFS #451 及配套装配等待最终 CI |
 | TEST-01 | 完整本地组合验收 | CLI、证书 agent、真实模型 TUI 全部实际执行并通过 | 已通过，含清理后实际 cohost 组合 |
 | TEST-02 | 实际 scode/cohost 本地验收 | 实际产物、所属 Kernel、原有身份和工作区的完整链路 | 正式 VFS pin 的 Windows CLI/cohost、真实模型 owner/restart 和 Linux 隔离/重启均通过；尚未发布新的 scode 产品版本 |
 
@@ -399,7 +413,7 @@ CODE-04 的剩余范围：
 
 - 人类账号的 Rust 服务端：注册、密码登录及变更、邮件验证、profile 和 Google OAuth。保留现有账号和 bcrypt 数据；provider 与 provider subject 绑定保持唯一，不按 email 自动合并身份。授权与撤销继续使用原生身份体系。
 - `nexus-frontend` 的基础文件操作已迁移；管理、workspace、agent、sandbox、memory、skills 注册及连接器业务调用方仍待迁移。移除没有调用的包装方法，并不代表对应业务端点可以删除。
-- `nexus-ui` 的 monitoring/健康模型、Python server 启动入口及其余业务接口；Search 请求、响应和统计已迁移，真实 Rust CI 已在自身仓库装配，最新 zone 与故障修复继续验收。TUI 的其他面板和可选功能元数据也尚未完成。
+- `nexus-ui` 的 monitoring/健康模型、Python server 启动入口及其余业务接口；Search 请求、响应和统计已迁移，真实 Rust CI 已在自身仓库装配，zone 与故障修复已合并。TUI 的其他面板和可选功能元数据也尚未完成。
 - 收齐这些调用方和账号后端，删除其替代的 Python 服务端，再跑完整用户旅程和 CI。上述事项完成前，整条 Python server 退役主线仍未 code complete。
 
 ## 七、评论和结果模板

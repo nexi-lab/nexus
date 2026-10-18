@@ -66,7 +66,10 @@ it("preserves mutation receipts, skips and HTTP failures through direct and work
         return Response.json({ status: "skipped", reason: "empty" }, { status: 409 });
       }
       if (url.pathname.endsWith("/batch")) {
-        return Response.json({ indexed_count: 1, skipped_count: 0, parked_paths: ["/failed"], skipped_paths: [], index_seq: 24 }, { status: 409 });
+        if (input.documents[0].path === "/failed") {
+          return Response.json({ error: "storage unavailable" }, { status: 500 });
+        }
+        return Response.json({ indexed_count: 1, skipped_count: 1, skipped_paths: ["/blank"], index_seq: 24 });
       }
       return Response.json({ status: request.method === "DELETE" ? "deleted" : "indexed", index_seq: 25, zone_id: "sharedzone" });
     },
@@ -89,15 +92,17 @@ it("preserves mutation receipts, skips and HTTP failures through direct and work
           expect(failure).toMatchObject({ retryAfter: 5, body: { detail: "indexing capacity exhausted" } });
         }
       }
-      let partial: unknown;
-      try { await indexing.indexDocuments([{ path: "/inline", text: "gentian" }]); } catch (error) { partial = error; }
-      expect(partial).toBeInstanceOf(NexusApiError);
-      expect(partial).toMatchObject({ status: 409, body: { indexed_count: 1, parked_paths: ["/failed"], index_seq: 24 } });
+      let failure: unknown;
+      try { await indexing.indexDocuments([{ path: "/failed", text: "gentian" }]); } catch (error) { failure = error; }
+      expect(failure).toBeInstanceOf(NexusApiError);
+      expect(failure).toMatchObject({ status: 500, body: { error: "storage unavailable" } });
+      expect(await indexing.indexDocuments([{ path: "/inline", text: "gentian" }, { path: "/blank", text: "" }]))
+        .toEqual({ indexed_count: 1, skipped_count: 1, skipped_paths: ["/blank"], index_seq: 24 });
       const escaped = '/space & quote" 虹.md';
       expect(await indexing.deleteFile(escaped)).toEqual({ status: "deleted", index_seq: 25, zone_id: "sharedzone" });
       expect(calls.at(-1)).toEqual({ method: "DELETE", path: escaped, zone: "sharedzone", credential: "Bearer original-caller", body: "" });
     }
-    expect(calls).toHaveLength(12);
+    expect(calls).toHaveLength(14);
     expect(calls.every(call => call.credential === "Bearer original-caller")).toBe(true);
   } finally {
     manager.terminate();

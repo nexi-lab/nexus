@@ -47,7 +47,6 @@ def search_stats(response: search_pb2.StatsResponse) -> dict[str, Any]:
         "fts_doc_count": response.fts_doc_count,
         "fts_path_count": response.fts_path_count,
         "ann_chunk_count": response.ann_chunk_count,
-        "parked_count": response.parked_count,
         "backend": backend,
         "embedding_model": response.embedding_model or None,
         "vector_backend": "hnsw-in-process" if response.embedding_model else None,

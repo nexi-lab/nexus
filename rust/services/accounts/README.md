@@ -6,7 +6,7 @@ The service reads account IDs, bcrypt hashes, verification and activity flags, p
 
 Account JWTs retain the HS256 claim format used by `DatabaseLocalAuth`. Both transports check the current SQL account on every authenticated request; account state and administrator flags are not taken from cached browser metadata. Tokens have a bounded lifetime and no server-side session records. As with the existing stateless JWT contract, changing a password does not revoke previously issued account tokens; deactivating the account rejects them immediately.
 
-Password work uses a bounded blocking pool. Cancelling a request keeps its admission permit with unfinished work. Hashing retains bcrypt cost 12 and the existing 72-byte password rule, including UTF-8 inputs that cross the byte limit.
+New passwords pass through one `NewPassword` constructor before entering the bounded blocking pool. Registration and password changes share its eight-character minimum; validation examines at most eight Unicode characters. Hashing accepts only that validated type and uses bcrypt cost 12. Hashing and verification share the existing 72-byte input rule, including UTF-8 inputs that cross the byte limit. Cancelling a request keeps its admission permit with unfinished work.
 
 ## Run locally
 

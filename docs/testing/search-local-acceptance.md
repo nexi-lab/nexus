@@ -2,7 +2,7 @@
 
 更新日期：2026 年 10 月 18 日。本文用于逐项评论、分配测试和记录结果。
 
-当前状态：慢索引、Search 服务端清理、固定 owner 授权、原生 whoami/CORS、TUI 身份迁移及 scode 正式依赖装配已合并。原生文件装配、RTS Search 及其真实 Rust 浏览器 CI、统计故障语义、zone 一致性和无生产者的索引队列清理也已合并。前端 #26 的文件操作和缓存隔离有 28 项 Chromium 回归及十二组原生浏览器断言通过；它继续保持草稿。Rust 账号服务的旧账号登录、读取/更新资料、改密和真实 SMTP 邮箱验证已合并。本轮候选增加注册与跨实例并发保护；本地 15 项 Rust 测试及 SQLite、PostgreSQL 各 13 组真实进程兼容验收通过，尚未接入前端或生产。Google OAuth、账号前端装配、其余业务接口和 Python server 退役尚未完成，整条主线尚未 code complete。腾讯云部署等代码与本地验收收齐后再讨论。
+当前状态：慢索引、Search 服务端清理、固定 owner 授权、原生 whoami/CORS、TUI 身份迁移及 scode 正式依赖装配已合并。原生文件装配、RTS Search 及其真实 Rust 浏览器 CI、统计故障语义、zone 一致性和无生产者的索引队列清理也已合并。前端 #26 的文件操作和缓存隔离有 28 项 Chromium 回归及十二组原生浏览器断言通过；它继续保持草稿。Rust 账号服务的旧账号登录、读取/更新资料、改密、真实 SMTP 邮箱验证、注册与跨实例并发保护已合并。本轮候选统一新密码校验与 bcrypt 字节规则；本地 16 项 Rust 测试及 SQLite、PostgreSQL 各 13 组真实进程兼容验收通过，尚未接入前端或生产。Google OAuth、账号前端装配、其余业务接口和 Python server 退役尚未完成，整条主线尚未 code complete。腾讯云部署等代码与本地验收收齐后再讨论。
 
 合并后验收补充：Nexus #4909 和 #4910 的合并后工作流均已通过；scode #970 的共享服务 E2E 四个平台全部通过，Rust CI 的其余任务通过，但真实模型 ACP subagent 测试在接收消息 120 秒后失败。当次网关仅返回心跳；测试夹具的 `env_clear()` 丢弃了 CI 配置的 90 秒 API 空闲预算，子进程回退到 300 秒，未能在夹具截止前执行现有流恢复。
 
@@ -195,7 +195,7 @@ Windows 本地 14 项 Rust 测试通过，包括非法签名、算法、用途�
 
 ### Rust 注册与跨实例一致性（2026-10-18）
 
-候选增加 `AccountsService.Register` 和调用同一方法的 `POST /auth/register`。新账号使用 UUID，默认未验证、非管理员且未分配 zone；注册响应只返回资料。前端应依次请求验证邮件、完成验证、再登录获取账号 JWT。用户名非空、不超过 255 字符且不含 `@`；邮箱沿用现有精确比较，不改写旧数据。
+已通过 [Nexus PR #4922](https://github.com/nexi-lab/nexus/pull/4922) 合并 `AccountsService.Register` 和调用同一方法的 `POST /auth/register`。新账号使用 UUID，默认未验证、非管理员且未分配 zone；注册响应只返回资料。前端应依次请求验证邮件、完成验证、再登录获取账号 JWT。用户名非空、不超过 255 字符且不含 `@`；邮箱沿用现有精确比较，不改写旧数据。
 
 | 编号 | 已完成的本地测试 | 结果 |
 |---|---|---|
@@ -206,6 +206,12 @@ Windows 本地 14 项 Rust 测试通过，包括非法签名、算法、用途�
 当前 Windows 本地共 15 项 Rust 测试通过，严格 Clippy、格式和 Ruff 通过；SQLite、PostgreSQL 各 13 组真实进程旅程通过。同一验收脚本已由既有 `Rust Accounts` CI 调用，新候选的 Linux CI 结果以 PR 为准。证据为 `registration-test-20261018.log`、`registration-clippy-20261018.log`、`registration-sqlite-20261018/result.json`、`registration-postgres-20261018/result.json`。
 
 注册在 bcrypt 完成后才开启短事务：SQLite 使用 `BEGIN IMMEDIATE`，PostgreSQL 使用 `SERIALIZABLE`；序列化冲突最多重做三次完整数据库事务，密码哈希不重复计算。未新增身份占位、会话或运行时锁表，历史重复账号不删除或合并。所有后续 Rust 账号创建入口必须复用这套事务契约；生产切换时必须一起退役旧 Python 写入口，混用较弱隔离的写入方不能提供该保证。Google OAuth 和完整浏览器账号流程仍待实现与验收。
+
+### 密码契约补充审计（2026-10-18）
+
+注册与改密的新密码统一经过密码模块的 `NewPassword` 构造，哈希入口只接受这个类型；最少八个 Unicode 字符的规则只定义一次，长度校验最多读取八个字符。bcrypt 的 72 字节输入处理也由哈希与旧密码验证共用。没有增加存储、运行时配置或新 API。
+
+本地 16 项 Rust 测试、严格 Clippy 和格式检查通过；新增七个/八个 Unicode 字符的边界校验，真实 gRPC 注册接受八个中文字符，已有多字节截断及 NUL 兼容测试继续通过。SQLite、PostgreSQL 各 13 组真实进程旅程再次通过，覆盖资料、改密、注册、SMTP、并发和重启。证据为 `password-contract-test-20261018.log`、`password-contract-clippy-20261018.log`、`password-contract-sqlite-20261018/result.json`、`password-contract-postgres-20261018/result.json`；同一 Rust Accounts CI 保护这些回归，Linux 结果以新候选 PR 为准。
 
 ### 浏览器身份迁移及验收边界
 

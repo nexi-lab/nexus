@@ -7,6 +7,24 @@ use tonic::Status;
 #[derive(Clone)]
 pub(crate) struct Passwords(Arc<Semaphore>);
 
+pub(crate) struct NewPassword(String);
+
+impl NewPassword {
+    pub fn new(password: String) -> Result<Self, Status> {
+        const MIN_CHARACTERS: usize = 8;
+        if password.chars().take(MIN_CHARACTERS).count() < MIN_CHARACTERS {
+            return Err(Status::invalid_argument(format!(
+                "Password must be at least {MIN_CHARACTERS} characters"
+            )));
+        }
+        Ok(Self(password))
+    }
+}
+
+fn bcrypt_bytes(password: &str) -> &[u8] {
+    &password.as_bytes()[..password.len().min(72)]
+}
+
 impl Passwords {
     pub fn new(concurrency: usize) -> Result<Self, Status> {
         if concurrency == 0 || concurrency > 32 {
@@ -19,8 +37,7 @@ impl Passwords {
 
     pub async fn verify(&self, password: String, stored: String) -> Result<(), Status> {
         self.run(move || {
-            let bytes = password.as_bytes();
-            let valid = bcrypt::verify(&bytes[..bytes.len().min(72)], &stored)
+            let valid = bcrypt::verify(bcrypt_bytes(&password), &stored)
                 .map_err(|_| Status::unavailable("Account password data is unavailable"))?;
             if !valid {
                 return Err(Status::unauthenticated(
@@ -32,10 +49,9 @@ impl Passwords {
         .await
     }
 
-    pub async fn hash(&self, password: String) -> Result<String, Status> {
+    pub async fn hash(&self, password: NewPassword) -> Result<String, Status> {
         self.run(move || {
-            let bytes = password.as_bytes();
-            bcrypt::hash(&bytes[..bytes.len().min(72)], 12)
+            bcrypt::hash(bcrypt_bytes(&password.0), 12)
                 .map_err(|_| Status::internal("Could not hash password"))
         })
         .await
@@ -60,6 +76,19 @@ impl Passwords {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn new_passwords_require_eight_characters_including_unicode() {
+        for password in ["short".into(), "密".repeat(7)] {
+            assert_eq!(
+                NewPassword::new(password).err().unwrap().code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+        for password in ["12345678".into(), "密".repeat(8)] {
+            assert!(NewPassword::new(password).is_ok());
+        }
+    }
 
     #[tokio::test]
     async fn cancellation_keeps_capacity_with_the_blocking_work() {

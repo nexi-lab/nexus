@@ -17,6 +17,7 @@ use crate::{
 
 pub fn router(service: AccountService) -> Router {
     Router::new()
+        .route("/auth/register", post(register))
         .route("/auth/login", post(login))
         .route("/auth/me", get(profile).patch(update_profile))
         .route("/auth/change-password", post(change_password))
@@ -25,6 +26,17 @@ pub fn router(service: AccountService) -> Router {
         .layer(DefaultBodyLimit::max(32 * 1024))
         .layer(axum::middleware::map_response(no_store))
         .with_state(service)
+}
+
+async fn register(
+    State(service): State<AccountService>,
+    body: Result<Json<RegisterRequest>, JsonRejection>,
+) -> Result<(StatusCode, Json<UserProfile>), AccountError> {
+    let Json(body) = body.map_err(AccountError::Body)?;
+    Ok((
+        StatusCode::CREATED,
+        Json(service.register(Request::new(body)).await?.into_inner()),
+    ))
 }
 
 async fn no_store(mut response: Response) -> Response {

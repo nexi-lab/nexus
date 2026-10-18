@@ -163,6 +163,111 @@ fn verification_claims(id: &str, email: &str) -> Value {
 }
 
 #[tokio::test]
+async fn registration_requires_verification_and_cannot_select_privilege_or_credentials() {
+    let fixture = Fixture::new().await;
+    let http = reqwest::Client::new();
+    let endpoint = format!("{}/auth/register", fixture.http_url);
+    let valid = json!({"email":"new@example.test", "password":PASSWORD, "username":"new"});
+    let mut invalid: Vec<_> = [
+        json!({"email":"not-an-email"}),
+        json!({"password":"short"}),
+        json!({"username":""}),
+        json!({"username":"alice@example.test"}),
+        json!({"username":"x".repeat(256)}),
+        json!({"display_name":"x".repeat(256)}),
+    ]
+    .into_iter()
+    .map(|body| (body, 400))
+    .collect();
+    for field in [
+        "user_id",
+        "is_global_admin",
+        "zone_id",
+        "email_verified",
+        "token",
+        "api_key",
+    ] {
+        invalid.push((json!({(field):"forged"}), 422));
+    }
+    for (fields, expected) in invalid {
+        let mut body = valid.clone();
+        body.as_object_mut()
+            .unwrap()
+            .extend(fields.as_object().unwrap().clone());
+        let response = http.post(&endpoint).json(&body).send().await.unwrap();
+        assert_eq!(response.status().as_u16(), expected);
+    }
+    let response = http.post(&endpoint).json(&valid).send().await.unwrap();
+    assert_eq!(response.status().as_u16(), 201);
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    let profile: Value = response.json().await.unwrap();
+    let id = profile["user_id"].as_str().unwrap();
+    assert_eq!(uuid::Uuid::parse_str(id).unwrap().get_version_num(), 4);
+    assert_eq!(profile["email_verified"], false);
+    assert_eq!(profile["is_global_admin"], false);
+    assert_eq!(profile["display_name"], "new");
+    assert!(profile["zone_id"].is_null());
+    assert!(profile.get("token").is_none() && profile.get("api_key").is_none());
+    let mut grpc = fixture.client().await;
+    let login = LoginRequest {
+        identifier: "new".into(),
+        password: PASSWORD.into(),
+    };
+    assert_eq!(
+        grpc.login(login.clone()).await.unwrap_err().code(),
+        Code::PermissionDenied
+    );
+    let verification = sign(
+        &verification_claims(id, "new@example.test"),
+        Algorithm::HS256,
+        SECRET,
+    );
+    grpc.verify_email(VerifyEmailRequest {
+        token: verification,
+    })
+    .await
+    .unwrap();
+    let signed_in = grpc.login(login).await.unwrap().into_inner();
+    assert_eq!(signed_in.user.unwrap().user_id, id);
+    assert!(grpc
+        .get_profile(authorized(&signed_in.token, GetProfileRequest {}))
+        .await
+        .is_ok());
+    assert_eq!(
+        http.post(&endpoint)
+            .json(&valid)
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .as_u16(),
+        409
+    );
+
+    let created = grpc
+        .register(RegisterRequest {
+            email: "grpc-new@example.test".into(),
+            password: PASSWORD.into(),
+            username: None,
+            display_name: Some("新账号 ✓".into()),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert_ne!(created.user_id, id);
+    assert_eq!(created.display_name.as_deref(), Some("新账号 ✓"));
+    assert!(!created.email_verified && !created.is_global_admin);
+    let hash: String = sqlx::query_scalar("SELECT password_hash FROM users WHERE user_id=$1")
+        .bind(&created.user_id)
+        .fetch_one(&fixture.pool)
+        .await
+        .unwrap();
+    assert!(hash.starts_with("$2b$12$"));
+    assert!(bcrypt::verify(PASSWORD, &hash).unwrap());
+    fixture.stop().await;
+}
+
+#[tokio::test]
 async fn smtp_failure_keeps_acceptance_uniform_and_does_not_verify_the_account() {
     // Reserve a port without listening, so connection refusal has no port race.
     let socket = tokio::net::TcpSocket::new_v4().unwrap();

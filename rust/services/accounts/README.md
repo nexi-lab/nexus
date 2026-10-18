@@ -1,6 +1,6 @@
 # Human account service
 
-`nexus-accounts` implements password login, profile reads and updates, password changes, and email verification over the existing SQL `users` table. The gRPC contract is [accounts.proto](../proto/nexus/accounts/v1/accounts.proto). HTTP invokes those same service methods.
+`nexus-accounts` implements registration, password login, profile reads and updates, password changes, and email verification over the existing SQL `users` table. The gRPC contract is [accounts.proto](../proto/nexus/accounts/v1/accounts.proto). HTTP invokes those same service methods.
 
 The service reads account IDs, bcrypt hashes, verification and activity flags, profile fields and zone membership from their existing rows. It creates no schema or session tables. PostgreSQL and SQLite execute the same parameterized queries. Password updates compare the original hash at the database write, so a concurrent password change cannot be overwritten.
 
@@ -22,6 +22,7 @@ The default listeners are `127.0.0.1:12015` for gRPC and `127.0.0.1:12016` for H
 
 | HTTP | gRPC |
 | --- | --- |
+| `POST /auth/register` | `AccountsService.Register` |
 | `POST /auth/login` | `AccountsService.Login` |
 | `GET /auth/me` | `AccountsService.GetProfile` |
 | `PATCH /auth/me` | `AccountsService.UpdateProfile` |
@@ -30,6 +31,16 @@ The default listeners are `127.0.0.1:12015` for gRPC and `127.0.0.1:12016` for H
 | `POST /auth/verify-email` | `AccountsService.VerifyEmail` |
 
 Profile and password requests carry `Authorization: Bearer <account JWT>`. All HTTP responses use `Cache-Control: no-store`. The native daemon continues to own file credentials and ReBAC grants. This component does not issue file API keys or treat account JWT claims as file grants.
+
+## Registration
+
+Registration accepts an email, a password of at least eight characters, and optional username/display name. Usernames are nonempty, at most 255 characters, and cannot contain `@`; existing usernames remain readable by Login. Email comparison retains the existing database's exact comparison. A new UUID identifies the account; administrator, zone, external identity and file credentials cannot be supplied by the caller.
+
+The response is the unverified `UserProfile` (HTTP 201), without credentials. The browser separately requests an email verification link, then calls Login after verification. A failed delivery can be retried through RequestEmailVerification without registering again. Login refuses unverified accounts.
+
+Identity checks and insertion share one short transaction: SQLite uses `BEGIN IMMEDIATE`, PostgreSQL uses `SERIALIZABLE`. PostgreSQL serialization conflicts retry the whole transaction at most three times, reusing the already computed bcrypt hash. Exhaustion returns Aborted/HTTP 409; duplicate active email or username returns AlreadyExists/HTTP 409. Hashing occurs before the transaction. No identity reservation or runtime lock is persisted, and historical duplicate accounts are preserved.
+
+All account creation in this service must follow this transaction contract. Deployment must route every account writer through the Rust service when retiring Python routes; mixed writers with weaker isolation cannot provide this guarantee. Google OAuth creation must join that same contract before its rollout.
 
 ## Verification email
 
@@ -61,8 +72,8 @@ python scripts/test_rust_accounts.py \
 
 On Windows, use `target/debug/nexusd-accounts.exe`. The Python journey needs the repository's Python dependencies and `grpcio-tools==1.80.0`. It creates accounts and tokens using the Python implementation, starts the real Rust binary, crosses both protocols, verifies Rust password writes with Python bcrypt, restarts, and checks deactivation and the absence of session tables. Rust network tests also cover invalid signatures and algorithms, cross-account claims, unknown mutation fields, ambiguous identifiers and database failures.
 
-CI runs the same binary journey against SQLite and an isolated PostgreSQL service. A loopback SMTP server receives actual MIME messages; the journey verifies Python-issued links in Rust and Rust-issued links in Python, restart, stale email rejection, and concurrent ownership conflicts. Linux also asserts a clean SIGTERM exit. The PostgreSQL test URL must use loopback and a database name beginning with `nexus_accounts_test`; the runner refuses a nonempty database. Compatibility SQL and bcrypt fixtures were generated from `UserModel` and the Python password implementation.
+CI runs the same binary journey against SQLite and an isolated PostgreSQL service. A loopback SMTP server receives actual MIME messages; the journey verifies registration through verification and login, Python-issued links in Rust and Rust-issued links in Python, restart, stale email rejection, and concurrent ownership conflicts. Two independent Rust processes race registration over HTTP and gRPC; PostgreSQL holds both inserts until both identity reads finish, exercising serialization conflicts without timing guesses. Distinct identities must both commit. Linux also asserts a clean SIGTERM exit. The PostgreSQL test URL must use loopback and a database name beginning with `nexus_accounts_test`; the runner refuses a nonempty database. Compatibility SQL and bcrypt fixtures were generated from `UserModel` and the Python password implementation.
 
 ## Remaining integration
 
-Registration, Google OAuth, native file-credential exchange, gateway/frontend wiring and Python route removal remain unfinished. The browser verification page is part of that frontend work. The frontend account rollout stays draft until those pieces and their complete user journeys are ready. This service has not been wired into Tencent production deployment.
+Google OAuth, native file-credential exchange, gateway/frontend wiring and Python route removal remain unfinished. The browser verification page is part of that frontend work. The frontend account rollout stays draft until those pieces and their complete user journeys are ready. This service has not been wired into Tencent production deployment.

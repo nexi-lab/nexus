@@ -152,6 +152,78 @@ fn sqlite_options(url: &str) -> Result<sqlx::sqlite::SqliteConnectOptions, Statu
 }
 
 impl AccountStore {
+    pub(crate) async fn create_password_user(
+        &self,
+        email: &str,
+        username: Option<&str>,
+        display_name: &str,
+        password_hash: &str,
+    ) -> Result<User, Status> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = Utc::now().naive_utc();
+        let begin = match self.0 {
+            Database::Sqlite(_) => "BEGIN IMMEDIATE",
+            Database::Postgres(_) => "BEGIN ISOLATION LEVEL SERIALIZABLE",
+        };
+        let lookup = format!(
+            "SELECT EXISTS(SELECT 1 FROM users WHERE (email = $1 OR username = $2) AND {ACTIVE})"
+        );
+        let insert = format!(
+            "INSERT INTO users (user_id, email, username, display_name, password_hash, \
+            primary_auth_method, is_global_admin, is_active, email_verified, created_at, updated_at) \
+            VALUES ($1, $2, $3, $4, $5, 'password', 0, 1, 0, $6, $6) RETURNING {COLUMNS}"
+        );
+        // All account creation must use this transaction contract. PostgreSQL
+        // retries the whole transaction on SSI conflicts; SQLite acquires its
+        // writer before checking identity. Neither relies on a process lock.
+        for _ in 0..3 {
+            let result = with_pool!(
+                self,
+                pool,
+                async {
+                    let mut transaction = pool.begin_with(begin).await?;
+                    let exists: bool = sqlx::query_scalar(&lookup)
+                        .bind(email)
+                        .bind(username)
+                        .fetch_one(&mut *transaction)
+                        .await?;
+                    if exists {
+                        transaction.rollback().await?;
+                        return Ok::<Option<User>, sqlx::Error>(None);
+                    }
+                    let user = sqlx::query_as::<_, User>(&insert)
+                        .bind(&id)
+                        .bind(email)
+                        .bind(username)
+                        .bind(display_name)
+                        .bind(password_hash)
+                        .bind(now)
+                        .fetch_one(&mut *transaction)
+                        .await?;
+                    transaction.commit().await?;
+                    Ok(Some(user))
+                }
+                .await
+            );
+            match result {
+                Ok(Some(user)) => return Ok(user),
+                Ok(None) => {
+                    return Err(Status::already_exists(
+                        "Email or username is already registered",
+                    ))
+                }
+                Err(error)
+                    if error
+                        .as_database_error()
+                        .is_some_and(|error| error.code().as_deref() == Some("40001")) => {}
+                Err(error) => return Err(unavailable(error)),
+            }
+        }
+        Err(Status::aborted(
+            "Concurrent registration; retry the request",
+        ))
+    }
+
     pub async fn close(&self) {
         with_pool!(self, pool, pool.close().await);
     }

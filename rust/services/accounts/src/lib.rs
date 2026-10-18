@@ -14,7 +14,7 @@ pub mod proto {
     tonic::include_proto!("nexus.accounts.v1");
 }
 
-use password::Passwords;
+use password::{NewPassword, Passwords};
 use proto::{accounts_service_server::AccountsService, *};
 use store::{AccountStore, User};
 use token::AccountTokens;
@@ -77,7 +77,6 @@ impl AccountsService for AccountService {
     ) -> Result<Response<UserProfile>, Status> {
         let body = request.into_inner();
         if !email::valid_email(&body.email)
-            || body.password.chars().count() < 8
             || body.username.as_ref().is_some_and(|name| {
                 name.is_empty() || name.chars().count() > 255 || name.contains('@')
             })
@@ -89,7 +88,10 @@ impl AccountsService for AccountService {
             return Err(Status::invalid_argument("Invalid registration fields"));
         }
         // CPU work completes before opening a database transaction.
-        let hash = self.passwords.hash(body.password).await?;
+        let hash = self
+            .passwords
+            .hash(NewPassword::new(body.password)?)
+            .await?;
         let name = body
             .display_name
             .as_deref()
@@ -227,17 +229,13 @@ impl AccountsService for AccountService {
     ) -> Result<Response<ChangePasswordResponse>, Status> {
         let user = self.caller(&request).await?;
         let body = request.into_inner();
-        if body.new_password.chars().count() < 8 {
-            return Err(Status::invalid_argument(
-                "New password must be at least eight characters",
-            ));
-        }
+        let password = NewPassword::new(body.new_password)?;
         let stored = user
             .password_hash
             .clone()
             .ok_or_else(|| Status::failed_precondition("Account has no password"))?;
         self.passwords.verify(body.current_password, stored).await?;
-        let hash = self.passwords.hash(body.new_password).await?;
+        let hash = self.passwords.hash(password).await?;
         self.store.change_password(&user, &hash).await?;
         Ok(Response::new(ChangePasswordResponse { success: true }))
     }

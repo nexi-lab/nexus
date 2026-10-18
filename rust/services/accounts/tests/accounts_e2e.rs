@@ -171,6 +171,7 @@ async fn registration_requires_verification_and_cannot_select_privilege_or_crede
     let mut invalid: Vec<_> = [
         json!({"email":"not-an-email"}),
         json!({"password":"short"}),
+        json!({"password":"密".repeat(7)}),
         json!({"username":""}),
         json!({"username":"alice@example.test"}),
         json!({"username":"x".repeat(256)}),
@@ -247,7 +248,7 @@ async fn registration_requires_verification_and_cannot_select_privilege_or_crede
     let created = grpc
         .register(RegisterRequest {
             email: "grpc-new@example.test".into(),
-            password: PASSWORD.into(),
+            password: "密码改写回归通过".into(),
             username: None,
             display_name: Some("新账号 ✓".into()),
         })
@@ -263,7 +264,7 @@ async fn registration_requires_verification_and_cannot_select_privilege_or_crede
         .await
         .unwrap();
     assert!(hash.starts_with("$2b$12$"));
-    assert!(bcrypt::verify(PASSWORD, &hash).unwrap());
+    assert!(bcrypt::verify("密码改写回归通过", &hash).unwrap());
     fixture.stop().await;
 }
 

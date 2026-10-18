@@ -3,6 +3,7 @@
 
 pub mod email;
 pub mod http;
+pub mod oauth;
 mod password;
 pub mod store;
 mod token;
@@ -25,6 +26,7 @@ pub struct AccountService {
     tokens: Arc<AccountTokens>,
     passwords: Passwords,
     email: Option<Arc<email::VerificationEmail>>,
+    google: Option<Arc<oauth::GoogleLogin>>,
 }
 
 impl AccountService {
@@ -39,12 +41,25 @@ impl AccountService {
             tokens: Arc::new(AccountTokens::new(jwt_secret, token_ttl)?),
             passwords: Passwords::new(password_workers)?,
             email: None,
+            google: None,
         })
     }
 
     pub fn with_email_verification(mut self, email: email::VerificationEmail) -> Self {
         self.email = Some(Arc::new(email));
         self
+    }
+
+    pub async fn with_google_login(mut self, google: oauth::GoogleLogin) -> Result<Self, Status> {
+        self.store.require_google_schema().await?;
+        self.google = Some(Arc::new(google));
+        Ok(self)
+    }
+
+    fn google(&self) -> Result<&oauth::GoogleLogin, Status> {
+        self.google
+            .as_deref()
+            .ok_or_else(|| Status::unavailable("Google sign-in is not configured"))
     }
 
     /// Call after both listeners have stopped accepting requests.
@@ -71,6 +86,30 @@ impl AccountService {
 
 #[tonic::async_trait]
 impl AccountsService for AccountService {
+    async fn start_google_login(
+        &self,
+        _: Request<StartGoogleLoginRequest>,
+    ) -> Result<Response<StartGoogleLoginResponse>, Status> {
+        Ok(Response::new(self.google()?.start().await?))
+    }
+
+    async fn finish_google_login(
+        &self,
+        request: Request<FinishGoogleLoginRequest>,
+    ) -> Result<Response<LoginResponse>, Status> {
+        let identity = tokio::time::timeout(
+            std::time::Duration::from_secs(15),
+            self.google()?.finish(request.into_inner()),
+        )
+        .await
+        .map_err(|_| Status::unavailable("Google sign-in timed out"))??;
+        let user = self.store.login_google(&identity).await?;
+        Ok(Response::new(LoginResponse {
+            token: self.tokens.issue(&user)?,
+            user: Some(user.profile()),
+        }))
+    }
+
     async fn register(
         &self,
         request: Request<RegisterRequest>,

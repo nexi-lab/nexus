@@ -2,7 +2,7 @@
 
 更新日期：2026 年 10 月 18 日。本文用于逐项评论、分配测试和记录结果。
 
-当前状态：慢索引、Search 服务端清理、固定 owner 授权、原生 whoami/CORS、TUI 身份迁移及 scode 正式依赖装配已合并。原生文件装配、RTS Search 及其真实 Rust 浏览器 CI、统计故障语义、zone 一致性和无生产者的索引队列清理也已合并。前端 #26 的文件操作和缓存隔离有 28 项 Chromium 回归及十二组原生浏览器断言通过；它继续保持草稿。Rust 账号服务的旧账号登录、读取/更新资料、改密、真实 SMTP 邮箱验证、注册与跨实例并发保护已合并。本轮候选统一新密码校验与 bcrypt 字节规则；本地 16 项 Rust 测试及 SQLite、PostgreSQL 各 13 组真实进程兼容验收通过，尚未接入前端或生产。Google OAuth、账号前端装配、其余业务接口和 Python server 退役尚未完成，整条主线尚未 code complete。腾讯云部署等代码与本地验收收齐后再讨论。
+当前状态：慢索引、Search 服务端清理、固定 owner 授权、原生 whoami/CORS、TUI 身份迁移及 scode 正式依赖装配已合并。原生文件装配、RTS Search 及其真实 Rust 浏览器 CI、统计故障语义、zone 一致性和无生产者的索引队列清理也已合并。前端 #26 的文件操作和缓存隔离有 28 项 Chromium 回归及十二组原生浏览器断言通过；它继续保持草稿。Rust 账号服务的旧账号登录、读取/更新资料、改密、SMTP 邮箱验证、注册、跨实例并发及统一密码契约已合并。本轮 Google OIDC 后端候选已通过本地 24 项 Rust 测试，包含 SQLite 与 PostgreSQL 的网络和事务验收。真实 Google 浏览器、原生文件凭证交换、账号前端装配、其余业务接口和 Python server 退役尚未完成，整条主线尚未 code complete。腾讯云部署等代码与本地验收收齐后再讨论。
 
 合并后验收补充：Nexus #4909 和 #4910 的合并后工作流均已通过；scode #970 的共享服务 E2E 四个平台全部通过，Rust CI 的其余任务通过，但真实模型 ACP subagent 测试在接收消息 120 秒后失败。当次网关仅返回心跳；测试夹具的 `env_clear()` 丢弃了 CI 配置的 90 秒 API 空闲预算，子进程回退到 300 秒，未能在夹具截止前执行现有流恢复。
 
@@ -203,7 +203,7 @@ Windows 本地 14 项 Rust 测试通过，包括非法签名、算法、用途�
 | ACCOUNT-12 | 两个独立 Rust 进程通过 HTTP/gRPC 同时注册相同邮箱或用户名，再并发注册不同邮箱 | 两种数据库通过；重复身份仅一份成功，另一份明确冲突；不同身份均提交；PostgreSQL 在两个身份查询完成后才放行插入，确定性覆盖事务竞争 |
 | ACCOUNT-13 | 重启服务，用新账号原 token 和密码读取资料、登录，检查持久表与日志 | 两种数据库通过；账号、密码及验证事实保持；仍仅有 `users` 表，日志不包含密码或 token |
 
-当前 Windows 本地共 15 项 Rust 测试通过，严格 Clippy、格式和 Ruff 通过；SQLite、PostgreSQL 各 13 组真实进程旅程通过。同一验收脚本已由既有 `Rust Accounts` CI 调用，新候选的 Linux CI 结果以 PR 为准。证据为 `registration-test-20261018.log`、`registration-clippy-20261018.log`、`registration-sqlite-20261018/result.json`、`registration-postgres-20261018/result.json`。
+该注册候选的 Windows 本地共 15 项 Rust 测试通过，严格 Clippy、格式和 Ruff 通过；SQLite、PostgreSQL 各 13 组真实进程旅程通过。同一验收脚本由 `Rust Accounts` CI 调用，PR #4922 的源提交与合并后 Linux CI 均已通过。证据为 `registration-test-20261018.log`、`registration-clippy-20261018.log`、`registration-sqlite-20261018/result.json`、`registration-postgres-20261018/result.json`。
 
 注册在 bcrypt 完成后才开启短事务：SQLite 使用 `BEGIN IMMEDIATE`，PostgreSQL 使用 `SERIALIZABLE`；序列化冲突最多重做三次完整数据库事务，密码哈希不重复计算。未新增身份占位、会话或运行时锁表，历史重复账号不删除或合并。所有后续 Rust 账号创建入口必须复用这套事务契约；生产切换时必须一起退役旧 Python 写入口，混用较弱隔离的写入方不能提供该保证。Google OAuth 和完整浏览器账号流程仍待实现与验收。
 
@@ -211,7 +211,34 @@ Windows 本地 14 项 Rust 测试通过，包括非法签名、算法、用途�
 
 注册与改密的新密码统一经过密码模块的 `NewPassword` 构造，哈希入口只接受这个类型；最少八个 Unicode 字符的规则只定义一次，长度校验最多读取八个字符。bcrypt 的 72 字节输入处理也由哈希与旧密码验证共用。没有增加存储、运行时配置或新 API。
 
-本地 16 项 Rust 测试、严格 Clippy 和格式检查通过；新增七个/八个 Unicode 字符的边界校验，真实 gRPC 注册接受八个中文字符，已有多字节截断及 NUL 兼容测试继续通过。SQLite、PostgreSQL 各 13 组真实进程旅程再次通过，覆盖资料、改密、注册、SMTP、并发和重启。证据为 `password-contract-test-20261018.log`、`password-contract-clippy-20261018.log`、`password-contract-sqlite-20261018/result.json`、`password-contract-postgres-20261018/result.json`；同一 Rust Accounts CI 保护这些回归，Linux 结果以新候选 PR 为准。
+已通过 [Nexus PR #4923](https://github.com/nexi-lab/nexus/pull/4923) 合并。该候选本地 16 项 Rust 测试、严格 Clippy 和格式检查通过；新增七个/八个 Unicode 字符的边界校验，真实 gRPC 注册接受八个中文字符，已有多字节截断及 NUL 兼容测试继续通过。SQLite、PostgreSQL 各 13 组真实进程旅程再次通过，覆盖资料、改密、注册、SMTP、并发和重启。证据为 `password-contract-test-20261018.log`、`password-contract-clippy-20261018.log`、`password-contract-sqlite-20261018/result.json`、`password-contract-postgres-20261018/result.json`；源提交与合并后的 Linux CI 均已通过。
+
+### Rust Google 登录后端（2026-10-18）
+
+本轮新增 `StartGoogleLogin`、`FinishGoogleLogin` 两个账号 gRPC 方法。HTTP 的 `GET /auth/oauth/google/authorize` 和 `POST /auth/oauth/google/callback` 调用相同服务。生产构造固定 Google issuer，通过 OIDC discovery/JWKS 校验 RS256 签名、issuer、audience、`azp`、过期时间、`nbf`、nonce、已验证邮箱和可选 access-token hash。授权使用固定回调地址与 S256 PKCE，不接受客户端选择 provider 或回调地址。
+
+| 编号 | 已完成的本地测试 | 结果 |
+|---|---|---|
+| ACCOUNT-14 | 回环 OIDC 服务实际签发 RSA ID token，经真实 HTTP 授权码交换与账号 gRPC/HTTP 登录 | 正常登录通过；错误签名、算法、issuer、audience、`azp`、nonce、时间和未验证邮箱被拒绝；替换的只有外部 provider |
+| ACCOUNT-15 | 缺失、错误、重复 cookie，错误 state 用途/客户端/回调/有效期，HTTP JSON 伪造绑定 | 被拒绝且不写账号；HTTP JSON 不返回 PKCE verifier；HTTPS 回调使用 host-only、HttpOnly、Secure、SameSite=Lax cookie；成功与失败均清 cookie 并禁止缓存 |
+| ACCOUNT-16 | 旧 `provider + subject` 绑定登录，provider 邮箱和名字变化；同邮箱新 subject；停用/删除/未验证账号 | SQLite、PostgreSQL 均通过；原 user ID、用户编辑资料、密码、zone 和 metadata 保持；不按邮箱自动合并，不重建已停用身份 |
+| ACCOUNT-17 | 两个独立服务实例竞争同 subject、同邮箱、Google/密码注册，以及两个不同身份 | 两种数据库通过；共用同一个创建事务；PostgreSQL 在两个身份查询之后再放行插入；没有重复账号或孤立绑定，不重复调用 provider |
+| ACCOUNT-18 | 开始流程后关闭服务实例，再用另一实例接收回调和签发账号 JWT | 两种数据库通过；开始流程不写库；新账号沿用 `primary_auth_method="oauth"`，非管理员、不分配 zone、不创建文件 key；provider 保存在绑定表；不写 ID/access token、PKCE、nonce、state 或 pending signup |
+| ACCOUNT-19 | 签名 key 轮换、provider 暂不可用、缓存过期、超大响应和交换容量耗尽 | 首次 key miss 可刷新，此后限制刷新频率；不重复消费授权码；过期缓存失败明确返回 503；响应最多 128 KiB，交换最多 8 个并发，超量返回 429 |
+| ACCOUNT-20 | 实际 Rust 二进制没有 Google 配置或只有部分配置，及不安全的回调地址 | 双数据库真实进程兼容脚本覆盖；未配置端点返回 503，部分或无效配置在监听前拒绝启动，普通账号入口继续可用 |
+| ACCOUNT-21 | Rust 测试用 SQL schema 与当前 Python 账号及 OAuth 绑定模型核对 | 兼容脚本在创建数据库前比较规范 DDL；账号模型变化必须同步 Rust 夹具，由既有 storage-models CI 路径保护 |
+
+Windows 本地 24 项 Rust 测试、严格 Clippy、格式与 Ruff 均已通过。Google 的两个数据库网络用例在 Rust 测试进程中启动真实服务实例；它们不等同于外部 Google 账号登录或完整产品浏览器验收。Python→Rust 真实二进制兼容脚本在 SQLite、PostgreSQL 各 16 组通过，覆盖注册、SMTP、bcrypt、JWT、并发、进程重启、Google 配置和规范 schema。最终证据为 `google-final-test-20261018.log`、`google-final-clippy-20261018.log`、`google-final-compatibility-sqlite-20261018/result.json`、`google-final-compatibility-postgres-20261018/result.json`；Linux/Windows CI 以本轮 PR 结果为准。
+
+审计时用代码生成属性禁止 `browser_binding` 参与 JSON 序列化/反序列化，HTTP 直接使用规范 proto DTO，不再维护另一份回调字段定义。gRPC 的私有绑定字段保持可用，HTTP 只从 cookie 填入该字段。原有测试继续断言伪造 JSON 绑定被拒绝。
+
+本轮还实际捕获到旧 CAS 单测在 Windows 清理临时文件时失败。原测试已经等待连接池关闭，失败日志保留为 `google-json-contract-test-20261018.log`，没有将其归因于尚未确认的驱动或系统问题。这个单测现在用单连接内存 SQL 库验证两个旧快照只能提交一个，避免无关的文件生命周期依赖；原有实际文件、双进程、持久化和重启验收保持。`Rust Accounts` 新增 Windows 网络 CI，与 Linux 双数据库 job 一起保护回归，没有添加测试重试或放宽断言。已核验并删除这次失败留下的临时目录。
+
+执行 `cargo test --locked -p nexus-accounts -- --nocapture` 可运行本地 SQLite OIDC 用例。双数据库测试还需提供 `ACCOUNTS_OAUTH_TEST_DATABASE_URL`，仅允许回环地址、`nexus_accounts_test*` 测试库且不带 query；测试在自己创建的 schema 内运行并在成功后删除。`Rust Accounts` CI 固定配置该 PostgreSQL fixture，因此两种数据库都会实际执行，不依赖外部 Google 服务。
+
+Google 配置只有三个环境变量：`NEXUS_ACCOUNTS_GOOGLE_CLIENT_ID`、`NEXUS_ACCOUNTS_GOOGLE_CLIENT_SECRET`、`NEXUS_ACCOUNTS_GOOGLE_REDIRECT_URI`，必须一起提供。JWT secret 继续使用 `NEXUS_JWT_SECRET`。回调地址要求 HTTPS，本机回环可用 HTTP；cookie 对应的账号 API 必须与前端处于同一 site，并经网关终止 TLS。前端应携带 cookie 调用新 callback；账号 JWT 仍不具备原生文件访问能力。
+
+旧 Google check/confirm、按邮箱自动关联、SQL 文件 key 和临时 token 存储仍需在消费方切换时一起删除。当前前端仍为草稿；真实 Google 登录、显式账号关联、凭证交换与完整账号到文件浏览器旅程尚未验收。本轮未改 Kernel syscall、插件 ABI、Raft 或腾讯云部署。
 
 ### 浏览器身份迁移及验收边界
 

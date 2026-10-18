@@ -1,7 +1,7 @@
 use clap::Parser;
 use nexus_accounts::{
-    email::VerificationEmail, proto::accounts_service_server::AccountsServiceServer,
-    store::AccountStore, AccountService,
+    email::VerificationEmail, oauth::GoogleLogin,
+    proto::accounts_service_server::AccountsServiceServer, store::AccountStore, AccountService,
 };
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
@@ -54,6 +54,28 @@ fn email_from_env() -> Result<Option<VerificationEmail>, Box<dyn std::error::Err
     )?))
 }
 
+async fn google_from_env(secret: &[u8]) -> Result<Option<GoogleLogin>, Box<dyn std::error::Error>> {
+    let names = [
+        "NEXUS_ACCOUNTS_GOOGLE_CLIENT_ID",
+        "NEXUS_ACCOUNTS_GOOGLE_CLIENT_SECRET",
+        "NEXUS_ACCOUNTS_GOOGLE_REDIRECT_URI",
+    ];
+    if names.iter().all(|name| std::env::var_os(name).is_none()) {
+        return Ok(None);
+    }
+    let required =
+        |name| std::env::var(name).map_err(|_| format!("{name} is required and must be UTF-8"));
+    Ok(Some(
+        GoogleLogin::new(
+            required(names[0])?,
+            required(names[1])?,
+            required(names[2])?,
+            secret,
+        )
+        .await?,
+    ))
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
@@ -76,6 +98,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     if let Some(email) = email_from_env()? {
         service = service.with_email_verification(email);
+    }
+    if let Some(google) = google_from_env(secret.as_bytes()).await? {
+        service = service.with_google_login(google).await?;
     }
     let grpc = TcpListener::bind(args.grpc_addr).await?;
     let http = TcpListener::bind(args.http_addr).await?;

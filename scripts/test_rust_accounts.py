@@ -8,14 +8,20 @@ import importlib
 import json
 import os
 import queue
+import re
+import socketserver
 import subprocess
 import sys
 import tempfile
 import threading
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from email import policy
+from email.parser import BytesParser
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import grpc
 from sqlalchemy import create_engine, inspect
@@ -29,6 +35,55 @@ ROOT = Path(__file__).resolve().parents[1]
 SECRET = "fixture-account-signing-key-32-bytes-minimum"
 PASSWORD = "python-created-password-多字节"
 NEXT_PASSWORD = "rust-changed-password-✓"
+MAIL_ENV = (
+    "NEXUS_ACCOUNTS_SMTP_URL",
+    "NEXUS_ACCOUNTS_EMAIL_FROM",
+    "NEXUS_ACCOUNTS_VERIFICATION_URL",
+    "NEXUS_ACCOUNTS_SMTP_USERNAME",
+    "NEXUS_ACCOUNTS_SMTP_PASSWORD",
+)
+
+
+@contextmanager
+def smtp_capture():
+    """A real loopback SMTP conversation; only the delivery provider is replaced."""
+    deliveries: queue.Queue = queue.Queue()
+
+    class Handler(socketserver.StreamRequestHandler):
+        def handle(self):
+            self.request.settimeout(10)
+            self.wfile.write(b"220 localhost test relay\r\n")
+            while line := self.rfile.readline(65537):
+                command = line.split(None, 1)[0].upper()
+                if command in {b"EHLO", b"HELO"}:
+                    self.wfile.write(b"250-localhost\r\n250 8BITMIME\r\n")
+                elif command == b"DATA":
+                    self.wfile.write(b"354 Send message\r\n")
+                    data = bytearray()
+                    while (line := self.rfile.readline(65537)) != b".\r\n":
+                        if not line or len(data) > 65536:
+                            raise ValueError("Incomplete or oversized test SMTP message")
+                        data.extend(line[1:] if line.startswith(b"..") else line)
+                    deliveries.put(BytesParser(policy=policy.default).parsebytes(data))
+                    self.wfile.write(b"250 Delivered\r\n")
+                elif command == b"QUIT":
+                    self.wfile.write(b"221 Goodbye\r\n")
+                    return
+                elif command in {b"MAIL", b"RCPT", b"RSET", b"NOOP"}:
+                    self.wfile.write(b"250 OK\r\n")
+                else:
+                    self.wfile.write(b"502 Unsupported command\r\n")
+
+    with socketserver.ThreadingTCPServer(("127.0.0.1", 0), Handler) as smtp:
+        smtp.daemon_threads = True
+        thread = threading.Thread(target=lambda: smtp.serve_forever(poll_interval=0.05))
+        thread.start()
+        try:
+            yield smtp.server_address[1], deliveries
+        finally:
+            smtp.shutdown()
+            thread.join(timeout=5)
+            assert not thread.is_alive()
 
 
 def request(
@@ -58,10 +113,20 @@ def request(
 
 
 @contextmanager
-def server(binary: Path, database_url: str, log_path: Path):
+def server(binary: Path, database_url: str, log_path: Path, smtp_port: int | None = None):
     env = os.environ.copy()
+    for name in MAIL_ENV:
+        env.pop(name, None)
     env["NEXUS_DATABASE_URL"] = database_url
     env["NEXUS_JWT_SECRET"] = SECRET
+    if smtp_port is not None:
+        env.update(
+            {
+                "NEXUS_ACCOUNTS_SMTP_URL": f"smtp://127.0.0.1:{smtp_port}",
+                "NEXUS_ACCOUNTS_EMAIL_FROM": "nexus@example.test",
+                "NEXUS_ACCOUNTS_VERIFICATION_URL": "https://nexus.example.test/verify-email",
+            }
+        )
     with log_path.open("w", encoding="utf8") as log:
         process = subprocess.Popen(
             [str(binary), "--grpc-addr", "127.0.0.1:0", "--http-addr", "127.0.0.1:0"],
@@ -80,12 +145,16 @@ def server(binary: Path, database_url: str, log_path: Path):
         finally:
             process.terminate()
             try:
-                process.wait(timeout=10)
+                process.wait(timeout=20)
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=10)
             process.stdout.close()
             reader.join(timeout=5)
+            if os.name != "nt":
+                assert process.returncode == 0, (
+                    "Account binary did not shut down gracefully on SIGTERM"
+                )
 
 
 def fixture_url(args, directory: Path) -> str:
@@ -111,7 +180,10 @@ def main() -> int:
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
     groups = []
-    with tempfile.TemporaryDirectory(prefix="nexus-account-acceptance-") as name:
+    with (
+        tempfile.TemporaryDirectory(prefix="nexus-account-acceptance-") as name,
+        smtp_capture() as smtp,
+    ):
         fixture = Path(name)
         generated = fixture / "generated"
         generated.mkdir()
@@ -153,8 +225,13 @@ def main() -> int:
                 session.add(stored)
             legacy_token = legacy.login("existing", PASSWORD)
             assert legacy_token
+            pending = legacy.register_user("pending@example.test", PASSWORD, username="pending")
+            old_pending = legacy.register_user("old-pending@example.test", PASSWORD)
+            old_verification = legacy.create_email_verification_token(
+                old_pending.user_id, old_pending.email
+            )
             with server(
-                args.binary.resolve(), url, args.output_dir / "accounts-first.log"
+                args.binary.resolve(), url, args.output_dir / "accounts-first.log", smtp[0]
             ) as ready:
                 base = f"http://{ready['http_addr']}"
                 with grpc.insecure_channel(ready["grpc_addr"]) as channel:
@@ -216,10 +293,107 @@ def main() -> int:
                         raise AssertionError("Missing account credential was accepted")
                     groups.append("Both transports reject invalid identity and privilege mutation")
 
+                    status, message = request(
+                        base, "/auth/verify-email", body={"token": old_verification}
+                    )
+                    assert status == 200
+                    with sessions() as session:
+                        verified_at = session.get(UserModel, old_pending.user_id).updated_at
+                    client.VerifyEmail(pb.VerifyEmailRequest(token=old_verification), timeout=15)
+                    with sessions() as session:
+                        assert session.get(UserModel, old_pending.user_id).updated_at == verified_at
+                    assert legacy.login("old-pending@example.test", PASSWORD)
+                    groups.append(
+                        "Python verification link -> Rust HTTP/gRPC, idempotent SQL fact and Python login"
+                    )
+
+                    responses = [
+                        request(base, "/auth/request-verification", body=body)
+                        for body in (
+                            {"email": "pending@example.test"},
+                            {"email": "missing@example.test"},
+                            {"email": "existing@example.test"},
+                            {},
+                        )
+                    ]
+                    assert all(
+                        result == (202, {"message": "Verification request accepted."})
+                        for result in responses
+                    )
+                    delivered = smtp[1].get(timeout=15)
+                    assert str(delivered["To"]) == "pending@example.test"
+                    link = re.search(r"https://[^\s]+", delivered.get_content()).group(0)
+                    parsed = urlsplit(link)
+                    assert (parsed.scheme, parsed.netloc, parsed.path) == (
+                        "https",
+                        "nexus.example.test",
+                        "/verify-email",
+                    )
+                    verification = parse_qs(parsed.query)["token"][0]
+                    assert legacy.verify_email_token(verification) == (
+                        pending.user_id,
+                        pending.email,
+                    )
+                    assert request(base, "/auth/me", verification)[0] == 401
+                    with sessions.begin() as session:
+                        stored = session.get(UserModel, pending.user_id)
+                        assert stored.email_verified == 0
+                        stored.email = "changed@example.test"
+                    assert (
+                        request(base, "/auth/verify-email", body={"token": verification})[0] == 400
+                    )
+                    with sessions.begin() as session:
+                        session.get(UserModel, pending.user_id).email = pending.email
+                    groups.append(
+                        "Rust SMTP message and verification JWT -> Python verifier; stale email and account credential reuse rejected"
+                    )
+
             with server(
                 args.binary.resolve(), url, args.output_dir / "accounts-restart.log"
             ) as ready:
                 base = f"http://{ready['http_addr']}"
+                status, _ = request(base, "/auth/verify-email", body={"token": verification})
+                assert status == 200 and legacy.login("pending", PASSWORD)
+                assert smtp[1].empty()
+                groups.append(
+                    "Verification link survives restart with no persisted token or delivery state"
+                )
+
+                owners = [
+                    legacy.register_user(f"owner-{i}@example.test", PASSWORD) for i in range(2)
+                ]
+                with sessions.begin() as session:
+                    for owner in owners:
+                        session.get(UserModel, owner.user_id).email = "collision@example.test"
+                tokens = [
+                    legacy.create_email_verification_token(owner.user_id, "collision@example.test")
+                    for owner in owners
+                ]
+                with grpc.insecure_channel(ready["grpc_addr"]) as channel:
+                    grpc.channel_ready_future(channel).result(timeout=15)
+                    client = rpc.AccountsServiceStub(channel)
+
+                    def verify(token):
+                        try:
+                            client.VerifyEmail(pb.VerifyEmailRequest(token=token), timeout=15)
+                            return grpc.StatusCode.OK
+                        except grpc.RpcError as error:
+                            return error.code()
+
+                    with ThreadPoolExecutor(max_workers=2) as executor:
+                        results = list(executor.map(verify, tokens))
+                    assert results.count(grpc.StatusCode.OK) == 1
+                    assert results.count(grpc.StatusCode.ALREADY_EXISTS) == 1
+                with sessions() as session:
+                    assert (
+                        sum(
+                            session.get(UserModel, owner.user_id).email_verified for owner in owners
+                        )
+                        == 1
+                    )
+                groups.append(
+                    "Concurrent verification keeps one email owner without merging account identities"
+                )
                 status, account = request(base, "/auth/me", login.token)
                 assert status == 200 and account["display_name"] == "Rust 更新 ✓"
                 status, session_data = request(
@@ -239,6 +413,12 @@ def main() -> int:
                     "Restart preserves account facts; deactivation rejects a previously valid token"
                 )
             assert inspect(engine).get_table_names() == ["users"]
+            for name in ("accounts-first.log", "accounts-restart.log"):
+                output = (args.output_dir / name).read_text(encoding="utf8")
+                assert all(
+                    token not in output
+                    for token in (old_verification, verification, legacy_token, login.token)
+                )
             groups.append("No session, token or runtime-state tables were persisted")
         finally:
             engine.dispose()

@@ -23,6 +23,7 @@ struct Fixture {
     temp: Option<TempDir>,
     pool: SqlitePool,
     store: AccountStore,
+    service: AccountService,
     grpc: JoinHandle<()>,
     http: JoinHandle<()>,
     shutdown: tokio::sync::watch::Sender<bool>,
@@ -55,6 +56,10 @@ async fn open_database(path: &Path) -> SqlitePool {
 
 impl Fixture {
     async fn new() -> Self {
+        Self::with_email(None).await
+    }
+
+    async fn with_email(email: Option<nexus_accounts::email::VerificationEmail>) -> Self {
         let temp = tempfile::Builder::new()
             .prefix("nexus-account-test-")
             .tempdir()
@@ -64,7 +69,11 @@ impl Fixture {
         let store = AccountStore::connect(&format!("sqlite:///{}", path.display()))
             .await
             .unwrap();
-        let service = AccountService::new(store.clone(), SECRET, 3600, 2).unwrap();
+        let mut service = AccountService::new(store.clone(), SECRET, 3600, 2).unwrap();
+        if let Some(email) = email {
+            service = service.with_email_verification(email);
+        }
+        let owner_service = service.clone();
         let grpc_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let http_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let grpc_url = format!("http://{}", grpc_listener.local_addr().unwrap());
@@ -94,6 +103,7 @@ impl Fixture {
             temp: Some(temp),
             pool,
             store,
+            service: owner_service,
             grpc,
             http,
             shutdown,
@@ -113,6 +123,7 @@ impl Fixture {
         // Await by mutable reference because Drop also owns cancellation on panic.
         (&mut self.grpc).await.unwrap();
         (&mut self.http).await.unwrap();
+        self.service.finish_email_requests().await;
         self.store.close().await;
         self.pool.close().await;
         self.temp.take().unwrap().close().unwrap();
@@ -145,6 +156,240 @@ fn sign(claims: &Value, algorithm: Algorithm, secret: &[u8]) -> String {
         &EncodingKey::from_secret(secret),
     )
     .unwrap()
+}
+
+fn verification_claims(id: &str, email: &str) -> Value {
+    json!({"sub":id, "email":email, "purpose":"email_verify", "iat":Utc::now().timestamp(), "exp":Utc::now().timestamp()+86400})
+}
+
+#[tokio::test]
+async fn smtp_failure_keeps_acceptance_uniform_and_does_not_verify_the_account() {
+    // Reserve a port without listening, so connection refusal has no port race.
+    let socket = tokio::net::TcpSocket::new_v4().unwrap();
+    socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let email = nexus_accounts::email::VerificationEmail::new(
+        &format!("smtp://{}", socket.local_addr().unwrap()),
+        "nexus@example.test",
+        "https://example.test/verify",
+        None,
+    )
+    .unwrap();
+    let fixture = Fixture::with_email(Some(email)).await;
+    sqlx::query("UPDATE users SET email_verified=0 WHERE user_id='alice'")
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+    let mut grpc = fixture.client().await;
+    let mut replies = Vec::new();
+    for email in ["alice@example.test", "missing@example.test"] {
+        replies.push(
+            grpc.request_email_verification(RequestEmailVerificationRequest {
+                email: Some(email.into()),
+            })
+            .await
+            .unwrap()
+            .into_inner(),
+        );
+        fixture.service.finish_email_requests().await;
+    }
+    assert_eq!(replies[0], replies[1]);
+    assert_eq!(replies[0].message, "Verification request accepted.");
+    let verified: i32 =
+        sqlx::query_scalar("SELECT email_verified FROM users WHERE user_id='alice'")
+            .fetch_one(&fixture.pool)
+            .await
+            .unwrap();
+    assert_eq!(verified, 0);
+    fixture.stop().await;
+}
+
+#[tokio::test]
+async fn verification_binds_current_identity_and_is_idempotent_across_transports() {
+    let fixture = Fixture::new().await;
+    sqlx::query("UPDATE users SET email_verified=0 WHERE user_id='alice'")
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+    let claims = verification_claims("alice", "alice@example.test");
+    let mut grpc = fixture.client().await;
+    let http = reqwest::Client::new();
+    let token = sign(&claims, Algorithm::HS256, SECRET);
+    let mut invalid: Vec<_> = [
+        json!({"purpose":"account"}),
+        json!({"sub":"bob"}),
+        json!({"email":"stale@example.test"}),
+        json!({"exp":1}),
+        json!({"iat":Utc::now().timestamp()+120}),
+        json!({"exp":Utc::now().timestamp()+90000}),
+        json!({"aud":"other-service"}),
+        json!({"nbf":Utc::now().timestamp()+120}),
+    ]
+    .into_iter()
+    .map(|changes| {
+        let mut changed = claims.clone();
+        changed
+            .as_object_mut()
+            .unwrap()
+            .extend(changes.as_object().unwrap().clone());
+        sign(&changed, Algorithm::HS256, SECRET)
+    })
+    .collect();
+    invalid.push(sign(&claims, Algorithm::HS384, SECRET));
+    invalid.push(sign(
+        &claims,
+        Algorithm::HS256,
+        b"different-signing-key-with-32-bytes",
+    ));
+    invalid.push(sign(&legacy_claims(), Algorithm::HS256, SECRET));
+    for token in invalid {
+        let error = grpc
+            .verify_email(VerifyEmailRequest { token })
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), Code::InvalidArgument);
+    }
+    for mutation in [
+        "is_active=0",
+        "deleted_at=CURRENT_TIMESTAMP",
+        "email='changed@example.test'",
+    ] {
+        sqlx::query(&format!(
+            "UPDATE users SET {mutation} WHERE user_id='alice'"
+        ))
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            grpc.verify_email(VerifyEmailRequest {
+                token: token.clone()
+            })
+            .await
+            .unwrap_err()
+            .code(),
+            Code::InvalidArgument
+        );
+        sqlx::query("UPDATE users SET is_active=1, deleted_at=NULL, email='alice@example.test' WHERE user_id='alice'").execute(&fixture.pool).await.unwrap();
+    }
+    let request = LoginRequest {
+        identifier: "alice".into(),
+        password: PASSWORD.into(),
+    };
+    assert_eq!(
+        grpc.login(request.clone()).await.unwrap_err().code(),
+        Code::PermissionDenied
+    );
+    let response = http
+        .post(format!("{}/auth/verify-email", fixture.http_url))
+        .json(&json!({"token":token}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    let updated: chrono::NaiveDateTime =
+        sqlx::query_scalar("SELECT updated_at FROM users WHERE user_id='alice'")
+            .fetch_one(&fixture.pool)
+            .await
+            .unwrap();
+    grpc.verify_email(VerifyEmailRequest {
+        token: token.clone(),
+    })
+    .await
+    .unwrap();
+    let replayed: chrono::NaiveDateTime =
+        sqlx::query_scalar("SELECT updated_at FROM users WHERE user_id='alice'")
+            .fetch_one(&fixture.pool)
+            .await
+            .unwrap();
+    assert_eq!(updated, replayed);
+    assert_eq!(
+        grpc.login(request)
+            .await
+            .unwrap()
+            .into_inner()
+            .user
+            .unwrap()
+            .user_id,
+        "alice"
+    );
+    assert_eq!(
+        http.get(format!("{}/auth/me", fixture.http_url))
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
+    fixture.stop().await;
+}
+
+#[tokio::test]
+async fn concurrent_verification_preserves_the_unique_email_owner() {
+    let fixture = Fixture::new().await;
+    let fixtures: Value = serde_json::from_str(include_str!("fixtures/passwords.json")).unwrap();
+    seed(&fixture.pool, "bob", fixtures[0]["hash"].as_str().unwrap()).await;
+    sqlx::query("UPDATE users SET email_verified=0")
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE users SET email='shared@example.test'")
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+    let mut alice = fixture.client().await;
+    let mut bob = fixture.client().await;
+    let (a, b) = tokio::join!(
+        alice.verify_email(VerifyEmailRequest {
+            token: sign(
+                &verification_claims("alice", "shared@example.test"),
+                Algorithm::HS256,
+                SECRET
+            )
+        }),
+        bob.verify_email(VerifyEmailRequest {
+            token: sign(
+                &verification_claims("bob", "shared@example.test"),
+                Algorithm::HS256,
+                SECRET
+            )
+        })
+    );
+    assert_eq!(a.is_ok() as usize + b.is_ok() as usize, 1);
+    assert_eq!(
+        a.err().or_else(|| b.err()).unwrap().code(),
+        Code::AlreadyExists
+    );
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE email_verified=1")
+        .fetch_one(&fixture.pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 1);
+    fixture.stop().await;
+}
+
+#[tokio::test]
+async fn absent_mail_configuration_has_the_same_failure_for_every_identity() {
+    let fixture = Fixture::new().await;
+    let mut grpc = fixture.client().await;
+    for email in [
+        None,
+        Some("alice@example.test"),
+        Some("missing@example.test"),
+    ] {
+        let error = grpc
+            .request_email_verification(RequestEmailVerificationRequest {
+                email: email.map(str::to_owned),
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), Code::Unavailable);
+        assert_eq!(
+            error.message(),
+            "Email verification delivery is not configured"
+        );
+    }
+    fixture.stop().await;
 }
 
 #[tokio::test]

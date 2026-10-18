@@ -6,6 +6,8 @@ service AccountsService {
   rpc GetProfile(GetProfileRequest) returns (UserProfile);
   rpc UpdateProfile(UpdateProfileRequest) returns (UserProfile);
   rpc ChangePassword(ChangePasswordRequest) returns (ChangePasswordResponse);
+  rpc RequestEmailVerification(RequestEmailVerificationRequest) returns (AccountMessage);
+  rpc VerifyEmail(VerifyEmailRequest) returns (AccountMessage);
 }
 
 message LoginRequest {
@@ -46,4 +48,16 @@ message ChangePasswordRequest {
 
 message ChangePasswordResponse {
   bool success = 1;
+}
+
+message RequestEmailVerificationRequest {
+  optional string email = 1;
+}
+
+message VerifyEmailRequest {
+  string token = 1;
+}
+
+message AccountMessage {
+  string message = 1;
 }

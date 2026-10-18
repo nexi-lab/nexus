@@ -253,6 +253,62 @@ impl AccountStore {
         .ok_or_else(|| Status::unauthenticated("Account changed during sign-in"))
     }
 
+    pub(crate) async fn for_verification(&self, email: &str) -> Result<Option<User>, Status> {
+        let sql = format!("SELECT {COLUMNS} FROM users WHERE email = $1 AND {ACTIVE} LIMIT 2");
+        let mut users = with_pool!(
+            self,
+            pool,
+            sqlx::query_as::<_, User>(&sql)
+                .bind(email)
+                .fetch_all(pool)
+                .await
+        )
+        .map_err(unavailable)?;
+        Ok(if users.len() == 1 && users[0].email_verified == 0 {
+            users.pop()
+        } else {
+            None
+        })
+    }
+
+    pub(crate) async fn verify_email(&self, id: &str, email: &str) -> Result<(), Status> {
+        let sql = format!(
+            "UPDATE users SET email_verified = 1, updated_at = $1 WHERE user_id = $2 \
+            AND email = $3 AND email_verified = 0 AND {ACTIVE} RETURNING user_id"
+        );
+        let updated = with_pool!(
+            self,
+            pool,
+            sqlx::query_scalar::<_, String>(&sql)
+                .bind(Utc::now().naive_utc())
+                .bind(id)
+                .bind(email)
+                .fetch_optional(pool)
+                .await
+        )
+        .map_err(|error| {
+            if error
+                .as_database_error()
+                .is_some_and(|error| error.is_unique_violation())
+            {
+                Status::already_exists("Email is already verified for another account")
+            } else {
+                unavailable(error)
+            }
+        })?;
+        if updated.is_some() {
+            return Ok(());
+        }
+        // Replaying a valid link is idempotent and does not rewrite timestamps.
+        match self.by_id(id).await {
+            Ok(user) if user.email.as_deref() == Some(email) && user.email_verified == 1 => Ok(()),
+            Err(error) if error.code() == tonic::Code::Unavailable => Err(error),
+            _ => Err(Status::invalid_argument(
+                "Verification token does not match current account",
+            )),
+        }
+    }
+
     pub(crate) async fn update_profile(
         &self,
         user: &User,

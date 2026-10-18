@@ -20,6 +20,8 @@ pub fn router(service: AccountService) -> Router {
         .route("/auth/login", post(login))
         .route("/auth/me", get(profile).patch(update_profile))
         .route("/auth/change-password", post(change_password))
+        .route("/auth/request-verification", post(request_verification))
+        .route("/auth/verify-email", post(verify_email))
         .layer(DefaultBodyLimit::max(32 * 1024))
         .layer(axum::middleware::map_response(no_store))
         .with_state(service)
@@ -61,6 +63,7 @@ impl IntoResponse for AccountError {
             Code::PermissionDenied => StatusCode::FORBIDDEN,
             Code::NotFound => StatusCode::NOT_FOUND,
             Code::Aborted => StatusCode::CONFLICT,
+            Code::AlreadyExists => StatusCode::CONFLICT,
             Code::FailedPrecondition => StatusCode::CONFLICT,
             Code::ResourceExhausted => StatusCode::TOO_MANY_REQUESTS,
             Code::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
@@ -68,6 +71,32 @@ impl IntoResponse for AccountError {
         };
         (code, Json(json!({"detail": status.message()}))).into_response()
     }
+}
+
+async fn request_verification(
+    State(service): State<AccountService>,
+    body: Result<Json<RequestEmailVerificationRequest>, JsonRejection>,
+) -> Result<(StatusCode, Json<AccountMessage>), AccountError> {
+    let Json(body) = body.map_err(AccountError::Body)?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(
+            service
+                .request_email_verification(Request::new(body))
+                .await?
+                .into_inner(),
+        ),
+    ))
+}
+
+async fn verify_email(
+    State(service): State<AccountService>,
+    body: Result<Json<VerifyEmailRequest>, JsonRejection>,
+) -> Result<Json<AccountMessage>, AccountError> {
+    let Json(body) = body.map_err(AccountError::Body)?;
+    Ok(Json(
+        service.verify_email(Request::new(body)).await?.into_inner(),
+    ))
 }
 
 fn authorized<T>(headers: &HeaderMap, body: T) -> Result<Request<T>, AccountError> {

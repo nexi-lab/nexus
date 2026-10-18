@@ -165,6 +165,12 @@ async fn grpc_and_http_share_existing_identity_profile_and_password_facts() {
     assert_eq!(user.zone_id.as_deref(), Some("fixture-zone"));
     assert!(user.last_login_at.is_some());
     assert!(!user.is_global_admin);
+    let (updated_at, last_login_at): (chrono::NaiveDateTime, chrono::NaiveDateTime) =
+        sqlx::query_as("SELECT updated_at, last_login_at FROM users WHERE user_id='alice'")
+            .fetch_one(&fixture.pool)
+            .await
+            .unwrap();
+    assert_eq!(updated_at, last_login_at);
 
     let http = reqwest::Client::new();
     let response = http

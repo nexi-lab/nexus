@@ -212,7 +212,7 @@ impl AccountStore {
 
     pub(crate) async fn record_login(&self, user: &User) -> Result<User, Status> {
         let sql = format!(
-            "UPDATE users SET last_login_at = $1 WHERE user_id = $2 \
+            "UPDATE users SET last_login_at = $1, updated_at = $1 WHERE user_id = $2 \
             AND password_hash = $3 AND email_verified = 1 AND {ACTIVE} RETURNING {COLUMNS}"
         );
         with_pool!(

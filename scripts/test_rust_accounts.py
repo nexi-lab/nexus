@@ -176,6 +176,9 @@ def main() -> int:
                     claims = legacy.verify_token(login.token)
                     assert claims["subject_id"] == user.user_id and claims["email"] == user.email
                     assert login.user.zone_id == "fixture-zone" and login.user.last_login_at
+                    with sessions() as session:
+                        stored = session.get(UserModel, user.user_id)
+                        assert stored.updated_at == stored.last_login_at
                     groups.append(
                         "Rust login -> Python JWT verification, original identity and zone"
                     )

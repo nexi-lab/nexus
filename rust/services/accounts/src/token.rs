@@ -23,6 +23,20 @@ pub(crate) struct Claims {
     pub name: Option<String>,
 }
 
+#[derive(Serialize, Deserialize)]
+pub(crate) struct VerificationClaims {
+    pub sub: String,
+    pub email: String,
+    purpose: String,
+    iat: u64,
+    exp: u64,
+}
+
+fn valid_times(iat: u64, exp: u64) -> bool {
+    let now = Utc::now().timestamp() as u64;
+    exp > iat && exp > now && iat <= now + 60
+}
+
 pub(crate) struct AccountTokens {
     encoding: EncodingKey,
     decoding: DecodingKey,
@@ -79,18 +93,48 @@ impl AccountTokens {
         let claims = decode::<Claims>(bearer, &self.decoding, &self.validation)
             .map_err(|_| invalid())?
             .claims;
-        let now = Utc::now().timestamp() as u64;
         if claims.subject_type != "user"
             || claims.sub != claims.subject_id
             || claims.sub.is_empty()
             || claims.email.is_empty()
-            || claims.exp <= claims.iat
-            || claims.exp <= now
-            || claims.iat > now + 60
+            || !valid_times(claims.iat, claims.exp)
             || claims
                 .purpose
                 .as_deref()
                 .is_some_and(|purpose| purpose != "account")
+        {
+            return Err(invalid());
+        }
+        Ok(claims)
+    }
+
+    pub fn issue_verification(&self, user: &User) -> Result<String, Status> {
+        let now = Utc::now().timestamp() as u64;
+        let claims = VerificationClaims {
+            sub: user.user_id.clone(),
+            email: user
+                .email
+                .clone()
+                .ok_or_else(|| Status::failed_precondition("Account has no email address"))?,
+            purpose: "email_verify".into(),
+            iat: now,
+            exp: now + 86_400,
+        };
+        encode(&Header::new(Algorithm::HS256), &claims, &self.encoding)
+            .map_err(|_| Status::internal("Could not sign verification token"))
+    }
+
+    pub fn verify_verification(&self, token: &str) -> Result<VerificationClaims, Status> {
+        let invalid = || Status::invalid_argument("Invalid or expired verification token");
+        let claims = decode::<VerificationClaims>(token, &self.decoding, &self.validation)
+            .map_err(|_| invalid())?
+            .claims;
+        if claims.sub.is_empty()
+            || claims.email.is_empty()
+            || claims.purpose != "email_verify"
+            || !valid_times(claims.iat, claims.exp)
+            // The Python issuer samples time twice; allow a one-second boundary.
+            || claims.exp.saturating_sub(claims.iat) > 86_401
         {
             return Err(invalid());
         }

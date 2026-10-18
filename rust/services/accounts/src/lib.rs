@@ -1,6 +1,7 @@
 //! Human accounts use the existing SQL identities, bcrypt hashes and account JWTs.
 //! File credentials and relationship grants remain the native daemon's authority.
 
+pub mod email;
 pub mod http;
 mod password;
 pub mod store;
@@ -23,6 +24,7 @@ pub struct AccountService {
     store: AccountStore,
     tokens: Arc<AccountTokens>,
     passwords: Passwords,
+    email: Option<Arc<email::VerificationEmail>>,
 }
 
 impl AccountService {
@@ -36,7 +38,20 @@ impl AccountService {
             store,
             tokens: Arc::new(AccountTokens::new(jwt_secret, token_ttl)?),
             passwords: Passwords::new(password_workers)?,
+            email: None,
         })
+    }
+
+    pub fn with_email_verification(mut self, email: email::VerificationEmail) -> Self {
+        self.email = Some(Arc::new(email));
+        self
+    }
+
+    /// Call after both listeners have stopped accepting requests.
+    pub async fn finish_email_requests(&self) {
+        if let Some(email) = &self.email {
+            email.drain().await;
+        }
     }
 
     async fn caller<T>(&self, request: &Request<T>) -> Result<User, Status> {
@@ -56,6 +71,62 @@ impl AccountService {
 
 #[tonic::async_trait]
 impl AccountsService for AccountService {
+    async fn request_email_verification(
+        &self,
+        request: Request<RequestEmailVerificationRequest>,
+    ) -> Result<Response<AccountMessage>, Status> {
+        let email = request.into_inner().email;
+        if email
+            .as_ref()
+            .is_some_and(|email| !email::valid_email(email))
+        {
+            return Err(Status::invalid_argument("Invalid email address"));
+        }
+        let sender = self
+            .email
+            .as_ref()
+            .ok_or_else(|| Status::unavailable("Email verification delivery is not configured"))?;
+        if let Some(email) = email {
+            // Admit before looking up identity. Status, body and request latency
+            // do not depend on whether an account exists or SMTP succeeds.
+            let permit = sender.admit()?;
+            let sender = Arc::clone(sender);
+            let store = self.store.clone();
+            let tokens = Arc::clone(&self.tokens);
+            tokio::spawn(async move {
+                let _permit = permit;
+                let result = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+                    if let Some(user) = store.for_verification(&email).await? {
+                        let token = tokens.issue_verification(&user)?;
+                        sender.send(&email, &token).await?;
+                    }
+                    Ok::<_, Status>(())
+                })
+                .await;
+                if !result.is_ok_and(|result| result.is_ok()) {
+                    // Delivery details can contain credentials or recipient data.
+                    tracing::warn!("Email verification request could not be completed");
+                }
+            });
+        }
+        Ok(Response::new(AccountMessage {
+            message: "Verification request accepted.".into(),
+        }))
+    }
+
+    async fn verify_email(
+        &self,
+        request: Request<VerifyEmailRequest>,
+    ) -> Result<Response<AccountMessage>, Status> {
+        let claims = self
+            .tokens
+            .verify_verification(&request.into_inner().token)?;
+        self.store.verify_email(&claims.sub, &claims.email).await?;
+        Ok(Response::new(AccountMessage {
+            message: "Email verified successfully. You can now log in.".into(),
+        }))
+    }
+
     async fn login(
         &self,
         request: Request<LoginRequest>,

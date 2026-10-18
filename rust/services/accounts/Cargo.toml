@@ -10,6 +10,7 @@ bcrypt = "0.19.3"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 clap = { version = "4", features = ["derive", "env"] }
 jsonwebtoken = { version = "11.1", default-features = false, features = ["rust_crypto"] }
+lettre = { version = "0.11.23", default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls-tls"] }
 prost = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -20,6 +21,7 @@ tonic = { workspace = true }
 tonic-prost = { workspace = true }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+url = "2"
 
 [build-dependencies]
 protoc-bin-vendored = "3"

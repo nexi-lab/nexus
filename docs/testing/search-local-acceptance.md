@@ -159,7 +159,7 @@ scode 候选基线为 `94088bd7`（0.2.31）。本地将其全部 VFS Git 依赖
 
 ### Rust 账号服务的本地兼容验收（2026-10-18）
 
-本轮通过草稿 [Nexus PR #4919](https://github.com/nexi-lab/nexus/pull/4919) 实现 `rust/services/accounts`：`Login`、`GetProfile`、`UpdateProfile`、`ChangePassword` 四个 gRPC 方法，以及调用同一服务方法的四个 HTTP 入口。现有 SQL `users` 表保存账号事实，沿用原 user ID、bcrypt 成本及 JWT 格式。原生 daemon 继续管理文件凭证和 ReBAC；账号 JWT 不自动换成文件权限。该组件目前只监听本机回环地址，尚未装配到前端或部署。
+已通过 [Nexus PR #4919](https://github.com/nexi-lab/nexus/pull/4919) 合并 `rust/services/accounts`：`Login`、`GetProfile`、`UpdateProfile`、`ChangePassword` 四个 gRPC 方法，以及调用同一服务方法的四个 HTTP 入口。现有 SQL `users` 表保存账号事实，沿用原 user ID、bcrypt 成本及 JWT 格式。原生 daemon 继续管理文件凭证和 ReBAC；账号 JWT 不自动换成文件权限。该组件目前只监听本机回环地址，尚未装配到前端或部署。
 
 | 编号 | 已完成的本地测试 | 结果 |
 |---|---|---|
@@ -170,7 +170,7 @@ scode 候选基线为 `94088bd7`（0.2.31）。本地将其全部 VFS Git 依赖
 | ACCOUNT-05 | 重启 Rust 进程，再读取资料、登录和停用账号 | 两种数据库均通过；停用立即拒绝原有效 token；仅存在 `users` 表 |
 | ACCOUNT-06 | 同一旧密码快照并发改密、取消 bcrypt 请求后检查容量 | Rust 确定性回归通过；已提交改密不能被覆盖，未结束的工作继续占用容量 |
 
-Rust 共 9 项测试通过，`fmt`、全 targets 严格 Clippy 和 Python Ruff 通过。两种数据库各有 6 组真实进程兼容验收通过。同样的跨语言流程已加入 `Rust Accounts` CI；最终 CI 状态以账号服务 PR 为准。
+本地 Windows 与隔离 Linux 各 9 项 Rust 测试通过，`fmt`、全 targets 严格 Clippy 和 Python Ruff 通过。两种数据库各有 6 组真实进程兼容验收通过；[Rust Accounts CI](https://github.com/nexi-lab/nexus/actions/runs/39094385358) 也已通过相同的双数据库流程。合并前最终提交 `648407c25` 的 51 项检查通过，文档部署及 release tag 发布两项按既有 PR 条件跳过；[完整自包含 E2E](https://github.com/nexi-lab/nexus/actions/runs/39094385299) 为 638 通过、134 跳过。普通合并提交 `fb81fe98f` 保留全部五个源提交，文件树与已测候选相同。本轮测试容器与数据卷已清理。
 
 本机证据位于 `C:/Users/songym/.codex/artifacts/search-http-batch-r10/`：`accounts-sqlalchemy-test-20261018.log`、`accounts-sqlalchemy-clippy-20261018.log`、`accounts-sqlite-sqlalchemy-20261018/result.json`、`accounts-postgres-timestamps-20261018/result.json`。首次跨语言验收因独立 Python 环境的 protobuf 编译器和运行库版本不匹配，在创建数据库前失败；匹配到 CI 使用的工具版本后通过，失败日志保留。
 

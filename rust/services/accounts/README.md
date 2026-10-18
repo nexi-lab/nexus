@@ -12,6 +12,8 @@ Password work uses a bounded blocking pool. Cancelling a request keeps its admis
 
 Provide an existing account database in `NEXUS_DATABASE_URL` and its account signing secret in `NEXUS_JWT_SECRET`. The secret must contain at least 32 bytes. Credentials are read from the environment and are not CLI arguments.
 
+SQLite locations use the existing SQLAlchemy URL convention: `sqlite:///relative.db`, `sqlite:////absolute/path/accounts.db` on Unix, or `sqlite:///C:/path/accounts.db` on Windows. `sqlite+pysqlite` uses the same rule. Startup never probes alternative paths or creates a missing database.
+
 ```sh
 cargo run -p nexus-accounts --bin nexusd-accounts
 ```

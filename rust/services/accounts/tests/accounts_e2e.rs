@@ -61,7 +61,7 @@ impl Fixture {
             .unwrap();
         let path = temp.path().join("accounts.db");
         let pool = open_database(&path).await;
-        let store = AccountStore::connect(&format!("sqlite://{}", path.display()))
+        let store = AccountStore::connect(&format!("sqlite:///{}", path.display()))
             .await
             .unwrap();
         let service = AccountService::new(store.clone(), SECRET, 3600, 2).unwrap();
@@ -427,7 +427,7 @@ async fn missing_database_and_missing_account_schema_fail_without_initializing_s
         .unwrap();
     let missing = dir.path().join("missing.db");
     assert!(
-        AccountStore::connect(&format!("sqlite://{}", missing.display()))
+        AccountStore::connect(&format!("sqlite:///{}", missing.display()))
             .await
             .is_err()
     );
@@ -441,7 +441,7 @@ async fn missing_database_and_missing_account_schema_fail_without_initializing_s
     .await
     .unwrap();
     assert!(
-        AccountStore::connect(&format!("sqlite://{}", empty.display()))
+        AccountStore::connect(&format!("sqlite:///{}", empty.display()))
             .await
             .is_err()
     );

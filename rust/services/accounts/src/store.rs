@@ -21,6 +21,28 @@ enum Database {
 mod tests {
     use super::*;
 
+    #[test]
+    fn sqlite_locations_follow_sqlalchemy_rules_on_every_platform() {
+        for (url, filename) in [
+            ("sqlite:///relative.db", "relative.db"),
+            ("sqlite:////tmp/accounts.db", "/tmp/accounts.db"),
+            ("sqlite:///C:/accounts.db", "C:/accounts.db"),
+            (
+                "sqlite+pysqlite:////tmp/nexus%20accounts.db",
+                "/tmp/nexus accounts.db",
+            ),
+        ] {
+            assert_eq!(
+                sqlite_options(url).unwrap().get_filename(),
+                std::path::Path::new(filename)
+            );
+        }
+        assert_eq!(
+            sqlite_options("sqlite://ambiguous.db").unwrap_err().code(),
+            tonic::Code::InvalidArgument
+        );
+    }
+
     #[tokio::test]
     async fn concurrent_password_updates_cannot_overwrite_a_committed_change() {
         let temp = tempfile::Builder::new()
@@ -41,7 +63,7 @@ mod tests {
             .unwrap();
         sqlx::query("INSERT INTO users (user_id, password_hash, primary_auth_method, is_global_admin, is_active, email_verified, created_at, updated_at) VALUES ('alice', 'original-hash', 'password', 0, 1, 1, $1, $1)")
             .bind(Utc::now().naive_utc()).execute(&pool).await.unwrap();
-        let store = AccountStore::connect(&format!("sqlite://{}", path.display()))
+        let store = AccountStore::connect(&format!("sqlite:///{}", path.display()))
             .await
             .unwrap();
         let snapshot = store.by_id("alice").await.unwrap();
@@ -119,6 +141,16 @@ fn unavailable(error: sqlx::Error) -> Status {
     Status::unavailable("Account database is unavailable")
 }
 
+fn sqlite_options(url: &str) -> Result<sqlx::sqlite::SqliteConnectOptions, Status> {
+    let url = url.replacen("sqlite+pysqlite:", "sqlite:", 1);
+    let path = url.strip_prefix("sqlite:///").ok_or_else(|| {
+        Status::invalid_argument("SQLite database URLs require the SQLAlchemy sqlite:/// format")
+    })?;
+    sqlx::sqlite::SqliteConnectOptions::from_str(&format!("sqlite://{path}"))
+        .map(|options| options.create_if_missing(false))
+        .map_err(|_| Status::invalid_argument("Invalid SQLite database URL"))
+}
+
 impl AccountStore {
     pub async fn close(&self) {
         with_pool!(self, pool, pool.close().await);
@@ -127,18 +159,10 @@ impl AccountStore {
     /// Connect to a provisioned account database; never create an empty fallback.
     pub async fn connect(url: &str) -> Result<Self, Status> {
         let store = if url.starts_with("sqlite:") || url.starts_with("sqlite+pysqlite:") {
-            let url = url.replacen("sqlite+pysqlite:", "sqlite:", 1);
-            let url = match url.strip_prefix("sqlite:///") {
-                Some(path) => format!("sqlite://{path}"),
-                None => url,
-            };
-            let options = sqlx::sqlite::SqliteConnectOptions::from_str(&url)
-                .map_err(|_| Status::invalid_argument("Invalid SQLite database URL"))?
-                .create_if_missing(false);
             Self(Database::Sqlite(
                 SqlitePoolOptions::new()
                     .max_connections(4)
-                    .connect_with(options)
+                    .connect_with(sqlite_options(url)?)
                     .await
                     .map_err(unavailable)?,
             ))

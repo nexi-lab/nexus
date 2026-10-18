@@ -170,9 +170,11 @@ scode 候选基线为 `94088bd7`（0.2.31）。本地将其全部 VFS Git 依赖
 | ACCOUNT-05 | 重启 Rust 进程，再读取资料、登录和停用账号 | 两种数据库均通过；停用立即拒绝原有效 token；仅存在 `users` 表 |
 | ACCOUNT-06 | 同一旧密码快照并发改密、取消 bcrypt 请求后检查容量 | Rust 确定性回归通过；已提交改密不能被覆盖，未结束的工作继续占用容量 |
 
-Rust 共 8 项测试通过，`fmt`、全 targets 严格 Clippy 和 Python Ruff 通过。两种数据库各有 6 组真实进程兼容验收通过。同样的跨语言流程已加入 `Rust Accounts` CI；最终 CI 状态以账号服务 PR 为准。
+Rust 共 9 项测试通过，`fmt`、全 targets 严格 Clippy 和 Python Ruff 通过。两种数据库各有 6 组真实进程兼容验收通过。同样的跨语言流程已加入 `Rust Accounts` CI；最终 CI 状态以账号服务 PR 为准。
 
-本机证据位于 `C:/Users/songym/.codex/artifacts/search-http-batch-r10/`：`accounts-timestamps-test-20261018.log`、`accounts-timestamps-clippy-20261018.log`、`accounts-sqlite-timestamps-20261018/result.json`、`accounts-postgres-timestamps-20261018/result.json`。首次跨语言验收因独立 Python 环境的 protobuf 编译器和运行库版本不匹配，在创建数据库前失败；匹配到 CI 使用的工具版本后通过，失败日志保留。
+本机证据位于 `C:/Users/songym/.codex/artifacts/search-http-batch-r10/`：`accounts-sqlalchemy-test-20261018.log`、`accounts-sqlalchemy-clippy-20261018.log`、`accounts-sqlite-sqlalchemy-20261018/result.json`、`accounts-postgres-timestamps-20261018/result.json`。首次跨语言验收因独立 Python 环境的 protobuf 编译器和运行库版本不匹配，在创建数据库前失败；匹配到 CI 使用的工具版本后通过，失败日志保留。
+
+首次 Linux CI 暴露了测试夹具混用 SQLx 与 SQLAlchemy SQLite URL 的问题。现在统一沿用 Nexus 的 SQLAlchemy URL 规则：Unix 绝对路径为 `sqlite:////absolute/path`，相对路径为 `sqlite:///relative/path`，Windows 为 `sqlite:///C:/path`。新增回归在每个平台同时核对这三种路径和 URL 转义；不通过探测文件是否存在来猜测路径，也没有增加测试重试。
 
 仍沿用现有无服务端 session 的 JWT 契约：改密不会撤销已经签发且未到期的 token，停用账号会拒绝它们。后续仍需注册、邮件验证、Google OAuth、原生文件凭证交换、网关/前端集成和 Python 路由删除，之后再跑完整浏览器账号流程。本轮结果不代表整条身份迁移已完成。
 

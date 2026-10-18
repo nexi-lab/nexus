@@ -223,12 +223,12 @@ Windows 本地 14 项 Rust 测试通过，包括非法签名、算法、用途�
 | ACCOUNT-15 | 缺失、错误、重复 cookie，错误 state 用途/客户端/回调/有效期，HTTP JSON 伪造绑定 | 被拒绝且不写账号；HTTP JSON 不返回 PKCE verifier；HTTPS 回调使用 host-only、HttpOnly、Secure、SameSite=Lax cookie；成功与失败均清 cookie 并禁止缓存 |
 | ACCOUNT-16 | 旧 `provider + subject` 绑定登录，provider 邮箱和名字变化；同邮箱新 subject；停用/删除/未验证账号 | SQLite、PostgreSQL 均通过；原 user ID、用户编辑资料、密码、zone 和 metadata 保持；不按邮箱自动合并，不重建已停用身份 |
 | ACCOUNT-17 | 两个独立服务实例竞争同 subject、同邮箱、Google/密码注册，以及两个不同身份 | 两种数据库通过；共用同一个创建事务；PostgreSQL 在两个身份查询之后再放行插入；没有重复账号或孤立绑定，不重复调用 provider |
-| ACCOUNT-18 | 开始流程后关闭服务实例，再用另一实例接收回调和签发账号 JWT | 两种数据库通过；开始流程不写库；新账号非管理员、不分配 zone、不创建文件 key；只写现有账号及 durable Google 绑定，不写 ID/access token、PKCE、nonce、state 或 pending signup |
+| ACCOUNT-18 | 开始流程后关闭服务实例，再用另一实例接收回调和签发账号 JWT | 两种数据库通过；开始流程不写库；新账号沿用 `primary_auth_method="oauth"`，非管理员、不分配 zone、不创建文件 key；provider 保存在绑定表；不写 ID/access token、PKCE、nonce、state 或 pending signup |
 | ACCOUNT-19 | 签名 key 轮换、provider 暂不可用、缓存过期、超大响应和交换容量耗尽 | 首次 key miss 可刷新，此后限制刷新频率；不重复消费授权码；过期缓存失败明确返回 503；响应最多 128 KiB，交换最多 8 个并发，超量返回 429 |
 | ACCOUNT-20 | 实际 Rust 二进制没有 Google 配置或只有部分配置，及不安全的回调地址 | 双数据库真实进程兼容脚本覆盖；未配置端点返回 503，部分或无效配置在监听前拒绝启动，普通账号入口继续可用 |
 | ACCOUNT-21 | Rust 测试用 SQL schema 与当前 Python 账号及 OAuth 绑定模型核对 | 兼容脚本在创建数据库前比较规范 DDL；账号模型变化必须同步 Rust 夹具，由既有 storage-models CI 路径保护 |
 
-Windows 本地 24 项 Rust 测试、严格 Clippy、格式与 Ruff 均已通过。Google 的两个数据库网络用例在 Rust 测试进程中启动真实服务实例；它们不等同于外部 Google 账号登录或完整产品浏览器验收。Python→Rust 真实二进制兼容脚本在 SQLite、PostgreSQL 各 16 组通过，覆盖注册、SMTP、bcrypt、JWT、并发、进程重启、Google 配置和规范 schema。最终证据为 `google-fixture-contract-test-20261018.log`、`google-json-clippy-final-20261018.log`、`google-contract-compatibility-sqlite-20261018/result.json`、`google-contract-compatibility-postgres-20261018/result.json`；Linux/Windows CI 以本轮 PR 结果为准。
+Windows 本地 24 项 Rust 测试、严格 Clippy、格式与 Ruff 均已通过。Google 的两个数据库网络用例在 Rust 测试进程中启动真实服务实例；它们不等同于外部 Google 账号登录或完整产品浏览器验收。Python→Rust 真实二进制兼容脚本在 SQLite、PostgreSQL 各 16 组通过，覆盖注册、SMTP、bcrypt、JWT、并发、进程重启、Google 配置和规范 schema。最终证据为 `google-final-test-20261018.log`、`google-final-clippy-20261018.log`、`google-final-compatibility-sqlite-20261018/result.json`、`google-final-compatibility-postgres-20261018/result.json`；Linux/Windows CI 以本轮 PR 结果为准。
 
 审计时用代码生成属性禁止 `browser_binding` 参与 JSON 序列化/反序列化，HTTP 直接使用规范 proto DTO，不再维护另一份回调字段定义。gRPC 的私有绑定字段保持可用，HTTP 只从 cookie 填入该字段。原有测试继续断言伪造 JSON 绑定被拒绝。
 

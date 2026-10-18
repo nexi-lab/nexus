@@ -140,7 +140,7 @@ impl AccountStore {
                         .bind(account.name)
                         .bind(account.picture)
                         .bind(hash)
-                        .bind(if google { "google" } else { "password" })
+                        .bind(if google { "oauth" } else { "password" })
                         .bind(i32::from(google))
                         .bind(now)
                         .bind(if google { Some(now) } else { None })

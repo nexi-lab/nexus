@@ -32,7 +32,7 @@ async fn google_callback_survives_replica_restart_without_persisting_flow_or_pro
         let (status, login) = second.callback(&code, &state, &cookie).await;
         assert_eq!(status, 200, "{login}");
         let user = &login["user"];
-        assert_eq!(user["primary_auth_method"], "google");
+        assert_eq!(user["primary_auth_method"], "oauth");
         assert_eq!(user["email_verified"], true);
         assert_eq!(user["is_global_admin"], false);
         assert!(user["zone_id"].is_null());

@@ -9,6 +9,8 @@ service AccountsService {
   rpc ChangePassword(ChangePasswordRequest) returns (ChangePasswordResponse);
   rpc RequestEmailVerification(RequestEmailVerificationRequest) returns (AccountMessage);
   rpc VerifyEmail(VerifyEmailRequest) returns (AccountMessage);
+  rpc StartGoogleLogin(StartGoogleLoginRequest) returns (StartGoogleLoginResponse);
+  rpc FinishGoogleLogin(FinishGoogleLoginRequest) returns (LoginResponse);
 }
 
 message RegisterRequest {
@@ -68,4 +70,20 @@ message VerifyEmailRequest {
 
 message AccountMessage {
   string message = 1;
+}
+
+message StartGoogleLoginRequest {}
+
+message StartGoogleLoginResponse {
+  string auth_url = 1;
+  string state = 2;
+  // The HTTP adapter keeps this in an HttpOnly cookie, outside its JSON response.
+  string browser_binding = 3;
+}
+
+message FinishGoogleLoginRequest {
+  string code = 1;
+  string state = 2;
+  // Supplied by a trusted transport adapter, never read from HTTP JSON.
+  string browser_binding = 3;
 }

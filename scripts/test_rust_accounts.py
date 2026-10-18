@@ -26,11 +26,13 @@ from urllib.parse import parse_qs, urlsplit
 
 import grpc
 from sqlalchemy import create_engine, inspect, select, text
+from sqlalchemy.dialects import sqlite
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.schema import CreateIndex, CreateTable
 
 from nexus.bricks.auth.providers.database_local import DatabaseLocalAuth
-from nexus.storage.models import UserModel
+from nexus.storage.models import UserModel, UserOAuthAccountModel
 
 ROOT = Path(__file__).resolve().parents[1]
 SECRET = "fixture-account-signing-key-32-bytes-minimum"
@@ -42,6 +44,11 @@ MAIL_ENV = (
     "NEXUS_ACCOUNTS_VERIFICATION_URL",
     "NEXUS_ACCOUNTS_SMTP_USERNAME",
     "NEXUS_ACCOUNTS_SMTP_PASSWORD",
+)
+GOOGLE_ENV = (
+    "NEXUS_ACCOUNTS_GOOGLE_CLIENT_ID",
+    "NEXUS_ACCOUNTS_GOOGLE_CLIENT_SECRET",
+    "NEXUS_ACCOUNTS_GOOGLE_REDIRECT_URI",
 )
 
 
@@ -116,7 +123,7 @@ def request(
 @contextmanager
 def server(binary: Path, database_url: str, log_path: Path, smtp_port: int | None = None):
     env = os.environ.copy()
-    for name in MAIL_ENV:
+    for name in (*MAIL_ENV, *GOOGLE_ENV):
         env.pop(name, None)
     env["NEXUS_DATABASE_URL"] = database_url
     env["NEXUS_JWT_SECRET"] = SECRET
@@ -171,6 +178,60 @@ def fixture_url(args, directory: Path) -> str:
             "PostgreSQL acceptance requires a loopback database named nexus_accounts_test*"
         )
     return args.postgres_test_url
+
+
+def validate_schema_fixtures():
+    """Protect the Rust SQL compatibility fixtures against canonical model drift."""
+    for model, filename in (
+        (UserModel, "users.sql"),
+        (UserOAuthAccountModel, "oauth-accounts.sql"),
+    ):
+        table = model.__table__
+        expected = str(CreateTable(table).compile(dialect=sqlite.dialect())).strip() + ";\n"
+        for index in sorted(table.indexes, key=lambda index: index.name):
+            expected += str(CreateIndex(index).compile(dialect=sqlite.dialect())) + ";\n"
+        actual = (ROOT / "rust/services/accounts/tests/fixtures" / filename).read_text(
+            encoding="utf8"
+        )
+        assert actual.split() == expected.split(), f"Canonical account schema drift: {filename}"
+
+
+def reject_invalid_google_configuration(binary: Path, database_url: str, output_dir: Path):
+    """The actual binary must reject partial/unsafe config before opening listeners."""
+    env = os.environ.copy()
+    for name in (*MAIL_ENV, *GOOGLE_ENV):
+        env.pop(name, None)
+    env.update(NEXUS_DATABASE_URL=database_url, NEXUS_JWT_SECRET=SECRET)
+    cases = [
+        ({GOOGLE_ENV[0]: "fixture-client"}, GOOGLE_ENV[1]),
+        ({GOOGLE_ENV[1]: "fixture-client-secret"}, GOOGLE_ENV[0]),
+        (
+            dict(
+                zip(
+                    GOOGLE_ENV,
+                    ("fixture-client", "fixture-client-secret", "http://remote.test/callback"),
+                    strict=True,
+                )
+            ),
+            "Invalid Google sign-in configuration",
+        ),
+    ]
+    for index, (configuration, error) in enumerate(cases):
+        result = subprocess.run(
+            [str(binary), "--grpc-addr", "127.0.0.1:0", "--http-addr", "127.0.0.1:0"],
+            env={**env, **configuration},
+            capture_output=True,
+            text=True,
+            encoding="utf8",
+            timeout=15,
+            check=False,
+        )
+        assert result.returncode != 0 and not result.stdout, result
+        assert error in result.stderr, result.stderr
+        assert SECRET not in result.stderr and "fixture-client-secret" not in result.stderr
+        (output_dir / f"accounts-google-invalid-{index}.log").write_text(
+            result.stderr, encoding="utf8"
+        )
 
 
 def concurrent_registration(engine, first_base, second_client, pb, bodies):
@@ -229,6 +290,10 @@ def main() -> int:
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
     groups = []
+    validate_schema_fixtures()
+    groups.append(
+        "Rust account SQL fixtures match the canonical Python account and OAuth binding models"
+    )
     with (
         tempfile.TemporaryDirectory(prefix="nexus-account-acceptance-") as name,
         smtp_capture() as smtp,
@@ -294,6 +359,24 @@ def main() -> int:
                     status, account = request(base, "/auth/me", legacy_token)
                     assert status == 200 and account["user_id"] == user.user_id
                     groups.append("Python account and JWT -> Rust HTTP/gRPC profile")
+
+                    status, _ = request(base, "/auth/oauth/google/authorize")
+                    assert status == 503
+                    status, _ = request(
+                        base,
+                        "/auth/oauth/google/callback",
+                        body={"code": "untrusted-code", "state": "untrusted-state"},
+                    )
+                    assert status == 503
+                    try:
+                        client.StartGoogleLogin(pb.StartGoogleLoginRequest(), timeout=15)
+                    except grpc.RpcError as error:
+                        assert error.code() == grpc.StatusCode.UNAVAILABLE
+                    else:
+                        raise AssertionError("Unconfigured Google login was accepted")
+                    groups.append(
+                        "Unconfigured Google HTTP/gRPC rejects login without affecting accounts"
+                    )
 
                     login = client.Login(
                         pb.LoginRequest(identifier="existing@example.test", password=PASSWORD),
@@ -581,6 +664,10 @@ def main() -> int:
                     "Restart preserves account facts; deactivation rejects a previously valid token"
                 )
             assert inspect(engine).get_table_names() == ["users"]
+            reject_invalid_google_configuration(args.binary.resolve(), url, args.output_dir)
+            groups.append(
+                "Actual binary rejects partial Google credentials and unsafe redirect before listening"
+            )
             for name in (
                 "accounts-first.log",
                 "accounts-second-instance.log",

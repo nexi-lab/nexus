@@ -41,6 +41,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  accounts-windows:
+    name: Accounts Windows network E2E
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: accounts-windows
+      - name: Rust format, lint and SQLite HTTP/gRPC journeys
+        shell: bash
+        run: |
+          cargo fmt --all --check
+          cargo clippy --locked -p nexus-accounts --all-targets -- -D warnings
+          cargo test --locked -p nexus-accounts -- --nocapture
   accounts:
     name: Accounts SQLite and PostgreSQL E2E
     runs-on: ubuntu-latest
@@ -67,10 +85,12 @@ jobs:
         with:
           shared-key: accounts
       - name: Rust format, lint and actual network journeys
+        env:
+          ACCOUNTS_OAUTH_TEST_DATABASE_URL: postgresql://accounts_fixture:accounts-fixture-password@127.0.0.1:5432/nexus_accounts_test
         run: |
           cargo fmt --all --check
           cargo clippy --locked -p nexus-accounts --all-targets -- -D warnings
-          cargo test --locked -p nexus-accounts
+          cargo test --locked -p nexus-accounts -- --nocapture
           cargo build --locked -p nexus-accounts --bin nexusd-accounts
       - uses: actions/setup-python@v5
         with:

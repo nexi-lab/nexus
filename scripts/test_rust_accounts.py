@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -24,7 +25,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import grpc
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, inspect, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import sessionmaker
 
@@ -170,6 +171,54 @@ def fixture_url(args, directory: Path) -> str:
             "PostgreSQL acceptance requires a loopback database named nexus_accounts_test*"
         )
     return args.postgres_test_url
+
+
+def concurrent_registration(engine, first_base, second_client, pb, bodies):
+    """Two real processes; hold PostgreSQL inserts until both identity reads finish."""
+    start = threading.Barrier(3)
+
+    def register(index):
+        start.wait(timeout=10)
+        if index == 0:
+            return request(first_base, "/auth/register", body=bodies[index])[0]
+        try:
+            second_client.Register(pb.RegisterRequest(**bodies[index]), timeout=15)
+            return 201
+        except grpc.RpcError as error:
+            assert error.code() == grpc.StatusCode.ALREADY_EXISTS, error
+            return 409
+
+    with engine.connect() as gate, ThreadPoolExecutor(max_workers=2) as executor:
+        gate.exec_driver_sql(
+            "BEGIN IMMEDIATE"
+            if engine.dialect.name == "sqlite"
+            else "LOCK TABLE users IN SHARE MODE"
+        )
+        futures = [executor.submit(register, index) for index in range(2)]
+        try:
+            start.wait(timeout=10)
+            if engine.dialect.name == "postgresql":
+                deadline = time.monotonic() + 10
+                with engine.connect() as observer:
+                    while True:
+                        waiting = observer.execute(
+                            text(
+                                "SELECT count(*) FROM pg_stat_activity "
+                                "WHERE datname = current_database() AND state = 'active' "
+                                "AND wait_event_type = 'Lock' AND query LIKE 'INSERT INTO users%'"
+                            )
+                        ).scalar_one()
+                        # PostgreSQL caches statistics within a transaction.
+                        observer.commit()
+                        if waiting == 2:
+                            break
+                        assert time.monotonic() < deadline, (
+                            f"Expected both registration inserts at the gate, observed {waiting}"
+                        )
+                        time.sleep(0.02)
+        finally:
+            gate.rollback()
+        return [future.result(timeout=20) for future in futures]
 
 
 def main() -> int:
@@ -348,6 +397,118 @@ def main() -> int:
                         "Rust SMTP message and verification JWT -> Python verifier; stale email and account credential reuse rejected"
                     )
 
+                    status, registered = request(
+                        base,
+                        "/auth/register",
+                        body={
+                            "email": "rust-new@example.test",
+                            "username": "rust-new",
+                            "password": PASSWORD,
+                            "display_name": "新账号 ✓",
+                        },
+                    )
+                    assert status == 201 and not registered["email_verified"]
+                    assert not registered["is_global_admin"] and registered["zone_id"] is None
+                    assert "token" not in registered and "api_key" not in registered
+                    assert (
+                        request(
+                            base,
+                            "/auth/login",
+                            body={"identifier": "rust-new", "password": PASSWORD},
+                        )[0]
+                        == 403
+                    )
+                    assert (
+                        request(
+                            base,
+                            "/auth/request-verification",
+                            body={"email": "rust-new@example.test"},
+                        )[0]
+                        == 202
+                    )
+                    delivered = smtp[1].get(timeout=15)
+                    assert str(delivered["To"]) == registered["email"]
+                    link = re.search(r"https://[^\s]+", delivered.get_content()).group(0)
+                    registered_verification = parse_qs(urlsplit(link).query)["token"][0]
+                    client.VerifyEmail(
+                        pb.VerifyEmailRequest(token=registered_verification), timeout=15
+                    )
+                    registered_login = client.Login(
+                        pb.LoginRequest(identifier="rust-new", password=PASSWORD), timeout=15
+                    )
+                    assert registered_login.user.user_id == registered["user_id"]
+                    assert (
+                        legacy.verify_token(registered_login.token)["subject_id"]
+                        == registered["user_id"]
+                    )
+                    assert legacy.login("rust-new", PASSWORD)
+                    with sessions() as session:
+                        stored = session.get(UserModel, registered["user_id"])
+                        assert stored.password_hash.startswith("$2b$12$")
+                        assert stored.primary_auth_method == "password"
+                        assert stored.api_key is None and stored.external_user_id is None
+                        assert stored.user_metadata is None
+                    groups.append(
+                        "Rust registration -> real SMTP verification -> Rust login -> Python bcrypt/JWT compatibility"
+                    )
+
+                    with (
+                        server(
+                            args.binary.resolve(),
+                            url,
+                            args.output_dir / "accounts-second-instance.log",
+                        ) as second,
+                        grpc.insecure_channel(second["grpc_addr"]) as second_channel,
+                    ):
+                        grpc.channel_ready_future(second_channel).result(timeout=15)
+                        second_client = rpc.AccountsServiceStub(second_channel)
+                        for label, bodies in (
+                            (
+                                "email",
+                                [
+                                    {
+                                        "email": "signup-race@example.test",
+                                        "username": f"race-{i}",
+                                        "password": PASSWORD,
+                                    }
+                                    for i in range(2)
+                                ],
+                            ),
+                            (
+                                "username",
+                                [
+                                    {
+                                        "email": f"signup-race-{i}@example.test",
+                                        "username": "signup-race",
+                                        "password": PASSWORD,
+                                    }
+                                    for i in range(2)
+                                ],
+                            ),
+                        ):
+                            results = concurrent_registration(
+                                engine, base, second_client, pb, bodies
+                            )
+                            assert sorted(results) == [201, 409], (label, results)
+                            with sessions() as session:
+                                users = session.scalars(
+                                    select(UserModel).where(
+                                        UserModel.email.in_([body["email"] for body in bodies])
+                                    )
+                                ).all()
+                                assert len(users) == 1 and not users[0].email_verified
+                        # Independent identities must remain independently creatable.
+                        distinct = [
+                            {"email": f"distinct-{i}@example.test", "password": PASSWORD}
+                            for i in range(2)
+                        ]
+                        assert concurrent_registration(
+                            engine, base, second_client, pb, distinct
+                        ) == [201, 201]
+                    groups.append(
+                        "Independent Rust processes serialize duplicate email/username creation on both protocols; distinct users both commit"
+                    )
+
             with server(
                 args.binary.resolve(), url, args.output_dir / "accounts-restart.log"
             ) as ready:
@@ -357,6 +518,13 @@ def main() -> int:
                 assert smtp[1].empty()
                 groups.append(
                     "Verification link survives restart with no persisted token or delivery state"
+                )
+                status, profile = request(base, "/auth/me", registered_login.token)
+                assert status == 200 and profile["user_id"] == registered["user_id"]
+                assert profile["email_verified"] and profile["display_name"] == "新账号 ✓"
+                assert legacy.login("rust-new", PASSWORD)
+                groups.append(
+                    "Rust-created account, password and verification facts survive process restart"
                 )
 
                 owners = [
@@ -413,11 +581,23 @@ def main() -> int:
                     "Restart preserves account facts; deactivation rejects a previously valid token"
                 )
             assert inspect(engine).get_table_names() == ["users"]
-            for name in ("accounts-first.log", "accounts-restart.log"):
+            for name in (
+                "accounts-first.log",
+                "accounts-second-instance.log",
+                "accounts-restart.log",
+            ):
                 output = (args.output_dir / name).read_text(encoding="utf8")
                 assert all(
                     token not in output
-                    for token in (old_verification, verification, legacy_token, login.token)
+                    for token in (
+                        old_verification,
+                        verification,
+                        registered_verification,
+                        legacy_token,
+                        login.token,
+                        registered_login.token,
+                        PASSWORD,
+                    )
                 )
             groups.append("No session, token or runtime-state tables were persisted")
         finally:

@@ -22,6 +22,7 @@ tonic-prost = { workspace = true }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2"
+uuid = { version = "1", features = ["v4"] }
 
 [build-dependencies]
 protoc-bin-vendored = "3"

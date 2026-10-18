@@ -2,7 +2,7 @@
 
 更新日期：2026 年 10 月 18 日。本文用于逐项评论、分配测试和记录结果。
 
-当前状态：慢索引、Search 服务端清理、固定 owner 授权、原生 whoami/CORS、TUI 身份迁移及 scode 正式依赖装配已合并。原生文件装配、RTS Search 及其真实 Rust 浏览器 CI、统计故障语义、zone 一致性和无生产者的索引队列清理也已合并。前端 #26 的文件操作和缓存隔离有 28 项 Chromium 回归及十二组原生浏览器断言通过；它继续保持草稿。Rust 账号服务已实现旧账号登录、读取/更新资料和改密；本轮候选增加真实 SMTP 邮箱验证，本地 SQLite、PostgreSQL 兼容验收均通过，尚未接入前端或生产。注册、Google OAuth、其余业务接口和 Python server 退役尚未完成，整条主线尚未 code complete。腾讯云部署等代码与本地验收收齐后再讨论。
+当前状态：慢索引、Search 服务端清理、固定 owner 授权、原生 whoami/CORS、TUI 身份迁移及 scode 正式依赖装配已合并。原生文件装配、RTS Search 及其真实 Rust 浏览器 CI、统计故障语义、zone 一致性和无生产者的索引队列清理也已合并。前端 #26 的文件操作和缓存隔离有 28 项 Chromium 回归及十二组原生浏览器断言通过；它继续保持草稿。Rust 账号服务的旧账号登录、读取/更新资料、改密和真实 SMTP 邮箱验证已合并。本轮候选增加注册与跨实例并发保护；本地 15 项 Rust 测试及 SQLite、PostgreSQL 各 13 组真实进程兼容验收通过，尚未接入前端或生产。Google OAuth、账号前端装配、其余业务接口和 Python server 退役尚未完成，整条主线尚未 code complete。腾讯云部署等代码与本地验收收齐后再讨论。
 
 合并后验收补充：Nexus #4909 和 #4910 的合并后工作流均已通过；scode #970 的共享服务 E2E 四个平台全部通过，Rust CI 的其余任务通过，但真实模型 ACP subagent 测试在接收消息 120 秒后失败。当次网关仅返回心跳；测试夹具的 `env_clear()` 丢弃了 CI 配置的 90 秒 API 空闲预算，子进程回退到 300 秒，未能在夹具截止前执行现有流恢复。
 
@@ -176,11 +176,11 @@ scode 候选基线为 `94088bd7`（0.2.31）。本地将其全部 VFS Git 依赖
 
 首次 Linux CI 暴露了测试夹具混用 SQLx 与 SQLAlchemy SQLite URL 的问题。现在统一沿用 Nexus 的 SQLAlchemy URL 规则：Unix 绝对路径为 `sqlite:////absolute/path`，相对路径为 `sqlite:///relative/path`，Windows 为 `sqlite:///C:/path`。新增回归在每个平台同时核对这三种路径和 URL 转义；不通过探测文件是否存在来猜测路径，也没有增加测试重试。
 
-仍沿用现有无服务端 session 的 JWT 契约：改密不会撤销已经签发且未到期的 token，停用账号会拒绝它们。邮箱验证扩展见下节；后续仍需注册、Google OAuth、原生文件凭证交换、网关/前端集成和 Python 路由删除，之后再跑完整浏览器账号流程。本轮结果不代表整条身份迁移已完成。
+仍沿用现有无服务端 session 的 JWT 契约：改密不会撤销已经签发且未到期的 token，停用账号会拒绝它们。邮箱验证和注册扩展见下节；后续仍需 Google OAuth、原生文件凭证交换、网关/前端集成和 Python 路由删除，之后再跑完整浏览器账号流程。本轮结果不代表整条身份迁移已完成。
 
 ### Rust 邮箱验证闭环（2026-10-18）
 
-Rust 账号服务增加 `RequestEmailVerification`、`VerifyEmail` 两个 gRPC 方法，及调用相同方法的 `POST /auth/request-verification`、`POST /auth/verify-email`。SMTP 远程连接要求 TLS；明文仅限本地回环验收。Rust 服务通过 SMTP 投递，不记录验证链接。邮件里的 token 沿用旧 `email_verify` 格式和 24 小时有效期，与账号登录 token 分开验证。
+已通过 [Nexus PR #4921](https://github.com/nexi-lab/nexus/pull/4921) 合并 `RequestEmailVerification`、`VerifyEmail` 两个 gRPC 方法，及调用相同方法的 `POST /auth/request-verification`、`POST /auth/verify-email`。SMTP 远程连接要求 TLS；明文仅限本地回环验收。Rust 服务通过 SMTP 投递，不记录验证链接。邮件里的 token 沿用旧 `email_verify` 格式和 24 小时有效期，与账号登录 token 分开验证。
 
 | 编号 | 已完成的本地测试 | 结果 |
 |---|---|---|
@@ -191,7 +191,21 @@ Rust 账号服务增加 `RequestEmailVerification`、`VerifyEmail` 两个 gRPC �
 
 Windows 本地 14 项 Rust 测试通过，包括非法签名、算法、用途、有效期、当前身份状态、幂等性、并发归属、SMTP 失败及配置约束。SQLite、PostgreSQL 各 10 组真实进程兼容旅程通过；同一脚本在 `Rust Accounts` CI 中保护回归，并在 Linux 断言 SIGTERM 正常退出。本机结果位于 `email-sqlite-final-20261018/result.json`、`email-postgres-final-20261018/result.json`，日志与前文使用同一个证据目录。
 
-邮件请求最多占用八个有期限的内存任务；接收请求不保证投递，重启可以丢弃未完成请求。持久库仍只有原有 `users` 事实，未新增发送队列、token、session 或运行时状态表。验证写入同时检查 user ID、当前邮箱、启用和删除状态；原有唯一索引裁决邮箱归属冲突。邮箱验证页面、注册、Google OAuth、文件凭证交换和网关/前端装配仍待完成，前端与腾讯云均未部署。
+邮件请求最多占用八个有期限的内存任务；接收请求不保证投递，重启可以丢弃未完成请求。持久库仍只有原有 `users` 事实，未新增发送队列、token、session 或运行时状态表。验证写入同时检查 user ID、当前邮箱、启用和删除状态；原有唯一索引裁决邮箱归属冲突。邮箱验证页面、Google OAuth、文件凭证交换和网关/前端装配仍待完成，前端与腾讯云均未部署。
+
+### Rust 注册与跨实例一致性（2026-10-18）
+
+候选增加 `AccountsService.Register` 和调用同一方法的 `POST /auth/register`。新账号使用 UUID，默认未验证、非管理员且未分配 zone；注册响应只返回资料。前端应依次请求验证邮件、完成验证、再登录获取账号 JWT。用户名非空、不超过 255 字符且不含 `@`；邮箱沿用现有精确比较，不改写旧数据。
+
+| 编号 | 已完成的本地测试 | 结果 |
+|---|---|---|
+| ACCOUNT-11 | 实际 Rust 进程注册，回环 SMTP 收到邮件，经 gRPC 验证并登录，Python 原实现校验 bcrypt/JWT | SQLite、PostgreSQL 各通过；验证前拒绝登录；注册不返回 token 或 API key，也不接受管理员/zone 字段 |
+| ACCOUNT-12 | 两个独立 Rust 进程通过 HTTP/gRPC 同时注册相同邮箱或用户名，再并发注册不同邮箱 | 两种数据库通过；重复身份仅一份成功，另一份明确冲突；不同身份均提交；PostgreSQL 在两个身份查询完成后才放行插入，确定性覆盖事务竞争 |
+| ACCOUNT-13 | 重启服务，用新账号原 token 和密码读取资料、登录，检查持久表与日志 | 两种数据库通过；账号、密码及验证事实保持；仍仅有 `users` 表，日志不包含密码或 token |
+
+当前 Windows 本地共 15 项 Rust 测试通过，严格 Clippy、格式和 Ruff 通过；SQLite、PostgreSQL 各 13 组真实进程旅程通过。同一验收脚本已由既有 `Rust Accounts` CI 调用，新候选的 Linux CI 结果以 PR 为准。证据为 `registration-test-20261018.log`、`registration-clippy-20261018.log`、`registration-sqlite-20261018/result.json`、`registration-postgres-20261018/result.json`。
+
+注册在 bcrypt 完成后才开启短事务：SQLite 使用 `BEGIN IMMEDIATE`，PostgreSQL 使用 `SERIALIZABLE`；序列化冲突最多重做三次完整数据库事务，密码哈希不重复计算。未新增身份占位、会话或运行时锁表，历史重复账号不删除或合并。所有后续 Rust 账号创建入口必须复用这套事务契约；生产切换时必须一起退役旧 Python 写入口，混用较弱隔离的写入方不能提供该保证。Google OAuth 和完整浏览器账号流程仍待实现与验收。
 
 ### 浏览器身份迁移及验收边界
 

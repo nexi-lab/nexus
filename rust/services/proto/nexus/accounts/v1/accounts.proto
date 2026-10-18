@@ -2,12 +2,20 @@ syntax = "proto3";
 package nexus.accounts.v1;
 
 service AccountsService {
+  rpc Register(RegisterRequest) returns (UserProfile);
   rpc Login(LoginRequest) returns (LoginResponse);
   rpc GetProfile(GetProfileRequest) returns (UserProfile);
   rpc UpdateProfile(UpdateProfileRequest) returns (UserProfile);
   rpc ChangePassword(ChangePasswordRequest) returns (ChangePasswordResponse);
   rpc RequestEmailVerification(RequestEmailVerificationRequest) returns (AccountMessage);
   rpc VerifyEmail(VerifyEmailRequest) returns (AccountMessage);
+}
+
+message RegisterRequest {
+  string email = 1;
+  string password = 2;
+  optional string username = 3;
+  optional string display_name = 4;
 }
 
 message LoginRequest {

@@ -71,6 +71,39 @@ impl AccountService {
 
 #[tonic::async_trait]
 impl AccountsService for AccountService {
+    async fn register(
+        &self,
+        request: Request<RegisterRequest>,
+    ) -> Result<Response<UserProfile>, Status> {
+        let body = request.into_inner();
+        if !email::valid_email(&body.email)
+            || body.password.chars().count() < 8
+            || body.username.as_ref().is_some_and(|name| {
+                name.is_empty() || name.chars().count() > 255 || name.contains('@')
+            })
+            || body
+                .display_name
+                .as_ref()
+                .is_some_and(|name| name.chars().count() > 255)
+        {
+            return Err(Status::invalid_argument("Invalid registration fields"));
+        }
+        // CPU work completes before opening a database transaction.
+        let hash = self.passwords.hash(body.password).await?;
+        let name = body
+            .display_name
+            .as_deref()
+            .filter(|name| !name.is_empty())
+            .or(body.username.as_deref())
+            .unwrap_or_else(|| body.email.split('@').next().unwrap_or_default());
+        let user = self
+            .store
+            .create_password_user(&body.email, body.username.as_deref(), name, &hash)
+            .await?;
+        // Verification and Login own their separate transitions and credentials.
+        Ok(Response::new(user.profile()))
+    }
+
     async fn request_email_verification(
         &self,
         request: Request<RequestEmailVerificationRequest>,

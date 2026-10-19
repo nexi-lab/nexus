@@ -2,7 +2,7 @@
 
 更新日期：2026 年 10 月 19 日。本文用于逐项评论、分配测试和记录结果。
 
-当前状态：Search、固定 owner 授权、原生 whoami/CORS、文件与 RTS Search、统计/zone 一致性、索引契约清理及 scode 正式依赖已合并。Rust 账号服务的注册、密码登录、资料、改密、SMTP 验证和 Google OIDC 后端已在最终 CI 全绿后合并。前端 #26 已接入这些账号契约，账户与 native 文件凭证分别管理；最终应用代码通过本地及 Linux 的 42 项浏览器回归，并通过十二组真实 native 浏览器断言。前端保持草稿，当前提交的账号浏览器和真实 native CI 均已通过。实际 Google 登录、账户删除、文件身份连接策略、其余业务调用方与 Python server 退役仍有待办，整条主线尚未 code complete。腾讯云部署等代码与本地验收收齐后再讨论。
+当前状态：Search、固定 owner 授权、原生 whoami/CORS、文件与 RTS Search、统计/zone 一致性、索引契约清理及 scode 正式依赖已合并。Rust 账号服务的注册、密码登录、资料、改密、SMTP 验证和 Google OIDC 后端已在最终 CI 全绿后合并。前端 #26 已接入这些账号契约，账户与 native 文件凭证分别管理；最新应用代码通过本地及 Linux CI 的 55 项浏览器回归，并通过十二组真实 native 浏览器断言。前端保持草稿，当前源的两项 CI 全绿。已确认保留显式 native 连接，两套身份独立。实际 Google 登录、账户删除、其余业务调用方与 Python server 退役仍有待办，整条主线尚未 code complete。腾讯云部署等代码与本地验收收齐后再讨论。
 
 合并后验收补充：Nexus #4909 和 #4910 的合并后工作流均已通过；scode #970 的共享服务 E2E 四个平台全部通过，Rust CI 的其余任务通过，但真实模型 ACP subagent 测试在接收消息 120 秒后失败。当次网关仅返回心跳；测试夹具的 `env_clear()` 丢弃了 CI 配置的 90 秒 API 空闲预算，子进程回退到 300 秒，未能在夹具截止前执行现有流恢复。
 
@@ -483,9 +483,11 @@ cargo test -p nexus-cluster --all-features --test user_runtime signed_search_kee
 
 ### 账户前端与实际浏览器验收（2026-10-19）
 
-[前端 PR #26](https://github.com/nexi-lab/nexus-frontend/pull/26) 的应用提交为 `b2e20c89a482c5bf550ed10fe675202cf2e63fcd`；后续 `4cfe17708d7404f3f47d59a71558ce05beed8f8e` 只增加 CI 和说明，应用源码相同。[账号后端 PR #4924](https://github.com/nexi-lab/nexus/pull/4924) 已合并为 `0ce4227ac37a862b2a3fe1090e71a5c6f5e8098c`，源提交与合并后 CI 均通过。
+[前端 PR #26](https://github.com/nexi-lab/nexus-frontend/pull/26) 的应用代码提交为 `fe04663388267e93935b2086182bff42cd903625`，包含账户/native 身份拆分、连接契约与邮箱验证恢复。[账号后端 PR #4924](https://github.com/nexi-lab/nexus/pull/4924) 已合并为 `0ce4227ac37a862b2a3fe1090e71a5c6f5e8098c`，源提交与合并后 CI 均通过。
 
 密码和 Google 登录进入 `/account`。账户客户端只调用账号 HTTP 适配层；注册不生成登录会话。标签页的 sessionStorage 保存最小账号凭证和服务地址，刷新后从 Rust 读取 profile；不保存浏览器权限副本。文件连接继续使用配置的 native API key，由 `whoami` 决定主体、zone 与管理员状态。两种登录、退出和凭证拒绝分别处理，账号 profile 的角色与 zone 不授予文件权限。
+
+2026-10-19 已确认产品边界：保留显式 native 连接，两套身份独立。Google 或密码登录后仍需使用已有 native 凭证连接文件与 Search；账户登录不自动创建文件空间或映射文件主体。该决定已由当前实现及 ACCOUNT-24、27、28、29 的回归覆盖。
 
 以下编号可直接用于评论和安排人工复核。使用本地隔离账号、浏览器 profile 和测试数据，记录实际入口及所测提交。
 
@@ -500,6 +502,15 @@ cargo test -p nexus-cluster --all-features --test user_runtime signed_search_kee
 | ACCOUNT-28 / 待安排 | Google 从所选账号服务器开始，回调使用 `/auth/oauth/google/callback`。state 或浏览器 cookie 缺失时失败，回调查询参数被移除，已有 native 连接保持。 | 浏览器线契约及 cookie 夹具通过；后端实际 RSA/OIDC 验收见 ACCOUNT-14—21。真人 Google 浏览器尚未执行。 |
 | ACCOUNT-29 / 待安排 | 用配置的 native 身份检查管理页面、文件与 Search；撤销 key/关系后刷新或重新查询，旧权限不继续生效，另一个用户保持可用。 | 真实 native daemon、签名 Search、TLS/ReBAC 和生产前端通过十二组断言。 |
 
+连接契约与恢复操作也可按以下编号安排人工复核：
+
+| 编号 / 人工复核 | 操作与通过标准 | 已执行的自动验证 |
+|---|---|---|
+| ACCOUNT-30 / 待安排 | 输入相对地址、缺少协议的地址、URL 内的用户名密码、query 或 fragment。显示地址错误，禁止发出凭证请求。 | 浏览器捕获实际请求；修复前测试假密码被发至本机前端下的相对路径，修复后五类无效地址均不发送请求。 |
+| ACCOUNT-31 / 待安排 | 让测试网关返回 HTTP 200 的 HTML 或缺少身份字段的 JSON。不得建立身份、覆盖已有 native key、显示注册成功或继续请求邮件。 | 账户登录/profile/注册及 native whoami 的实际浏览器故障输入通过；成功状态、JSON 类型和所需身份结构统一在适配层校验。 |
+| ACCOUNT-32 / 待安排 | 恢复保存了错误服务器地址的账户或 native 连接。进入可修正连接的页面，不把凭证发到前端相对路径。 | 两种恢复路径通过；无效账户地址只清理账户会话，已有 native key 保持。 |
+| ACCOUNT-33 / 待安排 | 关闭或刷新注册页面后，在 `/verify-email` 填写服务器与邮箱，显式请求新邮件；无效链接也可切换到该入口。收到新链接后确认服务器并完成验证。 | 两项真实 Rust/SQLite/SMTP/浏览器恢复旅程通过；不持久化 pending signup、不重复注册、不生成会话或 native 授权。 |
+
 复跑账户浏览器测试时，在候选 `nexus-frontend` checkout 中执行：
 
 ```powershell
@@ -508,26 +519,26 @@ $env:NEXUS_TEST_ACCOUNTS_SCHEMA = '<同一 Nexus checkout>/rust/services/account
 pnpm install --frozen-lockfile
 pnpm run build
 pnpm exec playwright install chromium
-pnpm exec playwright test tests/e2e/account-registration.spec.ts tests/e2e/account-session.spec.ts --headed
+pnpm exec playwright test tests/e2e/account-registration.spec.ts tests/e2e/account-session.spec.ts tests/e2e/connection-contract.spec.ts --headed
 ```
 
-这十三个账户场景会启动并清理实际 Rust 进程、临时数据库和回环 SMTP。测试网关的 Google/native 协议夹具不计为真人 Google 或真实文件服务；真实 native 组合用后文 `test_search_local.py --frontend-checkout` 的独立入口复跑。
+其中十五个账户场景连接实际 Rust 进程、临时数据库和回环 SMTP；另有十一项连接守卫覆盖错误地址、错误成功响应及恢复。结束后清理进程与数据库。测试网关的 Google/native 协议夹具不计为真人 Google 或真实文件服务；真实 native 组合用后文 `test_search_local.py --frontend-checkout` 的独立入口复跑。
 
 本轮完成的验证：
 
 | 范围 | 结果与证据 |
 |---|---|
 | 最终应用的 TypeScript、生产构建及本轮 focused lint | 通过；构建复用本工作线输出目录，使用 BelowNormal 与单任务设置，实际测试保持 Normal。 |
-| 最终应用本地浏览器 | 42/42、零重试，含十三项真实 Rust 账户场景；`frontend-account-session-final-source-20261019.log`。源码在运行期间保持不变，进程与数据库清理通过。 |
-| 最终应用 Linux 浏览器 CI | [42/42 通过](https://github.com/nexi-lab/nexus-frontend/actions/runs/39231043178)，源码为 `b2e20c8`。 |
-| 浏览目录与文本的 JavaScript 预算 | 实际 1,475,024 bytes，低于原有 2 MiB；登录预算仍为 1 MiB。Office/PDF 预览按打开类型加载。 |
+| 最终应用本地浏览器 | 55/55、零重试，含十五项真实 Rust 账户场景和十一项连接守卫；`frontend-email-recovery-final-source-20261019.log`。源码在运行期间保持不变，进程与数据库清理通过。 |
+| 最新应用 Linux 浏览器 CI | [55/55 通过](https://github.com/nexi-lab/nexus-frontend/actions/runs/39238753931)，源码为 `fe04663`，零重试；此前 42 项及其 native CI 作为旧源证据保留。 |
+| 浏览目录与文本的 JavaScript 预算 | 实际 1,477,603 bytes，低于原有 2 MiB；登录预算仍为 1 MiB。Office/PDF 预览按打开类型加载。 |
 | 文件读取故障稳定性 | 原 CI trace 证明切换全局故障与目录加载竞争。故障现按操作作用域配置且在导航前安装，连续五轮 35/35 通过；目录整体失败另有用例。断言、时限及零重试设置保持。 |
-| 真实 native / 签名 Search / TLS / ReBAC / 生产前端 | 八个步骤、十二组浏览器断言通过；包含密钥/关系撤销、目录/文件操作、UTF-8 改写、重命名后保存、逐字节上传下载和递归删除。证据为 `native-browser-account-session-20261019/run-1792402455411534900/results.json` 及其 `native-browser/native-browser-result.json`。临时 fixture 和凭证已清理。 |
-| 新增当前前端的 native CI | 使用同一后端 pin 复用 `build_search_fixture.sh` 与 `test_search_local.py`，直接测试 PR checkout，并保留浏览器证据。[最新源 CI 全部通过](https://github.com/nexi-lab/nexus-frontend/actions/runs/39231889036)：账号浏览器 42/42，真实 native 八个步骤、十二组浏览器断言。原账号 job 仍为十五分钟，native 测试仍为十分钟；含冷 Rust 构建的新 job 为三十分钟。 |
+| 真实 native / 签名 Search / TLS / ReBAC / 生产前端 | 八个步骤、十二组浏览器断言通过；包含密钥/关系撤销、目录/文件操作、UTF-8 改写、重命名后保存、逐字节上传下载和递归删除。证据为 `native-browser-server-contract-20261019/run-1792406235839002900/results.json` 及其 `native-browser/native-browser-result.json`。临时 fixture 和凭证已清理。 |
+| 新增当前前端的 native CI | 使用同一后端 pin 复用 `build_search_fixture.sh` 与 `test_search_local.py`，直接测试 PR checkout，并保留浏览器证据。[当前源两项 CI 全绿](https://github.com/nexi-lab/nexus-frontend/actions/runs/39238753931)：55 项浏览器、真实 native 八个步骤和十二组断言；本地同一源也全部通过。原账号 job 仍为十五分钟，native 测试仍为十分钟；含冷 Rust 构建的新 job 为三十分钟。 |
 
-本轮删除了旧 Google 确认流程、混合账号/文件认证回退、未使用的登录/删除弹窗，以及 native 客户端中的账户方法。当前仍有 43 个业务 RPC 包装方法、115 处成员引用和 18 处直接调用，涉及十个直接 RPC 目标；这部分与账户删除仍为明确待办。前端未发布，腾讯云生产未修改。
+本轮删除了旧 Google 确认流程、混合账号/文件认证回退、未使用的登录/删除弹窗，以及 native 客户端中的账户方法。当前应用代码仍有 43 个业务 RPC 包装方法、110 处成员调用和 18 处直接调用，涉及十个直接 RPC 目标；这部分与账户删除仍为明确待办。前端未发布，腾讯云生产未修改。
 
-scode #973 当前提交为 `0532a13c2cc3f60e8115c11eb2f8ff50ce9c9386`，通过普通 merge 接入最新 main 并保留全部历史。其前一应用提交 `19ee385f` 的本地实际 CLI/managed Nexus/Vault 九组验收通过；最新源的 Windows Shared Services 已通过，其余 CI 正在收齐。更早的[真实 Windows 模型验收](https://github.com/sudoprivacy/sudocode/actions/runs/39151107581) 已通过 Azure 文件结果和两组子代理审批；后续 hook 跟进被实际 provider 以 `403 pre_consume_token_quota_failed` 拒绝。当前源完整真实模型验收仍等待原 CI key 额度恢复，不计为已通过。
+scode #973 当前提交为 `0532a13c2cc3f60e8115c11eb2f8ff50ce9c9386`，通过普通 merge 接入最新 main 并保留全部历史。该提交的本地实际 CLI/managed Nexus/Vault 九组验收通过；最新源的 Shared Services 四个平台均通过，其余 CI 正在收齐。编译复用原输出目录，单 Cargo job、BelowNormal，实际 rustc 优先级已核实；测试与实际 CLI 保持 Normal，未继承 provider 凭证。更早的[真实 Windows 模型验收](https://github.com/sudoprivacy/sudocode/actions/runs/39151107581) 已通过 Azure 文件结果和两组子代理审批；后续 hook 跟进被实际 provider 以 `403 pre_consume_token_quota_failed` 拒绝。当前源完整真实模型验收仍等待原 CI key 额度恢复，不计为已通过。
 
 ## 六、代码与验收待办
 
@@ -536,7 +547,7 @@ scode #973 当前提交为 `0532a13c2cc3f60e8115c11eb2f8ff50ce9c9386`，通过�
 | CODE-01 | 修复索引超时的契约边界 | 受控慢操作在修复前失败、修复后通过；交互请求仍有明确预算 | 已合并；VFS PR #442 |
 | CODE-02 | CI 保护慢索引、取消与真实提交回执 | 最终提交 CI 全绿，实际执行相应用例 | 已完成；VFS 19 项、Nexus 53 项通过 |
 | CODE-03 | 原生化后残余 Search 代码与文档清理 | 重复列表/SQL 分支和失效配置删除；架构文档与源码一致 | 已合并；Nexus PR #4902 |
-| CODE-04 | 浏览器登录/OAuth cookie 及剩余 server 调用方迁移 | 保留现有身份 SSOT，完成浏览器与账号服务端迁移后再退役 server | Rust 账号后端已合并；前端草稿已迁移注册、验证、密码/Google 登录及资料/改密；账户删除、文件身份连接策略与其余业务消费者待完成 |
+| CODE-04 | 浏览器登录/OAuth cookie 及剩余 server 调用方迁移 | 保留现有身份 SSOT，完成浏览器与账号服务端迁移后再退役 server | Rust 账号后端已合并；前端草稿已迁移注册、验证、密码/Google 登录及资料/改密；已确认显式 native 连接、身份独立；账户删除与其余业务消费者待完成 |
 | CODE-05 | `serve-user` 下的 Search 装配与授权契约 | 使用固定 owner 的私有数据边界；本地签名插件、owner 隔离、委托身份和真实模型重启全部通过 | 已完成并合并；VFS PR #443 与 Nexus PR #4904 的源提交及合并后 CI 均通过 |
 | CODE-06 | scode 正式依赖、安装 checksum 与协议一致性 | 十个直接依赖使用同一发布源，checksum 按 release 绑定，proto 与上游一致，真实 CLI/cohost 经过验证 | PR #970 已在最终 CI 全绿后合并；Windows 与 Linux 本地验收通过 |
 | CODE-07 | 统计故障语义与消费者 zone 一致性 | 实际损坏存储错误、正常 zone、诊断事实及浏览器回归；同一作用域查询和统计 | 已合并；VFS #450、UI #85、Nexus #4916 的最终源提交 CI 全绿，保留全部历史 |
@@ -546,7 +557,7 @@ scode #973 当前提交为 `0532a13c2cc3f60e8115c11eb2f8ff50ce9c9386`，通过�
 
 CODE-04 的剩余范围：
 
-- Rust 人类账号的注册、密码登录及变更、邮件验证、profile 和 Google OAuth 已合并，保留原有 user ID、bcrypt 和 provider/subject 绑定。前端已切换这些契约；仍需实现账户删除、确认账户与 native 文件身份的连接策略，并完成真人 Google 验收。原生文件授权继续由实际 native 身份决定。
+- Rust 人类账号的注册、密码登录及变更、邮件验证、profile 和 Google OAuth 已合并，保留原有 user ID、bcrypt 和 provider/subject 绑定。前端已切换这些契约；仍需实现账户删除，并完成真人 Google 验收。已确认保留显式 native 连接；原生文件授权继续由实际 native 身份决定。
 - `nexus-frontend` 的基础文件操作已迁移；管理、workspace、agent、sandbox、memory、skills 注册及连接器业务调用方仍待迁移。移除没有调用的包装方法，并不代表对应业务端点可以删除。
 - `nexus-ui` 的 monitoring/健康模型、Python server 启动入口及其余业务接口；Search 请求、响应和统计已迁移，真实 Rust CI 已在自身仓库装配，zone 与故障修复已合并。TUI 的其他面板和可选功能元数据也尚未完成。
 - 收齐这些调用方和账号后端，删除其替代的 Python 服务端，再跑完整用户旅程和 CI。上述事项完成前，整条 Python server 退役主线仍未 code complete。

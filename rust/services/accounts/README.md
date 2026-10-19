@@ -100,4 +100,6 @@ Google network tests substitute only the external provider, which signs RSA ID t
 
 ## Remaining integration
 
-Live Google browser acceptance, explicit authenticated account linking, native file-credential exchange, gateway/frontend wiring and Python route removal remain unfinished. The browser verification page is part of that frontend work. The frontend account rollout stays draft until those pieces and their complete user journeys are ready. This service has not been wired into Tencent production deployment.
+The frontend uses this service for registration, email verification, password/Google login, profile updates and password changes. Account login and native file connection remain independent: users explicitly supply an existing native credential for files and Search. Account JWTs do not create or map a native subject.
+
+Live Google browser acceptance, account deletion, remaining business consumers, gateway wiring and Python route removal remain unfinished. The frontend account rollout stays draft until those pieces and their complete user journeys are ready. This service has not been wired into Tencent production deployment.

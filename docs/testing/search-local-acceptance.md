@@ -483,7 +483,7 @@ cargo test -p nexus-cluster --all-features --test user_runtime signed_search_kee
 
 ### 账户前端与实际浏览器验收（2026-10-19）
 
-[前端 PR #26](https://github.com/nexi-lab/nexus-frontend/pull/26) 的最新提交为 `fe04663388267e93935b2086182bff42cd903625`，包含账户/native 身份拆分、连接契约与邮箱验证恢复。[账号后端 PR #4924](https://github.com/nexi-lab/nexus/pull/4924) 已合并为 `0ce4227ac37a862b2a3fe1090e71a5c6f5e8098c`，源提交与合并后 CI 均通过。
+[前端 PR #26](https://github.com/nexi-lab/nexus-frontend/pull/26) 的应用代码提交为 `fe04663388267e93935b2086182bff42cd903625`，包含账户/native 身份拆分、连接契约与邮箱验证恢复。[账号后端 PR #4924](https://github.com/nexi-lab/nexus/pull/4924) 已合并为 `0ce4227ac37a862b2a3fe1090e71a5c6f5e8098c`，源提交与合并后 CI 均通过。
 
 密码和 Google 登录进入 `/account`。账户客户端只调用账号 HTTP 适配层；注册不生成登录会话。标签页的 sessionStorage 保存最小账号凭证和服务地址，刷新后从 Rust 读取 profile；不保存浏览器权限副本。文件连接继续使用配置的 native API key，由 `whoami` 决定主体、zone 与管理员状态。两种登录、退出和凭证拒绝分别处理，账号 profile 的角色与 zone 不授予文件权限。
 
@@ -536,7 +536,7 @@ pnpm exec playwright test tests/e2e/account-registration.spec.ts tests/e2e/accou
 | 真实 native / 签名 Search / TLS / ReBAC / 生产前端 | 八个步骤、十二组浏览器断言通过；包含密钥/关系撤销、目录/文件操作、UTF-8 改写、重命名后保存、逐字节上传下载和递归删除。证据为 `native-browser-server-contract-20261019/run-1792406235839002900/results.json` 及其 `native-browser/native-browser-result.json`。临时 fixture 和凭证已清理。 |
 | 新增当前前端的 native CI | 使用同一后端 pin 复用 `build_search_fixture.sh` 与 `test_search_local.py`，直接测试 PR checkout，并保留浏览器证据。[当前源两项 CI 全绿](https://github.com/nexi-lab/nexus-frontend/actions/runs/39238753931)：55 项浏览器、真实 native 八个步骤和十二组断言；本地同一源也全部通过。原账号 job 仍为十五分钟，native 测试仍为十分钟；含冷 Rust 构建的新 job 为三十分钟。 |
 
-本轮删除了旧 Google 确认流程、混合账号/文件认证回退、未使用的登录/删除弹窗，以及 native 客户端中的账户方法。当前仍有 43 个业务 RPC 包装方法、115 处成员引用和 18 处直接调用，涉及十个直接 RPC 目标；这部分与账户删除仍为明确待办。前端未发布，腾讯云生产未修改。
+本轮删除了旧 Google 确认流程、混合账号/文件认证回退、未使用的登录/删除弹窗，以及 native 客户端中的账户方法。当前应用代码仍有 43 个业务 RPC 包装方法、110 处成员调用和 18 处直接调用，涉及十个直接 RPC 目标；这部分与账户删除仍为明确待办。前端未发布，腾讯云生产未修改。
 
 scode #973 当前提交为 `0532a13c2cc3f60e8115c11eb2f8ff50ce9c9386`，通过普通 merge 接入最新 main 并保留全部历史。该提交的本地实际 CLI/managed Nexus/Vault 九组验收通过；最新源的 Shared Services 四个平台均通过，其余 CI 正在收齐。编译复用原输出目录，单 Cargo job、BelowNormal，实际 rustc 优先级已核实；测试与实际 CLI 保持 Normal，未继承 provider 凭证。更早的[真实 Windows 模型验收](https://github.com/sudoprivacy/sudocode/actions/runs/39151107581) 已通过 Azure 文件结果和两组子代理审批；后续 hook 跟进被实际 provider 以 `403 pre_consume_token_quota_failed` 拒绝。当前源完整真实模型验收仍等待原 CI key 额度恢复，不计为已通过。
 

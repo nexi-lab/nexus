@@ -7,6 +7,7 @@ service AccountsService {
   rpc GetProfile(GetProfileRequest) returns (UserProfile);
   rpc UpdateProfile(UpdateProfileRequest) returns (UserProfile);
   rpc ChangePassword(ChangePasswordRequest) returns (ChangePasswordResponse);
+  rpc DeleteAccount(DeleteAccountRequest) returns (AccountMessage);
   rpc RequestEmailVerification(RequestEmailVerificationRequest) returns (AccountMessage);
   rpc VerifyEmail(VerifyEmailRequest) returns (AccountMessage);
   rpc StartGoogleLogin(StartGoogleLoginRequest) returns (StartGoogleLoginResponse);
@@ -45,6 +46,8 @@ message LoginResponse {
 }
 
 message GetProfileRequest {}
+
+message DeleteAccountRequest {}
 
 message UpdateProfileRequest {
   optional string display_name = 1;

@@ -43,10 +43,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn concurrent_password_updates_cannot_overwrite_a_committed_change() {
-        // These requests share an old snapshot. Their SQL predicate is the
-        // contract under test; this fixture has no file lifetime to coordinate.
+    async fn password_store() -> (AccountStore, SqlitePool) {
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
@@ -58,7 +55,12 @@ mod tests {
             .unwrap();
         sqlx::query("INSERT INTO users (user_id, password_hash, primary_auth_method, is_global_admin, is_active, email_verified, created_at, updated_at) VALUES ('alice', 'original-hash', 'password', 0, 1, 1, $1, $1)")
             .bind(Utc::now().naive_utc()).execute(&pool).await.unwrap();
-        let store = AccountStore(Database::Sqlite(pool.clone()));
+        (AccountStore(Database::Sqlite(pool.clone())), pool)
+    }
+
+    #[tokio::test]
+    async fn concurrent_password_updates_cannot_overwrite_a_committed_change() {
+        let (store, pool) = password_store().await;
         let snapshot = store.by_id("alice").await.unwrap();
         let (first, second) = tokio::join!(
             store.change_password(&snapshot, "first-hash"),
@@ -75,6 +77,43 @@ mod tests {
         assert_eq!(
             store.by_id("alice").await.unwrap().password_hash.as_deref(),
             Some(expected)
+        );
+        store.close().await;
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn old_account_snapshots_cannot_restore_a_deleted_identity() {
+        let (store, pool) = password_store().await;
+        let snapshot = store.by_id("alice").await.unwrap();
+        store.delete_account(&snapshot).await.unwrap();
+        assert_eq!(
+            store.record_login(&snapshot).await.err().unwrap().code(),
+            tonic::Code::Unauthenticated
+        );
+        assert_eq!(
+            store
+                .update_profile(&snapshot, Some("late edit"), None)
+                .await
+                .err()
+                .unwrap()
+                .code(),
+            tonic::Code::Unauthenticated
+        );
+        assert_eq!(
+            store
+                .change_password(&snapshot, "late hash")
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::Aborted
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM users")
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            0
         );
         store.close().await;
         pool.close().await;
@@ -141,7 +180,7 @@ fn sqlite_options(url: &str) -> Result<sqlx::sqlite::SqliteConnectOptions, Statu
         Status::invalid_argument("SQLite database URLs require the SQLAlchemy sqlite:/// format")
     })?;
     sqlx::sqlite::SqliteConnectOptions::from_str(&format!("sqlite://{path}"))
-        .map(|options| options.create_if_missing(false))
+        .map(|options| options.create_if_missing(false).foreign_keys(true))
         .map_err(|_| Status::invalid_argument("Invalid SQLite database URL"))
 }
 
@@ -198,6 +237,23 @@ impl AccountStore {
         )
         .map_err(unavailable)?
         .ok_or_else(|| Status::unauthenticated("Account is unavailable"))
+    }
+
+    pub(crate) async fn delete_account(&self, user: &User) -> Result<(), Status> {
+        // The account schema's foreign keys remove login bindings in the same
+        // statement. File keys and relationship grants have separate owners.
+        let sql = format!("DELETE FROM users WHERE user_id = $1 AND {ACTIVE} RETURNING user_id");
+        with_pool!(
+            self,
+            pool,
+            sqlx::query_scalar::<_, String>(&sql)
+                .bind(&user.user_id)
+                .fetch_optional(pool)
+                .await
+        )
+        .map_err(unavailable)?
+        .ok_or_else(|| Status::unauthenticated("Account is unavailable"))?;
+        Ok(())
     }
 
     pub(crate) async fn for_login(&self, identifier: &str) -> Result<User, Status> {

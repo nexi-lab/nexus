@@ -27,6 +27,7 @@ The default listeners are `127.0.0.1:12015` for gRPC and `127.0.0.1:12016` for H
 | `GET /auth/me` | `AccountsService.GetProfile` |
 | `PATCH /auth/me` | `AccountsService.UpdateProfile` |
 | `POST /auth/change-password` | `AccountsService.ChangePassword` |
+| `DELETE /auth/me` | `AccountsService.DeleteAccount` |
 | `POST /auth/request-verification` | `AccountsService.RequestEmailVerification` |
 | `POST /auth/verify-email` | `AccountsService.VerifyEmail` |
 | `GET /auth/oauth/google/authorize` | `AccountsService.StartGoogleLogin` |
@@ -43,6 +44,14 @@ The response is the unverified `UserProfile` (HTTP 201), without credentials. Th
 Identity checks and insertion share one short transaction: SQLite uses `BEGIN IMMEDIATE`, PostgreSQL uses `SERIALIZABLE`. PostgreSQL serialization conflicts retry the whole transaction at most three times, reusing the already computed bcrypt hash. Exhaustion returns Aborted/HTTP 409; duplicate active email or username returns AlreadyExists/HTTP 409. Hashing occurs before the transaction. No identity reservation or runtime lock is persisted, and historical duplicate accounts are preserved.
 
 Password and Google creation share this transaction contract. Deployment must route every account writer through the Rust service when retiring Python routes; mixed writers with weaker isolation cannot provide this guarantee.
+
+## Account deletion
+
+An authenticated account can delete itself through `DeleteAccount` or bodyless `DELETE /auth/me`. The HTTP request takes no query parameters. The target comes only from the verified account JWT and current SQL identity.
+
+One SQL deletion removes the account; the provisioned foreign keys atomically remove its OAuth sign-in bindings and encrypted account-login key copies. SQLite connections explicitly enable foreign keys. Failure of any cascade rolls back the entire statement. Native credentials, files, zones and ReBAC grants remain with their serving authority; canonical SQL file-key rows also remain unchanged.
+
+Previously issued account and verification tokens cannot resolve the deleted identity, including on other service instances and after restart. A stale profile/password/login write cannot restore it. A later registration or Google sign-in may create a new account ID with no native grants. No session, deletion queue or runtime-state table is added.
 
 ## Google login
 
@@ -102,4 +111,4 @@ Google network tests substitute only the external provider, which signs RSA ID t
 
 The frontend uses this service for registration, email verification, password/Google login, profile updates and password changes. Account login and native file connection remain independent: users explicitly supply an existing native credential for files and Search. Account JWTs do not create or map a native subject.
 
-Live Google browser acceptance, account deletion, remaining business consumers, gateway wiring and Python route removal remain unfinished. The frontend account rollout stays draft until those pieces and their complete user journeys are ready. This service has not been wired into Tencent production deployment.
+Live Google browser acceptance, complete frontend integration, remaining business consumers, gateway wiring and Python route removal remain unfinished. The frontend account rollout stays draft until those pieces and their complete user journeys are ready. This service has not been wired into Tencent production deployment.

@@ -1,7 +1,8 @@
 //! HTTP maps its wire requests to the canonical gRPC service methods.
 
 use axum::{
-    extract::{rejection::JsonRejection, DefaultBodyLimit, State},
+    body::Bytes,
+    extract::{rejection::JsonRejection, DefaultBodyLimit, RawQuery, State},
     http::{
         header::{CACHE_CONTROL, COOKIE, SET_COOKIE},
         HeaderMap, HeaderValue, StatusCode,
@@ -22,7 +23,10 @@ pub fn router(service: AccountService) -> Router {
     Router::new()
         .route("/auth/register", post(register))
         .route("/auth/login", post(login))
-        .route("/auth/me", get(profile).patch(update_profile))
+        .route(
+            "/auth/me",
+            get(profile).patch(update_profile).delete(delete_account),
+        )
         .route("/auth/change-password", post(change_password))
         .route("/auth/request-verification", post(request_verification))
         .route("/auth/verify-email", post(verify_email))
@@ -212,6 +216,25 @@ async fn profile(
     Ok(Json(
         service
             .get_profile(authorized(&headers, GetProfileRequest {})?)
+            .await?
+            .into_inner(),
+    ))
+}
+
+async fn delete_account(
+    State(service): State<AccountService>,
+    headers: HeaderMap,
+    RawQuery(query): RawQuery,
+    body: Bytes,
+) -> Result<Json<AccountMessage>, AccountError> {
+    if query.is_some() || !body.is_empty() {
+        return Err(
+            Status::invalid_argument("Account deletion takes no body or query parameters").into(),
+        );
+    }
+    Ok(Json(
+        service
+            .delete_account(authorized(&headers, DeleteAccountRequest {})?)
             .await?
             .into_inner(),
     ))

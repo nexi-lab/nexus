@@ -163,6 +163,113 @@ fn verification_claims(id: &str, email: &str) -> Value {
 }
 
 #[tokio::test]
+async fn password_account_deletion_needs_its_own_token_and_no_oauth_schema() {
+    let fixture = Fixture::new().await;
+    let http = reqwest::Client::new();
+    let endpoint = format!("{}/auth/me", fixture.http_url);
+    let mut client = fixture.client().await;
+    let mut invalid = legacy_claims();
+    invalid["subject_id"] = json!("another-account");
+    for token in [
+        None,
+        Some("invalid".to_owned()),
+        Some(sign(&invalid, Algorithm::HS256, SECRET)),
+        Some(sign(
+            &verification_claims("alice", "alice@example.test"),
+            Algorithm::HS256,
+            SECRET,
+        )),
+    ] {
+        let mut request = http.delete(&endpoint);
+        if let Some(token) = &token {
+            request = request.bearer_auth(token);
+        }
+        assert_eq!(request.send().await.unwrap().status(), 401);
+        let request = token.as_ref().map_or_else(
+            || Request::new(DeleteAccountRequest {}),
+            |token| authorized(token, DeleteAccountRequest {}),
+        );
+        assert_eq!(
+            client.delete_account(request).await.unwrap_err().code(),
+            Code::Unauthenticated
+        );
+    }
+    let token = sign(&legacy_claims(), Algorithm::HS256, SECRET);
+    assert_eq!(
+        http.delete(&endpoint)
+            .bearer_auth(&token)
+            .json(&json!({"user_id":"another-account"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        400
+    );
+    assert_eq!(
+        http.delete(&endpoint)
+            .bearer_auth(&token)
+            .query(&[("user_id", "another-account")])
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        400
+    );
+    client
+        .get_profile(authorized(&token, GetProfileRequest {}))
+        .await
+        .unwrap();
+    let response = http
+        .delete(&endpoint)
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    assert_eq!(
+        response.json::<Value>().await.unwrap()["message"],
+        "Account deleted"
+    );
+    assert_eq!(
+        http.get(&endpoint)
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
+    assert_eq!(
+        client
+            .get_profile(authorized(&token, GetProfileRequest {}))
+            .await
+            .unwrap_err()
+            .code(),
+        Code::Unauthenticated
+    );
+    assert_eq!(
+        client
+            .login(LoginRequest {
+                identifier: "alice".into(),
+                password: PASSWORD.into()
+            })
+            .await
+            .unwrap_err()
+            .code(),
+        Code::Unauthenticated
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM users")
+            .fetch_one(&fixture.pool)
+            .await
+            .unwrap(),
+        0
+    );
+    fixture.stop().await;
+}
+
+#[tokio::test]
 async fn registration_requires_verification_and_cannot_select_privilege_or_credentials() {
     let fixture = Fixture::new().await;
     let http = reqwest::Client::new();

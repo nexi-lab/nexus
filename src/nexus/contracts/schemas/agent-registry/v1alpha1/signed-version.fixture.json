@@ -1,0 +1,32 @@
+{
+  "purpose": "public_test_key_only",
+  "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAA6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=\n-----END PUBLIC KEY-----\n",
+  "version": {
+    "manifest": {
+      "api_version": "agent-registry.sudo.dev/v1alpha1",
+      "kind": "VersionManifest",
+      "principal": {
+        "trust_domain": "fixture.example",
+        "agent_name": "assistant"
+      },
+      "version": "v1",
+      "spec_ref": {
+        "api_version": "common.sudo.dev/v1",
+        "kind": "ResourceRef",
+        "zone_id": "fixture-zone",
+        "path": "/agents/spec.json",
+        "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "spec_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "source_evidence_refs": [],
+      "created_by": "user:fixture",
+      "created_at": 1000,
+      "evidence": "signed_registration_only"
+    },
+    "payload_base64": "eyJhcGlfdmVyc2lvbiI6ImFnZW50LXJlZ2lzdHJ5LnN1ZG8uZGV2L3YxYWxwaGExIiwiY3JlYXRlZF9hdCI6MTAwMCwiY3JlYXRlZF9ieSI6InVzZXI6Zml4dHVyZSIsImV2aWRlbmNlIjoic2lnbmVkX3JlZ2lzdHJhdGlvbl9vbmx5Iiwia2luZCI6IlZlcnNpb25NYW5pZmVzdCIsInByaW5jaXBhbCI6eyJhZ2VudF9uYW1lIjoiYXNzaXN0YW50IiwidHJ1c3RfZG9tYWluIjoiZml4dHVyZS5leGFtcGxlIn0sInNvdXJjZV9ldmlkZW5jZV9yZWZzIjpbXSwic3BlY19kaWdlc3QiOiJzaGEyNTY6YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYSIsInNwZWNfcmVmIjp7ImFwaV92ZXJzaW9uIjoiY29tbW9uLnN1ZG8uZGV2L3YxIiwiZGlnZXN0Ijoic2hhMjU2OmFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWEiLCJraW5kIjoiUmVzb3VyY2VSZWYiLCJwYXRoIjoiL2FnZW50cy9zcGVjLmpzb24iLCJ6b25lX2lkIjoiZml4dHVyZS16b25lIn0sInZlcnNpb24iOiJ2MSJ9",
+    "digest": "sha256:93d916072cd4b93a59e9498f0c170d258dbc3507675ad59d98477a0b34e305c0",
+    "algorithm": "Ed25519",
+    "key_id": "sha256:56475aa75463474c0285df5dbf2bcab73da651358839e9b77481b2eab107708c",
+    "signature_base64": "m/K1YKwkXxhMUytchRHm0hpLF+1jmtbi7kAGrFzt/vi2LlMYg3lRNUsfgVNUqd9McibYDBQ0ZxiAeDzhbZ07Ag=="
+  }
+}

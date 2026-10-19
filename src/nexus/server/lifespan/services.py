@@ -30,6 +30,10 @@ async def startup_services(app: "FastAPI", svc: "LifespanServices") -> list[asyn
     """
     bg_tasks: list[asyncio.Task] = []
 
+    from nexus.services.product_agent_registry.configuration import configure as configure_registry
+
+    configure_registry(app, svc.record_store)
+
     _startup_agent_lifecycle(app, svc)
     _startup_key_service(app, svc)
     _startup_credential_service(app, svc)

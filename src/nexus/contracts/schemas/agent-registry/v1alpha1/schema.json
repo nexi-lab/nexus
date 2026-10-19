@@ -1,0 +1,805 @@
+{
+  "$defs": {
+    "Channel": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "enum": [
+            "stable",
+            "canary"
+          ],
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Version",
+          "type": "string"
+        },
+        "spec_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Spec Digest",
+          "type": "string"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "enabled": {
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "updated_at": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Updated At",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "version",
+        "spec_digest",
+        "revision",
+        "enabled",
+        "updated_at"
+      ],
+      "title": "Channel",
+      "type": "object"
+    },
+    "CommandResult": {
+      "additionalProperties": false,
+      "properties": {
+        "api_version": {
+          "const": "agent-registry.sudo.dev/v1alpha1",
+          "default": "agent-registry.sudo.dev/v1alpha1",
+          "title": "Api Version",
+          "type": "string"
+        },
+        "kind": {
+          "const": "RegistryCommandResult",
+          "default": "RegistryCommandResult",
+          "title": "Kind",
+          "type": "string"
+        },
+        "principal": {
+          "$ref": "#/$defs/Principal"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SignedVersion"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "decision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Decision"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "channel": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Channel"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "principal"
+      ],
+      "title": "CommandResult",
+      "type": "object"
+    },
+    "DecideVersion": {
+      "additionalProperties": false,
+      "properties": {
+        "api_version": {
+          "const": "agent-registry.sudo.dev/v1alpha1",
+          "title": "Api Version",
+          "type": "string"
+        },
+        "request_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "principal": {
+          "$ref": "#/$defs/PrincipalRef"
+        },
+        "kind": {
+          "const": "DecideVersion",
+          "title": "Kind",
+          "type": "string"
+        },
+        "version": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Version",
+          "type": "string"
+        },
+        "decision": {
+          "enum": [
+            "approved",
+            "withdrawn",
+            "revoked"
+          ],
+          "title": "Decision",
+          "type": "string"
+        },
+        "reason": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        },
+        "expires_at": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expires At"
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "principal",
+        "kind",
+        "version",
+        "decision",
+        "reason"
+      ],
+      "title": "DecideVersion",
+      "type": "object"
+    },
+    "Decision": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "version": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Version",
+          "type": "string"
+        },
+        "decision": {
+          "enum": [
+            "approved",
+            "withdrawn",
+            "revoked"
+          ],
+          "title": "Decision",
+          "type": "string"
+        },
+        "actor": {
+          "title": "Actor",
+          "type": "string"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "expires_at": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Expires At"
+        },
+        "created_at": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Created At",
+          "type": "integer"
+        },
+        "registry_revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Registry Revision",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "version",
+        "decision",
+        "actor",
+        "reason",
+        "expires_at",
+        "created_at",
+        "registry_revision"
+      ],
+      "title": "Decision",
+      "type": "object"
+    },
+    "MoveChannel": {
+      "additionalProperties": false,
+      "properties": {
+        "api_version": {
+          "const": "agent-registry.sudo.dev/v1alpha1",
+          "title": "Api Version",
+          "type": "string"
+        },
+        "request_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "principal": {
+          "$ref": "#/$defs/PrincipalRef"
+        },
+        "kind": {
+          "const": "MoveChannel",
+          "title": "Kind",
+          "type": "string"
+        },
+        "channel": {
+          "enum": [
+            "stable",
+            "canary"
+          ],
+          "title": "Channel",
+          "type": "string"
+        },
+        "version": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Version",
+          "type": "string"
+        },
+        "expected_revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Expected Revision",
+          "type": "integer"
+        },
+        "reason": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "principal",
+        "kind",
+        "channel",
+        "version",
+        "expected_revision",
+        "reason"
+      ],
+      "title": "MoveChannel",
+      "type": "object"
+    },
+    "Principal": {
+      "additionalProperties": false,
+      "properties": {
+        "principal": {
+          "$ref": "#/$defs/PrincipalRef"
+        },
+        "owner_zone": {
+          "title": "Owner Zone",
+          "type": "string"
+        },
+        "display_name": {
+          "title": "Display Name",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "active",
+            "suspended",
+            "revoked"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "created_at": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Created At",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "principal",
+        "owner_zone",
+        "display_name",
+        "status",
+        "revision",
+        "created_at"
+      ],
+      "title": "Principal",
+      "type": "object"
+    },
+    "PrincipalRef": {
+      "additionalProperties": false,
+      "properties": {
+        "trust_domain": {
+          "maxLength": 253,
+          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$",
+          "title": "Trust Domain",
+          "type": "string"
+        },
+        "agent_name": {
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$",
+          "title": "Agent Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "trust_domain",
+        "agent_name"
+      ],
+      "title": "PrincipalRef",
+      "type": "object"
+    },
+    "PublishVersion": {
+      "additionalProperties": false,
+      "properties": {
+        "api_version": {
+          "const": "agent-registry.sudo.dev/v1alpha1",
+          "title": "Api Version",
+          "type": "string"
+        },
+        "request_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "principal": {
+          "$ref": "#/$defs/PrincipalRef"
+        },
+        "kind": {
+          "const": "PublishVersion",
+          "title": "Kind",
+          "type": "string"
+        },
+        "version": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Version",
+          "type": "string"
+        },
+        "spec_ref": {
+          "$ref": "urn:sudo:contracts:common:v1:resource-ref"
+        },
+        "spec_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Spec Digest",
+          "type": "string"
+        },
+        "source_evidence_refs": {
+          "items": {
+            "$ref": "urn:sudo:contracts:common:v1:resource-ref"
+          },
+          "maxItems": 16,
+          "title": "Source Evidence Refs",
+          "type": "array"
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "principal",
+        "kind",
+        "version",
+        "spec_ref",
+        "spec_digest"
+      ],
+      "title": "PublishVersion",
+      "type": "object"
+    },
+    "RegisterPrincipal": {
+      "additionalProperties": false,
+      "properties": {
+        "api_version": {
+          "const": "agent-registry.sudo.dev/v1alpha1",
+          "title": "Api Version",
+          "type": "string"
+        },
+        "request_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "principal": {
+          "$ref": "#/$defs/PrincipalRef"
+        },
+        "kind": {
+          "const": "RegisterPrincipal",
+          "title": "Kind",
+          "type": "string"
+        },
+        "display_name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Display Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "principal",
+        "kind",
+        "display_name"
+      ],
+      "title": "RegisterPrincipal",
+      "type": "object"
+    },
+    "Resolution": {
+      "additionalProperties": false,
+      "properties": {
+        "api_version": {
+          "const": "agent-registry.sudo.dev/v1alpha1",
+          "default": "agent-registry.sudo.dev/v1alpha1",
+          "title": "Api Version",
+          "type": "string"
+        },
+        "kind": {
+          "const": "RegistryResolution",
+          "default": "RegistryResolution",
+          "title": "Kind",
+          "type": "string"
+        },
+        "principal": {
+          "$ref": "#/$defs/Principal"
+        },
+        "version": {
+          "$ref": "#/$defs/SignedVersion"
+        },
+        "approval": {
+          "$ref": "#/$defs/Decision"
+        },
+        "channel": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Channel"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evaluated_at": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Evaluated At",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "principal",
+        "version",
+        "approval",
+        "channel",
+        "evaluated_at"
+      ],
+      "title": "Resolution",
+      "type": "object"
+    },
+    "SetPrincipalStatus": {
+      "additionalProperties": false,
+      "properties": {
+        "api_version": {
+          "const": "agent-registry.sudo.dev/v1alpha1",
+          "title": "Api Version",
+          "type": "string"
+        },
+        "request_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "principal": {
+          "$ref": "#/$defs/PrincipalRef"
+        },
+        "kind": {
+          "const": "SetPrincipalStatus",
+          "title": "Kind",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "active",
+            "suspended",
+            "revoked"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "expected_revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Expected Revision",
+          "type": "integer"
+        },
+        "reason": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "principal",
+        "kind",
+        "status",
+        "expected_revision",
+        "reason"
+      ],
+      "title": "SetPrincipalStatus",
+      "type": "object"
+    },
+    "SignedVersion": {
+      "additionalProperties": false,
+      "properties": {
+        "manifest": {
+          "$ref": "#/$defs/VersionManifest"
+        },
+        "payload_base64": {
+          "title": "Payload Base64",
+          "type": "string"
+        },
+        "digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Digest",
+          "type": "string"
+        },
+        "algorithm": {
+          "const": "Ed25519",
+          "default": "Ed25519",
+          "title": "Algorithm",
+          "type": "string"
+        },
+        "key_id": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Key Id",
+          "type": "string"
+        },
+        "signature_base64": {
+          "title": "Signature Base64",
+          "type": "string"
+        }
+      },
+      "required": [
+        "manifest",
+        "payload_base64",
+        "digest",
+        "key_id",
+        "signature_base64"
+      ],
+      "title": "SignedVersion",
+      "type": "object"
+    },
+    "VersionItem": {
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "$ref": "#/$defs/SignedVersion"
+        },
+        "decision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Decision"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "decision"
+      ],
+      "title": "VersionItem",
+      "type": "object"
+    },
+    "VersionManifest": {
+      "additionalProperties": false,
+      "properties": {
+        "api_version": {
+          "const": "agent-registry.sudo.dev/v1alpha1",
+          "default": "agent-registry.sudo.dev/v1alpha1",
+          "title": "Api Version",
+          "type": "string"
+        },
+        "kind": {
+          "const": "VersionManifest",
+          "default": "VersionManifest",
+          "title": "Kind",
+          "type": "string"
+        },
+        "principal": {
+          "$ref": "#/$defs/PrincipalRef"
+        },
+        "version": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Version",
+          "type": "string"
+        },
+        "spec_ref": {
+          "$ref": "urn:sudo:contracts:common:v1:resource-ref"
+        },
+        "spec_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Spec Digest",
+          "type": "string"
+        },
+        "source_evidence_refs": {
+          "items": {
+            "$ref": "urn:sudo:contracts:common:v1:resource-ref"
+          },
+          "title": "Source Evidence Refs",
+          "type": "array"
+        },
+        "created_by": {
+          "title": "Created By",
+          "type": "string"
+        },
+        "created_at": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Created At",
+          "type": "integer"
+        },
+        "evidence": {
+          "const": "signed_registration_only",
+          "default": "signed_registration_only",
+          "title": "Evidence",
+          "type": "string"
+        }
+      },
+      "required": [
+        "principal",
+        "version",
+        "spec_ref",
+        "spec_digest",
+        "source_evidence_refs",
+        "created_by",
+        "created_at"
+      ],
+      "title": "VersionManifest",
+      "type": "object"
+    },
+    "VersionsPage": {
+      "additionalProperties": false,
+      "properties": {
+        "api_version": {
+          "const": "agent-registry.sudo.dev/v1alpha1",
+          "default": "agent-registry.sudo.dev/v1alpha1",
+          "title": "Api Version",
+          "type": "string"
+        },
+        "kind": {
+          "const": "RegistryVersionsPage",
+          "default": "RegistryVersionsPage",
+          "title": "Kind",
+          "type": "string"
+        },
+        "principal": {
+          "$ref": "#/$defs/Principal"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/VersionItem"
+          },
+          "title": "Items",
+          "type": "array"
+        },
+        "channels": {
+          "items": {
+            "$ref": "#/$defs/Channel"
+          },
+          "title": "Channels",
+          "type": "array"
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Next Cursor"
+        }
+      },
+      "required": [
+        "principal",
+        "items",
+        "channels",
+        "next_cursor"
+      ],
+      "title": "VersionsPage",
+      "type": "object"
+    }
+  },
+  "anyOf": [
+    {
+      "discriminator": {
+        "mapping": {
+          "DecideVersion": "#/$defs/DecideVersion",
+          "MoveChannel": "#/$defs/MoveChannel",
+          "PublishVersion": "#/$defs/PublishVersion",
+          "RegisterPrincipal": "#/$defs/RegisterPrincipal",
+          "SetPrincipalStatus": "#/$defs/SetPrincipalStatus"
+        },
+        "propertyName": "kind"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/RegisterPrincipal"
+        },
+        {
+          "$ref": "#/$defs/PublishVersion"
+        },
+        {
+          "$ref": "#/$defs/DecideVersion"
+        },
+        {
+          "$ref": "#/$defs/MoveChannel"
+        },
+        {
+          "$ref": "#/$defs/SetPrincipalStatus"
+        }
+      ]
+    },
+    {
+      "$ref": "#/$defs/CommandResult"
+    },
+    {
+      "$ref": "#/$defs/Resolution"
+    },
+    {
+      "$ref": "#/$defs/VersionsPage"
+    },
+    {
+      "$ref": "#/$defs/VersionItem"
+    }
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.sudo.dev/experimental/agent-registry/v1alpha1"
+}

@@ -92,6 +92,12 @@ def build_v2_registry(
     """
     registry = RouterRegistry()
 
+    from nexus.server.api.v2.routers.product_agent_registry import router as product_registry_router
+
+    registry.add(
+        RouterEntry(router=product_registry_router, name="product_agent_registry", endpoint_count=4)
+    )
+
     # ---- Core v2 routers ----
     try:
         from nexus.server.api.v2.routers import operations

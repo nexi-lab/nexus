@@ -389,12 +389,13 @@ def verify_account_closure(binary, url, engine, sessions, legacy, pb, rpc, outpu
         base = f"http://{ready['http_addr']}"
         for token in closed:
             assert request(base, "/auth/me", token)[0] == 401
-    assert inspect(engine).get_table_names() == [
+    tables = set(inspect(engine).get_table_names())
+    assert tables == {
         "api_keys",
         "oauth_api_keys",
         "user_oauth_accounts",
         "users",
-    ]
+    }, tables
 
 
 def main() -> int:

@@ -489,16 +489,16 @@ cargo test -p nexus-cluster --all-features --test user_runtime signed_search_kee
 
 以下编号可直接用于评论和安排人工复核。使用本地隔离账号、浏览器 profile 和测试数据，记录实际入口及所测提交。
 
-| 编号 | 操作与通过标准 | 已执行的自动验证 | 人工复核 |
-|---|---|---|---|
-| ACCOUNT-22 | `/register` 创建账号，打开邮件中的 `/verify-email` 链接，确认账号服务器后验证。地址栏清除 token；注册和验证不生成账户 JWT 或 native key。 | 真实 Rust 进程、规范 SQLite schema、回环 SMTP 及浏览器通过；`email_verified` 从 0 变 1，zone/key 仍为空且无管理员授权。 | 待安排 |
-| ACCOUNT-23 | 在测试网关使邮件请求返回 503，恢复后重发。页面保留已注册状态，不再次创建账号；重复注册显示实际冲突。 | 真实 Rust 注册和邮件投递通过，故障仅注入邮件请求；数据库只有一个账号。 | 待安排 |
-| ACCOUNT-24 | 分别用未验证账号、错误密码和已验证账号登录。前两项失败，正确密码进入 `/account`；仅登录账号不能进入文件页面。 | 真实 Rust 登录、HTTP 错误和页面路由通过。 | 待安排 |
-| ACCOUNT-25 | 在 `/account` 修改包含中文的 display name，刷新页面。显示 Rust 返回的新资料，user ID 保持，不创建文件权限。 | 实际 PATCH/GET 和刷新通过；无 native 授权副作用。 | 待安排 |
-| ACCOUNT-26 | 用错误当前密码改密，再用正确当前密码修改。错误时会话保留；成功后清空密码输入，旧密码不能登录，新密码可以。 | 实际 Rust 密码验证、改密和重新登录通过。 | 待安排 |
-| ACCOUNT-27 | 保留已有 native key 后登录/退出账号，或使账号 token 失效。文件连接保持；撤销 native key 后，仍有效的账户会话保持。 | 真实 Rust 账户与 native 协议夹具覆盖两个方向；实际 native 密钥撤销另有真实 daemon 验收。 | 待安排 |
-| ACCOUNT-28 | Google 从所选账号服务器开始，回调使用 `/auth/oauth/google/callback`。state 或浏览器 cookie 缺失时失败，回调查询参数被移除，已有 native 连接保持。 | 浏览器线契约及 cookie 夹具通过；后端实际 RSA/OIDC 验收见 ACCOUNT-14—21。真人 Google 浏览器尚未执行。 | 待安排 |
-| ACCOUNT-29 | 用配置的 native 身份检查管理页面、文件与 Search；撤销 key/关系后刷新或重新查询，旧权限不继续生效，另一个用户保持可用。 | 真实 native daemon、签名 Search、TLS/ReBAC 和生产前端通过十二组断言。 | 待安排 |
+| 编号 / 人工复核 | 操作与通过标准 | 已执行的自动验证 |
+|---|---|---|
+| ACCOUNT-22 / 待安排 | `/register` 创建账号，打开邮件中的 `/verify-email` 链接，确认账号服务器后验证。地址栏清除 token；注册和验证不生成账户 JWT 或 native key。 | 真实 Rust 进程、规范 SQLite schema、回环 SMTP 及浏览器通过；`email_verified` 从 0 变 1，zone/key 仍为空且无管理员授权。 |
+| ACCOUNT-23 / 待安排 | 在测试网关使邮件请求返回 503，恢复后重发。页面保留已注册状态，不再次创建账号；重复注册显示实际冲突。 | 真实 Rust 注册和邮件投递通过，故障仅注入邮件请求；数据库只有一个账号。 |
+| ACCOUNT-24 / 待安排 | 分别用未验证账号、错误密码和已验证账号登录。前两项失败，正确密码进入 `/account`；仅登录账号不能进入文件页面。 | 真实 Rust 登录、HTTP 错误和页面路由通过。 |
+| ACCOUNT-25 / 待安排 | 在 `/account` 修改包含中文的 display name，刷新页面。显示 Rust 返回的新资料，user ID 保持，不创建文件权限。 | 实际 PATCH/GET 和刷新通过；无 native 授权副作用。 |
+| ACCOUNT-26 / 待安排 | 用错误当前密码改密，再用正确当前密码修改。错误时会话保留；成功后清空密码输入，旧密码不能登录，新密码可以。 | 实际 Rust 密码验证、改密和重新登录通过。 |
+| ACCOUNT-27 / 待安排 | 保留已有 native key 后登录/退出账号，或使账号 token 失效。文件连接保持；撤销 native key 后，仍有效的账户会话保持。 | 真实 Rust 账户与 native 协议夹具覆盖两个方向；实际 native 密钥撤销另有真实 daemon 验收。 |
+| ACCOUNT-28 / 待安排 | Google 从所选账号服务器开始，回调使用 `/auth/oauth/google/callback`。state 或浏览器 cookie 缺失时失败，回调查询参数被移除，已有 native 连接保持。 | 浏览器线契约及 cookie 夹具通过；后端实际 RSA/OIDC 验收见 ACCOUNT-14—21。真人 Google 浏览器尚未执行。 |
+| ACCOUNT-29 / 待安排 | 用配置的 native 身份检查管理页面、文件与 Search；撤销 key/关系后刷新或重新查询，旧权限不继续生效，另一个用户保持可用。 | 真实 native daemon、签名 Search、TLS/ReBAC 和生产前端通过十二组断言。 |
 
 复跑账户浏览器测试时，在候选 `nexus-frontend` checkout 中执行：
 

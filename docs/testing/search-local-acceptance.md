@@ -2,7 +2,7 @@
 
 更新日期：2026 年 10 月 19 日。本文用于逐项评论、分配测试和记录结果。
 
-当前状态：Search、固定 owner 授权、原生 whoami/CORS、文件与 RTS Search、统计/zone 一致性、索引契约清理及 scode 正式依赖已合并。Rust 账号服务的注册、密码登录、资料、改密、SMTP 验证和 Google OIDC 后端已在最终 CI 全绿后合并。前端 #26 已接入这些账号契约，账户与 native 文件凭证分别管理；最新应用代码通过本地及 Linux CI 的 55 项浏览器回归，并通过十二组真实 native 浏览器断言。前端保持草稿，当前源的两项 CI 全绿。实际 Google 登录、账户删除、文件身份连接策略、其余业务调用方与 Python server 退役仍有待办，整条主线尚未 code complete。腾讯云部署等代码与本地验收收齐后再讨论。
+当前状态：Search、固定 owner 授权、原生 whoami/CORS、文件与 RTS Search、统计/zone 一致性、索引契约清理及 scode 正式依赖已合并。Rust 账号服务的注册、密码登录、资料、改密、SMTP 验证和 Google OIDC 后端已在最终 CI 全绿后合并。前端 #26 已接入这些账号契约，账户与 native 文件凭证分别管理；最新应用代码通过本地及 Linux CI 的 55 项浏览器回归，并通过十二组真实 native 浏览器断言。前端保持草稿，当前源的两项 CI 全绿。已确认保留显式 native 连接，两套身份独立。实际 Google 登录、账户删除、其余业务调用方与 Python server 退役仍有待办，整条主线尚未 code complete。腾讯云部署等代码与本地验收收齐后再讨论。
 
 合并后验收补充：Nexus #4909 和 #4910 的合并后工作流均已通过；scode #970 的共享服务 E2E 四个平台全部通过，Rust CI 的其余任务通过，但真实模型 ACP subagent 测试在接收消息 120 秒后失败。当次网关仅返回心跳；测试夹具的 `env_clear()` 丢弃了 CI 配置的 90 秒 API 空闲预算，子进程回退到 300 秒，未能在夹具截止前执行现有流恢复。
 
@@ -487,6 +487,8 @@ cargo test -p nexus-cluster --all-features --test user_runtime signed_search_kee
 
 密码和 Google 登录进入 `/account`。账户客户端只调用账号 HTTP 适配层；注册不生成登录会话。标签页的 sessionStorage 保存最小账号凭证和服务地址，刷新后从 Rust 读取 profile；不保存浏览器权限副本。文件连接继续使用配置的 native API key，由 `whoami` 决定主体、zone 与管理员状态。两种登录、退出和凭证拒绝分别处理，账号 profile 的角色与 zone 不授予文件权限。
 
+2026-10-19 已确认产品边界：保留显式 native 连接，两套身份独立。Google 或密码登录后仍需使用已有 native 凭证连接文件与 Search；账户登录不自动创建文件空间或映射文件主体。该决定已由当前实现及 ACCOUNT-24、27、28、29 的回归覆盖。
+
 以下编号可直接用于评论和安排人工复核。使用本地隔离账号、浏览器 profile 和测试数据，记录实际入口及所测提交。
 
 | 编号 / 人工复核 | 操作与通过标准 | 已执行的自动验证 |
@@ -545,7 +547,7 @@ scode #973 当前提交为 `0532a13c2cc3f60e8115c11eb2f8ff50ce9c9386`，通过�
 | CODE-01 | 修复索引超时的契约边界 | 受控慢操作在修复前失败、修复后通过；交互请求仍有明确预算 | 已合并；VFS PR #442 |
 | CODE-02 | CI 保护慢索引、取消与真实提交回执 | 最终提交 CI 全绿，实际执行相应用例 | 已完成；VFS 19 项、Nexus 53 项通过 |
 | CODE-03 | 原生化后残余 Search 代码与文档清理 | 重复列表/SQL 分支和失效配置删除；架构文档与源码一致 | 已合并；Nexus PR #4902 |
-| CODE-04 | 浏览器登录/OAuth cookie 及剩余 server 调用方迁移 | 保留现有身份 SSOT，完成浏览器与账号服务端迁移后再退役 server | Rust 账号后端已合并；前端草稿已迁移注册、验证、密码/Google 登录及资料/改密；账户删除、文件身份连接策略与其余业务消费者待完成 |
+| CODE-04 | 浏览器登录/OAuth cookie 及剩余 server 调用方迁移 | 保留现有身份 SSOT，完成浏览器与账号服务端迁移后再退役 server | Rust 账号后端已合并；前端草稿已迁移注册、验证、密码/Google 登录及资料/改密；已确认显式 native 连接、身份独立；账户删除与其余业务消费者待完成 |
 | CODE-05 | `serve-user` 下的 Search 装配与授权契约 | 使用固定 owner 的私有数据边界；本地签名插件、owner 隔离、委托身份和真实模型重启全部通过 | 已完成并合并；VFS PR #443 与 Nexus PR #4904 的源提交及合并后 CI 均通过 |
 | CODE-06 | scode 正式依赖、安装 checksum 与协议一致性 | 十个直接依赖使用同一发布源，checksum 按 release 绑定，proto 与上游一致，真实 CLI/cohost 经过验证 | PR #970 已在最终 CI 全绿后合并；Windows 与 Linux 本地验收通过 |
 | CODE-07 | 统计故障语义与消费者 zone 一致性 | 实际损坏存储错误、正常 zone、诊断事实及浏览器回归；同一作用域查询和统计 | 已合并；VFS #450、UI #85、Nexus #4916 的最终源提交 CI 全绿，保留全部历史 |
@@ -555,7 +557,7 @@ scode #973 当前提交为 `0532a13c2cc3f60e8115c11eb2f8ff50ce9c9386`，通过�
 
 CODE-04 的剩余范围：
 
-- Rust 人类账号的注册、密码登录及变更、邮件验证、profile 和 Google OAuth 已合并，保留原有 user ID、bcrypt 和 provider/subject 绑定。前端已切换这些契约；仍需实现账户删除、确认账户与 native 文件身份的连接策略，并完成真人 Google 验收。原生文件授权继续由实际 native 身份决定。
+- Rust 人类账号的注册、密码登录及变更、邮件验证、profile 和 Google OAuth 已合并，保留原有 user ID、bcrypt 和 provider/subject 绑定。前端已切换这些契约；仍需实现账户删除，并完成真人 Google 验收。已确认保留显式 native 连接；原生文件授权继续由实际 native 身份决定。
 - `nexus-frontend` 的基础文件操作已迁移；管理、workspace、agent、sandbox、memory、skills 注册及连接器业务调用方仍待迁移。移除没有调用的包装方法，并不代表对应业务端点可以删除。
 - `nexus-ui` 的 monitoring/健康模型、Python server 启动入口及其余业务接口；Search 请求、响应和统计已迁移，真实 Rust CI 已在自身仓库装配，zone 与故障修复已合并。TUI 的其他面板和可选功能元数据也尚未完成。
 - 收齐这些调用方和账号后端，删除其替代的 Python 服务端，再跑完整用户旅程和 CI。上述事项完成前，整条 Python server 退役主线仍未 code complete。

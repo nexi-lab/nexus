@@ -2,7 +2,7 @@
 
 更新日期：2026 年 10 月 19 日。本文用于逐项评论、分配测试和记录结果。
 
-当前状态：Search、固定 owner 授权、原生 whoami/CORS、文件与 RTS Search、统计/zone 一致性、索引契约清理及 scode 正式依赖已合并。Rust 账号服务的注册、密码登录、资料、改密、SMTP 验证、Google OIDC 和账户注销后端均已在当前源 CI 全绿后合并。前端 #26 已接入这些账号契约，账户与 native 文件凭证分别管理；当前提交通过本地及 Linux CI 的 62 项浏览器回归，以及十四组真实 native 联合断言。前端保持草稿，两项 CI 全绿。已确认保留显式 native 连接；注销仅删除人类账号及登录绑定，native 文件和凭证保持独立。实际 Google 登录、其余业务调用方与 Python server 退役仍有待办，整条主线尚未 code complete。腾讯云部署等代码与本地验收收齐后再讨论。
+当前状态：Search、固定 owner 授权、原生 whoami/CORS、文件与 RTS Search、统计/zone 一致性、索引契约清理及 scode 正式依赖已合并。Rust 人类账号后端已合并；已确认注销仅删除人类账号及登录绑定，native 文件、凭证与授权独立。前端 #26 已收敛到现有 Rust 能力，清除 Python RPC 消费与失效注册流程；当前源的本地和 Linux CI 均通过 80 项浏览器回归、真实 native 八个步骤及十六组浏览器断言，容器运行验收通过。前端仍为草稿，未发布。真人 Google、nexus-ui/TUI 剩余调用方和 Python server 退役尚未完成，整条主线仍未 code complete；腾讯云部署等代码与本地验收收齐后再讨论。
 
 合并后验收补充：Nexus #4909 和 #4910 的合并后工作流均已通过；scode #970 的共享服务 E2E 四个平台全部通过，Rust CI 的其余任务通过，但真实模型 ACP subagent 测试在接收消息 120 秒后失败。当次网关仅返回心跳；测试夹具的 `env_clear()` 丢弃了 CI 配置的 90 秒 API 空闲预算，子进程回退到 300 秒，未能在夹具截止前执行现有流恢复。
 
@@ -67,6 +67,13 @@ Graph HTTP API、调用方和 Zoekt 索引/诊断已清理。当前 Search 不�
 | BROWSER-03 | 新建和递归删除目录 | 在折叠目录中直接选择“New File”，输入框应显示；删除包含当前选中文件的目录后，文件视图清空，导航回到父目录。 | 自动化通过；人工待安排 |
 | BROWSER-04 | 切换凭证后的缓存隔离 | A 退出后在同一页面登录 B；A 的目录、内容和迟到响应均不得出现在 B 的界面。 | 自动化通过；人工待安排 |
 | BROWSER-05 | 文件及目录错误 | 测试 403、撤销凭证和服务不可用。界面明确展示错误，不能把失败当成空目录或不存在的文件。 | 自动化通过；人工待安排 |
+| BROWSER-06 | 真实 VFS 与能力范围 | 登录后直接展开实际目录；访问旧 workspace/memory/skills 地址回到文件页面，不请求工作区注册、合成 namespace、SKILL 探测或 Python RPC。 | 本地与 CI 通过；人工待安排 |
+| BROWSER-07 | 原生凭证与证书 agent 共存 | native 管理员创建 user/service 凭证，核对 subject、zone、expiry；明文默认隐藏且只留内存。重载不再显示明文，撤销后 whoami 返回 401。证书 agent 记录可见且只读。 | 协议与真实 native UI 通过；人工待安排 |
+| BROWSER-08 | 完整 ReBAC tuple | 对测试文件填写准确 zone、relation、subject，必要时填写 userset relation。检查完整 tuple 列表与撤销，另一管理员先撤销后本页仍可安全撤销；越区/错误响应不能显示为空成功。 | 协议与真实 native 403→200→403 通过；人工待安排 |
+| BROWSER-09 | HTML 隔离 | 打开测试 HTML，让脚本尝试读取父页面 localStorage；普通及全屏均被 origin 隔离。原生连接仍有效。 | 实际 Chrome 通过；人工待安排 |
+| BROWSER-10 | 本地 PDF、图片与资源释放 | 打开有效 PDF，核对页数、像素、缩放与本地 worker；再切换 PNG/SVG，均正确解码，旧对象 URL 已释放。损坏 PDF 明确报错并可下载。 | 实际 Chrome 与 worker MIME 容器检查通过；人工待安排 |
+| BROWSER-11 | Office 原字节下载 | 分别打开 DOCX/XLSX，下载并逐字节比较；页面和文件均不触发外部转换或字体请求。 | 实际 Chrome 通过；人工待安排 |
+| BROWSER-12 | 迟到文件操作与批量删除 | 延迟 A 文件的保存/删除，切换 B 并编辑，A 的成功或失败都不能覆盖 B；同时勾选目录和子文件只递归删除父目录一次。 | 真实浏览器控制响应顺序通过；人工待安排 |
 
 ## 三、2026 年 10 月 14 日已完成的本地验证
 
@@ -485,7 +492,7 @@ cargo test -p nexus-cluster --all-features --test user_runtime signed_search_kee
 
 ### 账户前端与实际浏览器验收（2026-10-19）
 
-[前端 PR #26](https://github.com/nexi-lab/nexus-frontend/pull/26) 的当前提交为 `bd2f2645a135b3c75c639fc87327c1188405c3a6`，包含账户/native 身份拆分、连接契约、邮箱验证恢复和账户注销。[账号后端 PR #4924](https://github.com/nexi-lab/nexus/pull/4924) 已合并为 `0ce4227ac37a862b2a3fe1090e71a5c6f5e8098c`。本轮账户注销 [PR #4929](https://github.com/nexi-lab/nexus/pull/4929) 的最终源为 `6809644192c95282ed3fcd9d7dcf06e5d9581995`：十八个工作流和五十一项检查通过，发布标签任务按配置跳过后普通合并为 `2a0cc7414b0b8716fcebe3abcfd1d884d09e03ff`。合并文件树与已测源完全相同，三个源提交及全部历史保留；合并后 CI 另行监控。前端两个 CI job 使用同一后端 revision。
+[前端 PR #26](https://github.com/nexi-lab/nexus-frontend/pull/26) 的当前提交为 `02fde723b07bbb48e726383b825116fa97f566d4`，包含独立账户/native 身份、Rust 账号流程、原生文件/Search、凭证管理、完整 ReBAC tuple 及预览隔离。账号注销 [PR #4929](https://github.com/nexi-lab/nexus/pull/4929) 已合并为 `2a0cc7414b0b8716fcebe3abcfd1d884d09e03ff`：源提交十八个工作流、五十一项检查通过，合并后十二个工作流、四十六项检查也通过。前端两个 Rust 验收 job 使用该 PR 的同一已验证后端 revision `6809644192c95282ed3fcd9d7dcf06e5d9581995`，另有运行 Nginx 的容器验收 job。全部源提交历史保留。
 
 密码和 Google 登录进入 `/account`。账户客户端只调用账号 HTTP 适配层；注册不生成登录会话。标签页的 sessionStorage 保存最小账号凭证和服务地址，刷新后从 Rust 读取 profile；不保存浏览器权限副本。文件连接继续使用配置的 native API key，由 `whoami` 决定主体、zone 与管理员状态。两种登录、退出和凭证拒绝分别处理，账号 profile 的角色与 zone 不授予文件权限。
 
@@ -536,24 +543,24 @@ pnpm exec playwright install chromium
 pnpm exec playwright test --headed
 ```
 
-当前共 62 项，其中二十二个账户场景连接实际 Rust 进程、临时数据库和回环 SMTP；另有十一项连接守卫覆盖错误地址、错误成功响应及恢复。结束后清理进程与数据库。测试网关的 Google/native 协议夹具不计为真人 Google 或真实文件服务；真实 native 组合用前文 `test_search_local.py --frontend-checkout` 的独立入口复跑。
+当前共 80 项，其中二十二个账户场景连接实际 Rust、SQLite 和回环 SMTP；十一项连接守卫检查地址和响应。新增覆盖 native 凭证、证书 agent 记录共存、完整 tuple、HTML origin、PDF 像素、PNG/SVG、对象 URL 释放、Office 原字节下载、迟到文件操作和父子去重删除。测试结束清理进程与数据库，零重试。Google/native 协议 fixture 不计为真人 Google 或真实 daemon；真实 native 组合另用前文 `test_search_local.py --frontend-checkout` 入口执行。
 
 本轮完成的验证：
 
 | 范围 | 结果与证据 |
 |---|---|
 | 最终应用的 TypeScript、生产构建及本轮 focused lint | 通过；构建复用本工作线输出目录，使用 BelowNormal 与单任务设置，实际测试保持 Normal。 |
-| 最终应用本地浏览器 | 62/62、零重试，含二十二项真实 Rust 账户场景和十一项连接守卫；`frontend-account-closure-typed-final-20261019.log`。源码为 `bd2f2645`，运行期间保持不变，进程与数据库清理通过。 |
-| 最新应用 Linux 浏览器 CI | [62/62 通过](https://github.com/nexi-lab/nexus-frontend/actions/runs/39248375623)，源码为 `bd2f2645`，零重试；此前 55 项及其 native CI 作为旧源证据保留。 |
-| 浏览目录与文本的 JavaScript 预算 | 实际 1,477,653 bytes，低于原有 2 MiB；登录预算仍为 1 MiB。Office/PDF 预览按打开类型加载。 |
+| 最终应用本地浏览器 | 80/80、零重试；`frontend-native-console-final-browser-20261019.log`。源码为 `02fde723b07bbb48e726383b825116fa97f566d4`，实际 Rust 账号二进制及源码在运行期间保持不变；fixture 清理通过。 |
+| 最新应用 Linux 浏览器 CI | [80/80 通过](https://github.com/nexi-lab/nexus-frontend/actions/runs/39263100102)，与本地同一源、同一实际浏览预算，零重试；此前 62 项及失败 trace 保留为历史证据。 |
+| 浏览目录与文本的 JavaScript 预算 | 本地及 Linux 实际 709,348 bytes，低于原有 2 MiB；登录仍低于 1 MiB。PDF 按需加载且 worker 同源；Office 原字节下载，不访问外部转换服务或字体站点。 |
 | 文件读取故障稳定性 | 原 CI trace 证明切换全局故障与目录加载竞争。故障现按操作作用域配置且在导航前安装，连续五轮 35/35 通过；目录整体失败另有用例。断言、时限及零重试设置保持。 |
-| 真实 native / 签名 Search / TLS / ReBAC / 生产前端 / Rust 账号 | 八个步骤、十四组浏览器断言通过；包含实际账号注销后的文件读取/Search、密钥/关系撤销、目录/文件操作、UTF-8 改写、重命名后保存、逐字节上传下载和递归删除。证据为 `native-account-closure-typed-final-20261019/run-1792411187600071500/results.json` 及其 `native-browser/native-browser-result.json`。源码与产物在运行期间保持不变，临时 fixture 和凭证已清理。 |
-| 当前前端的 native CI | 两个 job 使用同一后端 pin；复用 `build_search_fixture.sh` 与 `test_search_local.py`，实际构建账号服务，直接测试 PR checkout，并保留浏览器证据。[当前源两项 CI 全绿](https://github.com/nexi-lab/nexus-frontend/actions/runs/39248375623)：62 项浏览器、真实 native 八个步骤和十四组断言；本地同一源也全部通过。原账号 job 仍为十五分钟，native 测试仍为十分钟；含冷 Rust 构建的 job 为三十分钟。 |
+| 真实 native / 签名 Search / TLS / ReBAC / 生产前端 / Rust 账号 | 八个步骤、十六组浏览器断言通过；含账号注销后文件/Search、UI 创建及撤销 API key、UI 完整 tuple 授予及撤销后 403→200→403，以及既有原生操作。证据：`native-browser-native-console-final-20261019/run-1792417750386397700/results.json` 和其 `native-browser/native-browser-result.json`。当前源与三个二进制保持不变，fixture/凭证清理通过。 |
+| 当前前端的 native CI | [当前源三项 CI 全绿](https://github.com/nexi-lab/nexus-frontend/actions/runs/39263100102)：80 项浏览器、真实 native 八步/十六组断言，以及实际 Nginx 容器的 healthcheck、SPA、本地 PDF worker JavaScript MIME 与缺失资源 404。原浏览器十五分钟、native 测试十分钟、含冷 Rust 构建的 job 三十分钟和零重试均保持。 |
 | 注销后端 Rust、Clippy 与双数据库 | 本地十五项库测试、十二项网络测试及严格 Clippy 通过；[Windows/Linux Accounts CI](https://github.com/nexi-lab/nexus/actions/runs/39246907072) 也通过，实际 SQLite/PostgreSQL 二进制兼容验收各十七组。本机 Docker engine 未启动，只执行本地 SQLite 十七组；不声称本地 PostgreSQL 已通过。 |
 
-本轮删除了旧 Google 确认流程、混合账号/文件认证回退、未使用的登录/删除弹窗，以及 native 客户端中的账户方法。账户注销使用独立账户客户端；密码策略由 Rust 决定，两个浏览器 runner 共享纯邮件链接解析函数及精确类型声明。PostgreSQL schema 反射没有顺序保证，回归比较严格的表集合；保留首次失败日志，没有放宽表成员断言或测试时限。当前应用代码仍有 43 个业务 RPC 包装方法、110 处成员调用和 18 处直接调用，涉及十个直接 RPC 目标；这些业务消费者仍待完成。对 workspace/memory/skills 等找不到当前生产者的注册流程，保留范围确认待办，尚未按猜测删除页面。前端未发布，腾讯云生产未修改。
+本轮清除 50 个失效源码文件、23 项直接依赖与 233 个无用包版本，保留下来的依赖版本全部未变；导入图没有孤立源码。用户已确认按当前 Rust 能力收敛：移除缺少实现的 workspace/memory/skills 注册及旧 Connector/Chat 业务页面，原生 managed-agent 能力仍由自身生命周期管理。前端没有 `/api/nfs` 消费、合成 namespace、目录级 SKILL 探测或隐式工作区注册；API key 与 ReBAC 使用独立 typed adapter，原生身份字段不再翻译成 SQL 账户别名。上传/编辑共用写入 hook，下载共用字节实现。保留首次失败证据：下拉框用角色定位；外部字体链接删除；Nginx 等待既有 healthcheck，探针明确访问 IPv4 listener；凭证列表接受原生 `agent:<name>` 标识，证书 agent 只读；通用 MIME 的 SVG 回退被真实解码用例保护。未改 Kernel syscall、ABI、Raft 或生产。
 
-scode #973 当前提交为 `0532a13c2cc3f60e8115c11eb2f8ff50ce9c9386`，通过普通 merge 接入最新 main 并保留全部历史。该提交的本地实际 CLI/managed Nexus/Vault 九组验收通过；[Rust CI](https://github.com/sudoprivacy/sudocode/actions/runs/39230192392)、[Shared Services 四个平台](https://github.com/sudoprivacy/sudocode/actions/runs/39230192350)、五平台 release 构建、Rendering 和历史检查均通过，常规检查共 33 通过、4 项按配置跳过。编译复用原输出目录，单 Cargo job、BelowNormal，实际 rustc 优先级已核实；测试与实际 CLI 保持 Normal，未继承 provider 凭证。更早的[真实 Windows 模型验收](https://github.com/sudoprivacy/sudocode/actions/runs/39151107581) 已通过 Azure 文件结果和两组子代理审批；后续 hook 跟进被实际 provider 以 `403 pre_consume_token_quota_failed` 拒绝。当前源完整真实模型验收仍等待原 CI key 额度恢复，不计为已通过；PR 保持草稿。
+scode #973 的已验收提交为 `0532a13c2cc3f60e8115c11eb2f8ff50ce9c9386`，保留普通 merge 历史；之后 main 已推进，正式合并前还需接入届时最新 main 并重跑检查。该提交的本地实际 CLI/managed Nexus/Vault 九组通过，常规 CI 共 33 通过、4 项按配置跳过。编译单 Cargo job、BelowNormal，实际 rustc 优先级已核实，测试/CLI 为 Normal。完整当前源真实模型验收仍等原 CI key 额度恢复：此前 Windows 模型旅程通过 Azure 文件结果和两组子代理审批，后续 hook 被 provider 以 `403 pre_consume_token_quota_failed` 拒绝，不能计为完整通过；PR 保持草稿。
 
 ## 六、代码与验收待办
 
@@ -562,7 +569,7 @@ scode #973 当前提交为 `0532a13c2cc3f60e8115c11eb2f8ff50ce9c9386`，通过�
 | CODE-01 | 修复索引超时的契约边界 | 受控慢操作在修复前失败、修复后通过；交互请求仍有明确预算 | 已合并；VFS PR #442 |
 | CODE-02 | CI 保护慢索引、取消与真实提交回执 | 最终提交 CI 全绿，实际执行相应用例 | 已完成；VFS 19 项、Nexus 53 项通过 |
 | CODE-03 | 原生化后残余 Search 代码与文档清理 | 重复列表/SQL 分支和失效配置删除；架构文档与源码一致 | 已合并；Nexus PR #4902 |
-| CODE-04 | 浏览器登录/OAuth cookie 及剩余 server 调用方迁移 | 保留现有身份 SSOT，完成浏览器与账号服务端迁移后再退役 server | Rust 账号与注销后端均已在源提交 CI 全绿后合并；前端草稿已迁移注册、验证、密码/Google 登录、资料/改密及注销，62 项回归和 native 十四组断言通过；其余业务消费者待完成 |
+| CODE-04 | 浏览器登录/OAuth cookie 及剩余 server 调用方迁移 | 保留身份 SSOT，收齐消费者后退役 server | Rust 账号后端已合并；前端 Rust console 在当前源 80 项回归、native 十六组及容器 CI 通过，保持草稿；真人 Google、nexus-ui/TUI 与 Python 服务端清理待完成 |
 | CODE-05 | `serve-user` 下的 Search 装配与授权契约 | 使用固定 owner 的私有数据边界；本地签名插件、owner 隔离、委托身份和真实模型重启全部通过 | 已完成并合并；VFS PR #443 与 Nexus PR #4904 的源提交及合并后 CI 均通过 |
 | CODE-06 | scode 正式依赖、安装 checksum 与协议一致性 | 十个直接依赖使用同一发布源，checksum 按 release 绑定，proto 与上游一致，真实 CLI/cohost 经过验证 | PR #970 已在最终 CI 全绿后合并；Windows 与 Linux 本地验收通过 |
 | CODE-07 | 统计故障语义与消费者 zone 一致性 | 实际损坏存储错误、正常 zone、诊断事实及浏览器回归；同一作用域查询和统计 | 已合并；VFS #450、UI #85、Nexus #4916 的最终源提交 CI 全绿，保留全部历史 |
@@ -573,7 +580,7 @@ scode #973 当前提交为 `0532a13c2cc3f60e8115c11eb2f8ff50ce9c9386`，通过�
 CODE-04 的剩余范围：
 
 - Rust 人类账号的注册、密码登录及变更、邮件验证、profile、Google OAuth 和注销均已合并，保留原有 user ID、bcrypt 和 provider/subject 绑定。前端已切换这些契约；仍需完成真人 Google 验收。已确认保留显式 native 连接；原生文件授权继续由实际 native 身份决定。
-- `nexus-frontend` 的基础文件操作已迁移；管理、workspace、agent、sandbox、memory、skills 注册及连接器业务调用方仍待迁移。移除没有调用的包装方法，并不代表对应业务端点可以删除。
+- `nexus-frontend` 已按用户确认收敛到现有 Rust 能力，失效注册、旧业务 RPC 和依赖已清理；原生文件、Search、凭证与 ReBAC 及独立人类账号均有本地和 CI 保护。仍需真人 Google/实际网关验收及前端发布方案，当前不合并到会自动部署 Firebase 的 main。
 - `nexus-ui` 的 monitoring/健康模型、Python server 启动入口及其余业务接口；Search 请求、响应和统计已迁移，真实 Rust CI 已在自身仓库装配，zone 与故障修复已合并。TUI 的其他面板和可选功能元数据也尚未完成。
 - 收齐这些调用方和账号后端，删除其替代的 Python 服务端，再跑完整用户旅程和 CI。上述事项完成前，整条 Python server 退役主线仍未 code complete。
 

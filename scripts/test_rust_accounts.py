@@ -32,7 +32,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.schema import CreateIndex, CreateTable
 
 from nexus.bricks.auth.providers.database_local import DatabaseLocalAuth
-from nexus.storage.models import UserModel, UserOAuthAccountModel
+from nexus.storage.models import APIKeyModel, OAuthAPIKeyModel, UserModel, UserOAuthAccountModel
 
 ROOT = Path(__file__).resolve().parents[1]
 SECRET = "fixture-account-signing-key-32-bytes-minimum"
@@ -280,6 +280,122 @@ def concurrent_registration(engine, first_base, second_client, pb, bodies):
         finally:
             gate.rollback()
         return [future.result(timeout=20) for future in futures]
+
+
+def verify_account_closure(binary, url, engine, sessions, legacy, pb, rpc, output_dir):
+    """Delete migrated identities while preserving canonical file-key records."""
+    for model in (UserOAuthAccountModel, APIKeyModel, OAuthAPIKeyModel):
+        model.__table__.create(engine)
+    unrelated = legacy.register_user("closure-other@example.test", PASSWORD)
+    closed = []
+    with sessions.begin() as session:
+        session.get(UserModel, unrelated.user_id).email_verified = 1
+    with server(binary, url, output_dir / "accounts-closure.log") as ready:
+        base = f"http://{ready['http_addr']}"
+        with grpc.insecure_channel(ready["grpc_addr"]) as channel:
+            grpc.channel_ready_future(channel).result(timeout=15)
+            client = rpc.AccountsServiceStub(channel)
+            for index, transport in enumerate(("http", "grpc")):
+                target = legacy.register_user(f"closure-{transport}@example.test", PASSWORD)
+                with sessions.begin() as session:
+                    session.get(UserModel, target.user_id).email_verified = 1
+                    key = APIKeyModel(
+                        user_id=target.user_id,
+                        subject_type="user",
+                        subject_id=target.user_id,
+                        key_hash=("a" if index == 0 else "b") * 64,
+                        name=f"closure-{transport}-file-key",
+                    )
+                    session.add(key)
+                    session.flush()
+                    session.add(
+                        OAuthAPIKeyModel(
+                            key_id=key.key_id,
+                            user_id=target.user_id,
+                            encrypted_key_value="fixture-encrypted-key-copy",
+                        )
+                    )
+                    session.add(
+                        UserOAuthAccountModel(
+                            user_id=target.user_id,
+                            provider="google",
+                            provider_user_id=f"closure-{transport}-subject",
+                        )
+                    )
+                with sessions() as session:
+                    keys_before = [
+                        dict(row)
+                        for row in session.execute(
+                            select(APIKeyModel.__table__).order_by(APIKeyModel.key_id)
+                        ).mappings()
+                    ]
+                legacy_token = legacy.login(target.email, PASSWORD)
+                assert legacy_token
+                login = client.Login(
+                    pb.LoginRequest(identifier=target.email, password=PASSWORD), timeout=15
+                )
+                verification = legacy.create_email_verification_token(target.user_id, target.email)
+                closed.extend((legacy_token, login.token))
+                assert (
+                    request(
+                        base, "/auth/me", login.token, {"user_id": unrelated.user_id}, "DELETE"
+                    )[0]
+                    == 400
+                )
+                if transport == "http":
+                    status, result = request(base, "/auth/me", login.token, method="DELETE")
+                    assert status == 200 and result["message"] == "Account deleted"
+                else:
+                    result = client.DeleteAccount(
+                        pb.DeleteAccountRequest(),
+                        metadata=[("authorization", f"Bearer {login.token}")],
+                        timeout=15,
+                    )
+                    assert result.message == "Account deleted"
+                for token in (legacy_token, login.token):
+                    assert request(base, "/auth/me", token)[0] == 401
+                    try:
+                        client.GetProfile(
+                            pb.GetProfileRequest(),
+                            metadata=[("authorization", f"Bearer {token}")],
+                            timeout=15,
+                        )
+                    except grpc.RpcError as error:
+                        assert error.code() == grpc.StatusCode.UNAUTHENTICATED
+                    else:
+                        raise AssertionError("Deleted account token was accepted")
+                assert request(base, "/auth/verify-email", body={"token": verification})[0] == 400
+                assert legacy.login(target.email, PASSWORD) is None
+                assert legacy.login(unrelated.email, PASSWORD)
+                with sessions() as session:
+                    assert session.get(UserModel, target.user_id) is None
+                    assert not session.scalars(
+                        select(UserOAuthAccountModel).where(
+                            UserOAuthAccountModel.user_id == target.user_id
+                        )
+                    ).all()
+                    assert not session.scalars(
+                        select(OAuthAPIKeyModel).where(OAuthAPIKeyModel.user_id == target.user_id)
+                    ).all()
+                    assert session.get(UserModel, unrelated.user_id)
+                    keys_after = [
+                        dict(row)
+                        for row in session.execute(
+                            select(APIKeyModel.__table__).order_by(APIKeyModel.key_id)
+                        ).mappings()
+                    ]
+                    assert keys_after == keys_before
+    with server(binary, url, output_dir / "accounts-closure-restart.log") as ready:
+        base = f"http://{ready['http_addr']}"
+        for token in closed:
+            assert request(base, "/auth/me", token)[0] == 401
+    tables = set(inspect(engine).get_table_names())
+    assert tables == {
+        "api_keys",
+        "oauth_api_keys",
+        "user_oauth_accounts",
+        "users",
+    }, tables
 
 
 def main() -> int:
@@ -668,10 +784,18 @@ def main() -> int:
             groups.append(
                 "Actual binary rejects partial Google credentials and unsafe redirect before listening"
             )
+            verify_account_closure(
+                args.binary.resolve(), url, engine, sessions, legacy, pb, rpc, args.output_dir
+            )
+            groups.append(
+                "HTTP/gRPC account deletion removes login bindings, rejects old tokens after restart and preserves canonical SQL file-key facts"
+            )
             for name in (
                 "accounts-first.log",
                 "accounts-second-instance.log",
                 "accounts-restart.log",
+                "accounts-closure.log",
+                "accounts-closure-restart.log",
             ):
                 output = (args.output_dir / name).read_text(encoding="utf8")
                 assert all(

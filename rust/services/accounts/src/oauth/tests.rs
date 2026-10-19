@@ -5,6 +5,7 @@ use crate::proto::*;
 use serde_json::{json, Value};
 use tonic::Request;
 
+mod account_closure;
 mod provider;
 mod support;
 use provider::ProviderFixture;

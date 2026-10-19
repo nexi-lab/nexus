@@ -86,6 +86,17 @@ impl AccountService {
 
 #[tonic::async_trait]
 impl AccountsService for AccountService {
+    async fn delete_account(
+        &self,
+        request: Request<DeleteAccountRequest>,
+    ) -> Result<Response<AccountMessage>, Status> {
+        let user = self.caller(&request).await?;
+        self.store.delete_account(&user).await?;
+        Ok(Response::new(AccountMessage {
+            message: "Account deleted".into(),
+        }))
+    }
+
     async fn start_google_login(
         &self,
         _: Request<StartGoogleLoginRequest>,

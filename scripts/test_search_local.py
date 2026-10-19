@@ -294,11 +294,15 @@ def main() -> int:
                             )
                             env[key] = str(destination)
                     if len(prepared) == (1 if args.keyword_only else 2):
-                        browser_env = (
-                            {"NEXUS_TEST_CHROME": os.environ["NEXUS_TEST_CHROME"]}
-                            if "NEXUS_TEST_CHROME" in os.environ
-                            else None
-                        )
+                        browser_env = {
+                            name: os.environ[name]
+                            for name in (
+                                "NEXUS_TEST_CHROME",
+                                "NEXUS_TEST_ACCOUNTS_BINARY",
+                                "NEXUS_TEST_ACCOUNTS_SCHEMA",
+                            )
+                            if name in os.environ
+                        }
                         if args.frontend_checkout:
                             frontend = args.frontend_checkout.resolve()
                             if not run(

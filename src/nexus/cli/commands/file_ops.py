@@ -21,6 +21,7 @@ from nexus.cli.utils import (
     open_filesystem,
     resolve_content,
 )
+from nexus.lib.context_utils import parse_context
 
 
 def register_commands(cli: click.Group) -> None:
@@ -43,62 +44,15 @@ def register_commands(cli: click.Group) -> None:
 
 @click.command()
 @click.argument("path", type=str)
-@click.option(
-    "--metadata",
-    is_flag=True,
-    help="Show file metadata (content_id, version) for optimistic concurrency control",
-)
-@click.option(
-    "--at-operation",
-    type=str,
-    help="Read file content at a historical operation point (time-travel debugging)",
-)
-@click.option(
-    "--section",
-    type=str,
-    default=None,
-    help="(Markdown) Read a specific section by heading text (case-insensitive)",
-)
-@click.option(
-    "--block-type",
-    type=click.Choice(["code", "table"]),
-    default=None,
-    help="(Markdown) Filter by block type within --section",
-)
-@click.option(
-    "--offset",
-    type=int,
-    default=None,
-    help="Start byte offset for a range read (read_range)",
-)
-@click.option(
-    "--length",
-    type=int,
-    default=None,
-    help="Number of bytes from --offset (requires --offset)",
-)
-@click.option(
-    "--stream",
-    "stream_mode",
-    is_flag=True,
-    help="Stream content in chunks (stream / stream_range)",
-)
-@click.option(
-    "--chunk-size",
-    type=int,
-    default=65536,
-    show_default=True,
-    help="Chunk size for --stream",
-)
+@click.option("--offset", type=click.IntRange(min=0), default=None, help="Start byte offset.")
+@click.option("--length", type=click.IntRange(min=0), default=None, help="Maximum bytes to read.")
+@click.option("--stream", "stream_mode", is_flag=True, help="Write raw bytes in bounded chunks.")
+@click.option("--chunk-size", type=click.IntRange(min=1), default=65536, show_default=True)
 @add_output_options
 @add_backend_options
 @add_context_options
 def cat(
     path: str,
-    metadata: bool,
-    at_operation: str | None,
-    section: str | None,
-    block_type: str | None,
     offset: int | None,
     length: int | None,
     stream_mode: bool,
@@ -108,58 +62,38 @@ def cat(
     remote_api_key: str | None,
     operation_context: dict[str, Any],
 ) -> None:
-    """Display file contents.
+    """Read file contents or an explicit byte range.
 
-    Examples:
-        nexus cat /workspace/data.txt
-        nexus cat /workspace/code.py
-        nexus cat /workspace/data.txt --metadata
-        nexus cat /workspace/data.txt --json
-        nexus cat /workspace/data.txt --at-operation op_abc123
-        nexus cat /workspace/docs/arch.md --section Authentication
-        nexus cat /workspace/docs/arch.md --section Auth --block-type code
-        nexus cat /workspace/docs/arch.md#authentication
+    Use --stream for byte-exact output, including binary files.
     """
-    # Support fragment syntax: /path/file.md#section → path=/path/file.md, section=section
-    if "#" in path and section is None:
-        path, section = path.rsplit("#", 1)
 
     async def _impl() -> None:
         timing = CommandTiming()
-
         try:
-            async with open_filesystem(
-                remote_url,
-                remote_api_key,
-                allow_local_default=True,
-            ) as nx:
-                with timing.phase("connect"):
-                    pass  # connection already established by async with
-
-                if at_operation:
-                    _cat_time_travel(nx, path, at_operation, metadata, output_opts, timing)
-                    return
-
+            context = parse_context(operation_context)
+            async with open_filesystem(remote_url, remote_api_key, allow_local_default=True) as nx:
                 with timing.phase("server"):
-                    if offset is not None:
-                        if offset < 0 or (length is not None and length < 0):
-                            render_error(error=ValueError("--offset/--length must be non-negative"))
-                            sys.exit(2)
-                        end = offset + length if length is not None else nx.stat(path)["size"]
+                    if offset is not None or length is not None:
+                        start = offset or 0
                         if stream_mode:
+                            end = (
+                                start + length
+                                if length is not None
+                                else max(start, nx.stat(path)["size"])
+                            )
                             write_stdout(
                                 nx.stream_range(
                                     path,
-                                    offset,
+                                    start,
                                     end,
                                     chunk_size=chunk_size,
-                                    context=cast(Any, operation_context),
+                                    context=context,
                                 )
                             )
                         else:
-                            chunk = nx.read_range(
-                                path, offset, end, context=cast(Any, operation_context)
-                            )
+                            chunk = nx.sys_read(path, count=length, offset=start, context=context)
+                            if not isinstance(chunk, bytes):
+                                raise TypeError("A file read must return bytes")
                             write_stdout((chunk,))
                         return
                     if stream_mode:
@@ -167,213 +101,59 @@ def cat(
                             nx.stream(
                                 path,
                                 chunk_size=chunk_size,
-                                context=cast(Any, operation_context),
+                                context=context,
                             )
                         )
                         return
-                    if metadata:
-                        read_result = nx.read(
-                            path, context=cast(Any, operation_context), return_metadata=True
-                        )
-                        assert isinstance(read_result, dict), (
-                            "Expected dict when return_metadata=True"
-                        )
-                        content = read_result["content"]
-                        meta_data = {
-                            "path": path,
-                            "content_id": read_result["content_id"],
-                            "version": read_result["version"],
-                            "size": read_result["size"],
-                            "modified_at": str(read_result["modified_at"]),
-                        }
-                    else:
-                        # Check file size to decide between read() and stream().
-                        # Two correctness invariants:
-                        #   (a) Use the public ``nx.sys_stat`` with the
-                        #       caller's operation_context — calling
-                        #       ``nx._kernel.sys_stat(path, ROOT_ZONE_ID)``
-                        #       directly leaks size/existence to denied
-                        #       callers and bypasses zone scoping.
-                        #   (b) NEVER write status text to stdout for ``cat``;
-                        #       it must remain byte-identical to the file.
-                        #       The "Streaming large file..." line goes to
-                        #       stderr so ``nexus cat /big > copy`` produces
-                        #       a faithful copy.
-                        STREAM_THRESHOLD = 10 * 1024 * 1024  # 10MB
-                        file_size = 0
-                        try:
-                            from nexus.lib.context_utils import parse_context
 
-                            _ctx = parse_context(cast(Any, operation_context))
-                            _stat = nx.sys_stat(path, context=_ctx)
-                            if _stat:
-                                file_size = (
-                                    _stat.get("size", 0)
-                                    if isinstance(_stat, dict)
-                                    else getattr(_stat, "size", 0)
-                                )
-                        except Exception:
-                            # Permission denial / unknown path — fall through
-                            # to the regular read path which surfaces the
-                            # error with the right context (no size leak).
-                            file_size = 0
-
-                        if file_size > STREAM_THRESHOLD and not section:
-                            sys.stderr.write(f"Streaming large file ({file_size:,} bytes)...\n")
-                            sys.stderr.flush()
-                            write_stdout(
-                                nx.stream(
-                                    path, chunk_size=65536, context=cast(Any, operation_context)
-                                )
+                    metadata = nx.sys_stat(path, context=context)
+                    file_size = metadata.get("size", 0) if metadata else 0
+                    if file_size > 10 * 1024 * 1024 and not output_opts.json_output:
+                        sys.stderr.write(f"Streaming large file ({file_size:,} bytes)...\n")
+                        sys.stderr.flush()
+                        write_stdout(
+                            nx.stream(
+                                path,
+                                chunk_size=65536,
+                                context=context,
                             )
-                            return
+                        )
+                        return
+                    content = nx.sys_read(path, context=context)
+                    if not isinstance(content, bytes):
+                        raise TypeError("A file read must return bytes")
 
-                        content = nx.sys_read(path, context=cast(Any, operation_context))
-                        meta_data = None
-
-                # --- Markdown partial read (Issue #3718) ---
-                if section and path.endswith(".md"):
-                    content_bytes = (
-                        content if isinstance(content, bytes) else content.encode("utf-8")
-                    )
-                    partial = _cat_md_section(nx, path, content_bytes, section, block_type)
-                    if partial is not None:
-                        content = partial.encode("utf-8")
-
-            # JSON mode: return structured data
             if output_opts.json_output:
                 try:
                     text = content.decode("utf-8")
                 except UnicodeDecodeError:
                     text = None
-
-                data: dict[str, Any] = {
-                    "path": path,
-                    "size": len(content),
-                    "content": text,
-                    "binary": text is None,
-                }
-                if meta_data:
-                    data["metadata"] = meta_data
-
-                render_output(data=data, output_opts=output_opts, timing=timing)
+                render_output(
+                    data={
+                        "path": path,
+                        "size": len(content),
+                        "content": text,
+                        "binary": text is None,
+                    },
+                    output_opts=output_opts,
+                    timing=timing,
+                )
                 return
-
-            # Human mode
-            if metadata and meta_data:
-                console.print("[bold]Metadata:[/bold]")
-                console.print(f"[nexus.muted]Path:[/nexus.muted]     {meta_data['path']}")
-                console.print(f"[nexus.muted]Content-ID:[/nexus.muted] {meta_data['content_id']}")
-                console.print(f"[nexus.muted]Version:[/nexus.muted]  {meta_data['version']}")
-                console.print(f"[nexus.muted]Size:[/nexus.muted]     {meta_data['size']} bytes")
-                console.print(f"[nexus.muted]Modified:[/nexus.muted] {meta_data['modified_at']}")
-                console.print()
-                console.print("[bold]Content:[/bold]")
-
             _print_content(path, content)
-
-        except Exception as e:
+        except Exception as exc:
             if output_opts.json_output:
                 from nexus.cli.exit_codes import ExitCode
 
                 render_error(
-                    error=e,
+                    error=exc,
                     output_opts=output_opts,
                     exit_code=ExitCode.GENERAL_ERROR,
                     timing=timing,
                 )
             else:
-                handle_error(e)
+                handle_error(exc)
 
     asyncio.run(_impl())
-
-
-def _cat_time_travel(
-    nx: Any,
-    path: str,
-    at_operation: str,
-    metadata: bool,
-    output_opts: OutputOptions,
-    timing: CommandTiming,
-) -> None:
-    """Handle time-travel cat (--at-operation)."""
-    time_travel = getattr(nx, "time_travel_service", None)
-    if time_travel is None:
-        console.print(
-            "[nexus.error]Error:[/nexus.error] Time-travel is only supported with local NexusFS"
-        )
-        return
-
-    with timing.phase("server"):
-        state = time_travel.get_file_at_operation(path, at_operation)
-
-    content = state["content"]
-
-    if output_opts.json_output:
-        try:
-            text = content.decode("utf-8")
-        except UnicodeDecodeError:
-            text = None
-
-        data: dict[str, Any] = {
-            "path": path,
-            "operation_id": state["operation_id"],
-            "operation_time": str(state["operation_time"]),
-            "content": text,
-            "binary": text is None,
-            "metadata": state.get("metadata"),
-        }
-        render_output(data=data, output_opts=output_opts, timing=timing)
-        return
-
-    console.print("[bold nexus.value]Time-Travel Mode[/bold nexus.value]")
-    console.print(f"[nexus.muted]Operation ID:[/nexus.muted]  {state['operation_id']}")
-    console.print(f"[nexus.muted]Operation Time:[/nexus.muted] {state['operation_time']}")
-    console.print()
-
-    if metadata:
-        console.print("[bold]Metadata:[/bold]")
-        console.print(f"[nexus.muted]Path:[/nexus.muted]     {path}")
-        console.print(
-            f"[nexus.muted]Size:[/nexus.muted]     {state['metadata'].get('size', 0)} bytes"
-        )
-        console.print(f"[nexus.muted]Owner:[/nexus.muted]    {state['metadata'].get('owner', '-')}")
-        console.print(f"[nexus.muted]Group:[/nexus.muted]    {state['metadata'].get('group', '-')}")
-        console.print(f"[nexus.muted]Mode:[/nexus.muted]     {state['metadata'].get('mode', '-')}")
-        console.print(
-            f"[nexus.muted]Modified:[/nexus.muted] {state['metadata'].get('modified_at', '-')}"
-        )
-        console.print()
-        console.print("[bold]Content:[/bold]")
-
-    _print_content(path, content)
-
-
-def _cat_md_section(
-    nx: Any,
-    path: str,
-    content: bytes,
-    section: str,
-    block_type: str | None,
-) -> str | None:
-    """Attempt a partial markdown read using the structural index (Issue #3718)."""
-    try:
-        hook = nx.service("md_structure") if hasattr(nx, "service") else None
-        if hook is None or not hasattr(hook, "read_section"):
-            return None
-        content_id = ""
-        meta = getattr(nx, "metadata", None)
-        if meta is not None:
-            try:
-                file_meta = meta.get(path)
-                if file_meta and file_meta.content_id:
-                    content_id = file_meta.content_id
-            except Exception:
-                pass
-        result: str | None = hook.read_section(path, content, content_id, section, block_type)
-        return result
-    except Exception:
-        return None
 
 
 def _print_content(path: str, content: bytes) -> None:

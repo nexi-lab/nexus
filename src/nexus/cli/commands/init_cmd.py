@@ -9,8 +9,6 @@ Writes a project-local ``nexus.yaml`` with all defaults materialized.
 
 from __future__ import annotations
 
-import asyncio
-import logging
 import os
 import shutil
 import subprocess
@@ -23,8 +21,7 @@ import yaml
 
 from nexus.cli.port_utils import DEFAULT_PORTS, derive_ports
 from nexus.cli.theme import console
-
-logger = logging.getLogger(__name__)
+from nexus.cli.utils import connect_local_workspace
 
 # ---------------------------------------------------------------------------
 # Default image registry / repo
@@ -543,23 +540,15 @@ def init(
 
     # Initialize local Nexus workspace for 'local' preset
     if preset == "local":
-
-        async def _init_local_workspace() -> None:
-            import nexus
-
-            nx = nexus.connect(config={"data_dir": str(d_dir)})
-            nx.mkdir("/workspace", exist_ok=True)
-            nx.mkdir("/shared", exist_ok=True)
-            nx.close()
-
         try:
-            asyncio.run(_init_local_workspace())
-        except ImportError:
-            logger.debug("nexus package not available for local workspace init")
-        except FileExistsError:
-            pass  # Directories already created — expected on re-init
-        except Exception:
-            logger.warning("Failed to initialize local workspace", exc_info=True)
+            nx = connect_local_workspace(str(d_dir))
+            try:
+                nx.mkdir("/workspace", exist_ok=True)
+                nx.mkdir("/shared", exist_ok=True)
+            finally:
+                nx.close()
+        except Exception as exc:
+            raise click.ClickException(f"Could not initialize local workspace: {exc}") from exc
         _print_local_summary(cfg_path, d_dir)
     else:
         _print_shared_summary(config, cfg_path, d_dir)

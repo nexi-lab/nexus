@@ -33,9 +33,7 @@ _REGISTER_COMMANDS: dict[str, tuple[str, ...]] = {
     "directory": ("ls", "mkdir", "rmdir", "tree"),
     "search": ("glob", "grep", "search"),
     "rebac": ("rebac",),
-    "versions": ("versions",),
     "inspect": ("info", "version", "size"),
-    "plugins": ("plugins",),
     "mounts": ("mounts",),
     "mcp": ("mcp",),
     "network": ("network",),
@@ -63,23 +61,12 @@ _REGISTER_COMMANDS: dict[str, tuple[str, ...]] = {
 # Map module -> (click command name, module attribute name).
 _ADD_COMMAND: dict[str, tuple[str, str]] = {
     "agent": ("agent", "agent"),
-    # Issue #3962: cross-kind extension introspection
-    "extensions": ("extensions", "extensions"),
-    "acp_cli": ("acp", "acp"),
     "admin": ("admin", "admin"),
     "identity": ("identity", "identity"),
-    "sandbox": ("sandbox", "sandbox"),
-    "oauth": ("oauth", "oauth"),
     "auth_cli": ("auth", "auth"),
     "daemon_cli": ("daemon", "daemon"),
     "zone": ("zone", "zone"),
-    # Issue #2811: New CLI command groups
-    "audit": ("audit", "audit"),
     "locks": ("lock", "lock"),
-    "governance_cli": ("governance", "governance"),
-    "events_cli": ("events", "events"),
-    "snapshots": ("snapshot", "snapshot"),
-    "federation": ("federation", "federation"),
     "hub": ("hub", "hub"),
     "init_cmd": ("init", "init"),
 }

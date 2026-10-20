@@ -41,20 +41,6 @@ PUBLIC_RPC_METHODS = {
 }
 
 
-def test_cli_surface_contains_required_operator_commands() -> None:
-    from nexus.cli.commands.admin import admin
-    from nexus.cli.commands.audit import audit
-    from nexus.cli.commands.events_cli import events
-    from nexus.cli.commands.federation import federation
-    from nexus.cli.commands.governance_cli import governance
-
-    assert {"create-key", "list-keys", "revoke-key"} <= set(admin.commands)
-    assert {"list", "export"} <= set(audit.commands)
-    assert {"replay"} <= set(events.commands)
-    assert {"status", "alerts", "rings"} <= set(governance.commands)
-    assert {"status", "zones", "info", "mount", "unmount"} <= set(federation.commands)
-
-
 def test_sensitive_rpc_services_mark_admin_only() -> None:
     from nexus.server.rpc.services.audit_rpc import AuditRPCService
     from nexus.server.rpc.services.events_rpc import EventsRPCService

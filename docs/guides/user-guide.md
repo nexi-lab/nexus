@@ -2,6 +2,8 @@
 
 Nexus provides native file operations, authenticated Search and explicit administration of credentials and relationships.
 
+The CLI binds to the operations exposed by the native host. Its command help is the current list of available operations.
+
 ## Connect to the data owner
 
 Use the HTTP and gRPC endpoints of the native host that owns your files. HTTP serves Search, identity and administration. File operations use typed gRPC. Both carry your existing native credential.
@@ -47,6 +49,8 @@ nexus mkdir /docs/example
 nexus write /docs/example/report.txt "hello native"
 nexus cat /docs/example/report.txt
 nexus stat /docs/example/report.txt --json
+nexus info /docs/example/report.txt --json
+nexus size /docs/example --details
 nexus ls /docs/example --json
 nexus rm /docs/example/report.txt
 nexus rmdir /docs/example

@@ -352,159 +352,6 @@ operations:
   perf_link: tests/benchmarks/test_rebac_latency.py:1
   gap_issue: null
   owning_issue: 4134
-- id: acp.agents
-  module: agent_log
-  summary: ''
-  transports:
-    cli:
-      name: nexus acp agents
-      source: src/nexus/cli/commands/acp_cli.py:159
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: acp.call
-  module: uncategorized
-  summary: ''
-  transports:
-    cli:
-      name: nexus acp call
-      source: src/nexus/cli/commands/acp_cli.py:69
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: acp.config
-  module: uncategorized
-  summary: ''
-  transports:
-    cli:
-      name: nexus acp config
-      source: src/nexus/cli/commands/acp_cli.py:401
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: acp.history
-  module: uncategorized
-  summary: ''
-  transports:
-    cli:
-      name: nexus acp history
-      source: src/nexus/cli/commands/acp_cli.py:269
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: acp.kill
-  module: uncategorized
-  summary: ''
-  transports:
-    cli:
-      name: nexus acp kill
-      source: src/nexus/cli/commands/acp_cli.py:359
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: acp.ps
-  module: uncategorized
-  summary: ''
-  transports:
-    cli:
-      name: nexus acp ps
-      source: src/nexus/cli/commands/acp_cli.py:214
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: acp.system_prompt
-  module: uncategorized
-  summary: ''
-  transports:
-    cli:
-      name: nexus acp system-prompt
-      source: src/nexus/cli/commands/acp_cli.py:506
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: acp.system_prompt_get
-  module: uncategorized
-  summary: ''
-  transports:
-    cli:
-      name: nexus acp system-prompt get
-      source: src/nexus/cli/commands/acp_cli.py:511
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: acp.system_prompt_set
-  module: uncategorized
-  summary: ''
-  transports:
-    cli:
-      name: nexus acp system-prompt set
-      source: src/nexus/cli/commands/acp_cli.py:554
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
 - id: add.mount
   module: mount
   summary: Activate a backend connector under a Nexus virtual path and grant the creator owner permissions.
@@ -805,40 +652,6 @@ operations:
   perf_class: control
   perf_link: control-plane agent lifecycle mutation; latency guardrails in tests/benchmarks/test_lifecycle_surface_latency.py:45
     and :92
-  gap_issue: null
-  owning_issue: 4137
-- id: agent_log.audit
-  module: agent_log
-  summary: ''
-  transports:
-    cli:
-      name: nexus audit
-      source: src/nexus/cli/commands/audit.py:15
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/e2e/server/test_issue_4137_lifecycle_surface_e2e.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
-  gap_issue: null
-  owning_issue: 4137
-- id: agent_log.events
-  module: agent_log
-  summary: ''
-  transports:
-    cli:
-      name: nexus events
-      source: src/nexus/cli/commands/events_cli.py:18
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/e2e/server/test_issue_4137_lifecycle_surface_e2e.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4137
 - id: agent_log.logs
@@ -1815,9 +1628,6 @@ operations:
   module: agent_log
   summary: ''
   transports:
-    cli:
-      name: nexus audit export
-      source: src/nexus/cli/commands/audit.py:112
     grpc_expose:
       name: audit_export
       source: src/nexus/server/rpc/services/audit_rpc.py:44
@@ -1852,9 +1662,6 @@ operations:
   module: agent_log
   summary: ''
   transports:
-    cli:
-      name: nexus audit list
-      source: src/nexus/cli/commands/audit.py:33
     grpc_expose:
       name: audit_list
       source: src/nexus/server/rpc/services/audit_rpc.py:20
@@ -1993,7 +1800,7 @@ operations:
   transports:
     cli:
       name: nexus init
-      source: src/nexus/cli/commands/init_cmd.py:372
+      source: src/nexus/cli/commands/init_cmd.py:369
   profiles:
     lite: supported
     sandbox: supported
@@ -2038,24 +1845,6 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4138
-- id: auth.oauth
-  module: auth
-  summary: CLI command group for OAuth credential discovery, setup, validation, and revocation.
-  transports:
-    cli:
-      name: nexus oauth
-      source: src/nexus/cli/commands/oauth.py:73
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: 'CLI: nexus oauth list; nexus oauth setup-gdrive --user-email alice@example.com; RPC: oauth_list_credentials/oauth_get_auth_url/oauth_exchange_code
-    provide the same lifecycle.'
-  correctness_test: tests/unit/services/test_oauth_service.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py
-  perf_class: control
-  perf_link: control-plane credential flow; OAuth provider round trips dominate and are not Nexus hot paths.
-  gap_issue: null
-  owning_issue: 4136
 - id: auth.tls
   module: auth
   summary: ''
@@ -3246,9 +3035,6 @@ operations:
   module: agent_log
   summary: ''
   transports:
-    cli:
-      name: nexus events replay
-      source: src/nexus/cli/commands/events_cli.py:34
     grpc_expose:
       name: events_replay
       source: src/nexus/server/rpc/services/events_rpc.py:21
@@ -3372,47 +3158,10 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4138
-- id: extensions.check
-  module: uncategorized
-  summary: ''
-  transports:
-    cli:
-      name: nexus extensions check
-      source: src/nexus/cli/commands/extensions.py:155
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: extensions.info
-  module: uncategorized
-  summary: ''
-  transports:
-    cli:
-      name: nexus extensions info
-      source: src/nexus/cli/commands/extensions.py:118
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
 - id: extensions.kinds
   module: uncategorized
   summary: ''
   transports:
-    cli:
-      name: nexus extensions kinds
-      source: src/nexus/cli/commands/extensions.py:196
     http:
       name: GET /api/v2/extensions/kinds
       source: src/nexus/server/api/core/extensions.py:72
@@ -3426,23 +3175,6 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4138
-- id: extensions.list
-  module: uncategorized
-  summary: ''
-  transports:
-    cli:
-      name: nexus extensions list
-      source: src/nexus/cli/commands/extensions.py:69
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
 - id: extensions.{kind}_{name}
   module: uncategorized
   summary: ''
@@ -3495,23 +3227,6 @@ operations:
   perf_link: read-only feature introspection; queried once per boot smoke check, <10ms
   gap_issue: null
   owning_issue: 4126
-- id: federation.cli
-  module: federation
-  summary: ''
-  transports:
-    cli:
-      name: nexus federation
-      source: src/nexus/cli/commands/federation.py:21
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/unit/server/test_full_profile_control_plane_surface.py:1
-  perf_class: not_perf_sensitive
-  perf_link: human-invoked metadata or inventory surface; not on a request hot path
-  gap_issue: null
-  owning_issue: 4138
 - id: federation.client_whoami
   module: federation
   summary: Sandbox hub-token grant discovery; returns the remote zones and r/rw permissions used to mount read-only and read-write
@@ -3600,23 +3315,6 @@ operations:
   perf_link: setup/bootstrap surface; invoked outside steady-state request hot paths
   gap_issue: null
   owning_issue: 4138
-- id: federation.info
-  module: federation
-  summary: ''
-  transports:
-    cli:
-      name: nexus federation info
-      source: src/nexus/cli/commands/federation.py:137
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
 - id: federation.join
   module: federation
   summary: ''
@@ -3655,9 +3353,6 @@ operations:
   module: federation
   summary: ''
   transports:
-    cli:
-      name: nexus federation mount
-      source: src/nexus/cli/commands/federation.py:177
     grpc_expose:
       name: federation_mount
       source: src/nexus/server/rpc/services/federation_rpc.py:399
@@ -3705,30 +3400,10 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4138
-- id: federation.status
-  module: federation
-  summary: ''
-  transports:
-    cli:
-      name: nexus federation status
-      source: src/nexus/cli/commands/federation.py:41
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
 - id: federation.unmount
   module: federation
   summary: ''
   transports:
-    cli:
-      name: nexus federation unmount
-      source: src/nexus/cli/commands/federation.py:236
     grpc_expose:
       name: federation_unmount
       source: src/nexus/server/rpc/services/federation_rpc.py:448
@@ -3742,23 +3417,6 @@ operations:
   perf_link: setup/bootstrap surface; invoked outside steady-state request hot paths
   gap_issue: null
   owning_issue: 4138
-- id: federation.zones
-  module: federation
-  summary: ''
-  transports:
-    cli:
-      name: nexus federation zones
-      source: src/nexus/cli/commands/federation.py:88
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
 - id: file.info
   module: filesystem
   summary: Inspect file metadata through MCP; visible from the minimal profile.
@@ -3802,7 +3460,7 @@ operations:
   transports:
     cli:
       name: nexus cat
-      source: src/nexus/cli/commands/file_ops.py:43
+      source: src/nexus/cli/commands/file_ops.py:45
   profiles:
     lite: supported
     sandbox: supported
@@ -3836,7 +3494,7 @@ operations:
   transports:
     cli:
       name: nexus copy
-      source: src/nexus/cli/commands/file_ops.py:956
+      source: src/nexus/cli/commands/file_ops.py:739
   profiles:
     lite: supported
     sandbox: supported
@@ -3853,7 +3511,7 @@ operations:
   transports:
     cli:
       name: nexus cp
-      source: src/nexus/cli/commands/file_ops.py:912
+      source: src/nexus/cli/commands/file_ops.py:695
   profiles:
     lite: supported
     sandbox: supported
@@ -3905,7 +3563,7 @@ operations:
   transports:
     cli:
       name: nexus exists
-      source: src/nexus/cli/commands/file_ops.py:485
+      source: src/nexus/cli/commands/file_ops.py:268
     grpc_call:
       name: exists
       source: src/nexus/server/_kernel_syscall_dispatch.py:50
@@ -4015,7 +3673,7 @@ operations:
   transports:
     cli:
       name: nexus metadata
-      source: src/nexus/cli/commands/file_ops.py:444
+      source: src/nexus/cli/commands/file_ops.py:227
   profiles:
     lite: supported
     sandbox: supported
@@ -4056,7 +3714,7 @@ operations:
   transports:
     cli:
       name: nexus move
-      source: src/nexus/cli/commands/file_ops.py:1056
+      source: src/nexus/cli/commands/file_ops.py:839
   profiles:
     lite: supported
     sandbox: supported
@@ -4125,7 +3783,7 @@ operations:
   transports:
     cli:
       name: nexus read-bulk
-      source: src/nexus/cli/commands/file_ops.py:547
+      source: src/nexus/cli/commands/file_ops.py:330
   profiles:
     lite: supported
     sandbox: supported
@@ -4178,7 +3836,7 @@ operations:
   transports:
     cli:
       name: nexus rename-batch
-      source: src/nexus/cli/commands/file_ops.py:600
+      source: src/nexus/cli/commands/file_ops.py:383
   profiles:
     lite: supported
     sandbox: supported
@@ -4196,7 +3854,7 @@ operations:
   transports:
     cli:
       name: nexus rm
-      source: src/nexus/cli/commands/file_ops.py:1189
+      source: src/nexus/cli/commands/file_ops.py:972
   profiles:
     lite: supported
     sandbox: supported
@@ -4213,7 +3871,7 @@ operations:
   transports:
     cli:
       name: nexus rm-batch
-      source: src/nexus/cli/commands/file_ops.py:647
+      source: src/nexus/cli/commands/file_ops.py:430
   profiles:
     lite: supported
     sandbox: supported
@@ -4254,7 +3912,7 @@ operations:
   transports:
     cli:
       name: nexus size
-      source: src/nexus/cli/commands/inspect.py:125
+      source: src/nexus/cli/commands/inspect.py:111
   profiles:
     lite: supported
     sandbox: supported
@@ -4272,7 +3930,7 @@ operations:
   transports:
     cli:
       name: nexus stat
-      source: src/nexus/cli/commands/file_ops.py:396
+      source: src/nexus/cli/commands/file_ops.py:179
     grpc_expose:
       name: stat
       source: src/nexus/core/nexus_fs_metadata.py:1160
@@ -4327,7 +3985,7 @@ operations:
   transports:
     cli:
       name: nexus sync
-      source: src/nexus/cli/commands/file_ops.py:1088
+      source: src/nexus/cli/commands/file_ops.py:871
   profiles:
     lite: supported
     sandbox: supported
@@ -4362,7 +4020,7 @@ operations:
   transports:
     cli:
       name: nexus write
-      source: src/nexus/cli/commands/file_ops.py:690
+      source: src/nexus/cli/commands/file_ops.py:473
     grpc_call:
       name: write
       source: src/nexus/server/_kernel_syscall_dispatch.py:70
@@ -4385,7 +4043,7 @@ operations:
   transports:
     cli:
       name: nexus write-batch
-      source: src/nexus/cli/commands/file_ops.py:730
+      source: src/nexus/cli/commands/file_ops.py:513
   profiles:
     lite: supported
     sandbox: supported
@@ -5014,9 +4672,6 @@ operations:
   module: governance
   summary: ''
   transports:
-    cli:
-      name: nexus governance alerts
-      source: src/nexus/cli/commands/governance_cli.py:83
     grpc_expose:
       name: governance_alerts
       source: src/nexus/server/rpc/services/governance_rpc.py:26
@@ -5030,30 +4685,10 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4138
-- id: governance.cli
-  module: governance
-  summary: ''
-  transports:
-    cli:
-      name: nexus governance
-      source: src/nexus/cli/commands/governance_cli.py:15
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/unit/server/test_full_profile_control_plane_surface.py:1
-  perf_class: not_perf_sensitive
-  perf_link: human-invoked metadata or inventory surface; not on a request hot path
-  gap_issue: null
-  owning_issue: 4138
 - id: governance.rings
   module: governance
   summary: ''
   transports:
-    cli:
-      name: nexus governance rings
-      source: src/nexus/cli/commands/governance_cli.py:157
     grpc_expose:
       name: governance_rings
       source: src/nexus/server/rpc/services/governance_rpc.py:61
@@ -5071,9 +4706,6 @@ operations:
   module: governance
   summary: ''
   transports:
-    cli:
-      name: nexus governance status
-      source: src/nexus/cli/commands/governance_cli.py:33
     grpc_expose:
       name: governance_status
       source: src/nexus/server/rpc/services/governance_rpc.py:82
@@ -7511,23 +7143,6 @@ operations:
   perf_link: control-plane credential flow; OAuth provider round trips dominate and are not Nexus hot paths.
   gap_issue: 4136
   owning_issue: 4136
-- id: oauth.list
-  module: auth
-  summary: ''
-  transports:
-    cli:
-      name: nexus oauth list
-      source: src/nexus/cli/commands/oauth.py:93
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
 - id: oauth.list_credentials
   module: auth
   summary: List non-revoked OAuth credentials visible to the caller, with admin/user filtering.
@@ -7564,23 +7179,6 @@ operations:
   perf_link: control-plane credential flow; OAuth provider round trips dominate and are not Nexus hot paths.
   gap_issue: 4136
   owning_issue: 4136
-- id: oauth.revoke
-  module: auth
-  summary: ''
-  transports:
-    cli:
-      name: nexus oauth revoke
-      source: src/nexus/cli/commands/oauth.py:158
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
 - id: oauth.revoke_credential
   module: auth
   summary: Revoke a stored OAuth credential after ownership checks.
@@ -7599,57 +7197,6 @@ operations:
   perf_link: control-plane credential flow; OAuth provider round trips dominate and are not Nexus hot paths.
   gap_issue: 4136
   owning_issue: 4136
-- id: oauth.setup_gdrive
-  module: auth
-  summary: ''
-  transports:
-    cli:
-      name: nexus oauth setup-gdrive
-      source: src/nexus/cli/commands/oauth.py:261
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: oauth.setup_x
-  module: auth
-  summary: ''
-  transports:
-    cli:
-      name: nexus oauth setup-x
-      source: src/nexus/cli/commands/oauth.py:424
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: oauth.test
-  module: auth
-  summary: ''
-  transports:
-    cli:
-      name: nexus oauth test
-      source: src/nexus/cli/commands/oauth.py:206
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
 - id: oauth.test_credential
   module: auth
   summary: Validate an OAuth credential and report whether it can be used or refreshed.
@@ -8229,125 +7776,6 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4138
-- id: plugins.disable
-  module: uncategorized
-  summary: ''
-  transports:
-    cli:
-      name: nexus plugins disable
-      source: src/nexus/cli/commands/plugins.py:176
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: plugins.enable
-  module: uncategorized
-  summary: ''
-  transports:
-    cli:
-      name: nexus plugins enable
-      source: src/nexus/cli/commands/plugins.py:151
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: plugins.info
-  module: uncategorized
-  summary: ''
-  transports:
-    cli:
-      name: nexus plugins info
-      source: src/nexus/cli/commands/plugins.py:108
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: plugins.init
-  module: uncategorized
-  summary: ''
-  transports:
-    cli:
-      name: nexus plugins init
-      source: src/nexus/cli/commands/plugins.py:260
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: plugins.install
-  module: uncategorized
-  summary: ''
-  transports:
-    cli:
-      name: nexus plugins install
-      source: src/nexus/cli/commands/plugins.py:201
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: plugins.list
-  module: filesystem
-  summary: ''
-  transports:
-    cli:
-      name: nexus plugins list
-      source: src/nexus/cli/commands/plugins.py:74
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: plugins.uninstall
-  module: uncategorized
-  summary: ''
-  transports:
-    cli:
-      name: nexus plugins uninstall
-      source: src/nexus/cli/commands/plugins.py:228
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
 - id: portability.profile_export
   module: portability
   summary: Export a profile bundle (config + bricks + sample data) for sharing.
@@ -9137,48 +8565,11 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4133
-- id: sandbox.cli
-  module: sandbox
-  summary: ''
-  transports:
-    cli:
-      name: nexus sandbox
-      source: src/nexus/cli/commands/sandbox.py:17
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/integration/test_sandbox_boot.py:1
-  perf_class: not_perf_sensitive
-  perf_link: human-invoked metadata or inventory surface; not on a request hot path
-  gap_issue: null
-  owning_issue: 4126
-- id: sandbox.connect
-  module: sandbox
-  summary: ''
-  transports:
-    cli:
-      name: nexus sandbox connect
-      source: src/nexus/cli/commands/sandbox.py:439
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
 - id: sandbox.create
   module: sandbox
   summary: Create a sandbox runtime through MCP when the sandbox provider is available; visible from the execution profile
     and full profile.
   transports:
-    cli:
-      name: nexus sandbox create
-      source: src/nexus/cli/commands/sandbox.py:26
     mcp:
       name: nexus_sandbox_create
       source: src/nexus/config/tool_profiles.yaml:1
@@ -9194,48 +8585,11 @@ operations:
   perf_link: setup path; sandbox provider startup dominates latency and this is not a per-request namespace hot path
   gap_issue: null
   owning_issue: 4131
-- id: sandbox.disconnect
-  module: sandbox
-  summary: ''
-  transports:
-    cli:
-      name: nexus sandbox disconnect
-      source: src/nexus/cli/commands/sandbox.py:516
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: sandbox.get_or_create
-  module: sandbox
-  summary: ''
-  transports:
-    cli:
-      name: nexus sandbox get-or-create
-      source: src/nexus/cli/commands/sandbox.py:101
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
 - id: sandbox.list
   module: sandbox
   summary: List sandbox runtimes through MCP when sandbox support is available; visible from the execution profile and full
     profile.
   transports:
-    cli:
-      name: nexus sandbox list
-      source: src/nexus/cli/commands/sandbox.py:338
     mcp:
       name: nexus_sandbox_list
       source: src/nexus/config/tool_profiles.yaml:1
@@ -9251,40 +8605,6 @@ operations:
   perf_link: control-plane inspection; not performance-sensitive compared with sandbox provider API latency
   gap_issue: null
   owning_issue: 4131
-- id: sandbox.pause
-  module: sandbox
-  summary: ''
-  transports:
-    cli:
-      name: nexus sandbox pause
-      source: src/nexus/cli/commands/sandbox.py:251
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: sandbox.resume
-  module: sandbox
-  summary: ''
-  transports:
-    cli:
-      name: nexus sandbox resume
-      source: src/nexus/cli/commands/sandbox.py:280
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
 - id: sandbox.run
   module: sandbox
   summary: Run a command with Nexus connection env vars injected. Shares the exact state-consumption path as `nexus env` (env_cmd.py
@@ -9292,8 +8612,8 @@ operations:
     persisted by `nexus up --profile sandbox` (#4144). Covered via the shared resolver, not a run-specific sandbox test.
   transports:
     cli:
-      name: nexus sandbox run
-      source: src/nexus/cli/commands/sandbox.py:180
+      name: nexus run
+      source: src/nexus/cli/commands/env_cmd.py:167
   profiles:
     lite: supported
     sandbox: supported
@@ -9304,31 +8624,11 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4126
-- id: sandbox.status
-  module: sandbox
-  summary: ''
-  transports:
-    cli:
-      name: nexus sandbox status
-      source: src/nexus/cli/commands/sandbox.py:403
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
 - id: sandbox.stop
   module: sandbox
   summary: Stop a sandbox runtime through MCP when sandbox support is available; visible from the execution profile and full
     profile.
   transports:
-    cli:
-      name: nexus sandbox stop
-      source: src/nexus/cli/commands/sandbox.py:309
     mcp:
       name: nexus_sandbox_stop
       source: src/nexus/config/tool_profiles.yaml:1
@@ -10252,31 +9552,10 @@ operations:
   perf_link: control-plane operation; outside the per-request permission hot path, so no dedicated benchmark is required
   gap_issue: null
   owning_issue: 4134
-- id: snapshot.cli
-  module: snapshot
-  summary: CLI group for transactional snapshot create/list/info/entries/commit/restore.
-  transports:
-    cli:
-      name: nexus snapshot
-      source: src/nexus/cli/commands/snapshots.py:15
-  profiles:
-    lite: unavailable
-    sandbox: unavailable
-    full: supported
-  usage_example: 'CLI: nexus snapshot create --description "Before migration"; nexus snapshot info TXN; nexus snapshot entries
-    TXN; nexus snapshot commit TXN; nexus snapshot restore TXN'
-  correctness_test: tests/unit/services/snapshot/test_service.py
-  perf_class: control
-  perf_link: transactional snapshot list/entries guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:153
-  gap_issue: 4137
-  owning_issue: 4137
 - id: snapshot.commit
   module: snapshot
   summary: Commit a transactional snapshot.
   transports:
-    cli:
-      name: nexus snapshot commit
-      source: src/nexus/cli/commands/snapshots.py:209
     grpc_expose:
       name: snapshot_commit
       source: src/nexus/server/rpc/services/snapshots_rpc.py:71
@@ -10295,9 +9574,6 @@ operations:
   module: snapshot
   summary: Create a transactional snapshot.
   transports:
-    cli:
-      name: nexus snapshot create
-      source: src/nexus/cli/commands/snapshots.py:33
     grpc_expose:
       name: snapshot_create
       source: src/nexus/server/rpc/services/snapshots_rpc.py:34
@@ -10313,23 +9589,6 @@ operations:
     in tests/benchmarks/test_lifecycle_surface_latency.py:153
   gap_issue: 4137
   owning_issue: 4137
-- id: snapshot.entries
-  module: snapshot
-  summary: ''
-  transports:
-    cli:
-      name: nexus snapshot entries
-      source: src/nexus/cli/commands/snapshots.py:252
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
 - id: snapshot.get
   module: snapshot
   summary: Get one snapshot transaction by id.
@@ -10347,30 +9606,10 @@ operations:
   perf_link: transactional snapshot list/entries guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:153
   gap_issue: 4137
   owning_issue: 4137
-- id: snapshot.info
-  module: snapshot
-  summary: ''
-  transports:
-    cli:
-      name: nexus snapshot info
-      source: src/nexus/cli/commands/snapshots.py:157
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
 - id: snapshot.list
   module: snapshot
   summary: List transactional snapshot records.
   transports:
-    cli:
-      name: nexus snapshot list
-      source: src/nexus/cli/commands/snapshots.py:92
     grpc_expose:
       name: snapshot_list
       source: src/nexus/server/rpc/services/snapshots_rpc.py:49
@@ -10405,9 +9644,6 @@ operations:
   module: snapshot
   summary: Rollback a transactional snapshot transaction.
   transports:
-    cli:
-      name: nexus snapshot restore
-      source: src/nexus/cli/commands/snapshots.py:311
     grpc_expose:
       name: snapshot_restore
       source: src/nexus/server/rpc/services/snapshots_rpc.py:59
@@ -11128,23 +10364,6 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4138
-- id: uncategorized.acp
-  module: uncategorized
-  summary: ''
-  transports:
-    cli:
-      name: nexus acp
-      source: src/nexus/cli/commands/acp_cli.py:53
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/unit/server/test_full_profile_control_plane_surface.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
-  gap_issue: null
-  owning_issue: 4138
 - id: uncategorized.admin
   module: uncategorized
   summary: ''
@@ -11215,30 +10434,13 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4126
-- id: uncategorized.extensions
-  module: uncategorized
-  summary: ''
-  transports:
-    cli:
-      name: nexus extensions
-      source: src/nexus/cli/commands/extensions.py:64
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/unit/server/test_full_profile_control_plane_surface.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
-  gap_issue: null
-  owning_issue: 4138
 - id: uncategorized.info
   module: uncategorized
   summary: ''
   transports:
     cli:
       name: nexus info
-      source: src/nexus/cli/commands/inspect.py:25
+      source: src/nexus/cli/commands/inspect.py:24
   profiles:
     lite: supported
     sandbox: supported
@@ -11256,23 +10458,6 @@ operations:
     cli:
       name: nexus network
       source: src/nexus/cli/commands/network.py:20
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/unit/server/test_full_profile_control_plane_surface.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
-  gap_issue: null
-  owning_issue: 4138
-- id: uncategorized.plugins
-  module: uncategorized
-  summary: ''
-  transports:
-    cli:
-      name: nexus plugins
-      source: src/nexus/cli/commands/plugins.py:51
   profiles:
     lite: supported
     sandbox: supported
@@ -11413,7 +10598,7 @@ operations:
   transports:
     cli:
       name: nexus version
-      source: src/nexus/cli/commands/inspect.py:117
+      source: src/nexus/cli/commands/inspect.py:103
   profiles:
     lite: unavailable
     sandbox: unavailable
@@ -11424,92 +10609,6 @@ operations:
   perf_link: version list/diff guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:165
   gap_issue: 4137
   owning_issue: 4137
-- id: versioning.versions
-  module: versioning
-  summary: CLI group for file version history, get, diff, and rollback.
-  transports:
-    cli:
-      name: nexus versions
-      source: src/nexus/cli/commands/versions.py:31
-  profiles:
-    lite: unavailable
-    sandbox: unavailable
-    full: supported
-  usage_example: 'CLI: nexus versions history /workspace/hello.txt; nexus versions get /workspace/hello.txt --version 1; nexus
-    versions diff /workspace/hello.txt --v1 1 --v2 2'
-  correctness_test: tests/e2e/server/test_extracted_services_e2e.py:66
-  perf_class: hot
-  perf_link: version list/diff guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:165
-  gap_issue: 4137
-  owning_issue: 4137
-- id: versions.diff
-  module: versioning
-  summary: ''
-  transports:
-    cli:
-      name: nexus versions diff
-      source: src/nexus/cli/commands/versions.py:186
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: versions.get
-  module: versioning
-  summary: ''
-  transports:
-    cli:
-      name: nexus versions get
-      source: src/nexus/cli/commands/versions.py:131
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: versions.history
-  module: versioning
-  summary: ''
-  transports:
-    cli:
-      name: nexus versions history
-      source: src/nexus/cli/commands/versions.py:47
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: versions.rollback
-  module: versioning
-  summary: ''
-  transports:
-    cli:
-      name: nexus versions rollback
-      source: src/nexus/cli/commands/versions.py:290
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
 - id: workflows.api_v2
   module: workflows
   summary: ''
@@ -11939,78 +11038,6 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: acp.agents
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: acp.call
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: acp.config
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: acp.history
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: acp.kill
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: acp.ps
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: acp.system_prompt
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: acp.system_prompt_get
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: acp.system_prompt_set
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
 - operation_id: admin.create_key
   has:
   - cli
@@ -12124,22 +11151,6 @@ parity_warnings:
   - mcp
   - sdk
 - operation_id: agent_log.agent
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: agent_log.audit
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: agent_log.events
   has:
   - cli
   missing:
@@ -12579,28 +11590,12 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: audit.export
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
 - operation_id: audit.integrity_{record_id}
   has:
   - http
   missing:
   - cli
   - grpc_typed
-  - mcp
-  - sdk
-- operation_id: audit.list
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
   - mcp
   - sdk
 - operation_id: audit.transactions
@@ -12673,14 +11668,6 @@ parity_warnings:
   missing:
   - cli
   - grpc_typed
-  - mcp
-  - sdk
-- operation_id: auth.oauth
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
   - mcp
   - sdk
 - operation_id: auth.tls
@@ -13173,9 +12160,9 @@ parity_warnings:
   - sdk
 - operation_id: events.replay
   has:
-  - cli
   - http
   missing:
+  - cli
   - grpc_typed
   - mcp
   - sdk
@@ -13219,36 +12206,12 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: extensions.check
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: extensions.info
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
 - operation_id: extensions.kinds
   has:
-  - cli
   - http
   missing:
-  - grpc_typed
-  - mcp
-  - sdk
-- operation_id: extensions.list
-  has:
   - cli
-  missing:
   - grpc_typed
-  - http
   - mcp
   - sdk
 - operation_id: extensions.{kind}_{name}
@@ -13273,54 +12236,6 @@ parity_warnings:
   missing:
   - cli
   - grpc_typed
-  - mcp
-  - sdk
-- operation_id: federation.cli
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: federation.info
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: federation.mount
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: federation.status
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: federation.unmount
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: federation.zones
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
   - mcp
   - sdk
 - operation_id: file.info
@@ -13723,38 +12638,6 @@ parity_warnings:
   - grpc_typed
   - http
   - mcp
-- operation_id: governance.alerts
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: governance.cli
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: governance.rings
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: governance.status
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
 - operation_id: has.pipe
   has:
   - sdk
@@ -14571,46 +13454,6 @@ parity_warnings:
   - http
   - mcp
   - sdk
-- operation_id: oauth.list
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: oauth.revoke
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: oauth.setup_gdrive
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: oauth.setup_x
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: oauth.test
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
 - operation_id: operations.agents_{agent_id}_activity
   has:
   - http
@@ -14851,62 +13694,6 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: plugins.disable
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: plugins.enable
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: plugins.info
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: plugins.init
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: plugins.install
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: plugins.list
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: plugins.uninstall
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
 - operation_id: probes.healthz_live
   has:
   - http
@@ -15107,69 +13894,21 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: sandbox.cli
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: sandbox.connect
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
 - operation_id: sandbox.create
   has:
-  - cli
   - mcp
   missing:
-  - grpc_typed
-  - http
-  - sdk
-- operation_id: sandbox.disconnect
-  has:
   - cli
-  missing:
   - grpc_typed
   - http
-  - mcp
-  - sdk
-- operation_id: sandbox.get_or_create
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
   - sdk
 - operation_id: sandbox.list
   has:
-  - cli
   - mcp
   missing:
-  - grpc_typed
-  - http
-  - sdk
-- operation_id: sandbox.pause
-  has:
   - cli
-  missing:
   - grpc_typed
   - http
-  - mcp
-  - sdk
-- operation_id: sandbox.resume
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
   - sdk
 - operation_id: sandbox.run
   has:
@@ -15179,19 +13918,11 @@ parity_warnings:
   - http
   - mcp
   - sdk
-- operation_id: sandbox.status
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
 - operation_id: sandbox.stop
   has:
-  - cli
   - mcp
   missing:
+  - cli
   - grpc_typed
   - http
   - sdk
@@ -15547,62 +14278,6 @@ parity_warnings:
   - grpc_typed
   - http
   - mcp
-- operation_id: snapshot.cli
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: snapshot.commit
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: snapshot.create
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: snapshot.entries
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: snapshot.info
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: snapshot.list
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: snapshot.restore
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
 - operation_id: snapshots.api_v2
   has:
   - http
@@ -15931,14 +14606,6 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: uncategorized.acp
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
 - operation_id: uncategorized.admin
   has:
   - cli
@@ -15971,14 +14638,6 @@ parity_warnings:
   - http
   - mcp
   - sdk
-- operation_id: uncategorized.extensions
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
 - operation_id: uncategorized.info
   has:
   - cli
@@ -15988,14 +14647,6 @@ parity_warnings:
   - mcp
   - sdk
 - operation_id: uncategorized.network
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: uncategorized.plugins
   has:
   - cli
   missing:
@@ -16036,46 +14687,6 @@ parity_warnings:
   - http
   - mcp
 - operation_id: versioning.version
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: versioning.versions
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: versions.diff
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: versions.get
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: versions.history
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: versions.rollback
   has:
   - cli
   missing:

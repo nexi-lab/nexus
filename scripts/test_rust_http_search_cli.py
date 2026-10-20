@@ -177,7 +177,7 @@ async def main() -> None:
 
     async def verify_file_cli(client_data_dir):
         prefix = f"/docs/cli-files-{suffix}"
-        path = f"{prefix}/字节 文件.bin"
+        path = f"{prefix}/字节 文件#原始.bin"
         moved = f"{prefix}/renamed.bin"
         content = bytes(range(256)) + "Native 文件\r\n".encode()
         file_env = {
@@ -208,6 +208,19 @@ async def main() -> None:
                 ["cat", path, "--offset", "12", "--length", "96"], bytes_output=True
             )
             assert raw == content[12:108], raw
+            raw, _ = await file_cli(["cat", path, "--length", "17"], bytes_output=True)
+            assert raw == content[:17], raw
+            raw, _ = await file_cli(["cat", path, "--length", "0"], bytes_output=True)
+            assert raw == b"", raw
+            raw, _ = await file_cli(
+                ["cat", path, "--offset", str(len(content) + 1), "--stream"], bytes_output=True
+            )
+            assert raw == b"", raw
+            raw, _ = await file_cli(
+                ["cat", path, "--offset", "12", "--length", "96", "--stream", "--chunk-size", "7"],
+                bytes_output=True,
+            )
+            assert raw == content[12:108], raw
             raw, _ = await file_cli(
                 ["cat", path, "--stream", "--chunk-size", "31"], bytes_output=True
             )
@@ -215,6 +228,12 @@ async def main() -> None:
             stdout, _ = await file_cli(["stat", path, "--json"])
             metadata = json.loads(stdout)["data"]
             assert metadata["size"] == len(content) and metadata["content_id"], metadata
+            stdout, _ = await file_cli(["info", path, "--json"])
+            info = json.loads(stdout)["data"]
+            assert info["size"] == len(content) and info["content_id"] == metadata["content_id"]
+            for target in (path, prefix):
+                stdout, _ = await file_cli(["size", target, "--details"])
+                assert "File count: 1" in stdout and f"{len(content):,} bytes" in stdout, stdout
             stdout, _ = await file_cli(["ls", prefix, "--json"])
             assert path in {row["path"] for row in json.loads(stdout)["data"]}, stdout
             copied = f"{prefix}/copied.bin"
@@ -252,6 +271,8 @@ async def main() -> None:
                 key=keys["alice"],
                 expected=1,
             )
+            assert json.loads(denied)["error"]["code"] == "PERMISSION_DENIED", safe(denied)
+            denied, _ = await file_cli(["info", path, "--json"], key=keys["alice"], expected=1)
             assert json.loads(denied)["error"]["code"] == "PERMISSION_DENIED", safe(denied)
             await native_cli(
                 [

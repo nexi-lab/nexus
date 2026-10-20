@@ -424,6 +424,7 @@ def test_cat_auto_stream_branch_fires(patched_fs, monkeypatch):
     from nexus.cli.commands.file_ops import cat as _cat
 
     nx = patched_fs
+    monkeypatch.setenv("NEXUS_NO_AUTO_JSON", "1")
     body = b"S" * (11 * 1024 * 1024)
     nx.write("/big/auto.bin", body)
 
@@ -456,6 +457,18 @@ def test_cat_auto_stream_branch_fires(patched_fs, monkeypatch):
     assert b"Streaming" in (res.stderr_bytes or b""), (
         f"expected 'Streaming...' status line on stderr; stderr={res.stderr_bytes[:200]!r}"
     )
+
+
+def test_large_cat_json_keeps_the_structured_contract(patched_fs, cli_runner: CliRunner):
+    from nexus.cli.commands.file_ops import cat
+
+    content = b"S" * (11 * 1024 * 1024)
+    patched_fs.write("/large-json.txt", content)
+    result = cli_runner.invoke(cat, ["/large-json.txt", "--json"])
+    assert result.exit_code == 0, result.output[:500]
+    data = json.loads(result.output)["data"]
+    assert data["size"] == len(content)
+    assert data["content"].encode() == content
 
 
 def test_worktree_cli_resolves_to_src_with_pythonpath():

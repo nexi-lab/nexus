@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 import yaml
@@ -27,6 +27,27 @@ from nexus.cli.commands.init_cmd import (
 @pytest.fixture()
 def runner() -> CliRunner:
     return CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def local_initializer(monkeypatch: pytest.MonkeyPatch) -> Mock:
+    """Configuration tests use a filesystem boundary; integration/cli owns the real E2E."""
+    filesystem = Mock(spec_set=("mkdir", "close"))
+    monkeypatch.setattr(
+        "nexus.cli.commands.init_cmd.connect_local_workspace", lambda _data_dir: filesystem
+    )
+    return filesystem
+
+
+def test_local_initialization_failure_closes_the_filesystem_and_fails(
+    runner: CliRunner, tmp_path: Path, local_initializer: Mock
+) -> None:
+    local_initializer.mkdir.side_effect = RuntimeError("native storage unavailable")
+    result = runner.invoke(init, [str(tmp_path / "failed")])
+    assert result.exit_code != 0
+    assert "native storage unavailable" in result.output
+    assert "Initialized Nexus" not in result.output
+    local_initializer.close.assert_called_once()
 
 
 @pytest.fixture()

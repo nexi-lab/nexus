@@ -110,7 +110,7 @@ def _exec_tui(extra_args: list[str] | None = None) -> None:
 def main(ctx: click.Context, profile: str | None) -> None:
     """Nexus - filesystem/context plane.
 
-    Beautiful command-line interface for file operations, discovery, and management.
+    File operations, Search, native credentials and permissions.
 
     When invoked without a subcommand the interactive TUI is launched.
 
@@ -132,17 +132,9 @@ def main(ctx: click.Context, profile: str | None) -> None:
         nexus grep "TODO" --path /workspace
         nexus glob "**/*.py"
 
-        # Manage permissions
-        nexus chmod 644 /file.txt
-        nexus chown alice /file.txt
-
-        # Version tracking
-        nexus versions history /file.txt
-        nexus versions rollback /file.txt 1
-
-        # Server and mounting
-        nexusd --host 0.0.0.0 --port 2026
-        nexus mount /mnt/nexus
+        # Inspect the native identity and permissions
+        nexus identity whoami
+        nexus rebac list --zone-id root
 
         # Profile management
         nexus profile list

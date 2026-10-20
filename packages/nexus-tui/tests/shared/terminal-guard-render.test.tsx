@@ -40,9 +40,20 @@ async function renderGuard(
   return setup.captureCharFrame();
 }
 
+let savedDimensions: { width: number; height: number };
+let savedIsTTY: PropertyDescriptor | undefined;
+beforeEach(() => {
+  savedDimensions = { ...terminalDimensions() };
+  savedIsTTY = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+});
 afterEach(() => {
-  if (setup) {
-    setup.renderer.destroy();
+  try {
+    setup?.renderer.destroy();
+  } finally {
+    setup = undefined as unknown as TestSetup;
+    _setDimensionsForTesting(savedDimensions);
+    if (savedIsTTY) Object.defineProperty(process.stdout, "isTTY", savedIsTTY);
+    else Reflect.deleteProperty(process.stdout, "isTTY");
   }
 });
 
@@ -144,24 +155,6 @@ describe("resize message", () => {
 // =============================================================================
 
 describe("signal-driven boundary (via _setDimensionsForTesting)", () => {
-  let savedDimensions: { width: number; height: number };
-  let savedIsTTY: boolean | undefined;
-
-  beforeEach(() => {
-    savedDimensions = { ...terminalDimensions() };
-    savedIsTTY = process.stdout.isTTY;
-  });
-
-  afterEach(() => {
-    _setDimensionsForTesting(savedDimensions);
-    Object.defineProperty(process.stdout, "isTTY", { value: savedIsTTY, configurable: true });
-    // Destroy here; null setup so the outer afterEach doesn't double-destroy.
-    if (setup) {
-      setup.renderer.destroy();
-      setup = undefined as unknown as TestSetup;
-    }
-  });
-
   it("shows resize message when signal reports below-minimum cols (isTTY=true)", async () => {
     Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
     _setDimensionsForTesting({ width: 59, height: 30 });

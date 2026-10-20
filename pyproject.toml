@@ -940,9 +940,6 @@ ignore_imports = [
     # mcp -> rebac: TYPE_CHECKING imports for middleware/profiles (Issue #2429)
     "nexus.bricks.mcp.middleware -> nexus.bricks.rebac.manager",
     "nexus.bricks.mcp.profiles -> nexus.bricks.rebac.manager",
-    # search -> rebac: permission enforcement + entity registry in search_service (moved from services/)
-    "nexus.bricks.search.search_service -> nexus.bricks.rebac.enforcer",
-    "nexus.bricks.search.search_service -> nexus.bricks.rebac.manager",
     # parsers -> sandbox: TYPE_CHECKING imports for sandbox provider (Issue #2429)
     "nexus.bricks.parsers.validation.runner -> nexus.bricks.sandbox.sandbox_provider",
     "nexus.bricks.parsers.validation.detector -> nexus.bricks.sandbox.sandbox_provider",

@@ -159,10 +159,16 @@ def mcp_profile_show(profile_name: str, config_path: str | None, output_format: 
 
 @mcp.command()
 @click.option(
-    "--transport", type=click.Choice(["stdio", "http", "sse"]), default="stdio", show_default=True
+    "--transport",
+    type=click.Choice(["stdio", "http", "sse"]),
+    default="stdio",
+    envvar="MCP_TRANSPORT",
+    show_default=True,
 )
-@click.option("--host", default="127.0.0.1", show_default=True)
-@click.option("--port", type=click.IntRange(1, 65535), default=8081, show_default=True)
+@click.option("--host", default="127.0.0.1", envvar="MCP_HOST", show_default=True)
+@click.option(
+    "--port", type=click.IntRange(1, 65535), default=8081, envvar="MCP_PORT", show_default=True
+)
 @click.option("--api-key", default=None, help="Credential for the stdio connection.")
 @add_backend_options
 def serve(

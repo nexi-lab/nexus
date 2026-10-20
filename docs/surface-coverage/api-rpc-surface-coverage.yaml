@@ -5421,7 +5421,7 @@ operations:
   transports:
     cli:
       name: nexus mcp export-tools
-      source: src/nexus/cli/commands/mcp.py:212
+      source: src/nexus/cli/commands/mcp.py:218
   profiles:
     lite: unverified
     sandbox: unverified

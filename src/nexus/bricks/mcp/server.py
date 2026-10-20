@@ -1154,26 +1154,3 @@ Start by running the semantic search.
         ]
     )
     return mcp
-
-
-def main() -> None:
-    """Run the same transport and lifecycle as ``nexus mcp serve``."""
-    import os
-
-    from nexus.cli.commands.mcp import serve
-
-    serve.main(
-        args=[
-            "--transport",
-            os.environ.get("MCP_TRANSPORT", "stdio"),
-            "--host",
-            os.environ.get("MCP_HOST", "127.0.0.1"),
-            "--port",
-            os.environ.get("MCP_PORT", "8081"),
-        ],
-        prog_name="python -m nexus.bricks.mcp.server",
-    )
-
-
-if __name__ == "__main__":
-    main()

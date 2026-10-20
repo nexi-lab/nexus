@@ -76,14 +76,3 @@ class TestMCPServerCreation:
         server = await create_mcp_server(nx=nx)
 
         assert server is not None
-
-
-class TestMCPMain:
-    """Test MCP main entry point."""
-
-    def test_main_imports(self):
-        """Test that main function can be imported."""
-        from nexus.bricks.mcp.server import main
-
-        assert main is not None
-        assert callable(main)

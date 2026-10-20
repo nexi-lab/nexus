@@ -10,6 +10,8 @@ import asyncio
 import json
 import os
 import socket
+import sys
+import tempfile
 from pathlib import Path
 from unittest.mock import patch
 from uuid import uuid4
@@ -47,6 +49,7 @@ async def main() -> None:
     agents = {}
     filesystems = {}
     mcp_servers = {}
+    client_environments = {}
 
     def dial(ca, cert, key, server_name=None):
         credentials = grpc.ssl_channel_credentials(
@@ -91,6 +94,7 @@ async def main() -> None:
                 NEXUS_TLS_CERT=str(bundle / manifest["cert"]),
                 NEXUS_TLS_KEY=str(bundle / manifest["key"]),
             )
+            client_environments[name] = client_env
             with patch.dict(os.environ, client_env, clear=True):
                 filesystem = await asyncio.to_thread(
                     nexus.connect,
@@ -210,6 +214,39 @@ async def main() -> None:
 
         async def mcp_read(name, path, credential=None):
             return await mcp_call(name, "read_file", {"path": path}, credential)
+
+        async def check_mcp_cli():
+            from fastmcp import Client
+            from fastmcp.client.transports import StdioTransport
+
+            with tempfile.TemporaryDirectory(prefix="native-mcp-cli-home-") as home:
+                env = {
+                    **client_environments["a"],
+                    "HOME": home,
+                    "USERPROFILE": home,
+                    "MCP_TRANSPORT": "stdio",
+                    "NEXUS_ZONE_ID": "sharedzone",
+                    "NEXUS_NO_AUTO_JSON": "1",
+                }
+                transport = StdioTransport(
+                    command=sys.executable,
+                    args=[
+                        "-m",
+                        "nexus.cli.main",
+                        "mcp",
+                        "serve",
+                        "--remote-url",
+                        f"https://{target}",
+                    ],
+                    env=env,
+                    keep_alive=False,
+                )
+                async with Client(transport, timeout=15) as client:
+                    assert len(await client.list_tools()) == 15
+                    read = await client.call_tool("nexus_read_file", {"path": paths["a"]})
+                    assert read.content[0].text == f"{needle} a"
+                    rejected = await client.call_tool("nexus_read_file", {"path": paths["b"]})
+                    assert rejected.content[0].text.startswith("Error:")
 
         async def check_mcp_http():
             import uvicorn
@@ -491,6 +528,7 @@ async def main() -> None:
                 await sdk_denied(name, "sys_stat", paths[name])
                 await grant(name, "POST")
             await asyncio.gather(*(query(name, [paths[name]]) for name in paths for _ in range(3)))
+            await check_mcp_cli()
             await check_mcp_http()
             for name, (_, agent_vfs, client) in agents.items():
                 read = await agent_vfs.Read(vfs_pb2.ReadRequest(path=paths[name]), timeout=15)

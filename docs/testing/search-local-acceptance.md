@@ -2,7 +2,7 @@
 
 更新日期：2026 年 10 月 19 日。本文用于逐项评论、分配测试和记录结果。
 
-当前状态：Search、固定 owner 授权、原生 whoami/CORS、文件与 RTS Search、统计/zone 一致性、索引契约清理及 scode 正式依赖已合并。Rust 人类账号后端已合并；账号与 native 文件身份保持独立。前端 #26 的 80 项浏览器回归、真实 native 八步/十六组断言及容器 CI 通过，仍为草稿。RTS 已按现有 Rust 能力收敛，#87 合并前后 CI 全绿；TUI #4932 的代码、本地真实 Rust 与终端验收已收齐，最终 CI 正在验证。真人 Google/网关、残余 CLI/支付 SDK 调用方、Python server 退役及 scode 当前源的完整真实模型验收仍未收齐，整条主线尚未 code complete；腾讯云部署等代码与本地验收收齐后再讨论。
+当前状态：Search、固定 owner 授权、原生 whoami/CORS、文件与 RTS Search、统计/zone 一致性、索引契约清理及 scode 正式依赖已合并。Rust 人类账号后端已合并；账号与 native 文件身份保持独立。前端 #26 的 80 项浏览器回归、真实 native 八步/十六组断言及容器 CI 通过，仍为草稿。RTS #87 合并前后 CI 全绿；TUI #4932 已在最终 18 个工作流全绿后合并，本地实际 Rust、终端和独立安装包验证通过，合并后 CI 正在跟踪。真人 Google/网关、残余 CLI 调用方、Python server 退役及 scode 当前源的完整真实模型验收仍未收齐，整条主线尚未 code complete；腾讯云部署等代码与本地验收收齐后再讨论。
 
 合并后验收补充：Nexus #4909 和 #4910 的合并后工作流均已通过；scode #970 的共享服务 E2E 四个平台全部通过，Rust CI 的其余任务通过，但真实模型 ACP subagent 测试在接收消息 120 秒后失败。当次网关仅返回心跳；测试夹具的 `env_clear()` 丢弃了 CI 配置的 90 秒 API 空闲预算，子进程回退到 300 秒，未能在夹具截止前执行现有流恢复。
 
@@ -621,7 +621,7 @@ Search 保留 keyword/semantic/hybrid、glob 和 grep，使用显式 Search owne
 
 API 覆盖清单的六处 Search 源码行号已用仓库生成器同步；清单校验及运行时发现相关 46 项通过，一项未提交 HTML 的检查按配置跳过。
 
-TUI 当前源为 `0565f41be6e15e6494f4dc5ca0b5e4615d04ac4f`。`98911a349` 的 Linux 原生八步、完整模型 Docker、源码测试和安装包终端旅程均已通过；随后提交只修正文档构建，native/TUI/SDK/CLI 源树保持一致。最后一次本地原生验收为八个步骤、八组 TUI、86 项断言通过；keyword 模式有一项明确的真实模型跳过。最终源的文档及 Docker CI 通过，仍在等待其余完整 CI。合并及合并后结果以 #4932 为准。
+TUI 最终源 `0565f41be6e15e6494f4dc5ca0b5e4615d04ac4f` 的 **18 个工作流全部通过**，#4932 已通过普通 merge 合入 `c55a1286300008e14be6a37f7c48fc1d5d8a60da`；合并树与验收树一致，12 个源提交全部保留。最终源覆盖 Linux 原生八步、完整模型 Docker、源码测试、Windows 启动器和安装包终端旅程。最后一次本地原生验收为八个步骤、八组 TUI、86 项断言通过；keyword 模式有一项明确的真实模型跳过。合并后 CI 正在跟踪。
 
 安装包验收会将构建好的 tarball 安装到 checkout 外的独立目录，核对内置 SDK 与 canonical build 的 SHA-256，并执行安装后的命令。Linux 再通过已安装包运行实际 tmux 键盘旅程；Windows 已实际通过 ConPTY 进入界面、按 q、恢复终端并以 0 退出。修复前实际捕获了缺失运行配置、SDK 无法解析和模块格式不一致导致的错误类型失配，现有断言保持。源码入口和安装包都使用同一 SDK 实现。
 
@@ -654,7 +654,7 @@ bun run start --zone-id sharedzone
 | CODE-01 | 修复索引超时的契约边界 | 受控慢操作在修复前失败、修复后通过；交互请求仍有明确预算 | 已合并；VFS PR #442 |
 | CODE-02 | CI 保护慢索引、取消与真实提交回执 | 最终提交 CI 全绿，实际执行相应用例 | 已完成；VFS 19 项、Nexus 53 项通过 |
 | CODE-03 | 原生化后残余 Search 代码与文档清理 | 重复列表/SQL 分支和失效配置删除；架构文档与源码一致 | 已合并；Nexus PR #4902 |
-| CODE-04 | 浏览器登录/OAuth cookie 及剩余 server 调用方迁移 | 保留身份 SSOT，收齐消费者后退役 server | Rust 账号后端已合并；前端 Rust console 在当前源 80 项回归、native 十六组及容器 CI 通过，保持草稿；RTS #87 已合并且合并后 CI 全绿，TUI #4932 本地验收完成、最终 CI 待收齐；真人 Google、CLI/支付 SDK 与 Python 服务端清理待完成 |
+| CODE-04 | 浏览器登录/OAuth cookie 及剩余 server 调用方迁移 | 保留身份 SSOT，收齐消费者后退役 server | Rust 账号后端已合并；前端 Rust console 在当前源 80 项回归、native 十六组及容器 CI 通过，保持草稿；RTS #87 合并前后 CI 全绿，TUI #4932 在最终 18 个工作流全绿后已合并；CLI/SDK 收敛进行中，真人 Google、残余 CLI 与 Python 服务端清理待完成 |
 | CODE-05 | `serve-user` 下的 Search 装配与授权契约 | 使用固定 owner 的私有数据边界；本地签名插件、owner 隔离、委托身份和真实模型重启全部通过 | 已完成并合并；VFS PR #443 与 Nexus PR #4904 的源提交及合并后 CI 均通过 |
 | CODE-06 | scode 正式依赖、安装 checksum 与协议一致性 | 十个直接依赖使用同一发布源，checksum 按 release 绑定，proto 与上游一致，真实 CLI/cohost 经过验证 | PR #970 已在最终 CI 全绿后合并；Windows 与 Linux 本地验收通过 |
 | CODE-07 | 统计故障语义与消费者 zone 一致性 | 实际损坏存储错误、正常 zone、诊断事实及浏览器回归；同一作用域查询和统计 | 已合并；VFS #450、UI #85、Nexus #4916 的最终源提交 CI 全绿，保留全部历史 |
@@ -666,7 +666,7 @@ CODE-04 的剩余范围：
 
 - Rust 人类账号的注册、密码登录及变更、邮件验证、profile、Google OAuth 和注销均已合并，保留原有 user ID、bcrypt 和 provider/subject 绑定。前端已切换这些契约；仍需完成真人 Google 验收。已确认保留显式 native 连接；原生文件授权继续由实际 native 身份决定。
 - `nexus-frontend` 已按用户确认收敛到现有 Rust 能力，失效注册、旧业务 RPC 和依赖已清理；原生文件、Search、凭证与 ReBAC 及独立人类账号均有本地和 CI 保护。仍需真人 Google/实际网关验收及前端发布方案，当前不合并到会自动部署 Firebase 的 main。
-- `nexus-ui` #87 已收敛并合并，合并前后 CI 全绿。TUI #4932 的本地、真实 native、实际终端和独立安装包验收完成，最终 CI 正在收齐。CLI/SDK 收敛已获确认并开始清理；剩余 CLI、remote/MCP 的 server 依赖及 Python 服务端仍需完成。
+- `nexus-ui` #87 已收敛并合并，合并前后 CI 全绿。TUI #4932 的本地、真实 native、实际终端和独立安装包验收完成，最终 18 个工作流全绿后已合并。CLI/SDK 收敛已获确认并开始清理；剩余 CLI、remote/MCP 的 server 依赖及 Python 服务端仍需完成。
 - 收齐这些调用方和账号后端，删除其替代的 Python 服务端，再跑完整用户旅程和 CI。上述事项完成前，整条 Python server 退役主线仍未 code complete。
 
 ## 七、评论和结果模板

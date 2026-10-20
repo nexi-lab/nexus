@@ -103,12 +103,10 @@ async def main() -> None:
         return await native_cli(["agent", *args], key=key, expected=expected, extra_env=agent_env)
 
     async def verify_agent_registry():
-        owner = f"cli-runtime-{suffix}"
+        owner = (await native_cli(["identity", "whoami"]))["data"]["subject_id"]
         register = [
             "register",
             "CLI native acceptance",
-            "--owner-id",
-            owner,
             "--connection-id",
             f"cli-{suffix}",
             "--host-pid",
@@ -120,6 +118,8 @@ async def main() -> None:
         child = f"{parent}.7"
         created = []
         try:
+            forged = await agent_cli([*register, "--owner-id", f"cli-runtime-{suffix}"], expected=1)
+            assert forged["error"]["code"] == "PERMISSION_DENIED", forged
             record = (await agent_cli(register))["data"]
             created.append(parent)
             assert record["pid"] == parent and record["state"] == "REGISTERED", record
@@ -137,6 +137,8 @@ async def main() -> None:
             assert micro["pid"] == child and micro["parent_pid"] == parent, micro
             assert set((await agent_cli(["info", parent]))["data"]["children"]) == {child}
             records = (await agent_cli(["list", "--owner-id", owner]))["data"]
+            assert all(record["owner_id"] == owner for record in records), records
+            records = [r for r in records if r["labels"].get("acceptance") == suffix]
             assert {r["pid"] for r in records} == {parent, child}, records
             assert not (await agent_cli(["list", "--owner-id", owner, "--zone-id", "otherzone"]))[
                 "data"
@@ -149,6 +151,7 @@ async def main() -> None:
                 record = (await agent_cli(["transition", child, state]))["data"]
                 assert record["state"] == state.upper(), record
             ready = (await agent_cli(["list", "--owner-id", owner, "--state", "ready"]))["data"]
+            ready = [r for r in ready if r["labels"].get("acceptance") == suffix]
             assert [r["pid"] for r in ready] == [child], ready
             heartbeat = (await agent_cli(["heartbeat", child]))["data"]
             assert heartbeat["external_info"]["last_heartbeat_ms"] > 0, heartbeat
@@ -166,7 +169,7 @@ async def main() -> None:
             assert (await agent_cli(["delete", child, "--yes"]))["data"] == {"unregistered": True}
             created.remove(child)
             missing = await agent_cli(["info", child], expected=1)
-            assert missing["error"]["code"] == "NOT_FOUND", missing
+            assert missing["error"]["code"] == "PERMISSION_DENIED", missing
             assert not (await agent_cli(["info", parent]))["data"]["children"]
             print(
                 "Native agent CLI passed: canonical PID, parent/child, filters, state machine, heartbeat, signals, auth, unregister"

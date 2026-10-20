@@ -35,7 +35,7 @@ class AgentClient:
         self,
         *,
         name: str,
-        owner_id: str,
+        owner_id: str | None = None,
         zone_id: str,
         connection_id: str,
         host_pid: int,
@@ -74,9 +74,9 @@ class AgentClient:
             raise BackendError("Invalid native agent listing")
         return [self._record(item) for item in result]
 
-    def get(self, pid: str) -> dict[str, Any] | None:
+    def get(self, pid: str) -> dict[str, Any]:
         result = self._transport.call_rpc("agent_get", {"pid": pid})
-        return self._record(result) if result is not None else None
+        return self._record(result)
 
     def unregister(self, pid: str) -> bool:
         result = self._transport.call_rpc("agent_unregister_external", {"pid": pid})

@@ -445,7 +445,7 @@ operations:
   transports:
     cli:
       name: nexus agent delete
-      source: src/nexus/cli/commands/agent.py:84
+      source: src/nexus/cli/commands/agent.py:80
   profiles:
     lite: unverified
     sandbox: unverified
@@ -462,7 +462,7 @@ operations:
   transports:
     cli:
       name: nexus agent heartbeat
-      source: src/nexus/cli/commands/agent.py:102
+      source: src/nexus/cli/commands/agent.py:98
     grpc_expose:
       name: agent_heartbeat
       source: src/nexus/services/agents/agent_rpc_service.py:862
@@ -482,7 +482,7 @@ operations:
   transports:
     cli:
       name: nexus agent info
-      source: src/nexus/cli/commands/agent.py:73
+      source: src/nexus/cli/commands/agent.py:72
   profiles:
     lite: unverified
     sandbox: unverified
@@ -499,7 +499,7 @@ operations:
   transports:
     cli:
       name: nexus agent list
-      source: src/nexus/cli/commands/agent.py:63
+      source: src/nexus/cli/commands/agent.py:62
   profiles:
     lite: unverified
     sandbox: unverified
@@ -533,7 +533,7 @@ operations:
   transports:
     cli:
       name: nexus agent register
-      source: src/nexus/cli/commands/agent.py:44
+      source: src/nexus/cli/commands/agent.py:43
   profiles:
     lite: unverified
     sandbox: unverified
@@ -567,7 +567,7 @@ operations:
   transports:
     cli:
       name: nexus agent signal
-      source: src/nexus/cli/commands/agent.py:110
+      source: src/nexus/cli/commands/agent.py:106
   profiles:
     lite: unverified
     sandbox: unverified
@@ -584,7 +584,7 @@ operations:
   transports:
     cli:
       name: nexus agent transition
-      source: src/nexus/cli/commands/agent.py:93
+      source: src/nexus/cli/commands/agent.py:89
     grpc_expose:
       name: agent_transition
       source: src/nexus/services/agents/agent_rpc_service.py:811
@@ -606,7 +606,7 @@ operations:
   transports:
     cli:
       name: nexus agent
-      source: src/nexus/cli/commands/agent.py:39
+      source: src/nexus/cli/commands/agent.py:38
   profiles:
     lite: supported
     sandbox: supported

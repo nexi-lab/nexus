@@ -167,6 +167,17 @@ jobs:
         run: |
           uv run --no-sync pytest tests/benchmarks/ --collect-only -q -o "addopts="
 
+      - name: Verify authentication client isolation
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        run: |
+          uv run --no-sync pytest \
+            src/nexus/bricks/auth/tests/test_brick_isolation.py \
+            src/nexus/bricks/auth/tests/test_envelope.py \
+            src/nexus/bricks/auth/tests/test_credential_pool.py \
+            src/nexus/bricks/auth/tests/test_gh_sync.py \
+            src/nexus/bricks/auth/tests/test_rfc9700_regression.py \
+            -q -o "addopts="
+
   e2e-self-contained:
     name: E2E Tests (Self-Contained)
     needs: [detect-changes]

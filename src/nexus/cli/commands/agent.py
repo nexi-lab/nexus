@@ -11,7 +11,6 @@ from nexus.cli.output import add_output_options
 from nexus.cli.service_command import ServiceResult, service_command
 from nexus.cli.theme import console
 from nexus.cli.utils import REMOTE_API_KEY_OPTION, REMOTE_URL_OPTION
-from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.contracts.process_types import AgentSignal, AgentState
 from nexus.remote.agent_client import AgentClient
 
@@ -43,7 +42,7 @@ def agent() -> None:
 
 @agent.command("register")
 @click.argument("name")
-@click.option("--owner-id", required=True, help="Owner recorded in the runtime registry.")
+@click.option("--owner-id", help="Assert the authenticated owner; checked by the native host.")
 @click.option("--zone-id", required=True, envvar="NEXUS_ZONE_ID")
 @click.option("--connection-id", required=True)
 @click.option("--host-pid", required=True, type=click.IntRange(min=1))
@@ -75,10 +74,7 @@ def list_cmd(client: AgentClient, **filters: Any) -> ServiceResult:
 @_native_command
 def info_cmd(client: AgentClient, pid: str) -> ServiceResult:
     """Read the current record for a canonical runtime PID."""
-    data = client.get(pid)
-    if data is None:
-        raise NexusFileNotFoundError(pid)
-    return _result(data)
+    return _result(client.get(pid))
 
 
 @agent.command("delete")

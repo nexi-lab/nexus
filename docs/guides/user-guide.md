@@ -163,12 +163,14 @@ nexus agent transition <pid> ready --json
 The daemon validates every state transition. External runtimes can register their actual process and connection metadata:
 
 ```sh
-nexus agent register "Local worker" --owner-id alice --zone-id sharedzone --connection-id <connection> --host-pid <os-pid> --json
+nexus agent register "Local worker" --zone-id sharedzone --connection-id <connection> --host-pid <os-pid> --json
 nexus agent signal <pid> SIGUSR1 --label steering=continue --json
 nexus agent delete <pid> --yes --json
 ```
 
 These commands use the native gRPC endpoint and the existing credential. The Python SDK exposes the same bindings through `nexus.remote.agent_client.AgentClient`, which owns and closes its channel with a `with` statement.
+
+The native host derives the owner from the authenticated caller. `--owner-id` can assert that identity; it cannot delegate ownership. Reading an unavailable or inaccessible PID returns the same permission error.
 
 ## Release native advisory locks
 

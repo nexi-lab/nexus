@@ -50,12 +50,15 @@ def _exec_tui(extra_args: list[str] | None = None) -> None:
                 / "packages"
                 / "nexus-tui"
                 / "node_modules"
-                / "@nexus"
+                / "@nexus-ai-fs"
                 / "api-client"
                 / "package.json"
             )
             if local_entry.exists() and api_client_dist.exists() and tui_workspace_dep.exists():
-                os.execvp(bun, ["bun", "run", str(local_entry), *args])
+                os.execvp(
+                    bun,
+                    ["bun", "--cwd", str(local_entry.parents[1]), "run", "start", *args],
+                )
                 # execvp does not return
 
     # Fast path outside a checkout: use installed nexus-tui on PATH.
@@ -152,12 +155,14 @@ def main(ctx: click.Context, profile: str | None) -> None:
 
 @main.command("tui")
 @click.option("--url", default=None, help="Nexus server URL.")
+@click.option("--search-url", default=None, help="Owning Rust Search HTTP URL.")
 @click.option("--api-key", default=None, help="API key for authentication.")
 @click.option("--agent-id", default=None, help="Agent ID to connect as.")
 @click.option("--subject", default=None, help="Subject (user) identity.")
 @click.option("--zone-id", default=None, help="Zone ID to target.")
 def tui_cmd(
     url: str | None,
+    search_url: str | None,
     api_key: str | None,
     agent_id: str | None,
     subject: str | None,
@@ -167,6 +172,8 @@ def tui_cmd(
     args: list[str] = []
     if url is not None:
         args.extend(["--url", url])
+    if search_url is not None:
+        args.extend(["--search-url", search_url])
     if api_key is not None:
         args.extend(["--api-key", api_key])
     if agent_id is not None:

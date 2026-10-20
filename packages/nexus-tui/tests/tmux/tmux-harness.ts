@@ -274,7 +274,7 @@ export class TmuxSession {
 }
 
 function buildTuiCommand(options: TmuxSessionOptions): string {
-  const parts = ["bun", "run", "src/index.tsx"];
+  const parts = ["bun", "run", "start"];
   if (options.url) parts.push("--url", options.url);
   if (options.apiKey) parts.push("--api-key", options.apiKey);
   if (options.zoneId) parts.push("--zone-id", options.zoneId);

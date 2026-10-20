@@ -3,11 +3,11 @@
  *
  * @example
  * ```typescript
- * import { FetchClient, resolveConfig } from '@nexus-ai-fs/api-client';
+ * import { FetchClient, VfsClient, resolveConfig } from '@nexus-ai-fs/api-client';
  *
  * const config = resolveConfig({ apiKey: 'nx_live_myagent' });
  * const client = new FetchClient(config);
- * const files = await client.get('/api/v2/files/list?path=/');
+ * const files = await new VfsClient(client).list('/');
  * ```
  *
  * @packageDocumentation
@@ -52,14 +52,6 @@ export type {
   ApiErrorResponse,
   PaginatedResponse,
   SseEvent,
-  AspectEnvelope,
-  AspectListResponse,
-  DatasetSchema,
-  CatalogSchemaResponse,
-  ColumnSearchResult,
-  ColumnSearchResponse,
-  ReplayRecord,
-  ReplayResponse,
 } from "./types.js";
 
 // Case transform utilities

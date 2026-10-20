@@ -93,7 +93,7 @@ def main() -> int:
     output = args.output_dir.resolve() / f"run-{time.time_ns()}"
     output.mkdir()
     results: list[dict[str, object]] = []
-    process: subprocess.Popen[str] | None = None
+    process: subprocess.Popen[bytes] | None = None
     env = {
         key: value
         for key, value in os.environ.items()

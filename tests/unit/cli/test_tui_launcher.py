@@ -39,7 +39,7 @@ def test_public_commands_use_checkout_runtime_and_preserve_connection(
         calls.append((binary, arguments))
         raise SystemExit(23)
 
-    monkeypatch.setattr(cli.os, "execvp", execute)
+    monkeypatch.setattr(cli, "_exec_terminal", execute)
     connection = [
         "--url",
         "http://native:2028",
@@ -72,7 +72,7 @@ def test_checkout_without_current_dependency_uses_installed_binary(
         calls.append((binary, arguments))
         raise SystemExit(0)
 
-    monkeypatch.setattr(cli.os, "execvp", execute)
+    monkeypatch.setattr(cli, "_exec_terminal", execute)
     result = CliRunner().invoke(cli.main, ["tui", "--zone-id", "root"])
     assert result.exit_code == 0, result.output
     assert calls == [("/tools/nexus-tui", ["nexus-tui", "--zone-id", "root"])]
@@ -101,3 +101,10 @@ def test_actual_bun_launcher_reaches_terminal_entrypoint(nested: bool) -> None:
     assert "nexus-tui" in result.stdout and "Terminal UI for Nexus" in result.stdout
     assert "--search-url" in result.stdout
     assert "package.json scripts" not in result.stdout
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows process lifetime contract")
+def test_windows_terminal_waits_and_preserves_child_exit_status() -> None:
+    with pytest.raises(SystemExit) as stopped:
+        cli._exec_terminal(sys.executable, ["python", "-c", "raise SystemExit(23)"])
+    assert stopped.value.code == 23

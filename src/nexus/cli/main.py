@@ -9,6 +9,7 @@ When invoked with no subcommand, ``nexus`` execs into the TUI (``nexus-tui``).
 import os
 import shutil
 import signal
+import subprocess
 import sys
 import warnings
 from pathlib import Path
@@ -22,6 +23,16 @@ from nexus.core import setup_uvloop
 # ---------------------------------------------------------------------------
 # TUI launcher helpers
 # ---------------------------------------------------------------------------
+
+
+def _exec_terminal(binary: str, arguments: list[str]) -> None:
+    if sys.platform == "win32":
+        try:
+            code = subprocess.call([binary, *arguments[1:]])
+        except KeyboardInterrupt:
+            raise SystemExit(130) from None
+        raise SystemExit(code)
+    os.execvp(binary, arguments)
 
 
 def _exec_tui(extra_args: list[str] | None = None) -> None:
@@ -55,7 +66,7 @@ def _exec_tui(extra_args: list[str] | None = None) -> None:
                 / "package.json"
             )
             if local_entry.exists() and api_client_dist.exists() and tui_workspace_dep.exists():
-                os.execvp(
+                _exec_terminal(
                     bun,
                     ["bun", "run", "--cwd", str(local_entry.parents[1]), "start", *args],
                 )
@@ -64,13 +75,13 @@ def _exec_tui(extra_args: list[str] | None = None) -> None:
     # Fast path outside a checkout: use installed nexus-tui on PATH.
     nexus_tui = shutil.which("nexus-tui")
     if nexus_tui is not None:
-        os.execvp(nexus_tui, ["nexus-tui", *args])
+        _exec_terminal(nexus_tui, ["nexus-tui", *args])
         # execvp does not return
 
     # Fallback: use bunx (Bun's npx equivalent) against the scoped package.
     bunx = shutil.which("bunx")
     if bunx is not None:
-        os.execvp(bunx, ["bunx", "@nexus-ai-fs/tui", *args])
+        _exec_terminal(bunx, ["bunx", "@nexus-ai-fs/tui", *args])
         # execvp does not return
 
     # Neither found – give the user actionable guidance.

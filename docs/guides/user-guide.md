@@ -1393,16 +1393,6 @@ dynamic-viewer read overhead; ReBAC latency and scale coverage is in
 `tests/benchmarks/bench_rebac_scale.py`. Sharing, namespace, consent, and
 public/private mutations are control-plane operations, not request hot paths.
 
-### Step 6: Create and test access manifests
-
-Access manifests let you say which tools and data surfaces an agent may use.
-
-```bash
-nexus manifest create agent_alice --name "dev tools" --entry "read_*:allow"
-nexus manifest list
-nexus manifest evaluate <manifest-id> --tool-name read_file
-```
-
 ### Step 7: If you are running database auth, create real user keys
 
 This is the operator path once a database-auth deployment is in place:
@@ -1416,8 +1406,6 @@ Packages behind this:
 
 - Auth: `nexus.bricks.auth`
 - ReBAC and policy graph: `nexus.bricks.rebac`
-- Access manifests: `nexus.bricks.access_manifest`
-- Identity and delegation: `nexus.bricks.identity`, `nexus.bricks.delegation`
 
 ## 7. Agent Registry, IPC, Identity, And Delegation
 
@@ -1496,29 +1484,6 @@ nexus ipc send bob_bot "hello from alice" --from alice_bot
 nexus ipc inbox bob_bot
 nexus ipc count bob_bot
 ```
-
-### Step 3: Inspect identity
-
-```bash
-nexus identity show alice_bot
-nexus identity credentials alice_bot
-nexus identity passport alice_bot
-```
-
-### Step 4: Delegate work
-
-```bash
-nexus delegation create alice_bot bob_bot --mode CLEAN --scope "/workspace/project/*" --ttl 3600
-nexus delegation list
-```
-
-Packages behind this:
-
-- Agent registry and lifecycle: `nexus.system_services.agents`
-- IPC: `nexus.bricks.ipc`
-- Identity: `nexus.bricks.identity`
-- Delegation: `nexus.bricks.delegation`
-- A2A support: `nexus.bricks.a2a`
 
 ## 9. Workflows, Sandbox, LLM, And MCP
 
@@ -1784,23 +1749,6 @@ nexus events replay --since 1h
 The `nexus events` CLI currently exposes replay over the generic gRPC `Call`
 path. Live event subscription is not a CLI/RPC command in this surface.
 
-### Scheduler visibility
-
-```bash
-nexus scheduler status
-nexus scheduler queue
-```
-
-### Upload visibility
-
-The upload command group is mainly for inspecting or cancelling resumable
-uploads that already exist on the server:
-
-```bash
-nexus upload status <upload-id>
-nexus upload cancel <upload-id>
-```
-
 ### Operation logs and undo
 
 ```bash
@@ -1812,7 +1760,6 @@ Packages behind this:
 
 - Versioning: `nexus.bricks.versioning`
 - Snapshots: `nexus.bricks.snapshot`
-- Uploads: `nexus.bricks.upload`
 - Event subsystem and scheduler: `nexus.system_services.event_subsystem`, `nexus.system_services.scheduler`
 - Storage and audit trails: `nexus.storage`
 
@@ -2122,43 +2069,10 @@ nexus governance alerts --severity high
 nexus governance rings --json
 ```
 
-### 12.5 Exchange, payments, reputation, and audit
-
-These features fit together as a marketplace flow:
-
-1. publish something through the exchange
-2. pay for it
-3. leave reputation feedback
-4. inspect the audit trail
-
-Typical first commands:
-
-```bash
-nexus exchange list
-nexus exchange create /workspace/report.csv --price 25 --description "Weekly report"
-nexus pay balance
-nexus pay transfer bob_bot 10.00 --memo "For data access"
-nexus reputation show bob_bot
-nexus reputation feedback exch_123 --rater alice_bot --rated bob_bot --outcome positive
-nexus audit list --since 1h
-```
-
-The current exchange CLI is present, but the backend is still marked as under
-development. Use it as an advanced deployment feature, not as the first thing
-you try.
-
-### 12.7 Conflicts, locks, cache, migrate, secrets audit, and RLM
+### 12.7 Locks, cache, and migration
 
 These commands are operational tools. You usually need them after a deployment
 already exists.
-
-Conflict handling:
-
-```bash
-nexus conflicts list
-nexus conflicts show <conflict-id>
-nexus conflicts resolve <conflict-id> --outcome nexus_wins
-```
 
 Distributed lock inspection:
 
@@ -2184,20 +2098,6 @@ nexus migrate plan --from 0.9.0 --to 0.10.0
 nexus migrate import-fs --source ./docs --target /workspace/docs/ --dry-run
 ```
 
-Secret access audit:
-
-```bash
-nexus secrets-audit list --since 1h
-nexus secrets-audit export --format csv
-nexus secrets-audit verify <record-id>
-```
-
-Recursive language-model inference:
-
-```bash
-nexus rlm infer /workspace/report.pdf --prompt "Summarize the key findings"
-```
-
 ### 12.8 Other command families you will eventually see
 
 These are real user-facing areas, but they are more specialized than the core
@@ -2206,15 +2106,10 @@ guide above:
 - `graph`: knowledge graph queries
 - `governance`: anti-fraud and collusion analysis
 - `reputation`: reputation and disputes
-- `exchange`: agent exchange marketplace
-- `pay`: credits and payment flows
 - `audit`: exchange transaction audit
-- `conflicts`: optimistic concurrency conflict resolution
 - `lock`: distributed lock visibility
 - `cache`: cache warming and cache stats
 - `migrate`: upgrade, rollback, backup, restore, and import flows
-- `secrets-audit`: secret access auditing
-- `rlm`: recursive language-model inference
 
 ## 13. Full-Profile Control Plane For Operators
 
@@ -2275,8 +2170,7 @@ nexus governance status --json
 
 The JSON output should show the provisioned user or key, audit rows when they
 exist, replayed events when they exist, and governance counts. A regular user
-key should be able to use normal user surfaces such as `nexus pay balance`, but
-should be denied by admin-only methods.
+key should be denied by admin-only methods.
 
 ### Control-plane surface matrix
 
@@ -2292,7 +2186,6 @@ surfaces, auth expectations, tests, and benchmark classification.
 | Governance | `governance_status`, `governance_alerts`, `governance_rings` | `nexus governance status`, `alerts`, `rings` | Yes | security hardening, the #4138 surface test, and `tests/benchmarks/test_full_control_plane_rpc_benchmark.py` | Benchmarked in `tests/benchmarks/test_full_control_plane_rpc_benchmark.py` |
 | Federation read-only | `federation_client_whoami`, `federation_list_zones`, `federation_cluster_info` | `nexus federation status`, `zones`, `info` | No | federation whoami, docker federation coverage, and `tests/benchmarks/test_full_control_plane_rpc_benchmark.py` | `federation_list_zones` runtime benchmarked in `tests/benchmarks/test_full_control_plane_rpc_benchmark.py` |
 | Federation mutations | `federation_create_zone`, `federation_remove_zone`, `federation_join`, `federation_mount`, `federation_unmount`, `federation_share`, `federation_export_zone`, `federation_import_zone` | `nexus federation mount`, `unmount`; create/remove/share/join CLI parity is #4200 | Yes | docker federation, zone import/export E2E coverage, and `tests/benchmarks/test_full_control_plane_rpc_benchmark.py` | `federation_create_zone` runtime benchmarked in `tests/benchmarks/test_full_control_plane_rpc_benchmark.py`; CLI parity gap #4200 |
-| Pay | `pay_balance`, `pay_transfer`, `pay_history` | `nexus pay balance`, `transfer`, `history` | No | exchange OpenAPI and pay integration coverage | Marketplace user path, not an admin hot path |
 
 Sensitive operation requirements:
 
@@ -2302,8 +2195,6 @@ Sensitive operation requirements:
 - Use a federation-enabled runtime for federation rows. `full` alone does not
   create a federation mesh; use `cluster` or a full/cloud server with federation
   kernel support.
-- Use a pay-enabled full/cloud deployment for pay commands. Pay commands are
-  normal authenticated marketplace flows, not admin-only flows.
 
 Benchmark note: #4138 names admin key operations, audit list/export, events
 replay, governance summaries, and federation zone list/create as benchmark

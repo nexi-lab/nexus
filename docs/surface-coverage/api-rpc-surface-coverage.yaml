@@ -9418,9 +9418,6 @@ operations:
   module: pay
   summary: ''
   transports:
-    cli:
-      name: nexus pay balance
-      source: src/nexus/cli/commands/pay.py:33
     grpc_expose:
       name: pay_balance
       source: src/nexus/server/rpc/services/pay_rpc.py:21
@@ -9492,9 +9489,6 @@ operations:
   module: pay
   summary: ''
   transports:
-    cli:
-      name: nexus pay history
-      source: src/nexus/cli/commands/pay.py:138
     grpc_expose:
       name: pay_history
       source: src/nexus/server/rpc/services/pay_rpc.py:56
@@ -9665,9 +9659,6 @@ operations:
   module: pay
   summary: ''
   transports:
-    cli:
-      name: nexus pay transfer
-      source: src/nexus/cli/commands/pay.py:74
     grpc_expose:
       name: pay_transfer
       source: src/nexus/server/rpc/services/pay_rpc.py:31
@@ -15137,14 +15128,6 @@ parity_warnings:
   - http
   - mcp
   - sdk
-- operation_id: auth.exchange
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
 - operation_id: auth.init
   has:
   - cli
@@ -15425,30 +15408,6 @@ parity_warnings:
   - http
   - mcp
   - sdk
-- operation_id: conflicts.list
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: conflicts.resolve
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: conflicts.show
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
 - operation_id: connectors.api_v2
   has:
   - http
@@ -15673,46 +15632,6 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: delegation.cli
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: delegation.create
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: delegation.list
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: delegation.revoke
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: delegation.show
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
 - operation_id: delete.file
   has:
   - mcp
@@ -15849,14 +15768,6 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: exchange.cancel
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
 - operation_id: exchange.code
   has:
   - sdk
@@ -15865,30 +15776,6 @@ parity_warnings:
   - grpc_typed
   - http
   - mcp
-- operation_id: exchange.create
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: exchange.list
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: exchange.show
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
 - operation_id: execute.workflow
   has:
   - mcp
@@ -16697,46 +16584,6 @@ parity_warnings:
   - http
   - mcp
   - sdk
-- operation_id: identity.cli
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: identity.credentials
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: identity.passport
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: identity.show
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: identity.verify
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
 - operation_id: is.directory
   has:
   - sdk
@@ -16951,46 +16798,6 @@ parity_warnings:
   missing:
   - cli
   - grpc_typed
-  - mcp
-  - sdk
-- operation_id: manifest.create
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: manifest.evaluate
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: manifest.list
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: manifest.revoke
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: manifest.show
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
   - mcp
   - sdk
 - operation_id: mcp.cli
@@ -17771,9 +17578,9 @@ parity_warnings:
   - sdk
 - operation_id: pay.balance
   has:
-  - cli
   - http
   missing:
+  - cli
   - grpc_typed
   - mcp
   - sdk
@@ -17791,22 +17598,6 @@ parity_warnings:
   missing:
   - cli
   - grpc_typed
-  - mcp
-  - sdk
-- operation_id: pay.cli
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: pay.history
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
   - mcp
   - sdk
 - operation_id: pay.meter
@@ -17883,9 +17674,9 @@ parity_warnings:
   - sdk
 - operation_id: pay.transfer
   has:
-  - cli
   - http
   missing:
+  - cli
   - grpc_typed
   - mcp
   - sdk
@@ -18345,14 +18136,6 @@ parity_warnings:
   - grpc_typed
   - http
   - mcp
-- operation_id: rlm.infer
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
 - operation_id: rpc.api_nfs
   has:
   - http
@@ -18463,22 +18246,6 @@ parity_warnings:
   missing:
   - cli
   - grpc_typed
-  - mcp
-  - sdk
-- operation_id: scheduler.queue
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: scheduler.status
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
   - mcp
   - sdk
 - operation_id: scheduler.submit
@@ -18681,44 +18448,12 @@ parity_warnings:
   missing:
   - mcp
   - sdk
-- operation_id: secrets.secrets_audit
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
 - operation_id: secrets_audit.events_export
   has:
   - http
   missing:
   - cli
   - grpc_typed
-  - mcp
-  - sdk
-- operation_id: secrets_audit.export
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: secrets_audit.list
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: secrets_audit.verify
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
   - mcp
   - sdk
 - operation_id: semantic.search
@@ -19105,14 +18840,6 @@ parity_warnings:
   - grpc_typed
   - http
   - mcp
-- operation_id: task_manager.scheduler
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
 - operation_id: tasks.events
   has:
   - http
@@ -19241,14 +18968,6 @@ parity_warnings:
   - http
   - mcp
   - sdk
-- operation_id: uncategorized.conflicts
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
 - operation_id: uncategorized.demo
   has:
   - cli
@@ -19289,22 +19008,6 @@ parity_warnings:
   - http
   - mcp
   - sdk
-- operation_id: uncategorized.manifest
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: uncategorized.memory
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
 - operation_id: uncategorized.migrate
   has:
   - cli
@@ -19330,14 +19033,6 @@ parity_warnings:
   - mcp
   - sdk
 - operation_id: uncategorized.plugins
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: uncategorized.rlm
   has:
   - cli
   missing:
@@ -19385,30 +19080,6 @@ parity_warnings:
   - grpc_typed
   - http
   - mcp
-- operation_id: upload.cancel
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: upload.cli
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: upload.status
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
 - operation_id: versioning.undo
   has:
   - cli
@@ -19714,4 +19385,82 @@ parity_warnings:
   - mcp
   - sdk
 unmapped_surfaces: []
-stale_rows: []
+stale_rows:
+- operation_id: auth.exchange
+  reason: present in committed YAML but not detected by extractor
+- operation_id: conflicts.list
+  reason: present in committed YAML but not detected by extractor
+- operation_id: conflicts.resolve
+  reason: present in committed YAML but not detected by extractor
+- operation_id: conflicts.show
+  reason: present in committed YAML but not detected by extractor
+- operation_id: delegation.cli
+  reason: present in committed YAML but not detected by extractor
+- operation_id: delegation.create
+  reason: present in committed YAML but not detected by extractor
+- operation_id: delegation.list
+  reason: present in committed YAML but not detected by extractor
+- operation_id: delegation.revoke
+  reason: present in committed YAML but not detected by extractor
+- operation_id: delegation.show
+  reason: present in committed YAML but not detected by extractor
+- operation_id: exchange.cancel
+  reason: present in committed YAML but not detected by extractor
+- operation_id: exchange.create
+  reason: present in committed YAML but not detected by extractor
+- operation_id: exchange.list
+  reason: present in committed YAML but not detected by extractor
+- operation_id: exchange.show
+  reason: present in committed YAML but not detected by extractor
+- operation_id: identity.cli
+  reason: present in committed YAML but not detected by extractor
+- operation_id: identity.credentials
+  reason: present in committed YAML but not detected by extractor
+- operation_id: identity.passport
+  reason: present in committed YAML but not detected by extractor
+- operation_id: identity.show
+  reason: present in committed YAML but not detected by extractor
+- operation_id: identity.verify
+  reason: present in committed YAML but not detected by extractor
+- operation_id: manifest.create
+  reason: present in committed YAML but not detected by extractor
+- operation_id: manifest.evaluate
+  reason: present in committed YAML but not detected by extractor
+- operation_id: manifest.list
+  reason: present in committed YAML but not detected by extractor
+- operation_id: manifest.revoke
+  reason: present in committed YAML but not detected by extractor
+- operation_id: manifest.show
+  reason: present in committed YAML but not detected by extractor
+- operation_id: pay.cli
+  reason: present in committed YAML but not detected by extractor
+- operation_id: rlm.infer
+  reason: present in committed YAML but not detected by extractor
+- operation_id: scheduler.queue
+  reason: present in committed YAML but not detected by extractor
+- operation_id: scheduler.status
+  reason: present in committed YAML but not detected by extractor
+- operation_id: secrets.secrets_audit
+  reason: present in committed YAML but not detected by extractor
+- operation_id: secrets_audit.export
+  reason: present in committed YAML but not detected by extractor
+- operation_id: secrets_audit.list
+  reason: present in committed YAML but not detected by extractor
+- operation_id: secrets_audit.verify
+  reason: present in committed YAML but not detected by extractor
+- operation_id: task_manager.scheduler
+  reason: present in committed YAML but not detected by extractor
+- operation_id: uncategorized.conflicts
+  reason: present in committed YAML but not detected by extractor
+- operation_id: uncategorized.manifest
+  reason: present in committed YAML but not detected by extractor
+- operation_id: uncategorized.memory
+  reason: present in committed YAML but not detected by extractor
+- operation_id: uncategorized.rlm
+  reason: present in committed YAML but not detected by extractor
+- operation_id: upload.cancel
+  reason: present in committed YAML but not detected by extractor
+- operation_id: upload.cli
+  reason: present in committed YAML but not detected by extractor
+- operation_id: upload.status
+  reason: present in committed YAML but not detected by extractor

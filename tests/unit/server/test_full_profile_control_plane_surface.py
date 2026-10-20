@@ -101,7 +101,6 @@ def test_cli_surface_contains_required_operator_commands() -> None:
     from nexus.cli.commands.events_cli import events
     from nexus.cli.commands.federation import federation
     from nexus.cli.commands.governance_cli import governance
-    from nexus.cli.commands.pay import pay
 
     assert {
         "create-user",
@@ -116,7 +115,6 @@ def test_cli_surface_contains_required_operator_commands() -> None:
     assert {"replay"} <= set(events.commands)
     assert {"status", "alerts", "rings"} <= set(governance.commands)
     assert {"status", "zones", "info", "mount", "unmount"} <= set(federation.commands)
-    assert {"balance", "transfer", "history"} <= set(pay.commands)
 
 
 def test_sensitive_rpc_services_mark_admin_only() -> None:

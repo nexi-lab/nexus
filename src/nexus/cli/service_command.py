@@ -5,14 +5,14 @@ individual commands only need to call the client and return a ``ServiceResult``.
 
 Usage::
 
-    @group.command("balance")
+    @group.command("stats")
     @add_output_options
     @REMOTE_API_KEY_OPTION
     @REMOTE_URL_OPTION
-    @service_command(client_class=PayClient)
-    def pay_balance(client: PayClient, ...) -> ServiceResult:
-        data = client.balance()
-        return ServiceResult(data=data, human_formatter=_render_balance)
+    @service_command(client_class=SearchClient)
+    def search_stats(client: SearchClient, ...) -> ServiceResult:
+        data = client.stats()
+        return ServiceResult(data=data, human_formatter=_render_stats)
 
 The ``client_class`` parameter is required::
 

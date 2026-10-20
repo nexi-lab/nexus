@@ -1,9 +1,6 @@
 /**
  * Core HTTP client with retry, timeout, auth, error mapping,
  * and automatic snake_case ↔ camelCase key transformation.
- *
- * Generalized from nexus-pay-ts's FetchClient. Consumer packages
- * can subclass and override `buildError()` for domain-specific error mapping.
  */
 
 import {
@@ -325,9 +322,6 @@ export class FetchClient {
 
   /**
    * Map HTTP response to a typed error.
-   *
-   * Subclasses can override this to add domain-specific error mapping
-   * (e.g. 402 → InsufficientCreditsError in nexus-pay-ts).
    */
   protected async buildError(response: Response): Promise<NexusApiError> {
     let message = `HTTP ${response.status}`;

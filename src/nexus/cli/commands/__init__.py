@@ -74,7 +74,6 @@ _REGISTER_COMMANDS: dict[str, tuple[str, ...]] = {
 # Modules that expose a single Click command/group to add via cli.add_command
 # Map module -> (click command name, module attribute name).
 _ADD_COMMAND: dict[str, tuple[str, str]] = {
-    "memory": ("memory", "memory"),
     "agent": ("agent", "agent"),
     # Issue #3962: cross-kind extension introspection
     "extensions": ("extensions", "extensions"),
@@ -86,27 +85,13 @@ _ADD_COMMAND: dict[str, tuple[str, str]] = {
     "daemon_cli": ("daemon", "daemon"),
     "zone": ("zone", "zone"),
     # Issue #2811: New CLI command groups
-    "pay": ("pay", "pay"),
     "audit": ("audit", "audit"),
     "locks": ("lock", "lock"),
     "governance_cli": ("governance", "governance"),
     "events_cli": ("events", "events"),
     "snapshots": ("snapshot", "snapshot"),
-    "exchange": ("exchange", "exchange"),
     "federation": ("federation", "federation"),
-    # Issue #2812: Missing CLI commands for identity, ipc, etc.
-    "identity": ("identity", "identity"),
-    # `ipc` command deleted in Phase M of the parallel-layers PR —
-    # `nexus.bricks.ipc` removed; PR #3912 ships the Rust replacement.
-    "delegation": ("delegation", "delegation"),
-    "scheduler_cli": ("scheduler", "scheduler"),
-    # "share" removed: /api/v2/share-links endpoints not implemented server-side
     "hub": ("hub", "hub"),
-    "conflicts": ("conflicts", "conflicts"),
-    "manifest_cli": ("manifest", "manifest"),
-    "secrets_audit": ("secrets-audit", "secrets_audit"),
-    "rlm": ("rlm", "rlm"),
-    "upload": ("upload", "upload"),
     # Issue #2915: Demo data management + preset-aware init
     "demo": ("demo", "demo"),
     "init_cmd": ("init", "init"),

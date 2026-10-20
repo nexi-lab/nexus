@@ -1,4 +1,4 @@
-import { SearchClient, type FetchClient, type SearchConnection, type SearchHit } from "@nexus-ai-fs/api-client";
+import { SearchClient, type FetchClient, type SearchConnection, type SearchHit } from "#nexus-api-client";
 import { createStore } from "./create-store.js";
 export type SearchResult = SearchHit;
 export type SearchMode = "keyword" | "semantic" | "hybrid";

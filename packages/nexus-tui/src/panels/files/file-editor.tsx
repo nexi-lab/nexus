@@ -1,6 +1,6 @@
 import { createSignal, Show } from "solid-js";
 import type { TextareaRenderable } from "@opentui/core";
-import type { VfsClient } from "@nexus-ai-fs/api-client";
+import type { VfsClient } from "#nexus-api-client";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useRequestScope } from "../../shared/hooks/use-request-scope.js";
 import { ConfirmDialog } from "../../shared/components/confirm-dialog.js";

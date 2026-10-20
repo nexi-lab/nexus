@@ -4,16 +4,25 @@
   "description": "Terminal UI for native Nexus files, Search and HTTP requests",
   "type": "module",
   "bin": {
-    "nexus-tui": "./src/index.tsx"
+    "nexus-tui": "./bin/nexus-tui.cjs"
+  },
+  "imports": {
+    "#nexus-api-client": "./src/api-client.ts"
   },
   "files": [
+    "bin",
     "src",
+    "bunfig.toml",
+    "tsconfig.json",
+    "scripts/patch-jsx-types.cjs",
     "README.md"
   ],
   "scripts": {
     "dev": "bun run --conditions=browser src/index.tsx",
     "start": "bun run --conditions=browser src/index.tsx",
     "test": "bun test",
+    "test:package": "bun run scripts/test-package.ts",
+    "pack": "bun run scripts/pack.ts",
     "lint": "tsc --noEmit",
     "clean": "rm -rf dist",
     "postinstall": "node scripts/patch-jsx-types.cjs"

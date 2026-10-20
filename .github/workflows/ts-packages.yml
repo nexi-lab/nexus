@@ -86,6 +86,7 @@ jobs:
           "$build_dir/install/bin/tmux" -V
       - run: bun test
       - run: bun run lint
+      - run: bun run test:package
 
   windows-tui-launcher:
     name: Windows TUI launcher
@@ -119,6 +120,9 @@ jobs:
           uv pip install -e ".[dev,test]"
       - name: Verify actual Bun launch and Windows child exit status
         run: uv run --no-sync python -m pytest tests/unit/cli/test_tui_launcher.py -n 0 -q
+      - name: Verify an isolated installation of the packed terminal
+        working-directory: packages/nexus-tui
+        run: bun run test:package
 
   native-tui:
     name: Native TUI acceptance

@@ -11,7 +11,7 @@
  * @see §2 Worker thread isolation — Issue #3632
  */
 
-import type { NexusClientOptions, RequestOptions } from "@nexus-ai-fs/api-client";
+import type { NexusClientOptions, RequestOptions } from "#nexus-api-client";
 
 // ─── Shared types ─────────────────────────────────────────────────────────────
 

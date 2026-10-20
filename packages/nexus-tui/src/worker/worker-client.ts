@@ -16,7 +16,7 @@
  * @see §2 Worker thread isolation — Issue #3632
  */
 
-import { createHttpError, NexusApiError, type RequestOptions } from "@nexus-ai-fs/api-client";
+import { createHttpError, NexusApiError, type RequestOptions } from "#nexus-api-client";
 import type {
   FromWorkerMessage,
   HttpMethod,

@@ -10,7 +10,7 @@
  * @see §2 Worker thread isolation — Issue #3632
  */
 
-import { FetchClient, NexusApiError, RateLimitError } from "@nexus-ai-fs/api-client";
+import { FetchClient, NexusApiError, RateLimitError } from "#nexus-api-client";
 import type {
   ToWorkerMessage,
   FromWorkerMessage,

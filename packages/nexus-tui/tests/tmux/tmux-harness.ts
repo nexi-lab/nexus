@@ -11,11 +11,11 @@
  * ```ts
  * const session = await TmuxSession.create({ width: 120, height: 40 });
  * try {
- *   await session.waitForText("NEXUS", 5000);       // Wait for TUI to render
- *   await session.sendKeys("5");                      // Navigate to Access panel
- *   await session.waitForText("[Manifests]", 3000);   // Verify tab rendered
+ *   await session.waitForText("Nexus native", 5000);
+ *   await session.sendKeys("3");
+ *   await session.waitForText("Native Console", 3000);
  *   const content = await session.capturePane();
- *   expect(content).toContain("? Help");
+ *   expect(content).toContain("Native Console");
  * } finally {
  *   await session.destroy();
  * }
@@ -84,7 +84,7 @@ export class TmuxSession {
 
     // Build TUI command — needs to cd into the package directory first
     const tuiCmd = options.command ?? buildTuiCommand(options);
-    const pkgDir = fileURLToPath(new URL("../../", import.meta.url));
+    const pkgDir = process.env.NEXUS_TUI_PACKAGE_CWD ?? fileURLToPath(new URL("../../", import.meta.url));
     const fullCmd = `cd ${shellQuote(pkgDir)} && ${tuiCmd}`;
 
     // Create detached tmux session with fixed dimensions.
@@ -274,8 +274,8 @@ export class TmuxSession {
 }
 
 function buildTuiCommand(options: TmuxSessionOptions): string {
-  const parts = ["bun", "run", "start"];
-  if (options.url) parts.push("--url", options.url);
+  const parts = process.env.NEXUS_TUI_PACKAGED_BIN ? ["bun", process.env.NEXUS_TUI_PACKAGED_BIN] : ["bun", "run", "start"];
+  if (options.url) parts.push("--url", options.url, "--search-url", options.url);
   if (options.apiKey) parts.push("--api-key", options.apiKey);
   if (options.zoneId) parts.push("--zone-id", options.zoneId);
   return parts.map(shellQuote).join(" ");

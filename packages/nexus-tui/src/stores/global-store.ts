@@ -1,4 +1,4 @@
-import { FetchClient, resolveConfig, type NativeIdentity, type NexusClientOptions } from "@nexus-ai-fs/api-client";
+import { FetchClient, resolveConfig, type NativeIdentity, type NexusClientOptions } from "#nexus-api-client";
 import { createStore } from "./create-store.js";
 
 export type PanelId = "files" | "search" | "console";

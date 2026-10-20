@@ -41,8 +41,11 @@ Editor saves require a valid native write receipt. Failed or late responses pres
 ```sh
 bun test
 bun run lint
+bun run test:package
 ```
 
 The standard suite drives the full terminal tree with real keystrokes, a transport worker and controlled HTTP faults. It covers Unicode input, binary transfers, editor acknowledgements, late saves, discard/delete confirmation, Search errors, native Console traffic and terminal resizing. Linux CI also starts the actual CLI inside tmux and checks its rendered output and exit status.
+
+`test:package` installs the built tarball in an isolated directory, verifies the bundled API client matches the canonical build and invokes the installed command. Linux also repeats the actual tmux journeys through that installed package. Windows verifies installation and the command runtime; its public CLI process lifetime has a separate regression. Run `bun run pack` to prepare the same release artifact in `dist/`. The packer stages the runtime configuration and canonical SDK build. The package import points at the local dependency during development and the identical shipped SDK in the artifact; no checkout path or unpublished registry version is needed at installation. Source manifests remain unchanged.
 
 `tests/e2e/native-search.test.tsx` uses an isolated Rust daemon prepared by the repository's `scripts/test_search_local.py`. It verifies binary VFS CRUD, native identity, Search/discovery/indexing scope, and immediate key/relation revocation through the real worker and terminal renderer. The **Native TUI acceptance** CI job runs this journey against the pinned daemon/plugin. No Python server is used.

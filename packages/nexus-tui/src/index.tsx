@@ -12,7 +12,7 @@
 
 import { createCliRenderer } from "@opentui/core";
 import { render } from "@opentui/solid";
-import { resolveConfig } from "@nexus-ai-fs/api-client";
+import { resolveConfig } from "#nexus-api-client";
 import { useGlobalStore, setClientFactory } from "./stores/global-store.js";
 import { createWorkerManager } from "./worker/worker-manager.js";
 import { App } from "./app.js";
@@ -117,7 +117,7 @@ async function main(): Promise<void> {
     // Keep the worker and native transport on the same explicit configuration.
     workerManager.reconfigure(newConfig);
     // WorkerFetchClient implements the transport methods used by native clients.
-    return workerManager.client as unknown as import("@nexus-ai-fs/api-client").FetchClient;
+    return workerManager.client as unknown as import("#nexus-api-client").FetchClient;
   });
 
   // Initialize the native connection through the shared worker.

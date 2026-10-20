@@ -11,7 +11,7 @@
  * @see §2 Worker thread isolation — Issue #3632
  */
 
-import type { NexusClientOptions } from "@nexus-ai-fs/api-client";
+import type { NexusClientOptions } from "#nexus-api-client";
 import { WorkerFetchClient } from "./worker-client.js";
 import type { ToWorkerMessage } from "./protocol.js";
 

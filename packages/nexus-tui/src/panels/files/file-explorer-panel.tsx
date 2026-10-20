@@ -1,5 +1,5 @@
 import { createSignal, onCleanup, Show } from "solid-js";
-import { VfsClient, type FileMetadata } from "@nexus-ai-fs/api-client";
+import { VfsClient, type FileMetadata } from "#nexus-api-client";
 import { useGlobalStore } from "../../stores/global-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useRequestScope } from "../../shared/hooks/use-request-scope.js";

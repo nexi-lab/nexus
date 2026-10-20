@@ -18,8 +18,8 @@ export default function SearchPanel(props: { readonly onInputMode: (active: bool
   const client = useGlobalStore.getState().client!;
   const connection = { url: config.searchUrl, zoneId: config.zoneId };
   const transport = {
-    get: <T,>(path: string, options?: import("@nexus-ai-fs/api-client").RequestOptions) => client.get<T>(path, { ...options, signal: scope.signal }),
-    post: <T,>(path: string, body: unknown, options?: import("@nexus-ai-fs/api-client").RequestOptions) => client.post<T>(path, body, { ...options, signal: scope.signal }),
+    get: <T,>(path: string, options?: import("#nexus-api-client").RequestOptions) => client.get<T>(path, { ...options, signal: scope.signal }),
+    post: <T,>(path: string, body: unknown, options?: import("#nexus-api-client").RequestOptions) => client.post<T>(path, body, { ...options, signal: scope.signal }),
   };
   onCleanup(() => { state().cancel(); props.onInputMode(false); });
   const close = () => { setInput(false); setRootInput(false); props.onInputMode(false); };

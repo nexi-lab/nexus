@@ -1,8 +1,14 @@
-"""E2E test: Zone deprovision with FastAPI, ReBAC permissions, and non-admin users.
+"""WIRING test (renamed from _e2e, M-15): zone deprovision authorization on
+an in-memory ReBAC and an always-ok runtime receipt.
 
-Tests the full zone lifecycle with actual permission enforcement:
+This suite verifies the ROUTER↔SERVICE wiring (capability gates, status
+codes, SQL state) — NOT real ReBAC semantics: the rebac_check here is a
+test-supplied in-memory function and the runtime never refuses.  Real-stack
+semantics live in the full-process e2e suites.
+
+Checks:
 1. Register two users (owner + non-member)
-2. Create zone (owner auto-enrolled via ReBAC)
+2. Create zone (owner auto-enrolled via the in-memory ReBAC)
 3. Non-member cannot DELETE zone (403)
 4. Owner can DELETE zone (202)
 5. Verify idempotent retry on terminated zone
@@ -13,8 +19,12 @@ Issue #2061: Zone Finalizer Protocol for Ordered Cleanup.
 
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+
+from nexus.remote.zone_runtime_client import RuntimeReceipt
+from nexus.server.lifespan.zone_control import arm_zone_services, zone_worker
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -22,7 +32,7 @@ import pytest
 
 
 @pytest.fixture(scope="module")
-async def app_with_auth():
+def app_with_auth():
     """Create a full FastAPI app with DatabaseLocalAuth and ReBAC."""
     tmpdir = tempfile.mkdtemp()
     tmp_path = Path(tmpdir)
@@ -57,23 +67,6 @@ async def app_with_auth():
         )
         conn.commit()
 
-    # Create NexusFS via factory
-    from nexus.backends.storage.cas_local import CASLocalBackend
-    from nexus.factory import create_nexus_fs
-    from nexus.storage.record_store import SQLAlchemyRecordStore
-
-    storage_path = tmp_path / "storage"
-    storage_path.mkdir(exist_ok=True)
-    backend = CASLocalBackend(root_path=storage_path)
-    metadata_store = str(tmp_path / "raft")
-    record_store = SQLAlchemyRecordStore(db_url=db_url)
-
-    nx = create_nexus_fs(
-        backend=backend,
-        metadata_store=metadata_store,
-        record_store=record_store,
-    )
-
     # Create auth provider with SAME database
     from nexus.bricks.auth.providers.database_local import DatabaseLocalAuth
 
@@ -82,28 +75,102 @@ async def app_with_auth():
         jwt_secret="test-secret-key-for-e2e",
     )
 
-    # Create FastAPI app
-    from nexus.server.fastapi_server import create_app
+    # Build the compatibility surface around the canonical service.  The
+    # separate full-process E2E covers the real Rust runtime; this fixture
+    # keeps its focus on user-vs-outsider authorization and SQL state.
+    from fastapi import FastAPI
 
-    app = create_app(
-        nexus_fs=nx,
-        auth_provider=auth,
-        database_url=db_url,
+    from nexus.server.auth import auth_routes
+    from nexus.server.auth.zone_routes import router as zone_router
+
+    app = FastAPI()
+    app.state.api_key = None
+    app.state.auth_provider = auth
+    app.state.session_factory = SessionLocal
+
+    edges: set[tuple[str, str, str, str]] = set()
+
+    def projection_write(zone_id, principal, relation, path):
+        edges.add((zone_id, principal["subject_id"], relation, path))
+
+    def projection_delete(zone_id, principal, relation, path):
+        edges.discard((zone_id, principal["subject_id"], relation, path))
+
+    def rebac_check(_session, subject, permission, path, zone_id):
+        subject_id = subject.split(":", 1)[-1]
+        accepted = {
+            "read": {"direct_viewer", "direct_editor", "direct_owner"},
+            "write": {"direct_editor", "direct_owner"},
+            "execute": {"direct_owner"},
+        }[permission]
+        return any(
+            edge_zone == zone_id
+            and edge_subject == subject_id
+            and relation in accepted
+            and (edge_path == "/" or path.startswith(edge_path.rstrip("/") + "/"))
+            for edge_zone, edge_subject, relation, edge_path in edges
+        )
+
+    runtime = SimpleNamespace(
+        probe_capabilities=lambda **_: (
+            "zone-runtime:create",
+            "zone-runtime:join",
+            "zone-runtime:status",
+            "zone-runtime:mount",
+            "zone-runtime:unmount",
+            "zone-runtime:deprovision",
+            "zone-runtime:operation-journal",
+        ),
+        create_zone=lambda **kwargs: RuntimeReceipt(
+            ok=True,
+            physical_identity=kwargs["zone_id"],
+            membership="RESIDENT",
+            raw={"zone_id": kwargs["zone_id"], "outcome": "CREATED"},
+        ),
+        zone_status=lambda **kwargs: RuntimeReceipt(
+            ok=True,
+            physical_identity=kwargs["zone_id"],
+            membership="RESIDENT",
+            runtime_revision="1:1:1",
+            raw={"zone_id": kwargs["zone_id"], "presence": "RESIDENT"},
+        ),
+        deprovision=lambda **kwargs: RuntimeReceipt(
+            ok=True,
+            physical_identity=kwargs["zone_id"],
+            membership="DELETED",
+            raw={"zone_id": kwargs["zone_id"], "outcome": "DEPROVISIONED"},
+        ),
     )
-
-    # Set nexus instance globally (zone routes use get_nexus_instance())
-    from nexus.server.auth.auth_routes import set_nexus_instance
-
-    set_nexus_instance(nx)
+    arm_zone_services(
+        app,
+        session_factory=SessionLocal,
+        runtime=runtime,
+        rebac_check=rebac_check,
+        projection_write=projection_write,
+        projection_delete=projection_delete,
+        worker_enabled=True,
+    )
 
     from fastapi.testclient import TestClient
 
-    client = TestClient(app)
+    auth_routes._auth_provider = auth
+    auth_routes._nexus_fs_instance = None
+    app.include_router(auth_routes.router)
+    app.include_router(zone_router)
 
-    yield {"client": client, "nx": nx, "session_factory": SessionLocal}
+    with TestClient(app) as client:
+        yield {
+            "client": client,
+            "session_factory": SessionLocal,
+            "worker": zone_worker(app),
+            # zone_id setup 需要用 create_token 铸 admin JWT（见该 fixture）
+            "auth": auth,
+        }
 
     # Cleanup
-    nx.close()
+    auth_routes._auth_provider = None
+    auth.close()
+    engine.dispose()
     import shutil
 
     shutil.rmtree(tmpdir, ignore_errors=True)
@@ -120,8 +187,6 @@ def _register_or_login(client, email, password, username, display_name):
             "display_name": display_name,
         },
     )
-    if resp.status_code == 503:
-        pytest.skip("Auth provider not configured")
     if resp.status_code == 201:
         return resp.json()["token"]
     # Already registered — login
@@ -133,44 +198,104 @@ def _register_or_login(client, email, password, username, display_name):
     return resp.json()["token"]
 
 
+def _zone_scoped_token(app_with_auth, email: str, zone_id: str) -> str:
+    """create_token 签 zone-scoped 用户 JWT（is_admin=False，授权走 ReBAC）。
+
+    7903b539e9 起 token 的 zone binding 是硬边界：注册 token 的 home
+    zone 为 root（#4740），访问其他 zone 会被 ZONE_OUT_OF_TOKEN_SCOPE
+    拒。本套件的授权断言要测的是 ReBAC 路径，用户 token 须绑定目标
+    zone（用户被 assign zone 后的正常形态，user.zone_id 列存在）。
+    """
+    from nexus.storage.models import UserModel
+
+    session_factory = app_with_auth["session_factory"]
+    with session_factory() as s:
+        user = s.query(UserModel).filter_by(email=email).one()
+        return app_with_auth["auth"].create_token(
+            user.email,
+            {
+                "subject_type": "user",
+                "subject_id": user.user_id,
+                "zone_id": zone_id,
+                "is_admin": False,
+                "name": user.display_name or user.username,
+            },
+        )
+
+
 @pytest.fixture(scope="module")
 def owner_token(app_with_auth):
-    """Register/login zone owner user."""
-    return _register_or_login(
+    """Register the zone owner user; JWT scoped to the test zone."""
+    _register_or_login(
         app_with_auth["client"],
         "owner@example.com",
         "ownerpass123!",
         "zone_owner",
         "Zone Owner",
     )
+    return _zone_scoped_token(app_with_auth, "owner@example.com", "perm-test-zone")
 
 
 @pytest.fixture(scope="module")
 def outsider_token(app_with_auth):
-    """Register/login a user who is NOT a zone member."""
-    return _register_or_login(
+    """Register a user who is NOT a zone member; JWT scoped to the test zone.
+
+    非成员对 zone 资源的 403 断言要测的是 ReBAC 拒绝而非 token scope
+    拒绝，token 绑定同一 zone 才能穿过硬边界。
+    """
+    _register_or_login(
         app_with_auth["client"],
         "outsider@example.com",
         "outsiderpass123!",
         "zone_outsider",
         "Zone Outsider",
     )
+    return _zone_scoped_token(app_with_auth, "outsider@example.com", "perm-test-zone")
 
 
 @pytest.fixture(scope="module")
-def zone_id(app_with_auth, owner_token):
-    """Create a zone — owner is auto-enrolled via ReBAC."""
+def admin_token(app_with_auth, owner_token):
+    """Setup 专用 admin JWT（subject = owner 本人）。
+
+    2d00dc6546 起 create zone 需 zone.global.create（admin-only），而
+    create 在本 wiring 套件里是 setup/前置而非被测行为：用
+    auth.create_token 签 admin claim（register/login 内部即此调用；
+    JWT 自包含，claim 即身份，不动用户行——注册用户 email_verified=0，
+    login 会被 _verify_user_login_eligibility 拒，故不走 login）。
+    admin 的 subject 仍是 owner 本人，router enroll 依旧给 owner 建
+    direct_owner 投影；各测试的授权断言继续用普通 owner_token 走
+    ReBAC 路径而非 admin 豁免。
+    """
+    from nexus.storage.models import UserModel
+
+    session_factory = app_with_auth["session_factory"]
+    with session_factory() as s:
+        owner = s.query(UserModel).filter_by(email="owner@example.com").one()
+        return app_with_auth["auth"].create_token(
+            owner.email,
+            {
+                "subject_type": "user",
+                "subject_id": owner.user_id,
+                "zone_id": owner.zone_id or "root",
+                "is_admin": True,
+                "name": owner.display_name or owner.username,
+            },
+        )
+
+
+@pytest.fixture(scope="module")
+def zone_id(app_with_auth, admin_token):
+    """Create a zone — owner is auto-enrolled via ReBAC (see admin_token)."""
     client = app_with_auth["client"]
     resp = client.post(
         "/api/zones",
         json={"name": "Test Zone", "zone_id": "perm-test-zone"},
-        headers={"Authorization": f"Bearer {owner_token}"},
+        headers={"Authorization": f"Bearer {admin_token}"},
     )
     # Zone may already exist from prior test class
     if resp.status_code == 400 and "already" in resp.text.lower():
         return "perm-test-zone"
-    if resp.status_code != 201:
-        pytest.skip(f"Zone creation failed ({resp.status_code}): {resp.text}")
+    assert resp.status_code == 201, resp.text
     data = resp.json()
     assert data["phase"] == "Active"
     assert data["finalizers"] == []
@@ -188,7 +313,10 @@ class TestZonePermissions:
     def test_unauthenticated_delete_returns_error(self, app_with_auth):
         """DELETE without token → 401 from the unified auth dependency."""
         client = app_with_auth["client"]
-        resp = client.delete("/api/zones/perm-test-zone")
+        resp = client.delete(
+            "/api/zones/perm-test-zone",
+            headers={"X-Nexus-Confirm-Zone": "perm-test-zone"},
+        )
         assert resp.status_code == 401
 
     def test_outsider_cannot_get_zone(self, app_with_auth, outsider_token, zone_id):
@@ -205,7 +333,10 @@ class TestZonePermissions:
         client = app_with_auth["client"]
         resp = client.delete(
             f"/api/zones/{zone_id}",
-            headers={"Authorization": f"Bearer {outsider_token}"},
+            headers={
+                "Authorization": f"Bearer {outsider_token}",
+                "X-Nexus-Confirm-Zone": zone_id,
+            },
         )
         assert resp.status_code == 403, f"Expected 403, got {resp.status_code}: {resp.text}"
 
@@ -247,86 +378,98 @@ class TestDeprovisionLifecycle:
         client = app_with_auth["client"]
         resp = client.delete(
             f"/api/zones/{zone_id}",
-            headers={"Authorization": f"Bearer {owner_token}"},
+            headers={
+                "Authorization": f"Bearer {owner_token}",
+                "X-Nexus-Confirm-Zone": zone_id,
+            },
         )
         assert resp.status_code == 202, f"Expected 202, got {resp.status_code}: {resp.text}"
         data = resp.json()
         assert data["zone_id"] == zone_id
-        assert data["phase"] in ("Terminating", "Terminated")
+        assert data["phase"] == "Terminating"
         assert "finalizers_completed" in data
         assert "finalizers_pending" in data
         assert "finalizers_failed" in data
 
-    def test_double_delete_idempotent(self, app_with_auth, owner_token):
+    def test_double_delete_idempotent(self, app_with_auth, owner_token, admin_token):
         """Second DELETE after termination → 404 (ReBAC tuples cleaned)."""
         client = app_with_auth["client"]
-        # Create a fresh zone for this test
+        # Create a fresh zone for this test (setup: admin claim, see admin_token)
         create_resp = client.post(
             "/api/zones",
             json={"name": "Double Delete", "zone_id": "double-del-zone"},
-            headers={"Authorization": f"Bearer {owner_token}"},
+            headers={"Authorization": f"Bearer {admin_token}"},
         )
-        if create_resp.status_code != 201:
-            pytest.skip("Zone creation failed")
+        assert create_resp.status_code == 201, create_resp.text
         zid = create_resp.json()["zone_id"]
+        zone_owner_token = _zone_scoped_token(app_with_auth, "owner@example.com", zid)
 
         first = client.delete(
             f"/api/zones/{zid}",
-            headers={"Authorization": f"Bearer {owner_token}"},
+            headers={
+                "Authorization": f"Bearer {zone_owner_token}",
+                "X-Nexus-Confirm-Zone": zid,
+            },
         )
         assert first.status_code == 202
+        app_with_auth["worker"].pump_once()
 
-        # Second DELETE — zone is Terminated so 404; or 403 because ReBAC
-        # tuples were cleaned (finalizer worked correctly)
+        # The first request revokes the zone's grants.  The next authorization
+        # boundary therefore fails closed before an idempotent replay can leak
+        # the operation to a now-unprivileged caller.
         second = client.delete(
             f"/api/zones/{zid}",
-            headers={"Authorization": f"Bearer {owner_token}"},
+            headers={
+                "Authorization": f"Bearer {zone_owner_token}",
+                "X-Nexus-Confirm-Zone": zid,
+            },
         )
-        assert second.status_code in (202, 403, 404), (
-            f"Expected 202/403/404, got {second.status_code}: {second.text}"
-        )
+        assert second.status_code == 403, second.text
 
-    def test_get_after_deprovision(self, app_with_auth, owner_token):
-        """GET after deprovision shows terminated phase."""
+    def test_get_after_deprovision(self, app_with_auth, owner_token, admin_token):
+        """GET after deprovision fails closed after the owner grant is revoked."""
         client = app_with_auth["client"]
 
         create_resp = client.post(
             "/api/zones",
             json={"name": "Deprovision Check", "zone_id": "depr-check-zone"},
-            headers={"Authorization": f"Bearer {owner_token}"},
+            headers={"Authorization": f"Bearer {admin_token}"},
         )
-        if create_resp.status_code != 201:
-            pytest.skip("Zone creation failed")
+        assert create_resp.status_code == 201, create_resp.text
         zid = create_resp.json()["zone_id"]
+        zone_owner_token = _zone_scoped_token(app_with_auth, "owner@example.com", zid)
 
         del_resp = client.delete(
             f"/api/zones/{zid}",
-            headers={"Authorization": f"Bearer {owner_token}"},
+            headers={
+                "Authorization": f"Bearer {zone_owner_token}",
+                "X-Nexus-Confirm-Zone": zid,
+            },
         )
         assert del_resp.status_code == 202
+        app_with_auth["worker"].pump_once()
 
         get_resp = client.get(
             f"/api/zones/{zid}",
-            headers={"Authorization": f"Bearer {owner_token}"},
+            headers={"Authorization": f"Bearer {zone_owner_token}"},
         )
-        if get_resp.status_code == 200:
-            data = get_resp.json()
-            assert data["phase"] in ("Terminating", "Terminated")
-            assert data["is_active"] is False
+        assert get_resp.status_code == 403, get_resp.text
 
     def test_deprovision_removes_only_target_zone_graph_and_rebac_rows(
         self,
         app_with_auth,
         owner_token,
+        admin_token,
     ):
         """Finalizer deletes all target references and preserves control rows."""
         from sqlalchemy import text
 
         client = app_with_auth["client"]
         session_factory = app_with_auth["session_factory"]
-        headers = {"Authorization": f"Bearer {owner_token}"}
         target_zone = "cleanup-target-zone"
         control_zone = "cleanup-control-zone"
+        # create 是 setup（admin claim）；delete/断言保持 owner 的 ReBAC 路径
+        create_headers = {"Authorization": f"Bearer {admin_token}"}
 
         for zone_id, name in (
             (target_zone, "Cleanup Target"),
@@ -335,7 +478,7 @@ class TestDeprovisionLifecycle:
             response = client.post(
                 "/api/zones",
                 json={"name": name, "zone_id": zone_id},
-                headers=headers,
+                headers=create_headers,
             )
             assert response.status_code == 201, response.text
 
@@ -416,8 +559,15 @@ class TestDeprovisionLifecycle:
                 )
             session.commit()
 
-        delete_response = client.delete(f"/api/zones/{target_zone}", headers=headers)
+        delete_response = client.delete(
+            f"/api/zones/{target_zone}",
+            headers={
+                "Authorization": f"Bearer {_zone_scoped_token(app_with_auth, 'owner@example.com', target_zone)}",
+                "X-Nexus-Confirm-Zone": target_zone,
+            },
+        )
         assert delete_response.status_code == 202, delete_response.text
+        app_with_auth["worker"].pump_once()
 
         with session_factory() as session:
             target_entity_count = session.execute(
@@ -475,36 +625,38 @@ class TestDeprovisionLifecycle:
 
 
 class TestZoneResponseFormat:
-    def test_create_zone_has_phase_fields(self, app_with_auth, owner_token):
+    def test_create_zone_has_phase_fields(self, app_with_auth, admin_token):
         """POST /api/zones response includes phase, finalizers, is_active."""
         client = app_with_auth["client"]
+        # create 的响应契约在有权限主体上验证（2d00dc6546 起 admin-only）
         resp = client.post(
             "/api/zones",
             json={"name": "Format Test", "zone_id": "format-check"},
-            headers={"Authorization": f"Bearer {owner_token}"},
+            headers={"Authorization": f"Bearer {admin_token}"},
         )
-        if resp.status_code != 201:
-            pytest.skip("Zone creation failed")
+        assert resp.status_code == 201, resp.text
         data = resp.json()
         assert data["phase"] == "Active"
         assert data["finalizers"] == []
         assert data["is_active"] is True
 
-    def test_deprovision_response_shape(self, app_with_auth, owner_token):
+    def test_deprovision_response_shape(self, app_with_auth, owner_token, admin_token):
         """DELETE response has correct ZoneDeprovisionResponse shape."""
         client = app_with_auth["client"]
         create_resp = client.post(
             "/api/zones",
             json={"name": "Shape Test", "zone_id": "shape-check"},
-            headers={"Authorization": f"Bearer {owner_token}"},
+            headers={"Authorization": f"Bearer {admin_token}"},
         )
-        if create_resp.status_code != 201:
-            pytest.skip("Zone creation failed")
+        assert create_resp.status_code == 201, create_resp.text
         zid = create_resp.json()["zone_id"]
 
         del_resp = client.delete(
             f"/api/zones/{zid}",
-            headers={"Authorization": f"Bearer {owner_token}"},
+            headers={
+                "Authorization": f"Bearer {_zone_scoped_token(app_with_auth, 'owner@example.com', zid)}",
+                "X-Nexus-Confirm-Zone": zid,
+            },
         )
         assert del_resp.status_code == 202
         data = del_resp.json()

@@ -550,7 +550,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.agent_registry
-      source: src/nexus/remote/kernel_client.py:1207
+      source: src/nexus/remote/kernel_client.py:1249
   profiles:
     lite: supported
     sandbox: supported
@@ -1112,7 +1112,7 @@ operations:
   transports:
     http:
       name: POST /batch/read
-      source: src/nexus/server/api/v2/routers/async_files.py:2189
+      source: src/nexus/server/api/v2/routers/async_files.py:2205
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1131,7 +1131,7 @@ operations:
   transports:
     http:
       name: POST /batch/write
-      source: src/nexus/server/api/v2/routers/async_files.py:2103
+      source: src/nexus/server/api/v2/routers/async_files.py:2119
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1150,7 +1150,7 @@ operations:
   transports:
     http:
       name: POST /copy
-      source: src/nexus/server/api/v2/routers/async_files.py:2394
+      source: src/nexus/server/api/v2/routers/async_files.py:2410
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1169,7 +1169,7 @@ operations:
   transports:
     http:
       name: POST /copy-bulk
-      source: src/nexus/server/api/v2/routers/async_files.py:2504
+      source: src/nexus/server/api/v2/routers/async_files.py:2520
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1188,7 +1188,7 @@ operations:
   transports:
     http:
       name: DELETE /delete
-      source: src/nexus/server/api/v2/routers/async_files.py:1554
+      source: src/nexus/server/api/v2/routers/async_files.py:1570
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1206,7 +1206,7 @@ operations:
   transports:
     http:
       name: GET /exists
-      source: src/nexus/server/api/v2/routers/async_files.py:1666
+      source: src/nexus/server/api/v2/routers/async_files.py:1682
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1224,7 +1224,7 @@ operations:
   transports:
     http:
       name: GET /glob
-      source: src/nexus/server/api/v2/routers/async_files.py:2583
+      source: src/nexus/server/api/v2/routers/async_files.py:2599
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1242,7 +1242,7 @@ operations:
   transports:
     http:
       name: GET /grep
-      source: src/nexus/server/api/v2/routers/async_files.py:2642
+      source: src/nexus/server/api/v2/routers/async_files.py:2658
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1261,7 +1261,7 @@ operations:
   transports:
     http:
       name: GET /list
-      source: src/nexus/server/api/v2/routers/async_files.py:1703
+      source: src/nexus/server/api/v2/routers/async_files.py:1719
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1279,7 +1279,7 @@ operations:
   transports:
     http:
       name: GET /md-structure
-      source: src/nexus/server/api/v2/routers/async_files.py:1456
+      source: src/nexus/server/api/v2/routers/async_files.py:1472
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1297,7 +1297,7 @@ operations:
   transports:
     http:
       name: GET /metadata
-      source: src/nexus/server/api/v2/routers/async_files.py:1999
+      source: src/nexus/server/api/v2/routers/async_files.py:2015
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1315,7 +1315,7 @@ operations:
   transports:
     http:
       name: POST /mkdir
-      source: src/nexus/server/api/v2/routers/async_files.py:1955
+      source: src/nexus/server/api/v2/routers/async_files.py:1971
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1351,7 +1351,7 @@ operations:
   transports:
     http:
       name: GET /read-url
-      source: src/nexus/server/api/v2/routers/async_files.py:1292
+      source: src/nexus/server/api/v2/routers/async_files.py:1308
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1370,7 +1370,7 @@ operations:
   transports:
     http:
       name: POST /rename
-      source: src/nexus/server/api/v2/routers/async_files.py:2349
+      source: src/nexus/server/api/v2/routers/async_files.py:2365
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1388,7 +1388,7 @@ operations:
   transports:
     http:
       name: POST /rename-batch
-      source: src/nexus/server/api/v2/routers/async_files.py:2461
+      source: src/nexus/server/api/v2/routers/async_files.py:2477
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1406,7 +1406,7 @@ operations:
   transports:
     http:
       name: GET /stream
-      source: src/nexus/server/api/v2/routers/async_files.py:2268
+      source: src/nexus/server/api/v2/routers/async_files.py:2284
   profiles:
     lite: supported
     sandbox: unavailable
@@ -1674,6 +1674,40 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4138
+- id: auth.zone_delegations
+  module: auth
+  summary: ''
+  transports:
+    http:
+      name: POST /v2/auth/zone-delegations
+      source: src/nexus/server/api/v2/routers/zone_grants.py:277
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: auth.zone_delegations_{delegation_id}
+  module: auth
+  summary: ''
+  transports:
+    http:
+      name: GET /v2/auth/zone-delegations/{delegation_id}
+      source: src/nexus/server/api/v2/routers/zone_grants.py:321
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: auth_profiles.post
   module: auth
   summary: ''
@@ -1952,7 +1986,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.close_all_pipes
-      source: src/nexus/remote/kernel_client.py:1085
+      source: src/nexus/remote/kernel_client.py:1127
   profiles:
     lite: supported
     sandbox: supported
@@ -1969,7 +2003,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.close_all_streams
-      source: src/nexus/remote/kernel_client.py:1138
+      source: src/nexus/remote/kernel_client.py:1180
   profiles:
     lite: supported
     sandbox: supported
@@ -1986,7 +2020,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.close_pipe
-      source: src/nexus/remote/kernel_client.py:1075
+      source: src/nexus/remote/kernel_client.py:1117
   profiles:
     lite: supported
     sandbox: supported
@@ -2003,7 +2037,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.close_stream
-      source: src/nexus/remote/kernel_client.py:1129
+      source: src/nexus/remote/kernel_client.py:1171
   profiles:
     lite: supported
     sandbox: supported
@@ -2289,7 +2323,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.count_by_state
-      source: src/nexus/remote/kernel_client.py:1695
+      source: src/nexus/remote/kernel_client.py:1737
   profiles:
     lite: supported
     sandbox: supported
@@ -2306,7 +2340,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.create_pipe
-      source: src/nexus/remote/kernel_client.py:1067
+      source: src/nexus/remote/kernel_client.py:1109
   profiles:
     lite: supported
     sandbox: supported
@@ -2340,7 +2374,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.create_stream
-      source: src/nexus/remote/kernel_client.py:1092
+      source: src/nexus/remote/kernel_client.py:1134
   profiles:
     lite: supported
     sandbox: supported
@@ -2637,7 +2671,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.destroy_pipe
-      source: src/nexus/remote/kernel_client.py:1071
+      source: src/nexus/remote/kernel_client.py:1113
   profiles:
     lite: supported
     sandbox: supported
@@ -2654,7 +2688,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.destroy_stream
-      source: src/nexus/remote/kernel_client.py:1134
+      source: src/nexus/remote/kernel_client.py:1176
   profiles:
     lite: supported
     sandbox: supported
@@ -2757,7 +2791,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.dispatch_post_hooks
-      source: src/nexus/remote/kernel_client.py:833
+      source: src/nexus/remote/kernel_client.py:875
   profiles:
     lite: supported
     sandbox: supported
@@ -2774,7 +2808,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.dispatch_pre_hooks
-      source: src/nexus/remote/kernel_client.py:840
+      source: src/nexus/remote/kernel_client.py:882
   profiles:
     lite: supported
     sandbox: supported
@@ -2791,7 +2825,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.dispatch_pre_hooks_batch_stat
-      source: src/nexus/remote/kernel_client.py:868
+      source: src/nexus/remote/kernel_client.py:910
   profiles:
     lite: supported
     sandbox: supported
@@ -3914,7 +3948,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.get
-      source: src/nexus/remote/kernel_client.py:1642
+      source: src/nexus/remote/kernel_client.py:1684
   profiles:
     lite: supported
     sandbox: supported
@@ -3965,7 +3999,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.heartbeat
-      source: src/nexus/remote/kernel_client.py:1668
+      source: src/nexus/remote/kernel_client.py:1710
   profiles:
     lite: supported
     sandbox: supported
@@ -4016,7 +4050,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.open
-      source: src/nexus/remote/kernel_client.py:357
+      source: src/nexus/remote/kernel_client.py:374
   profiles:
     lite: supported
     sandbox: supported
@@ -4050,7 +4084,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.register
-      source: src/nexus/remote/kernel_client.py:1603
+      source: src/nexus/remote/kernel_client.py:1645
   profiles:
     lite: supported
     sandbox: supported
@@ -4101,7 +4135,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.signal
-      source: src/nexus/remote/kernel_client.py:1645
+      source: src/nexus/remote/kernel_client.py:1687
   profiles:
     lite: supported
     sandbox: supported
@@ -4152,7 +4186,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.unregister
-      source: src/nexus/remote/kernel_client.py:1636
+      source: src/nexus/remote/kernel_client.py:1678
   profiles:
     lite: supported
     sandbox: supported
@@ -4235,7 +4269,7 @@ operations:
       source: src/nexus/core/nexus_fs_metadata.py:630
     sdk:
       name: KernelClient.get_content_id
-      source: src/nexus/remote/kernel_client.py:885
+      source: src/nexus/remote/kernel_client.py:927
   profiles:
     lite: supported
     sandbox: supported
@@ -4286,7 +4320,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.get_mount_points
-      source: src/nexus/remote/kernel_client.py:899
+      source: src/nexus/remote/kernel_client.py:941
   profiles:
     lite: supported
     sandbox: supported
@@ -4374,7 +4408,7 @@ operations:
       source: src/nexus/core/nexus_fs_metadata.py:271
     sdk:
       name: KernelClient.get_top_level_mounts
-      source: src/nexus/remote/kernel_client.py:906
+      source: src/nexus/remote/kernel_client.py:948
   profiles:
     lite: supported
     sandbox: supported
@@ -4409,7 +4443,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.get_xattr
-      source: src/nexus/remote/kernel_client.py:1032
+      source: src/nexus/remote/kernel_client.py:1074
   profiles:
     lite: supported
     sandbox: supported
@@ -4426,7 +4460,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.get_xattr_bulk
-      source: src/nexus/remote/kernel_client.py:1053
+      source: src/nexus/remote/kernel_client.py:1095
   profiles:
     lite: supported
     sandbox: supported
@@ -4528,7 +4562,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.has_pipe
-      source: src/nexus/remote/kernel_client.py:1080
+      source: src/nexus/remote/kernel_client.py:1122
   profiles:
     lite: supported
     sandbox: supported
@@ -4545,7 +4579,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.has_stream
-      source: src/nexus/remote/kernel_client.py:1096
+      source: src/nexus/remote/kernel_client.py:1138
   profiles:
     lite: supported
     sandbox: supported
@@ -4614,7 +4648,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.hook_count
-      source: src/nexus/remote/kernel_client.py:830
+      source: src/nexus/remote/kernel_client.py:872
   profiles:
     lite: supported
     sandbox: supported
@@ -4852,7 +4886,7 @@ operations:
       source: src/nexus/services/agents/agent_rpc_service.py:584
     sdk:
       name: _AgentRegistryProxy.list_agents
-      source: src/nexus/remote/kernel_client.py:1671
+      source: src/nexus/remote/kernel_client.py:1713
   profiles:
     lite: supported
     sandbox: supported
@@ -4870,7 +4904,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.list_by_priority
-      source: src/nexus/remote/kernel_client.py:1699
+      source: src/nexus/remote/kernel_client.py:1741
   profiles:
     lite: supported
     sandbox: supported
@@ -4976,7 +5010,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.list_processes
-      source: src/nexus/remote/kernel_client.py:1674
+      source: src/nexus/remote/kernel_client.py:1716
   profiles:
     lite: supported
     sandbox: supported
@@ -5442,7 +5476,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.metastore_list_iter
-      source: src/nexus/remote/kernel_client.py:997
+      source: src/nexus/remote/kernel_client.py:1039
   profiles:
     lite: supported
     sandbox: supported
@@ -5459,7 +5493,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.metastore_list_paginated
-      source: src/nexus/remote/kernel_client.py:966
+      source: src/nexus/remote/kernel_client.py:1008
   profiles:
     lite: supported
     sandbox: supported
@@ -7636,7 +7670,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.register_external
-      source: src/nexus/remote/kernel_client.py:1606
+      source: src/nexus/remote/kernel_client.py:1648
   profiles:
     lite: supported
     sandbox: supported
@@ -7653,7 +7687,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.register_hook
-      source: src/nexus/remote/kernel_client.py:847
+      source: src/nexus/remote/kernel_client.py:889
   profiles:
     lite: supported
     sandbox: supported
@@ -7687,7 +7721,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.register_native_hook
-      source: src/nexus/remote/kernel_client.py:1173
+      source: src/nexus/remote/kernel_client.py:1215
   profiles:
     lite: supported
     sandbox: supported
@@ -7841,6 +7875,74 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4133
+- id: runtime.resume
+  module: uncategorized
+  summary: ''
+  transports:
+    http:
+      name: POST /v2/runtime/resume
+      source: src/nexus/server/api/v2/routers/sessions.py:659
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: runtime.runs_{pid}
+  module: uncategorized
+  summary: ''
+  transports:
+    http:
+      name: GET /v2/runtime/runs/{pid}
+      source: src/nexus/server/api/v2/routers/sessions.py:670
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: runtime.runs_{pid}_cancel
+  module: uncategorized
+  summary: ''
+  transports:
+    http:
+      name: POST /v2/runtime/runs/{pid}/cancel
+      source: src/nexus/server/api/v2/routers/sessions.py:690
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: runtime.start
+  module: uncategorized
+  summary: ''
+  transports:
+    http:
+      name: POST /v2/runtime/start
+      source: src/nexus/server/api/v2/routers/sessions.py:650
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: sandbox.run
   module: sandbox
   summary: Run a command with Nexus connection env vars injected. Shares the exact state-consumption path as `nexus env` (env_cmd.py
@@ -8486,7 +8588,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.service_close_all
-      source: src/nexus/remote/kernel_client.py:822
+      source: src/nexus/remote/kernel_client.py:864
   profiles:
     lite: supported
     sandbox: supported
@@ -8503,7 +8605,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.service_enlist
-      source: src/nexus/remote/kernel_client.py:809
+      source: src/nexus/remote/kernel_client.py:851
   profiles:
     lite: supported
     sandbox: supported
@@ -8520,7 +8622,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.service_lookup
-      source: src/nexus/remote/kernel_client.py:797
+      source: src/nexus/remote/kernel_client.py:839
   profiles:
     lite: supported
     sandbox: supported
@@ -8537,7 +8639,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.service_mark_bootstrapped
-      source: src/nexus/remote/kernel_client.py:794
+      source: src/nexus/remote/kernel_client.py:836
   profiles:
     lite: supported
     sandbox: supported
@@ -8554,7 +8656,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.service_start_all
-      source: src/nexus/remote/kernel_client.py:791
+      source: src/nexus/remote/kernel_client.py:833
   profiles:
     lite: supported
     sandbox: supported
@@ -8571,7 +8673,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.service_stop_all
-      source: src/nexus/remote/kernel_client.py:819
+      source: src/nexus/remote/kernel_client.py:861
   profiles:
     lite: supported
     sandbox: supported
@@ -8588,7 +8690,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.service_swap
-      source: src/nexus/remote/kernel_client.py:801
+      source: src/nexus/remote/kernel_client.py:843
   profiles:
     lite: supported
     sandbox: supported
@@ -8605,7 +8707,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.service_unregister
-      source: src/nexus/remote/kernel_client.py:1013
+      source: src/nexus/remote/kernel_client.py:1055
   profiles:
     lite: supported
     sandbox: supported
@@ -8616,13 +8718,81 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4133
+- id: sessions.v2_sessions
+  module: uncategorized
+  summary: ''
+  transports:
+    http:
+      name: POST /v2/sessions
+      source: src/nexus/server/api/v2/routers/sessions.py:279
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: tests/e2e/server/test_session_runtime_p1a_e2e.py
+  perf_class: control
+  perf_link: control-plane operation; tests/e2e/server/test_session_runtime_p1a_e2e.py
+  gap_issue: null
+  owning_issue: 4846
+- id: sessions.{session_id}
+  module: uncategorized
+  summary: ''
+  transports:
+    http:
+      name: GET /v2/sessions/{session_id}
+      source: src/nexus/server/api/v2/routers/sessions.py:323
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: sessions.{session_id}_records
+  module: uncategorized
+  summary: ''
+  transports:
+    http:
+      name: POST /v2/sessions/{session_id}/records
+      source: src/nexus/server/api/v2/routers/sessions.py:343
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: sessions.{session_id}_tasks_{task_id}
+  module: task_manager
+  summary: ''
+  transports:
+    http:
+      name: GET /v2/sessions/{session_id}/tasks/{task_id}
+      source: src/nexus/server/api/v2/routers/sessions.py:627
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: set.hook_count
   module: uncategorized
   summary: ''
   transports:
     sdk:
       name: KernelClient.set_hook_count
-      source: src/nexus/remote/kernel_client.py:864
+      source: src/nexus/remote/kernel_client.py:906
   profiles:
     lite: supported
     sandbox: supported
@@ -8639,7 +8809,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.set_metastore_path
-      source: src/nexus/remote/kernel_client.py:1145
+      source: src/nexus/remote/kernel_client.py:1187
   profiles:
     lite: supported
     sandbox: supported
@@ -8656,7 +8826,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.set_permission_provider
-      source: src/nexus/remote/kernel_client.py:1177
+      source: src/nexus/remote/kernel_client.py:1219
   profiles:
     lite: supported
     sandbox: supported
@@ -8690,7 +8860,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.set_vfs_lock
-      source: src/nexus/remote/kernel_client.py:1169
+      source: src/nexus/remote/kernel_client.py:1211
   profiles:
     lite: supported
     sandbox: supported
@@ -8707,7 +8877,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.set_xattr
-      source: src/nexus/remote/kernel_client.py:1045
+      source: src/nexus/remote/kernel_client.py:1087
   profiles:
     lite: supported
     sandbox: supported
@@ -8949,7 +9119,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.stat_batch
-      source: src/nexus/remote/kernel_client.py:762
+      source: src/nexus/remote/kernel_client.py:804
   profiles:
     lite: supported
     sandbox: supported
@@ -8986,7 +9156,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.stream_collect_all
-      source: src/nexus/remote/kernel_client.py:1125
+      source: src/nexus/remote/kernel_client.py:1167
   profiles:
     lite: supported
     sandbox: supported
@@ -9023,7 +9193,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.stream_read_at
-      source: src/nexus/remote/kernel_client.py:1113
+      source: src/nexus/remote/kernel_client.py:1155
   profiles:
     lite: supported
     sandbox: supported
@@ -9040,7 +9210,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.stream_read_at_blocking
-      source: src/nexus/remote/kernel_client.py:1100
+      source: src/nexus/remote/kernel_client.py:1142
   profiles:
     lite: supported
     sandbox: supported
@@ -9057,7 +9227,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.stream_write_nowait
-      source: src/nexus/remote/kernel_client.py:1108
+      source: src/nexus/remote/kernel_client.py:1150
   profiles:
     lite: supported
     sandbox: supported
@@ -9159,7 +9329,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_lock
-      source: src/nexus/remote/kernel_client.py:699
+      source: src/nexus/remote/kernel_client.py:741
   profiles:
     lite: supported
     sandbox: supported
@@ -9176,7 +9346,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_mkdir
-      source: src/nexus/remote/kernel_client.py:630
+      source: src/nexus/remote/kernel_client.py:672
   profiles:
     lite: supported
     sandbox: supported
@@ -9210,7 +9380,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.sys_read_raw
-      source: src/nexus/remote/kernel_client.py:556
+      source: src/nexus/remote/kernel_client.py:598
   profiles:
     lite: supported
     sandbox: supported
@@ -9332,7 +9502,7 @@ operations:
       source: src/nexus/core/nexus_fs_watch.py:26
     sdk:
       name: KernelClient.sys_watch
-      source: src/nexus/remote/kernel_client.py:777
+      source: src/nexus/remote/kernel_client.py:819
   profiles:
     lite: supported
     sandbox: supported
@@ -9468,7 +9638,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.trie_lookup
-      source: src/nexus/remote/kernel_client.py:1024
+      source: src/nexus/remote/kernel_client.py:1066
   profiles:
     lite: supported
     sandbox: supported
@@ -9485,7 +9655,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.trie_register
-      source: src/nexus/remote/kernel_client.py:1021
+      source: src/nexus/remote/kernel_client.py:1063
   profiles:
     lite: supported
     sandbox: supported
@@ -9502,7 +9672,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.trie_unregister
-      source: src/nexus/remote/kernel_client.py:1027
+      source: src/nexus/remote/kernel_client.py:1069
   profiles:
     lite: supported
     sandbox: supported
@@ -9691,7 +9861,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.unregister_external
-      source: src/nexus/remote/kernel_client.py:1639
+      source: src/nexus/remote/kernel_client.py:1681
   profiles:
     lite: supported
     sandbox: supported
@@ -9708,7 +9878,7 @@ operations:
   transports:
     sdk:
       name: KernelClient.unregister_hook
-      source: src/nexus/remote/kernel_client.py:852
+      source: src/nexus/remote/kernel_client.py:894
   profiles:
     lite: supported
     sandbox: supported
@@ -9763,7 +9933,7 @@ operations:
   transports:
     sdk:
       name: _AgentRegistryProxy.update_state
-      source: src/nexus/remote/kernel_client.py:1657
+      source: src/nexus/remote/kernel_client.py:1699
   profiles:
     lite: supported
     sandbox: supported
@@ -10022,7 +10192,7 @@ operations:
   transports:
     cli:
       name: nexus zone
-      source: src/nexus/cli/commands/zone.py:42
+      source: src/nexus/cli/commands/zone.py:73
   profiles:
     lite: supported
     sandbox: supported
@@ -10039,7 +10209,7 @@ operations:
   transports:
     cli:
       name: nexus zone create
-      source: src/nexus/cli/commands/zone.py:84
+      source: src/nexus/cli/commands/zone.py:115
   profiles:
     lite: unverified
     sandbox: unverified
@@ -10056,7 +10226,7 @@ operations:
   transports:
     cli:
       name: nexus zone export
-      source: src/nexus/cli/commands/zone.py:505
+      source: src/nexus/cli/commands/zone.py:652
   profiles:
     lite: unverified
     sandbox: unverified
@@ -10073,7 +10243,7 @@ operations:
   transports:
     cli:
       name: nexus zone import
-      source: src/nexus/cli/commands/zone.py:711
+      source: src/nexus/cli/commands/zone.py:858
   profiles:
     lite: unverified
     sandbox: unverified
@@ -10090,7 +10260,7 @@ operations:
   transports:
     cli:
       name: nexus zone inspect
-      source: src/nexus/cli/commands/zone.py:1040
+      source: src/nexus/cli/commands/zone.py:1187
   profiles:
     lite: unverified
     sandbox: unverified
@@ -10107,7 +10277,7 @@ operations:
   transports:
     cli:
       name: nexus zone join
-      source: src/nexus/cli/commands/zone.py:185
+      source: src/nexus/cli/commands/zone.py:227
   profiles:
     lite: unverified
     sandbox: unverified
@@ -10124,7 +10294,7 @@ operations:
   transports:
     cli:
       name: nexus zone list
-      source: src/nexus/cli/commands/zone.py:252
+      source: src/nexus/cli/commands/zone.py:302
   profiles:
     lite: unverified
     sandbox: unverified
@@ -10141,7 +10311,7 @@ operations:
   transports:
     cli:
       name: nexus zone mount
-      source: src/nexus/cli/commands/zone.py:344
+      source: src/nexus/cli/commands/zone.py:405
   profiles:
     lite: unverified
     sandbox: unverified
@@ -10152,13 +10322,30 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: zone.runtime_call
+  module: zone
+  summary: ''
+  transports:
+    sdk:
+      name: KernelClient.zone_runtime_call
+      source: src/nexus/remote/kernel_client.py:549
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: tests/e2e/server/test_zone_routes_e2e.py
+  perf_class: control
+  perf_link: control-plane operation; tests/e2e/server/test_zone_routes_e2e.py
+  gap_issue: null
+  owning_issue: 4846
 - id: zone.unmount
   module: zone
   summary: ''
   transports:
     cli:
       name: nexus zone unmount
-      source: src/nexus/cli/commands/zone.py:428
+      source: src/nexus/cli/commands/zone.py:507
   profiles:
     lite: unverified
     sandbox: unverified
@@ -10175,7 +10362,75 @@ operations:
   transports:
     cli:
       name: nexus zone validate
-      source: src/nexus/cli/commands/zone.py:1081
+      source: src/nexus/cli/commands/zone.py:1228
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: zone.wait
+  module: zone
+  summary: ''
+  transports:
+    cli:
+      name: nexus zone wait
+      source: src/nexus/cli/commands/zone.py:619
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: zone_grants.v2_zone_capabilities
+  module: zone
+  summary: ''
+  transports:
+    http:
+      name: GET /v2/zone-capabilities
+      source: src/nexus/server/api/v2/routers/zone_grants.py:258
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: tests/e2e/server/test_zone_v2_p0_matrix_e2e.py
+  perf_class: control
+  perf_link: control-plane operation; tests/e2e/server/test_zone_v2_p0_matrix_e2e.py
+  gap_issue: null
+  owning_issue: 4846
+- id: zone_mounts.{mount_id}
+  module: zone
+  summary: ''
+  transports:
+    http:
+      name: DELETE /v2/zone-mounts/{mount_id}
+      source: src/nexus/server/api/v2/routers/zone_runtime.py:114
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: zone_operations.{operation_id}
+  module: zone
+  summary: ''
+  transports:
+    http:
+      name: GET /v2/zone-operations/{operation_id}
+      source: src/nexus/server/api/v2/routers/zone_grants.py:237
   profiles:
     lite: unverified
     sandbox: unverified
@@ -10192,7 +10447,7 @@ operations:
   transports:
     http:
       name: GET /api/zones/{zone_id}
-      source: src/nexus/server/auth/zone_routes.py:265
+      source: src/nexus/server/auth/zone_routes.py:240
   profiles:
     lite: supported
     sandbox: supported
@@ -10203,6 +10458,346 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4138
+- id: zone_runtime.v2_zone_mounts
+  module: zone
+  summary: ''
+  transports:
+    http:
+      name: POST /v2/zone-mounts
+      source: src/nexus/server/api/v2/routers/zone_runtime.py:79
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: tests/e2e/server/test_full_profile_control_plane_e2e.py
+  perf_class: control
+  perf_link: control-plane operation; tests/e2e/server/test_full_profile_control_plane_e2e.py
+  gap_issue: null
+  owning_issue: 4846
+- id: zone_runtime.v2_zone_transfers
+  module: zone
+  summary: ''
+  transports:
+    http:
+      name: POST /v2/zone-transfers
+      source: src/nexus/server/api/v2/routers/zone_runtime.py:196
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: tests/e2e/server/test_full_profile_control_plane_e2e.py
+  perf_class: control
+  perf_link: control-plane operation; tests/e2e/server/test_full_profile_control_plane_e2e.py
+  gap_issue: null
+  owning_issue: 4846
+- id: zone_runtime_service.get_runtime_capabilities
+  module: zone
+  summary: ''
+  transports:
+    grpc_typed:
+      name: ZoneRuntimeService.GetRuntimeCapabilities
+      source: src/nexus/grpc/vfs/zone_runtime_pb2_grpc.py:77
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: zone_runtime_service.get_zone_operation
+  module: zone
+  summary: ''
+  transports:
+    grpc_typed:
+      name: ZoneRuntimeService.GetZoneOperation
+      source: src/nexus/grpc/vfs/zone_runtime_pb2_grpc.py:72
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: zone_runtime_service.zone_create
+  module: zone
+  summary: ''
+  transports:
+    grpc_typed:
+      name: ZoneRuntimeService.ZoneCreate
+      source: src/nexus/grpc/vfs/zone_runtime_pb2_grpc.py:37
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: zone_runtime_service.zone_deprovision
+  module: zone
+  summary: ''
+  transports:
+    grpc_typed:
+      name: ZoneRuntimeService.ZoneDeprovision
+      source: src/nexus/grpc/vfs/zone_runtime_pb2_grpc.py:67
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: zone_runtime_service.zone_join
+  module: zone
+  summary: ''
+  transports:
+    grpc_typed:
+      name: ZoneRuntimeService.ZoneJoin
+      source: src/nexus/grpc/vfs/zone_runtime_pb2_grpc.py:42
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: zone_runtime_service.zone_mount
+  module: zone
+  summary: ''
+  transports:
+    grpc_typed:
+      name: ZoneRuntimeService.ZoneMount
+      source: src/nexus/grpc/vfs/zone_runtime_pb2_grpc.py:52
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: zone_runtime_service.zone_remove_replica
+  module: zone
+  summary: ''
+  transports:
+    grpc_typed:
+      name: ZoneRuntimeService.ZoneRemoveReplica
+      source: src/nexus/grpc/vfs/zone_runtime_pb2_grpc.py:62
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: zone_runtime_service.zone_status
+  module: zone
+  summary: ''
+  transports:
+    grpc_typed:
+      name: ZoneRuntimeService.ZoneStatus
+      source: src/nexus/grpc/vfs/zone_runtime_pb2_grpc.py:47
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: zone_runtime_service.zone_unmount
+  module: zone
+  summary: ''
+  transports:
+    grpc_typed:
+      name: ZoneRuntimeService.ZoneUnmount
+      source: src/nexus/grpc/vfs/zone_runtime_pb2_grpc.py:57
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: zone_transfers.{operation_id}
+  module: zone
+  summary: ''
+  transports:
+    http:
+      name: GET /v2/zone-transfers/{operation_id}
+      source: src/nexus/server/api/v2/routers/zone_runtime.py:240
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: zones.v2_zones
+  module: uncategorized
+  summary: ''
+  transports:
+    http:
+      name: POST /v2/zones
+      source: src/nexus/server/api/v2/routers/zones.py:114
+  profiles:
+    lite: supported
+    sandbox: supported
+    full: supported
+  usage_example: null
+  correctness_test: tests/e2e/server/test_zone_routes_e2e.py
+  perf_class: control
+  perf_link: control-plane operation; tests/e2e/server/test_zone_routes_e2e.py
+  gap_issue: null
+  owning_issue: 4846
+- id: zones.{zone_id}
+  module: zone
+  summary: ''
+  transports:
+    http:
+      name: PATCH /v2/zones/{zone_id}
+      source: src/nexus/server/api/v2/routers/zones.py:294
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: zones.{zone_id}:resume
+  module: zone
+  summary: ''
+  transports:
+    http:
+      name: POST /v2/zones/{zone_id}:resume
+      source: src/nexus/server/api/v2/routers/zones.py:342
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: zones.{zone_id}:suspend
+  module: zone
+  summary: ''
+  transports:
+    http:
+      name: POST /v2/zones/{zone_id}:suspend
+      source: src/nexus/server/api/v2/routers/zones.py:332
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: zones.{zone_id}_grants
+  module: zone
+  summary: ''
+  transports:
+    http:
+      name: POST /v2/zones/{zone_id}/grants
+      source: src/nexus/server/api/v2/routers/zone_grants.py:102
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: zones.{zone_id}_grants_{grant_id}
+  module: zone
+  summary: ''
+  transports:
+    http:
+      name: GET /v2/zones/{zone_id}/grants/{grant_id}
+      source: src/nexus/server/api/v2/routers/zone_grants.py:183
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: zones.{zone_id}_joins
+  module: zone
+  summary: ''
+  transports:
+    http:
+      name: POST /v2/zones/{zone_id}/joins
+      source: src/nexus/server/api/v2/routers/zone_runtime.py:55
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: zones.{zone_id}_status
+  module: zone
+  summary: ''
+  transports:
+    http:
+      name: GET /v2/zones/{zone_id}/status
+      source: src/nexus/server/api/v2/routers/zones.py:271
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 parity_warnings:
 - operation_id: access_manifests.api_v2
   has:
@@ -10786,6 +11381,22 @@ parity_warnings:
   missing:
   - grpc_typed
   - http
+  - mcp
+  - sdk
+- operation_id: auth.zone_delegations
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: auth.zone_delegations_{delegation_id}
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
   - mcp
   - sdk
 - operation_id: auth_profiles.post
@@ -12764,6 +13375,38 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
+- operation_id: runtime.resume
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: runtime.runs_{pid}
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: runtime.runs_{pid}_cancel
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: runtime.start
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
 - operation_id: sandbox.run
   has:
   - cli
@@ -13076,6 +13719,38 @@ parity_warnings:
   - grpc_typed
   - http
   - mcp
+- operation_id: sessions.v2_sessions
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: sessions.{session_id}
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: sessions.{session_id}_records
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: sessions.{session_id}_tasks_{task_id}
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
 - operation_id: set.hook_count
   has:
   - sdk
@@ -13684,6 +14359,14 @@ parity_warnings:
   - http
   - mcp
   - sdk
+- operation_id: zone.runtime_call
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
 - operation_id: zone.unmount
   has:
   - cli
@@ -13700,7 +14383,199 @@ parity_warnings:
   - http
   - mcp
   - sdk
+- operation_id: zone.wait
+  has:
+  - cli
+  missing:
+  - grpc_typed
+  - http
+  - mcp
+  - sdk
+- operation_id: zone_grants.v2_zone_capabilities
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: zone_mounts.{mount_id}
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: zone_operations.{operation_id}
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
 - operation_id: zone_routes.api_zones
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: zone_runtime.v2_zone_mounts
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: zone_runtime.v2_zone_transfers
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: zone_runtime_service.get_runtime_capabilities
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: zone_runtime_service.get_zone_operation
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: zone_runtime_service.zone_create
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: zone_runtime_service.zone_deprovision
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: zone_runtime_service.zone_join
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: zone_runtime_service.zone_mount
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: zone_runtime_service.zone_remove_replica
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: zone_runtime_service.zone_status
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: zone_runtime_service.zone_unmount
+  has:
+  - grpc_typed
+  missing:
+  - cli
+  - http
+  - mcp
+  - sdk
+- operation_id: zone_transfers.{operation_id}
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: zones.v2_zones
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: zones.{zone_id}
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: zones.{zone_id}:resume
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: zones.{zone_id}:suspend
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: zones.{zone_id}_grants
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: zones.{zone_id}_grants_{grant_id}
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: zones.{zone_id}_joins
+  has:
+  - http
+  missing:
+  - cli
+  - grpc_typed
+  - mcp
+  - sdk
+- operation_id: zones.{zone_id}_status
   has:
   - http
   missing:

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import create_engine, inspect
+import pytest
+from sqlalchemy import create_engine, inspect, text
 
 from nexus.storage.schema_invariants import (
     _ensure_file_paths_search_columns,
@@ -12,6 +13,7 @@ from nexus.storage.schema_invariants import (
     _ensure_zone_indexes,
     _ensure_zones_table_shape,
     ensure_postgres_schema_invariants,
+    ensure_zone_v1_schema_invariants,
 )
 
 
@@ -157,3 +159,117 @@ def test_ensure_version_history_content_columns_repairs_legacy_content_hash() ->
     assert "ADD COLUMN content_id VARCHAR(255)" in statements
     assert "SET content_id = content_hash" in statements
     assert "ALTER COLUMN content_hash DROP NOT NULL" in statements
+
+
+def _legacy_relation_sources_engine(with_zone_grants: bool = True) -> Any:
+    """SQLite engine carrying the pre-d4797ec230 schema (no zone_id column).
+
+    Old deployments were built by create_all on the earlier model revision;
+    rebuilding the legacy DDL directly is the only faithful simulation
+    (DROP COLUMN cannot remove an indexed column on SQLite).
+    """
+    engine = create_engine("sqlite://")
+    with engine.begin() as conn:
+        if with_zone_grants:
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE zone_grants (
+                        grant_id VARCHAR(64) PRIMARY KEY,
+                        zone_id VARCHAR(255) NOT NULL
+                    )
+                    """
+                )
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO zone_grants (grant_id, zone_id) "
+                    "VALUES ('g1', 'org-a'), ('g2', 'org-b')"
+                )
+            )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE rebac_relation_sources (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    subject VARCHAR(255) NOT NULL,
+                    relation VARCHAR(128) NOT NULL,
+                    object VARCHAR(255) NOT NULL,
+                    source_grant_id VARCHAR(64),
+                    reference_state VARCHAR(16) NOT NULL,
+                    created_at TIMESTAMP,
+                    updated_at TIMESTAMP
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO rebac_relation_sources "
+                "(subject, relation, object, source_grant_id, reference_state) "
+                "VALUES ('s1', 'r', '/', 'g1', 'ACTIVE'), "
+                "('s2', 'r', '/', 'g2', 'ACTIVE')"
+            )
+        )
+    return engine
+
+
+def test_ensure_zone_v1_skips_when_table_missing() -> None:
+    engine = create_engine("sqlite://")
+    with engine.begin() as conn:
+        conn.execute(text("CREATE TABLE unrelated (id INTEGER PRIMARY KEY)"))
+
+    # No rebac_relation_sources → partial-schema environment stays non-fatal.
+    ensure_zone_v1_schema_invariants(engine)
+
+
+def test_ensure_zone_v1_upgrades_legacy_table_and_backfills() -> None:
+    engine = _legacy_relation_sources_engine()
+
+    ensure_zone_v1_schema_invariants(engine)
+
+    inspector = inspect(engine)
+    columns = {c["name"] for c in inspector.get_columns("rebac_relation_sources")}
+    assert "zone_id" in columns
+    indexes = {i["name"] for i in inspector.get_indexes("rebac_relation_sources")}
+    assert "ix_rebac_rel_src_zone" in indexes
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text("SELECT source_grant_id, zone_id FROM rebac_relation_sources ORDER BY id")
+        ).fetchall()
+        assert rows == [("g1", "org-a"), ("g2", "org-b")]
+
+
+def test_ensure_zone_v1_is_idempotent_after_upgrade() -> None:
+    engine = _legacy_relation_sources_engine()
+
+    ensure_zone_v1_schema_invariants(engine)
+    ensure_zone_v1_schema_invariants(engine)  # second run is a no-op
+
+    with engine.connect() as conn:
+        count = conn.execute(
+            text("SELECT COUNT(*) FROM rebac_relation_sources WHERE zone_id IS NULL")
+        ).scalar_one()
+        assert count == 0
+
+
+def test_ensure_zone_v1_fails_closed_on_authoritative_rows() -> None:
+    engine = _legacy_relation_sources_engine()
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO rebac_relation_sources "
+                "(subject, relation, object, source_grant_id, reference_state) "
+                "VALUES ('s3', 'r', '/', NULL, 'ACTIVE')"
+            )
+        )
+
+    with pytest.raises(RuntimeError, match="authoritative"):
+        ensure_zone_v1_schema_invariants(engine)
+
+
+def test_ensure_zone_v1_fails_closed_without_zone_grants() -> None:
+    engine = _legacy_relation_sources_engine(with_zone_grants=False)
+
+    with pytest.raises(RuntimeError, match="zone_grants"):
+        ensure_zone_v1_schema_invariants(engine)

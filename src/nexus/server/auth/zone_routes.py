@@ -4,38 +4,52 @@ Provides endpoints for creating, updating, and managing zones.
 
 Auth: Uses the unified ``require_auth`` dependency (supports JWT + API key +
 static admin key) instead of the legacy JWT-only ``get_authenticated_user``.
+
+Temporary zone access for a user without a standing grant is expressed as a
+short-TTL grant (``POST /v2/zones/{zone_id}/grants`` with ``expires_at``) —
+auditable, revocable, and identical on both doors. The one-shot PolicyGate
+bypass (Issue #3790 Task 19) was removed with the v2 authorization model.
 """
 
 import logging
-from typing import Any
+from datetime import UTC, datetime
+from typing import Any, cast
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, Field
-from sqlalchemy import func, select, text
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
+from pydantic import BaseModel, Field, ValidationError
+from sqlalchemy import func, select
 
-from nexus.bricks.auth.zone_helpers import (
-    create_zone,
-    normalize_to_slug,
-    suggest_zone_id,
-    validate_zone_id,
-)
+from nexus.bricks.auth.zone_helpers import normalize_to_slug, suggest_zone_id
 from nexus.contracts.zone_phase import ZonePhase
-from nexus.lib.zone_helpers import (
-    add_user_to_zone,
-    get_user_zones,
-    is_zone_owner,
-    user_belongs_to_zone,
+from nexus.server.api.v2.zone_security import (
+    require_global_capability,
+    require_zone_capability,
+    zone_capability_decision,
 )
-from nexus.server.auth.auth_routes import (
-    get_auth_provider,
-    get_nexus_instance,
-)
+from nexus.server.auth.auth_routes import get_auth_provider
 from nexus.server.dependencies import require_auth
+from nexus.services.zones.service import ServiceError, ZoneApplicationService
 from nexus.storage.models import ZoneModel
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/zones", tags=["zones"])
+
+
+def _deprecation_headers(response: Response) -> None:
+    """§6.8: legacy /api/zones keeps one stable release window, then goes."""
+    response.headers.setdefault("Deprecation", "true")
+    response.headers.setdefault("Sunset", "Sat, 18 Sep 2027 00:00:00 GMT")
+    response.headers.setdefault("Link", '</v2/zones>; rel="successor-version"')
+
+
+def _zone_service(request: Request) -> ZoneApplicationService:
+    """Return the one ZoneApplicationService used by both legacy and v2."""
+    service = getattr(request.app.state, "zone_application_service", None)
+    readiness = getattr(request.app.state, "zone_control_readiness", {})
+    if service is None or not readiness.get("composite_armed", False):
+        raise HTTPException(status_code=503, detail="zone service not armed")
+    return cast(ZoneApplicationService, service)
 
 
 # Request/Response Models
@@ -76,75 +90,6 @@ class ZoneListResponse(BaseModel):
     total: int
 
 
-def _trigger_federation_remove_zone(nx: Any, zone_id: str) -> bool:
-    """Best-effort raft-side zone removal — mirrors the federation_remove_zone
-    RPC by reaching through the kernel ``_call`` channel that
-    ``FederationRPCService.federation_remove_zone`` uses
-    (federation_rpc.py:338).
-
-    Returns True on success, False if the kernel handle is missing or the
-    call raised; the failure is logged but never re-raised because the
-    caller has already run the SQL deletes by the time this fires and we
-    don't want a transient raft hiccup to surface as a 5xx.
-    """
-    if nx is None:
-        return False
-    kernel = getattr(nx, "_kernel", None)
-    if kernel is None:
-        logger.warning(
-            "zone %s: federation_remove_zone skipped — kernel handle unavailable",
-            zone_id,
-        )
-        return False
-    try:
-        kernel._call("federation_remove_zone", {"zone_id": zone_id, "force": False})
-    except Exception as exc:
-        logger.warning("zone %s: federation_remove_zone failed: %s", zone_id, exc)
-        return False
-    return True
-
-
-def _inline_zone_finalizer_deletes(session: Any, zone_id: str) -> None:
-    """Delete zone graph data and every ReBAC tuple that references the zone.
-
-    Graph dependents are removed explicitly before their entities so cleanup
-    remains correct when SQLite foreign-key enforcement is disabled. ReBAC
-    cleanup includes tuple ownership and cross-zone subject/object references.
-    Every statement is idempotent, so retrying cleanup is harmless.
-    """
-    session.execute(
-        text(
-            "DELETE FROM entity_mentions WHERE entity_id IN ("
-            "SELECT entity_id FROM entities WHERE zone_id = :zid)"
-        ),
-        {"zid": zone_id},
-    )
-    session.execute(
-        text(
-            "DELETE FROM relationships "
-            "WHERE zone_id = :zid "
-            "OR source_entity_id IN ("
-            "SELECT entity_id FROM entities WHERE zone_id = :zid) "
-            "OR target_entity_id IN ("
-            "SELECT entity_id FROM entities WHERE zone_id = :zid)"
-        ),
-        {"zid": zone_id},
-    )
-    session.execute(
-        text("DELETE FROM entities WHERE zone_id = :zid"),
-        {"zid": zone_id},
-    )
-    session.execute(
-        text(
-            "DELETE FROM rebac_tuples "
-            "WHERE zone_id = :zid "
-            "OR subject_zone_id = :zid "
-            "OR object_zone_id = :zid"
-        ),
-        {"zid": zone_id},
-    )
-
-
 def _zone_to_response(zone: ZoneModel) -> ZoneResponse:
     """Convert a ZoneModel to a ZoneResponse (DRY helper)."""
     # Extract limits from zone settings (forward-compatible via extra='allow')
@@ -176,15 +121,19 @@ def _zone_to_response(zone: ZoneModel) -> ZoneResponse:
 async def create_zone_endpoint(
     zone_request: CreateZoneRequest,
     request: Request,
+    response: Response,
     auth_result: dict[str, Any] = Depends(require_auth),
 ) -> ZoneResponse:
     """Create a new zone.
 
-    The authenticated user will be added as owner of the new zone.
+    Delegates to the single ZoneApplicationService (§6.8: the legacy route is
+    an adapter, never a second writer). The zone becomes visible here only
+    after the runtime receipt marks it active.
 
     Args:
         zone_request: Zone creation request body
         request: FastAPI request used to resolve the app-scoped DB session
+        response: Response object carrying deprecation metadata
         auth_result: Authenticated identity (JWT, API key, or static admin key)
 
     Returns:
@@ -195,77 +144,104 @@ async def create_zone_endpoint(
         401: Not authenticated
         500: Failed to assign creator as zone owner
     """
+    _deprecation_headers(response)
     user_id = auth_result["subject_id"]
 
-    session_factory = _get_session_factory(request)
-    with session_factory() as session:
-        # Determine zone_id
-        if zone_request.zone_id:
-            # Validate provided zone_id
-            is_valid, error_msg = validate_zone_id(zone_request.zone_id)
-            if not is_valid:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=error_msg,
-                )
-            zone_id = zone_request.zone_id
-        else:
-            # Generate zone_id from name
-            suggested_slug = normalize_to_slug(zone_request.name)
-            zone_id = suggest_zone_id(suggested_slug, session)
-
-        # Create zone
-        try:
-            zone = create_zone(
-                session=session,
-                zone_id=zone_id,
-                name=zone_request.name,
-                domain=zone_request.domain,
-                description=zone_request.description,
-            )
-
-            # Add authenticated user as zone owner via ReBAC
-            nx = get_nexus_instance()
-            # Issue #1771: rebac_manager via ServiceRegistry
-            _rebac_mgr = nx.service("rebac_manager") if nx else None
-            if nx and _rebac_mgr is not None:
-                try:
-                    add_user_to_zone(
-                        rebac_manager=_rebac_mgr,
-                        user_id=user_id,
-                        zone_id=zone_id,
-                        role="owner",
-                        caller_user_id=None,  # System action, no caller check needed
-                    )
-                    logger.info("Added user %s as owner of zone %s", user_id, zone_id)
-                except Exception as e:
-                    logger.error(
-                        "Failed to add user %s as zone owner: %s", user_id, e, exc_info=True
-                    )
-                    raise HTTPException(
-                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail=f"Failed to assign creator as zone owner: {e}",
-                    ) from e
-            else:
-                logger.warning(
-                    "NexusFS or ReBAC manager not available. User %s not added as owner of zone %s",
-                    user_id,
-                    zone_id,
-                )
-
-            return _zone_to_response(zone)
-
-        except ValueError as e:
+    svc = _zone_service(request)
+    if svc is not None:
+        # Admission gate aligned with v2 (zones.py require_global_capability):
+        # the legacy adapter must not be a softer door to the same writer.
+        require_global_capability(auth_result, "zone.global.create")
+        if zone_request.domain:
+            # The v2 contract carries no domain field — refuse loudly instead
+            # of silently accepting and dropping the value.
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=str(e),
-            ) from e
+                detail={
+                    "code": "INVALID_REQUEST",
+                    "message": "domain is not supported: v2 zones carry no domain field",
+                    "retryable": False,
+                },
+            )
+        from nexus.contracts.zone_v1 import ZoneCreateRequest as ContractCreate
+
+        if not zone_request.zone_id:
+            suggested = normalize_to_slug(zone_request.name)
+            session_factory = _get_session_factory(request)
+            with session_factory() as session:
+                zone_id = suggest_zone_id(suggested, session)
+        else:
+            zone_id = zone_request.zone_id
+        try:
+            contract = ContractCreate(
+                api_version="auth.sudo.dev/v1",
+                kind="ZoneCreateRequest",
+                zone_id=zone_id,
+                display_name=zone_request.name,
+                description=zone_request.description,
+            )
+        except ValidationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "code": "INVALID_ZONE_ID",
+                    "message": f"zone_id {zone_id!r} failed contract validation",
+                    "retryable": False,
+                },
+            ) from exc
+        principal = {
+            "subject_type": str(auth_result.get("subject_type") or "user"),
+            "subject_id": user_id,
+            "is_admin": bool(auth_result.get("is_admin", False)),
+        }
+        try:
+            operation = svc.create_zone(
+                contract, idempotency_key=f"legacy:{zone_id}", principal=principal
+            )
+        except ServiceError as exc:
+            raise HTTPException(
+                status_code=exc.http_status,
+                detail={
+                    "code": exc.code,
+                    "message": exc.message,
+                    "retryable": exc.retryable,
+                },
+            ) from exc
+        response.headers["Location"] = f"/v2/zone-operations/{operation.operation_id}"
+        session_factory = _get_session_factory(request)
+        with session_factory() as session:
+            zone = session.get(ZoneModel, zone_id)
+            if zone is not None:
+                # reflect the canonical lifecycle in the legacy shape
+                zone.phase = (
+                    ZonePhase.ACTIVE
+                    if zone.canonical_status == "active"
+                    else ZonePhase.TERMINATING
+                    if zone.canonical_status == "deleting"
+                    else zone.phase
+                )
+                if zone.canonical_status != "active":
+                    response.status_code = status.HTTP_202_ACCEPTED
+                return _zone_to_response(zone)
+        response.status_code = status.HTTP_202_ACCEPTED
+        # Zone row not visible yet (saga still running): the legacy shape gets
+        # a non-Active phase rather than a phantom Active (C6: no lying).
+        return ZoneResponse(
+            zone_id=zone_id,
+            name=zone_request.name,
+            description=zone_request.description,
+            phase="Creating",
+            is_active=False,
+            created_at=datetime.now(UTC).isoformat(),
+            updated_at=datetime.now(UTC).isoformat(),
+        )
 
 
 @router.get("/{zone_id}", response_model=ZoneResponse)
 async def get_zone(
     zone_id: str,
     request: Request,
+    response: Response,
     auth_result: dict[str, Any] = Depends(require_auth),
 ) -> ZoneResponse:
     """Get zone information by ID.
@@ -283,42 +259,25 @@ async def get_zone(
 
     Raises:
         401: Not authenticated
-        403: User does not have access to this zone (after operator deny
-            via PolicyGate, or when no gate is configured)
+        403: User does not have access to this zone
         404: Zone not found
+        503: Zone control surface not armed (fail-closed: the composite
+            service must be assembled before any zone read)
     """
-    user_id = auth_result["subject_id"]
     is_admin = auth_result.get("is_admin", False)
+
+    _deprecation_headers(response)
+    _zone_service(request)
+    if not is_admin:
+        require_zone_capability(
+            request,
+            auth_result,
+            zone_id=zone_id,
+            capability="zone.data.read",
+        )
 
     session_factory = _get_session_factory(request)
     with session_factory() as session:
-        # Check zone access (admins can access any zone)
-        nx = get_nexus_instance()
-        rebac_mgr = nx.service("rebac_manager") if (nx and hasattr(nx, "service")) else None
-        if not is_admin:
-            if rebac_mgr is None:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Cannot verify zone membership — ReBAC unavailable",
-                )
-            # Issue #3790, Task 19: route zone-scope misses through the
-            # approval queue. If an operator approves the request, fall
-            # through to the normal lookup path. If the gate is missing,
-            # raises an exception, or the operator denies/times-out, fall
-            # back to the existing 403 response.
-            if not user_belongs_to_zone(
-                rebac_mgr, user_id, zone_id
-            ) and not await _zone_access_approved_via_gate(
-                request=request,
-                zone_id=zone_id,
-                user_id=user_id,
-                auth_result=auth_result,
-            ):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"Access denied: you are not a member of zone '{zone_id}'",
-                )
-
         zone = session.get(ZoneModel, zone_id)
         if not zone:
             raise HTTPException(
@@ -327,82 +286,6 @@ async def get_zone(
             )
 
         return _zone_to_response(zone)
-
-
-async def _zone_access_approved_via_gate(
-    request: Request,
-    zone_id: str,
-    user_id: str,
-    auth_result: dict[str, Any],
-) -> bool:
-    """Consult the PolicyGate when a token misses zone scope.
-
-    Issue #3790, Task 19: route zone-scope misses through the approval
-    queue. Returns True iff an operator approved the zone access within
-    the gate's timeout, in which case the caller may proceed as if the
-    membership check had passed. Returns False on missing gate, denial,
-    timeout, or any unexpected gate error (graceful degradation — the
-    caller then re-raises the original 403).
-    """
-    gate = getattr(request.app.state, "policy_gate", None)
-    if gate is None:
-        return False
-
-    # Lazy import keeps this module free of an eager top-level cross-package
-    # import (the call site is in nexus.server, not under nexus.bricks/, so
-    # the brick boundary checker does not apply — but lazy is still cheaper
-    # for the common case where the gate is unset).
-    try:
-        from nexus.bricks.approvals.models import ApprovalKind, Decision
-    except ImportError:
-        logger.warning(
-            "approvals brick unavailable while resolving zone access for %r; falling back to deny",
-            zone_id,
-        )
-        return False
-
-    # Synthesize stable identifiers from the request's auth_result. The
-    # hub's auth_result dict does not currently expose a per-token id, so
-    # use subject_id (user_id) as the token identifier and the request's
-    # auth source as the session identifier — operators can correlate
-    # repeated attempts for the same user/zone in the queue UI.
-    #
-    # F2 (#3790): the synthesized session_id is deliberately stable across
-    # requests (no HTTP-session lifecycle to bind it to). The approvals
-    # service guards against this turning a SESSION-scope grant into a
-    # durable persist by refusing the SESSION-scope cache fast-path for
-    # any session_id starting with ``hub:`` (see
-    # ``_is_fabricated_session_id`` in nexus.bricks.approvals.service).
-    # Operators that want durable zone access must write a ReBAC tuple
-    # via the admin tuples endpoint; an approval here is good for one
-    # zone-access attempt only.
-    subject_type = auth_result.get("subject_type") or "user"
-    token_id = f"hub:{subject_type}:{user_id}"
-    session_id = f"{token_id}:zone:{zone_id}"
-    try:
-        decision = await gate.check(
-            kind=ApprovalKind.ZONE_ACCESS,
-            subject=zone_id,
-            zone_id=zone_id,
-            token_id=token_id,
-            session_id=session_id,
-            agent_id=None,
-            reason="zone_access",
-            metadata={
-                "requested_zone": zone_id,
-                "user_id": user_id,
-                "subject_type": subject_type,
-            },
-        )
-    except Exception:
-        logger.warning(
-            "approvals gate raised for zone-access user=%r zone=%r; falling back to deny",
-            user_id,
-            zone_id,
-            exc_info=True,
-        )
-        return False
-    return decision is Decision.APPROVED
 
 
 def _get_session_factory(request: Request) -> Any:
@@ -442,6 +325,7 @@ def _get_session_factory(request: Request) -> Any:
 @router.get("", response_model=ZoneListResponse)
 async def list_zones(
     request: Request,
+    response: Response,
     auth_result: dict[str, Any] = Depends(require_auth),
     limit: int = 100,
     offset: int = 0,
@@ -462,9 +346,11 @@ async def list_zones(
     Raises:
         401: Not authenticated
     """
-    user_id = auth_result["subject_id"]
+    # §6.8: every legacy-route response carries deprecation markers.
+    _deprecation_headers(response)
     is_admin = auth_result.get("is_admin", False)
 
+    _zone_service(request)
     session_factory = _get_session_factory(request)
     with session_factory() as session:
         if is_admin:
@@ -488,46 +374,35 @@ async def list_zones(
                 or 0
             )
         else:
-            # Regular users only see zones they belong to
-            nx = get_nexus_instance() or getattr(request.app.state, "nexus_fs", None)
-            rebac_mgr = nx.service("rebac_manager") if (nx and hasattr(nx, "service")) else None
-            # API-key auth may include zone_id — restrict to that zone
-            auth_zone = auth_result.get("zone_id")
-            user_zone_ids = (
-                [auth_zone]
-                if auth_zone
-                else get_user_zones(rebac_mgr, user_id)
-                if rebac_mgr
-                else []
+            # Same grant prefilter as the v2 list (M-18 pattern): a non-admin
+            # row without an active grant can never pass the two-layer
+            # decision, so drop it in SQL before the per-row fan-out.
+            from nexus.storage.models import ZoneGrantModel
+
+            granted = set(
+                session.execute(
+                    select(ZoneGrantModel.zone_id).where(ZoneGrantModel.status == "active")
+                )
+                .scalars()
+                .all()
             )
-
-            if not user_zone_ids:
-                return ZoneListResponse(zones=[], total=0)
-
-            # Query only zones user belongs to
-            stmt = (
+            candidates = session.scalars(
                 select(ZoneModel)
-                .where(
-                    ZoneModel.phase != ZonePhase.TERMINATED,
-                    ZoneModel.zone_id.in_(user_zone_ids),
-                )
+                .where(ZoneModel.phase != ZonePhase.TERMINATED, ZoneModel.zone_id.in_(granted))
                 .order_by(ZoneModel.created_at.desc())
-                .limit(limit)
-                .offset(offset)
-            )
-            zones = session.scalars(stmt).all()
-            # Use actual DB count (user_zone_ids may include terminated zones)
-            total = (
-                session.scalar(
-                    select(func.count())
-                    .select_from(ZoneModel)
-                    .where(
-                        ZoneModel.phase != ZonePhase.TERMINATED,
-                        ZoneModel.zone_id.in_(user_zone_ids),
-                    )
-                )
-                or 0
-            )
+            ).all()
+            visible = [
+                zone
+                for zone in candidates
+                if zone_capability_decision(
+                    request,
+                    auth_result,
+                    zone_id=zone.zone_id,
+                    capability="zone.data.read",
+                ).allowed
+            ]
+            total = len(visible)
+            zones = visible[offset : offset + limit]
 
         return ZoneListResponse(
             zones=[_zone_to_response(t) for t in zones],
@@ -553,36 +428,29 @@ class ZoneDeprovisionResponse(BaseModel):
 async def delete_zone_endpoint(
     zone_id: str,
     request: Request,
+    response: Response,
+    confirmation: str = Header(alias="X-Nexus-Confirm-Zone"),
     auth_result: dict[str, Any] = Depends(require_auth),
 ) -> ZoneDeprovisionResponse:
     """Delete (deprovision) a zone.
 
-    Synchronously tears down the zone in three steps:
-
-    1. ``DELETE FROM entities`` / ``relationships`` / ``rebac_tuples`` for
-       this ``zone_id`` (previously the SearchZoneFinalizer +
-       ReBACZoneFinalizer SQL).
-    2. ``federation_remove_zone`` via the kernel call channel (best-effort
-       raft-side teardown — logged-not-raised on failure since the SQL
-       has already committed).
-    3. Mark ``ZoneModel`` row as ``phase="Terminated"`` + set
-       ``deleted_at`` (soft-delete so the row is gone from operator views
-       but FK references from audit / api-key history rows remain valid).
-
-    - Active → 202 Accepted (teardown completed)
-    - Terminated → 404 Not Found (idempotent retry surfaces this)
+    Delegates to the single ZoneApplicationService (§6.8): DELETE
+    requests deprovisioning — blockers surface as 409, and the zone reaches
+    Terminated only through the deprovision operation, never as a best-effort
+    side effect of an HTTP call.
 
     Args:
         zone_id: Zone identifier
         request: FastAPI request used to resolve the app-scoped DB session
+        response: Response object carrying deprecation metadata + operation
         auth_result: Authenticated identity (JWT, API key, or static admin key)
 
     Raises:
         403: User is not zone owner or global admin, or zone is ROOT_ZONE_ID
         404: Zone not found or already terminated
+        409: Deprovision blocked (active grants, retention, ...)
     """
-    from datetime import UTC, datetime
-
+    _deprecation_headers(response)
     from nexus.contracts.constants import ROOT_ZONE_ID
 
     # Issue #3897: the default ROOT_ZONE_ID row is required by the
@@ -597,66 +465,55 @@ async def delete_zone_endpoint(
             detail=f"Zone {ROOT_ZONE_ID!r} is reserved and cannot be deleted",
         )
 
-    user_id = auth_result["subject_id"]
-    is_admin = auth_result.get("is_admin", False)
+    svc = _zone_service(request)
+    if svc is not None:
+        from nexus.services.zones.service import ServiceError
 
-    nx = get_nexus_instance()
-
-    session_factory = _get_session_factory(request)
-    with session_factory() as session:
-        if not is_admin:
-            # Require zone *owner* (not mere member) for destructive operations
-            rebac_mgr = nx.service("rebac_manager") if (nx and hasattr(nx, "service")) else None
-            if rebac_mgr is None:
+        # existence first: a missing zone answers 404 for every role (the
+        # docstring promises it; capability-then-existence used to answer
+        # 403 for non-admins and 404 for admins)
+        session_factory = _get_session_factory(request)
+        with session_factory() as session:
+            if session.get(ZoneModel, zone_id) is None:
                 raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Cannot verify zone ownership — ReBAC unavailable",
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Zone '{zone_id}' not found",
                 )
-            if not is_zone_owner(rebac_mgr, user_id, zone_id):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"Access denied: you are not the owner of zone '{zone_id}'",
-                )
-
-        zone = session.get(ZoneModel, zone_id)
-        if not zone:
+        # mis-delete guard parity with v2: the confirmation header must
+        # repeat the zone id
+        if confirmation != zone_id:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Zone '{zone_id}' not found",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "code": "ZONE_DELETE_BLOCKED",
+                    "message": "X-Nexus-Confirm-Zone must exactly match zone_id",
+                    "retryable": False,
+                },
             )
+        require_zone_capability(
+            request,
+            auth_result,
+            zone_id=zone_id,
+            capability="zone.lifecycle.delete",
+        )
 
-        # Enforce ownership for zone deletion (not just membership)
-        _zone_owner: str | None = getattr(zone, "owner_id", None)
-        if not is_admin and _zone_owner is not None and _zone_owner != user_id:
+        principal = {
+            "subject_type": str(auth_result.get("subject_type") or "user"),
+            "subject_id": auth_result["subject_id"],
+            "is_admin": bool(auth_result.get("is_admin", False)),
+        }
+        try:
+            operation = svc.request_deprovision(zone_id, principal=principal)
+        except ServiceError as exc:
             raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Only the zone owner can delete a zone",
-            )
-
-        if zone.phase == ZonePhase.TERMINATED:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Zone '{zone_id}' is already terminated",
-            )
-
-        _inline_zone_finalizer_deletes(session, zone_id)
-        _trigger_federation_remove_zone(nx, zone_id)
-
-        zone.phase = ZonePhase.TERMINATED
-        zone.finalizers = "[]"
-        zone.deleted_at = datetime.now(UTC)
-        session.commit()
-
-        # The raw tuple deletes above bypass the ReBAC writer, so no revision
-        # moved: drop cached permission decisions explicitly.
-        rebac_mgr = nx.service("rebac_manager") if (nx and hasattr(nx, "service")) else None
-        if rebac_mgr is not None and hasattr(rebac_mgr, "clear_permission_cache"):
-            rebac_mgr.clear_permission_cache()
-
+                status_code=exc.http_status,
+                detail={"code": exc.code, "message": exc.message, "retryable": exc.retryable},
+            ) from exc
+        response.headers["Location"] = f"/v2/zone-operations/{operation.operation_id}"
         return ZoneDeprovisionResponse(
             zone_id=zone_id,
-            phase=ZonePhase.TERMINATED,
+            phase=ZonePhase.TERMINATING,
             finalizers_completed=[],
-            finalizers_pending=[],
+            finalizers_pending=["zone-deprovision-operation"],
             finalizers_failed={},
         )

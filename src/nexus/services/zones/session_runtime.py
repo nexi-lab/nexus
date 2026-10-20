@@ -1,0 +1,814 @@
+"""P1a SessionRuntimeService (SW-20260915-002 §8.9).
+
+Owns the SessionStore semantics for the runtime-zone subset:
+
+- session creation resolves the home zone from the authenticated ingress
+  (the caller names a zone; the service validates it exists and is active
+  and that the caller holds zone.data.write there — a client payload can
+  never conjure the home zone by itself);
+- home_zone_id is immutable: there is no update path, and any attempt is
+  rejected loudly;
+- the five record kinds (session/transcript/context/artifact/verify)
+  default-write into the home zone through the typed kernel — real VFS
+  bytes under ``/sessions/{sid}/...`` — and every write lands in the
+  routing ledger;
+- runtime start/resume solidifies execution_zone_id (default = home zone;
+  cross-zone requires decision_reason/policy_version) plus delegation/
+  grant/epoch references, feeding the dependency index;
+- cancel marks termination; when the run cannot terminate it parks in
+  revocation_pending, which blocks new resource acquisition (a new record
+  write on a revocation_pending session is refused).
+
+Restarts do not drift: home/execution zones live in rows written once and
+re-read from the canonical store; the routing ledger records where every
+record byte physically landed.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
+from pydantic import TypeAdapter
+from pydantic import ValidationError as PydanticValidationError
+from sqlalchemy import or_, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from nexus.contracts.zone_v1 import ZonePathStr
+from nexus.storage.models import (
+    SessionDataRecordModel,
+    SessionModel,
+    SessionRuntimeRunModel,
+    SessionZoneDependencyModel,
+    TaskAttemptModel,
+    ZoneModel,
+)
+
+logger = logging.getLogger(__name__)
+
+RECORD_VFS_SUBPATHS: dict[str, str] = {
+    "session": "session.json",
+    "transcript": "transcript.jsonl",
+    "context": "context.json",
+    "artifact": "artifacts",
+    "verify": "verify.json",
+}
+
+#: Convergence horizon for parked/orphaned runs (engineering default — no
+#: spec pins it): a run may not park, nor sit registered without progress,
+#: longer than this before the reaper terminates it.
+PARK_STALE_AFTER_S: float = 24 * 3600.0
+
+
+class SessionRuntimeError(Exception):
+    def __init__(
+        self, code: str, message: str, status_code: int = 400, *, retryable: bool | None = None
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.status_code = status_code
+        # 5xx outcomes (e.g. ZONE_RUNTIME_UNAVAILABLE) are retryable; explicit
+        # 4xx denials are not.  Callers may override with an explicit value.
+        self.retryable = status_code >= 500 if retryable is None else retryable
+
+
+@dataclass(frozen=True)
+class SessionView:
+    session_id: str
+    home_zone_id: str
+    owner: dict
+    state: str
+    created_at: datetime
+    updated_at: datetime
+
+    def as_json(self) -> dict[str, Any]:
+        return {
+            "api_version": "runtime.sudo.dev/v2",
+            "kind": "SessionMetadata",
+            "session_id": self.session_id,
+            "home_zone_id": self.home_zone_id,
+            "owner": self.owner,
+            "state": self.state,
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+        }
+
+
+@dataclass(frozen=True)
+class RunView:
+    pid: str
+    session_id: str
+    task_id: str | None
+    attempt_id: str | None
+    execution_zone_id: str
+    state: str
+    delegation_ref: str | None
+    grant_ref: str | None
+    authorization_epoch: int | None
+    decision_reason: str | None
+    policy_version: str | None
+    started_at: datetime
+    ended_at: datetime | None
+
+    def as_json(self) -> dict[str, Any]:
+        return {
+            "api_version": "runtime.sudo.dev/v2",
+            "kind": "RuntimeRun",
+            "pid": self.pid,
+            "session_id": self.session_id,
+            "task_id": self.task_id,
+            "attempt_id": self.attempt_id,
+            "execution_zone_id": self.execution_zone_id,
+            "state": self.state,
+            "delegation_ref": self.delegation_ref,
+            "grant_ref": self.grant_ref,
+            "authorization_epoch": self.authorization_epoch,
+            "decision_reason": self.decision_reason,
+            "policy_version": self.policy_version,
+            "started_at": self.started_at.isoformat(),
+            "ended_at": self.ended_at.isoformat() if self.ended_at else None,
+        }
+
+
+def _utcnow() -> datetime:
+    return datetime.now(UTC)
+
+
+def require_no_pending_runs(session: Session, session_id: str) -> None:
+    """Contract guard: a run parked in revocation_pending may not obtain new
+    resources — record writes AND run/attempt/task creation all refuse while
+    any run of the session is pending (runtime-v2-p1a amendment)."""
+    pending = (
+        session.execute(
+            select(SessionRuntimeRunModel.pid).where(
+                SessionRuntimeRunModel.session_id == session_id,
+                SessionRuntimeRunModel.state == "revocation_pending",
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if pending is not None:
+        raise SessionRuntimeError(
+            "REVOCATION_PENDING",
+            f"session {session_id} has run {pending} in revocation_pending; no new resources",
+            409,
+        )
+
+
+class SessionRuntimeService:
+    def __init__(self, session_factory: Any, *, fs_writer: Any = None) -> None:
+        """``fs_writer(path, buf, zone_id)`` performs the zone-scoped kernel
+        write; when absent the service records the intent but refuses record
+        writes (fail closed — never pretend SQL columns are zone I/O)."""
+        self._session_factory = session_factory
+        self._fs_writer = fs_writer
+
+    # ── sessions ────────────────────────────────────────────────────────────
+    def create_session(
+        self,
+        *,
+        session_id: str,
+        home_zone_id: str,
+        owner: dict,
+        created_by: dict,
+        policy_version: str = "p1a-default",
+        capability_check: Any = None,
+    ) -> SessionView:
+        """Create the session record; the home zone must exist and be active.
+
+        ``capability_check(zone_id)`` is the ingress-provided policy hook
+        (the router passes the authenticated zone.data.write check); the
+        service itself additionally verifies the zone row exists and is
+        active. The client naming a zone is a *target hint* validated by
+        policy — it is never authority by itself.
+        """
+        if capability_check is not None and not capability_check(home_zone_id):
+            raise SessionRuntimeError(
+                "RESOURCE_RELATION_DENIED",
+                f"caller may not create a session homed in {home_zone_id}",
+                403,
+            )
+        with self._session_factory() as session:
+            zone = session.get(ZoneModel, home_zone_id)
+            if zone is None:
+                raise SessionRuntimeError(
+                    "ZONE_NOT_FOUND", f"home zone {home_zone_id} does not exist", 404
+                )
+            if (zone.canonical_status or "unknown") != "active":
+                raise SessionRuntimeError(
+                    "ZONE_NOT_ACTIVE",
+                    f"home zone {home_zone_id} is {zone.canonical_status}, not active",
+                    409,
+                )
+            record = SessionModel(
+                session_id=session_id,
+                home_zone_id=home_zone_id,
+                owner=owner,
+                created_by=created_by,
+                policy_version=policy_version,
+            )
+            session.add(record)
+            try:
+                session.commit()
+            except IntegrityError as exc:
+                # Fixed message on the wire — driver error text may leak schema
+                # details; the original stays on the exception chain for logs.
+                raise SessionRuntimeError(
+                    "SESSION_ALREADY_EXISTS", "session already exists", 409
+                ) from exc
+            return self._view(session, record)
+
+    def get_session(self, session_id: str) -> SessionView:
+        with self._session_factory() as session:
+            record = session.get(SessionModel, session_id)
+            if record is None:
+                raise SessionRuntimeError(
+                    "SESSION_NOT_FOUND", f"session {session_id} not found", 404
+                )
+            return self._view(session, record)
+
+    def home_zone_of(self, session_id: str, session: Session) -> str:
+        record = session.get(SessionModel, session_id)
+        if record is None:
+            raise SessionRuntimeError("SESSION_NOT_FOUND", f"session {session_id} not found", 404)
+        return record.home_zone_id
+
+    @staticmethod
+    def _view(_session: Session, record: SessionModel) -> SessionView:
+        return SessionView(
+            session_id=record.session_id,
+            home_zone_id=record.home_zone_id,
+            owner=record.owner,
+            state=record.state,
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+        )
+
+    # ── home-zone record routing (§8.9 item 2) ─────────────────────────────
+    def write_session_record(
+        self,
+        *,
+        session_id: str,
+        record_kind: str,
+        payload: bytes,
+        record_name: str = "default",
+        zone_hint: str | None = None,
+    ) -> dict[str, Any]:
+        """Default-route one record write into the session's home zone.
+
+        The zone hint from the caller can only name the home zone itself;
+        anything else is refused (a payload zone never overrides the
+        authenticated home zone). Real kernel bytes are written and the
+        routing ledger records zone + path + size.
+        """
+        if record_kind not in RECORD_VFS_SUBPATHS:
+            raise SessionRuntimeError(
+                "UNSUPPORTED_RECORD_KIND", f"unknown record kind {record_kind}", 422
+            )
+        if self._fs_writer is None:
+            raise SessionRuntimeError(
+                "ZONE_RUNTIME_UNAVAILABLE",
+                "zone-scoped record writes are not armed in this deployment",
+                503,
+            )
+        with self._session_factory() as session:
+            record = session.get(SessionModel, session_id)
+            if record is None:
+                raise SessionRuntimeError(
+                    "SESSION_NOT_FOUND", f"session {session_id} not found", 404
+                )
+            if record.state != "active":
+                raise SessionRuntimeError(
+                    "SESSION_NOT_ACTIVE", f"session {session_id} is {record.state}", 409
+                )
+            home_zone = record.home_zone_id
+            zone = session.get(ZoneModel, home_zone)
+            if zone is None or zone.canonical_status != "active":
+                raise SessionRuntimeError("ZONE_NOT_ACTIVE", f"zone {home_zone} is not active", 409)
+            if zone_hint is not None and zone_hint != home_zone:
+                raise SessionRuntimeError(
+                    "ZONE_OVERRIDE_DENIED",
+                    "a client-supplied zone hint may not override the session home zone",
+                    403,
+                )
+            require_no_pending_runs(session, session_id)
+
+            subpath = RECORD_VFS_SUBPATHS[record_kind]
+            # Default names keep the canonical paths (zero change for every
+            # existing reader). A non-artifact record carrying an explicit
+            # name MUST get its own file: the ledger keys rows by name, so a
+            # shared path would silently overwrite the previous record's
+            # bytes while presenting two independent rows.
+            if record_kind == "artifact":
+                vfs_path = f"/sessions/{session_id}/{subpath}/{record_name}"
+            elif record_name != "default":
+                vfs_path = f"/sessions/{session_id}/{subpath}.{record_name}"
+            else:
+                vfs_path = f"/sessions/{session_id}/{subpath}"
+            # Second line of defence (L-2): the input layer validates the
+            # parts, but the kernel's path semantics live outside this repo —
+            # the composed path itself must satisfy the vendored zone-path
+            # projection ('..' segments, traversal shapes) before it reaches
+            # the VFS writer.
+            try:
+                TypeAdapter(ZonePathStr).validate_python(vfs_path)
+            except PydanticValidationError as exc:
+                raise SessionRuntimeError(
+                    "INVALID_PATH", f"record path is not a canonical zone path: {vfs_path}", 422
+                ) from exc
+            written = self._fs_writer(vfs_path, payload, home_zone)
+            ledger = session.execute(
+                select(SessionDataRecordModel).where(
+                    SessionDataRecordModel.session_id == session_id,
+                    SessionDataRecordModel.record_kind == record_kind,
+                    SessionDataRecordModel.record_name == record_name,
+                )
+            ).scalar_one_or_none()
+            if ledger is None:
+                ledger = SessionDataRecordModel(
+                    session_id=session_id,
+                    record_kind=record_kind,
+                    record_name=record_name,
+                    zone_id=home_zone,
+                    vfs_path=vfs_path,
+                    bytes_written=written,
+                )
+                session.add(ledger)
+            else:
+                ledger.zone_id = home_zone
+                ledger.vfs_path = vfs_path
+                ledger.bytes_written = written
+                ledger.updated_at = _utcnow()
+            try:
+                session.commit()
+            except IntegrityError:
+                # A concurrent writer inserted the same named record between
+                # our SELECT and INSERT: fall back to the update path (upsert
+                # semantics) instead of surfacing a 500.
+                session.rollback()
+                ledger = (
+                    session.execute(
+                        select(SessionDataRecordModel).where(
+                            SessionDataRecordModel.session_id == session_id,
+                            SessionDataRecordModel.record_kind == record_kind,
+                            SessionDataRecordModel.record_name == record_name,
+                        )
+                    )
+                    .scalars()
+                    .one()
+                )
+                ledger.zone_id = home_zone
+                ledger.vfs_path = vfs_path
+                ledger.bytes_written = written
+                ledger.updated_at = _utcnow()
+                session.commit()
+            except Exception:
+                # The VFS bytes are already durable but the ledger is not.
+                # The kernel exposes no VFS delete, so the orphan is logged
+                # for ops instead of being silently dropped — at-least-once
+                # write semantics (L-7①).
+                logger.exception(
+                    "record VFS bytes landed but the ledger commit failed (orphan: %s)",
+                    vfs_path,
+                )
+                raise
+            return {
+                "session_id": session_id,
+                "record_kind": record_kind,
+                "record_name": record_name,
+                "zone_id": home_zone,
+                "vfs_path": vfs_path,
+                "bytes_written": written,
+            }
+
+    def record_ledger(self, session_id: str) -> list[dict[str, Any]]:
+        with self._session_factory() as session:
+            rows = (
+                session.execute(
+                    select(SessionDataRecordModel).where(
+                        SessionDataRecordModel.session_id == session_id
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            return [
+                {
+                    "record_kind": r.record_kind,
+                    "record_name": r.record_name,
+                    "zone_id": r.zone_id,
+                    "vfs_path": r.vfs_path,
+                    "bytes_written": r.bytes_written,
+                }
+                for r in rows
+            ]
+
+    # ── runtime runs (§8.9 items 3/4) ──────────────────────────────────────
+    def start_run(
+        self,
+        *,
+        pid: str,
+        session_id: str,
+        execution_zone_hint: str | None = None,
+        delegation_ref: str | None = None,
+        grant_ref: str | None = None,
+        authorization_epoch: int | None = None,
+        decision_reason: str | None = None,
+        policy_version: str | None = None,
+        attempt_id: str | None = None,
+        zone_active_check: Any = None,
+    ) -> RunView:
+        """Register a run; solidify execution_zone_id and dependency refs.
+
+        The execution zone defaults to the session home zone. A different
+        zone requires an explicit decision_reason + policy_version
+        (cross-zone execution is a recorded policy decision) and an
+        active-zone check. The grant/epoch references feed the dependency
+        index used by cancellation and revocation_pending handling.
+        """
+        with self._session_factory() as session:
+            record = session.get(SessionModel, session_id)
+            if record is None:
+                raise SessionRuntimeError(
+                    "SESSION_NOT_FOUND", f"session {session_id} not found", 404
+                )
+            if record.state != "active":
+                raise SessionRuntimeError(
+                    "SESSION_NOT_ACTIVE", f"session {session_id} is {record.state}", 409
+                )
+            # contract: a parked run "may not obtain new resources" — the
+            # guard covers records AND run/attempt creation (this entry)
+            require_no_pending_runs(session, session_id)
+            home_zone = record.home_zone_id
+            if execution_zone_hint is None or execution_zone_hint == home_zone:
+                execution_zone = home_zone
+                reason = None
+            else:
+                if not decision_reason or not policy_version:
+                    raise SessionRuntimeError(
+                        "CROSS_ZONE_DECISION_REQUIRED",
+                        "execution outside the home zone requires decision_reason and policy_version",
+                        422,
+                    )
+                execution_zone = execution_zone_hint
+                reason = decision_reason
+            zone_row = session.get(ZoneModel, execution_zone)
+            if zone_row is None or (zone_row.canonical_status or "unknown") != "active":
+                raise SessionRuntimeError(
+                    "ZONE_NOT_ACTIVE", f"execution zone {execution_zone} is not active", 409
+                )
+            if zone_active_check is not None and not zone_active_check(execution_zone):
+                raise SessionRuntimeError(
+                    "RESOURCE_RELATION_DENIED",
+                    f"policy denies executing in {execution_zone}",
+                    403,
+                )
+            run = SessionRuntimeRunModel(
+                pid=pid,
+                session_id=session_id,
+                attempt_id=attempt_id,
+                execution_zone_id=execution_zone,
+                delegation_ref=delegation_ref,
+                grant_ref=grant_ref,
+                authorization_epoch=authorization_epoch,
+                decision_reason=reason,
+                policy_version=policy_version
+                if execution_zone != home_zone
+                else (policy_version or "p1a-default"),
+                state="registered",
+            )
+            session.add(run)
+            session.add(
+                SessionZoneDependencyModel(
+                    zone_id=execution_zone,
+                    pid=pid,
+                    session_id=session_id,
+                    grant_ref=grant_ref,
+                    authorization_epoch=authorization_epoch,
+                )
+            )
+            try:
+                session.commit()
+            except IntegrityError as exc:
+                raise SessionRuntimeError(
+                    "RUN_ALREADY_EXISTS", "a run with this pid already exists", 409
+                ) from exc
+            return self._run_view(session, run)
+
+    def resume_run(
+        self,
+        *,
+        pid: str,
+        session_id: str,
+        execution_zone_hint: str | None = None,
+        delegation_ref: str | None = None,
+        grant_ref: str | None = None,
+        authorization_epoch: int | None = None,
+        attempt_id: str | None = None,
+        zone_active_check: Any = None,
+    ) -> RunView:
+        """Create a new PID without allowing execution-zone drift.
+
+        Resume inherits the most recent run's execution zone.  A caller may
+        repeat that zone as a consistency hint, but may not silently move the
+        resumed runtime to another zone.
+        """
+        with self._session_factory() as session:
+            previous = (
+                session.execute(
+                    select(SessionRuntimeRunModel)
+                    .where(SessionRuntimeRunModel.session_id == session_id)
+                    .order_by(
+                        SessionRuntimeRunModel.started_at.desc(), SessionRuntimeRunModel.pid.desc()
+                    )
+                )
+                .scalars()
+                .first()
+            )
+            if previous is None:
+                raise SessionRuntimeError(
+                    "RUN_NOT_FOUND", f"session {session_id} has no run to resume", 404
+                )
+            inherited_zone = previous.execution_zone_id
+            if execution_zone_hint is not None and execution_zone_hint != inherited_zone:
+                raise SessionRuntimeError(
+                    "ZONE_IDENTITY_DRIFT",
+                    "resume may not change the previous execution zone",
+                    409,
+                )
+            session_record = session.get(SessionModel, session_id)
+            assert session_record is not None
+            cross_zone = inherited_zone != session_record.home_zone_id
+            decision_reason = previous.decision_reason if cross_zone else None
+            policy_version = previous.policy_version if cross_zone else None
+
+        return self.start_run(
+            pid=pid,
+            session_id=session_id,
+            execution_zone_hint=inherited_zone,
+            delegation_ref=delegation_ref,
+            grant_ref=grant_ref,
+            authorization_epoch=authorization_epoch,
+            decision_reason=decision_reason,
+            policy_version=policy_version,
+            attempt_id=attempt_id,
+            zone_active_check=zone_active_check,
+        )
+
+    def resume_zone_of(self, session_id: str) -> str:
+        """Return the immutable execution zone a new resume PID must inherit."""
+        with self._session_factory() as session:
+            previous = (
+                session.execute(
+                    select(SessionRuntimeRunModel)
+                    .where(SessionRuntimeRunModel.session_id == session_id)
+                    .order_by(
+                        SessionRuntimeRunModel.started_at.desc(), SessionRuntimeRunModel.pid.desc()
+                    )
+                )
+                .scalars()
+                .first()
+            )
+            if previous is None:
+                raise SessionRuntimeError(
+                    "RUN_NOT_FOUND", f"session {session_id} has no run to resume", 404
+                )
+            return str(previous.execution_zone_id)
+
+    def get_run(self, pid: str) -> RunView:
+        with self._session_factory() as session:
+            run = session.get(SessionRuntimeRunModel, pid)
+            if run is None:
+                raise SessionRuntimeError("RUN_NOT_FOUND", f"run {pid} not found", 404)
+            return self._run_view(session, run)
+
+    def cancel_run(self, *, pid: str, mode: str = "terminate") -> RunView:
+        """Cancel a run. ``terminate`` marks it terminated; ``pending`` parks
+        it in revocation_pending — the run may not obtain new resources
+        afterwards (write_session_record refuses while any run is pending)."""
+        if mode not in ("terminate", "pending"):
+            raise SessionRuntimeError("BAD_CANCEL_MODE", f"unknown cancel mode {mode}", 422)
+        with self._session_factory() as session:
+            run = session.get(SessionRuntimeRunModel, pid)
+            if run is None:
+                raise SessionRuntimeError("RUN_NOT_FOUND", f"run {pid} not found", 404)
+            if run.state in ("terminated", "failed"):
+                # terminal stays terminal: a pending-cancel must not
+                # resurrect a dead run (which would re-block the session's
+                # record writes) nor rewrite a settled lifecycle
+                raise SessionRuntimeError(
+                    "RUN_ALREADY_TERMINAL",
+                    f"run {pid} is already {run.state}",
+                    409,
+                )
+            run.state = "revocation_pending" if mode == "pending" else "terminated"
+            if mode == "terminate":
+                # the attempt itself stays resumable on purpose: resume
+                # re-attaches a new pid to the SAME attempt (pid_history
+                # accumulates). Attempt convergence is the reaper's call
+                # (a terminated run past the horizon closes its attempt).
+                run.ended_at = _utcnow()
+            session.commit()
+            return self._run_view(session, run)
+
+    def runs_depending_on(self, *, zone_id: str, grant_ref: str | None = None) -> list[RunView]:
+        """Dependency-index query: active runs bound to a zone/grant — the
+        input set for cancellation when a grant is revoked or an epoch moves."""
+        with self._session_factory() as session:
+            stmt = select(SessionRuntimeRunModel).where(
+                SessionRuntimeRunModel.execution_zone_id == zone_id,
+                SessionRuntimeRunModel.state.in_(
+                    ("registered", "warming_up", "ready", "busy", "awaiting_input")
+                ),
+            )
+            if grant_ref is not None:
+                stmt = stmt.where(SessionRuntimeRunModel.grant_ref == grant_ref)
+            runs = session.execute(stmt).scalars().all()
+            return [self._run_view(session, r) for r in runs]
+
+    def park_runs_for_revocation(
+        self, *, zone_id: str, grant_ref: str, authorization_epoch: int
+    ) -> int:
+        """Fail closed after a grant/epoch change.
+
+        Driven by the ``session_zone_dependencies`` index (§8.9 item 4): the
+        dependency rows carry the same grant/epoch references the run was
+        started under, so the park set is exactly the runs depending on this
+        zone whose grant matches, whose epoch is stale, or whose epoch is
+        unknown (NULL — SQL three-valued logic would silently drop those from
+        an ``epoch < :x`` comparison, so the IS NULL arm is load-bearing).
+        Today each run writes one dependency row (its execution zone); when
+        data-zone dependencies are recorded the same query parks them too.
+        """
+        active_states = ("registered", "warming_up", "ready", "busy", "awaiting_input")
+        with self._session_factory() as session, session.begin():
+            dep_pids = (
+                session.execute(
+                    select(SessionZoneDependencyModel.pid).where(
+                        SessionZoneDependencyModel.zone_id == zone_id,
+                        or_(
+                            SessionZoneDependencyModel.grant_ref == grant_ref,
+                            SessionZoneDependencyModel.authorization_epoch.is_(None),
+                            SessionZoneDependencyModel.authorization_epoch < authorization_epoch,
+                        ),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if not dep_pids:
+                return 0
+            runs = (
+                session.execute(
+                    select(SessionRuntimeRunModel).where(
+                        SessionRuntimeRunModel.pid.in_(dep_pids),
+                        SessionRuntimeRunModel.state.in_(active_states),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for run in runs:
+                run.state = "revocation_pending"
+            return len(runs)
+
+    def park_session_runs(self, *, session_id: str) -> int:
+        """Park active runs after an access-time delegation failure."""
+        active_states = ("registered", "warming_up", "ready", "busy", "awaiting_input")
+        parked = 0
+        with self._session_factory() as session, session.begin():
+            runs = (
+                session.execute(
+                    select(SessionRuntimeRunModel).where(
+                        SessionRuntimeRunModel.session_id == session_id,
+                        SessionRuntimeRunModel.state.in_(active_states),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for run in runs:
+                run.state = "revocation_pending"
+                parked += 1
+        return parked
+
+    def revalidate_runtime_dependencies(self, validator: Any) -> int:
+        """Park active runtimes whose delegation/grant/epoch is no longer current.
+
+        Convergence (M-5/M-6): a parked run whose dependency has settled as
+        invalid terminates here — the park is a waiting room for graceful
+        shutdown, never a permanent state; runs parked or registered past
+        PARK_STALE_AFTER_S converge regardless, so a dead client can never
+        block a session's record writes (or a zone's deprovision) for good."""
+        active_states = ("registered", "warming_up", "ready", "busy", "awaiting_input")
+        with self._session_factory() as session:
+            snapshots = [
+                (
+                    run.pid,
+                    run.session_id,
+                    run.state,
+                    run.delegation_ref,
+                    run.execution_zone_id,
+                    run.grant_ref,
+                    run.authorization_epoch,
+                )
+                for run in (
+                    session.execute(
+                        select(SessionRuntimeRunModel).where(
+                            SessionRuntimeRunModel.state.in_(
+                                active_states + ("revocation_pending",)
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+            ]
+
+        invalid: list[str] = []  # active + dependency gone → park
+        dead_pending: list[str] = []  # parked + dependency gone → terminate
+        unreachable = 0
+        for pid, session_id, state, delegation_ref, zone_id, grant_ref, epoch in snapshots:
+            gone = not delegation_ref or grant_ref is None or epoch is None
+            if not gone:
+                current = validator(delegation_ref, zone_id, grant_ref, int(epoch), session_id)
+                if current is None:
+                    unreachable += 1
+                    continue
+                gone = not current
+            if not gone:
+                continue
+            (dead_pending if state == "revocation_pending" else invalid).append(pid)
+        if unreachable:
+            logger.warning(
+                "skipped dependency revalidation for %d runtime(s): membership unavailable",
+                unreachable,
+            )
+        now = _utcnow()
+        stale_cutoff = now - timedelta(seconds=PARK_STALE_AFTER_S)
+        with self._session_factory() as session, session.begin():
+            moved = 0
+            for pid in invalid:
+                run = session.get(SessionRuntimeRunModel, pid)
+                if run is not None and run.state in active_states:
+                    run.state = "revocation_pending"
+                    moved += 1
+            for pid in dead_pending:
+                run = session.get(SessionRuntimeRunModel, pid)
+                if run is not None and run.state == "revocation_pending":
+                    self._terminate_with_attempt(session, run, now)
+                    moved += 1
+            stale = (
+                session.execute(
+                    select(SessionRuntimeRunModel).where(
+                        SessionRuntimeRunModel.state.in_(("revocation_pending", "registered")),
+                        SessionRuntimeRunModel.started_at.is_not(None),
+                        SessionRuntimeRunModel.started_at < stale_cutoff,
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for run in stale:
+                self._terminate_with_attempt(session, run, now)
+                moved += 1
+            return moved
+
+    @staticmethod
+    def _terminate_with_attempt(
+        session: Session, run: SessionRuntimeRunModel, now: datetime
+    ) -> None:
+        """Terminate a run and end its still-running attempt with it."""
+        run.state = "terminated"
+        run.ended_at = now
+        attempt = session.get(TaskAttemptModel, run.attempt_id) if run.attempt_id else None
+        if attempt is not None and attempt.state == "running":
+            attempt.state = "cancelled"
+            attempt.ended_at = now
+
+    @staticmethod
+    def _run_view(session: Session, run: SessionRuntimeRunModel) -> RunView:
+        task_id = None
+        if run.attempt_id is not None:
+            attempt = session.get(TaskAttemptModel, run.attempt_id)
+            task_id = attempt.task_id if attempt is not None else None
+        return RunView(
+            pid=run.pid,
+            session_id=run.session_id,
+            task_id=task_id,
+            attempt_id=run.attempt_id,
+            execution_zone_id=run.execution_zone_id,
+            state=run.state,
+            delegation_ref=run.delegation_ref,
+            grant_ref=run.grant_ref,
+            authorization_epoch=run.authorization_epoch,
+            decision_reason=run.decision_reason,
+            policy_version=run.policy_version,
+            started_at=run.started_at,
+            ended_at=run.ended_at,
+        )

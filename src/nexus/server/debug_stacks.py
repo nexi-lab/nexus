@@ -28,6 +28,11 @@ def install_stack_dump_signal() -> None:
         logger.warning("NEXUS_DEBUG_STACK_DUMP requested, but SIGUSR1 is unavailable")
         return
 
+    register = getattr(faulthandler, "register", None)
+    if register is None:
+        logger.warning("NEXUS_DEBUG_STACK_DUMP requested, but faulthandler.register is unavailable")
+        return
+
     faulthandler.enable(file=sys.stderr, all_threads=True)
     try:
         register(sigusr1, file=sys.stderr, all_threads=True, chain=False)

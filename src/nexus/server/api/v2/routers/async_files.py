@@ -1015,6 +1015,19 @@ def create_async_files_router(
         # is only set when the caller explicitly requested base64.
         if encoding in ("utf8", "utf-8"):
             encoding = None
+        # Zone-scoped read-back executes with the node credential, not the
+        # ambient request bearer: the request-credentials middleware binds the
+        # HTTP caller's key for user-file RPCs, but the kernel's API-key plane
+        # only knows the node key — a user bearer here reads as invalid
+        # credentials (the same trade the zone_control session writer makes).
+        # Python-side authz (key validity, zone binding, verified delegation)
+        # has already decided by this point; only the RPC credential changes.
+        from nexus.lib.request_credentials import request_api_key
+        from nexus.server.api.v2._zone_scoped_fs import zone_prefix_for
+
+        _zone_read_token = (
+            request_api_key.set(None) if zone_prefix_for(context) is not None else None
+        )
         try:
 
             async def _work() -> Any:
@@ -1288,6 +1301,9 @@ def create_async_files_router(
         except Exception as e:
             logger.exception(f"Read error: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
+        finally:
+            if _zone_read_token is not None:
+                request_api_key.reset(_zone_read_token)
 
     @router.get("/read-url")
     async def read_url(

@@ -1,4 +1,5 @@
 use jsonschema::{Registry, Validator};
+use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::collections::BTreeMap;
 
@@ -15,6 +16,12 @@ pub enum ValidationFailure {
     UnknownContract(String),
     #[error("invalid {schema} document at {path}")]
     InvalidDocument { schema: String, path: String },
+    #[error("object adapter does not match canonical contract {0}")]
+    AdapterMismatch(&'static str),
+}
+
+pub trait CanonicalModel: DeserializeOwned {
+    const SCHEMA: &'static str;
 }
 
 /// Compile the embedded owner schemas once when assembling the product service.
@@ -80,6 +87,11 @@ impl ContractCatalog {
                 schema: schema.to_owned(),
                 path: error.instance_path().to_string(),
             })
+    }
+
+    pub fn decode<T: CanonicalModel>(&self, document: Value) -> Result<T, ValidationFailure> {
+        self.validate(T::SCHEMA, &document)?;
+        serde_json::from_value(document).map_err(|_| ValidationFailure::AdapterMismatch(T::SCHEMA))
     }
 }
 

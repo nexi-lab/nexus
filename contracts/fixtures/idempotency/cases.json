@@ -1,0 +1,208 @@
+{
+  "source": "03c2054aacaf721798679ff78b7dd058ebbb0798",
+  "requests": [
+    {
+      "name": "zone-create-request-minimal",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "ZoneCreateRequest",
+        "zone_id": "org-acme-shared",
+        "display_name": "Acme Shared Zone",
+        "description": null,
+        "deployment": null,
+        "labels": null
+      },
+      "canonical": "{\"api_version\":\"auth.sudo.dev/v1\",\"deployment\":null,\"description\":null,\"display_name\":\"Acme Shared Zone\",\"kind\":\"ZoneCreateRequest\",\"labels\":null,\"zone_id\":\"org-acme-shared\"}",
+      "sha256": "57c1991b32aa9b077ba00a34c48409e2e28bb21f1a56a98e2b9e2bac088908fa"
+    },
+    {
+      "name": "zone-create-request-full",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "ZoneCreateRequest",
+        "zone_id": "team-platform-eu",
+        "display_name": "Platform EU",
+        "description": "Primary working zone",
+        "deployment": {
+          "location": "edge",
+          "data_domain": "general",
+          "trust_domain": "sudo.dev",
+          "region": "ap-northeast-1",
+          "replication_policy_ref": null
+        },
+        "labels": {
+          "env": "prod"
+        }
+      },
+      "canonical": "{\"api_version\":\"auth.sudo.dev/v1\",\"deployment\":{\"data_domain\":\"general\",\"location\":\"edge\",\"region\":\"ap-northeast-1\",\"replication_policy_ref\":null,\"trust_domain\":\"sudo.dev\"},\"description\":\"Primary working zone\",\"display_name\":\"Platform EU\",\"kind\":\"ZoneCreateRequest\",\"labels\":{\"env\":\"prod\"},\"zone_id\":\"team-platform-eu\"}",
+      "sha256": "7e5fc9f859135934213bf30ae0fa3a21e7af9cc36d46fe52e1322457739aa478"
+    },
+    {
+      "name": "zone-patch-request-whitelist",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "ZonePatchRequest",
+        "display_name": "Renamed Zone",
+        "description": null,
+        "labels": null,
+        "deployment": null
+      },
+      "canonical": "{\"api_version\":\"auth.sudo.dev/v1\",\"deployment\":null,\"description\":null,\"display_name\":\"Renamed Zone\",\"kind\":\"ZonePatchRequest\",\"labels\":null}",
+      "sha256": "4316bd7b3deaf8ac02132c88705e42def4c209b7bfa8cd0c18b22bed0af52fd1"
+    },
+    {
+      "name": "zone-patch-request-placement",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "ZonePatchRequest",
+        "display_name": "Renamed Zone",
+        "description": "Updated",
+        "labels": {
+          "team": "platform"
+        },
+        "deployment": {
+          "region": "us-west-2",
+          "data_domain": "core"
+        }
+      },
+      "canonical": "{\"api_version\":\"auth.sudo.dev/v1\",\"deployment\":{\"data_domain\":\"core\",\"region\":\"us-west-2\"},\"description\":\"Updated\",\"display_name\":\"Renamed Zone\",\"kind\":\"ZonePatchRequest\",\"labels\":{\"team\":\"platform\"}}",
+      "sha256": "eaa6f9a45020370ea1c10dc9b0b200ce51006510b4ae4ddca4ce4f5b601a1c64"
+    },
+    {
+      "name": "zone-grant-create-request-minimal",
+      "payload": {
+        "api_version": "auth.sudo.dev/v1",
+        "kind": "ZoneGrantCreateRequest",
+        "grantee": {
+          "subject_type": "organization",
+          "subject_id": "org_550e8400",
+          "trust_domain": null
+        },
+        "capabilities": [
+          "zone.data.read"
+        ],
+        "resource_prefixes": null,
+        "source": null,
+        "reason": "onboarding default",
+        "policy_version": null,
+        "not_before": null,
+        "expires_at": null
+      },
+      "canonical": "{\"api_version\":\"auth.sudo.dev/v1\",\"capabilities\":[\"zone.data.read\"],\"expires_at\":null,\"grantee\":{\"subject_id\":\"org_550e8400\",\"subject_type\":\"organization\",\"trust_domain\":null},\"kind\":\"ZoneGrantCreateRequest\",\"not_before\":null,\"policy_version\":null,\"reason\":\"onboarding default\",\"resource_prefixes\":null,\"source\":null}",
+      "sha256": "ed0f458f60ac2415968aa387974bb6544119abe9a11e4b1db40165862a1ccc57"
+    },
+    {
+      "name": "nested-unicode-and-control-characters",
+      "payload": {
+        "labels": {
+          "😀": "用户",
+          "a": "\b\t\n\f\r\"\\/"
+        },
+        "integer": 18446744073709551615,
+        "flag": false,
+        "optional": null
+      },
+      "canonical": "{\"flag\":false,\"integer\":18446744073709551615,\"labels\":{\"a\":\"\\b\\t\\n\\f\\r\\\"\\\\/\",\"😀\":\"用户\"},\"optional\":null}",
+      "sha256": "314c0ad8fea71ac3512328cd80fe8eeb60e70f8e26b1c6f4f3e2e6958c52ca31"
+    },
+    {
+      "name": "empty-object",
+      "payload": {},
+      "canonical": "{}",
+      "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    }
+  ],
+  "scopes": [
+    {
+      "subject_type": "user",
+      "subject_id": "same-id",
+      "action": "zone.create",
+      "targets": [
+        "cloud-user-1001"
+      ],
+      "encoded": "[\"user:same-id\", \"zone.create\", \"cloud-user-1001\"]"
+    },
+    {
+      "subject_type": "user",
+      "subject_id": "same-id",
+      "action": "zone.mount",
+      "targets": [
+        "parent",
+        "target",
+        "/sessions/s1"
+      ],
+      "encoded": "[\"user:same-id\", \"zone.mount\", \"parent\", \"target\", \"/sessions/s1\"]"
+    },
+    {
+      "subject_type": "user",
+      "subject_id": "same-id",
+      "action": "zone.transfer",
+      "targets": [
+        "source",
+        "target"
+      ],
+      "encoded": "[\"user:same-id\", \"zone.transfer\", \"source\", \"target\"]"
+    },
+    {
+      "subject_type": "agent",
+      "subject_id": "same-id",
+      "action": "zone.create",
+      "targets": [
+        "cloud-user-1001"
+      ],
+      "encoded": "[\"agent:same-id\", \"zone.create\", \"cloud-user-1001\"]"
+    },
+    {
+      "subject_type": "agent",
+      "subject_id": "same-id",
+      "action": "zone.mount",
+      "targets": [
+        "parent",
+        "target",
+        "/sessions/s1"
+      ],
+      "encoded": "[\"agent:same-id\", \"zone.mount\", \"parent\", \"target\", \"/sessions/s1\"]"
+    },
+    {
+      "subject_type": "agent",
+      "subject_id": "same-id",
+      "action": "zone.transfer",
+      "targets": [
+        "source",
+        "target"
+      ],
+      "encoded": "[\"agent:same-id\", \"zone.transfer\", \"source\", \"target\"]"
+    },
+    {
+      "subject_type": "service",
+      "subject_id": "用户😀",
+      "action": "zone.create",
+      "targets": [
+        "cloud-user-1001"
+      ],
+      "encoded": "[\"service:\\u7528\\u6237\\ud83d\\ude00\\u007f\", \"zone.create\", \"cloud-user-1001\"]"
+    },
+    {
+      "subject_type": "service",
+      "subject_id": "用户😀",
+      "action": "zone.mount",
+      "targets": [
+        "parent",
+        "target",
+        "/sessions/s1"
+      ],
+      "encoded": "[\"service:\\u7528\\u6237\\ud83d\\ude00\\u007f\", \"zone.mount\", \"parent\", \"target\", \"/sessions/s1\"]"
+    },
+    {
+      "subject_type": "service",
+      "subject_id": "用户😀",
+      "action": "zone.transfer",
+      "targets": [
+        "source",
+        "target"
+      ],
+      "encoded": "[\"service:\\u7528\\u6237\\ud83d\\ude00\\u007f\", \"zone.transfer\", \"source\", \"target\"]"
+    }
+  ],
+  "$comment": "Durable request fingerprint and scope encoding baseline captured from the existing product writer. Type-qualified mount and transfer scopes prevent distinct principal kinds from colliding."
+}

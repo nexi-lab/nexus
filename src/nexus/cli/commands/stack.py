@@ -1699,8 +1699,6 @@ def up(
     console.print()
     console.print("[bold]Next steps:[/bold]")
     console.print("  eval $(nexus env)        # load env vars into shell")
-    if preset == "demo":
-        console.print("  nexus demo init")
     console.print("  nexus status")
 
     if with_daemon:

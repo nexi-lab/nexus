@@ -65,14 +65,12 @@ _UNIFIED_MODULES = [
     # Q1 sweep — newly migrated modules
     ("nexus.cli.commands.sandbox", "list_sandboxes"),
     ("nexus.cli.commands.mounts", "list_mounts"),
-    ("nexus.cli.commands.cache", "stats"),
-    ("nexus.cli.commands.admin", "list_users"),
+    ("nexus.cli.commands.admin", "list_keys"),
     ("nexus.cli.commands.snapshots", "snapshot_list"),
     ("nexus.cli.commands.locks", "lock_list"),
     ("nexus.cli.commands.governance_cli", "governance_status"),
     ("nexus.cli.commands.events_cli", "events_replay"),
     ("nexus.cli.commands.audit", "audit_list"),
-    ("nexus.cli.commands.connectors", "list_connectors"),
     ("nexus.cli.commands.config_cmd", "show_cmd"),
     # A4 — federation CLI
     ("nexus.cli.commands.federation", "federation_status"),

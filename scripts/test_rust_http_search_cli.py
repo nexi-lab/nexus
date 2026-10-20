@@ -18,6 +18,7 @@ from uuid import uuid4
 import grpc
 import httpx
 
+from nexus.cli.exit_codes import ExitCode
 from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
 
 
@@ -41,7 +42,7 @@ async def main() -> None:
     def safe(text):
         for secret in (admin, *keys.values()):
             text = text.replace(secret, "[redacted]")
-        return text
+        return re.sub(r"sk-[A-Za-z0-9_.-]+", "[redacted]", text)
 
     async def run(args, key=admin, zone="sharedzone", expected=0, extra_env=None):
         env = os.environ.copy()
@@ -79,6 +80,15 @@ async def main() -> None:
     async def cli(args, key=admin, zone="sharedzone", expected=0):
         return await run(["-m", "nexus.cli.main", "search", *args], key, zone, expected)
 
+    async def native_cli(args, key=admin, expected=0, extra_env=None):
+        stdout, _ = await run(
+            ["-m", "nexus.cli.main", *args, "--json"],
+            key=key,
+            expected=expected,
+            extra_env=extra_env,
+        )
+        return json.loads(stdout)
+
     async with httpx.AsyncClient(base_url=base, timeout=20, trust_env=False) as rust:
 
         async def admin_request(method, url, **kwargs):
@@ -89,30 +99,37 @@ async def main() -> None:
             return response.json()
 
         async def grant(name, method):
-            return await admin_request(
-                method,
-                "/v2/rebac/tuples",
-                json={
-                    "zone": "sharedzone",
-                    "object_type": "file",
-                    "object_id": paths[name],
-                    "relation": "viewer",
-                    "subject_type": "user",
-                    "subject_id": f"cli-{name}-{suffix}",
-                },
-            )
+            return (
+                await native_cli(
+                    [
+                        "rebac",
+                        "create" if method == "POST" else "delete",
+                        "user",
+                        f"cli-{name}-{suffix}",
+                        "viewer",
+                        "file",
+                        paths[name],
+                        "--zone-id",
+                        "sharedzone",
+                    ]
+                )
+            )["data"]
 
         try:
             for name, path in paths.items():
-                minted = await admin_request(
-                    "POST",
-                    "/v2/auth/keys",
-                    json={
-                        "subject_type": "user",
-                        "subject_id": f"cli-{name}-{suffix}",
-                        "zones": ["sharedzone:r"],
-                    },
-                )
+                minted = (
+                    await native_cli(
+                        [
+                            "admin",
+                            "create-key",
+                            f"cli-{name}-{suffix}",
+                            "--subject-type",
+                            "user",
+                            "--zone",
+                            "sharedzone:r",
+                        ]
+                    )
+                )["data"]
                 keys[name], hashes[name] = minted["key"], minted["key_hash"]
                 written = await vfs.Write(
                     vfs_pb2.WriteRequest(
@@ -123,6 +140,62 @@ async def main() -> None:
                 )
                 assert not written.is_error, safe(str(written))
                 await grant(name, "POST")
+
+            identity = (
+                await native_cli(
+                    ["identity", "whoami"],
+                    key=keys["alice"],
+                    extra_env={
+                        "NEXUS_SUBJECT": "user:forged-admin",
+                        "NEXUS_AGENT_ID": "forged-admin",
+                    },
+                )
+            )["data"]
+            assert identity["subject_id"] == f"cli-alice-{suffix}" and identity["is_admin"] is False
+            listed = (
+                await native_cli(["admin", "list-keys", "--subject-id", f"cli-alice-{suffix}"])
+            )["data"]["keys"]
+            assert len(listed) == 1 and listed[0]["key_hash"] == hashes["alice"]
+            assert all("key" not in row for row in listed)
+            tuples = (await native_cli(["rebac", "list", "--zone-id", "sharedzone"]))["data"][
+                "tuples"
+            ]
+            assert all(tuple_["zone"] == "sharedzone" for tuple_ in tuples)
+            assert any(tuple_["subject_id"] == f"cli-alice-{suffix}" for tuple_ in tuples)
+            for args in (["admin", "list-keys"], ["rebac", "list", "--zone-id", "sharedzone"]):
+                denied = await native_cli(
+                    args, key=keys["alice"], expected=ExitCode.PERMISSION_DENIED
+                )
+                assert denied["error"]["code"] == "PERMISSION_DENIED", denied
+            await native_cli(
+                ["admin", "revoke-key", hashes["bob"]],
+                key=keys["alice"],
+                expected=ExitCode.PERMISSION_DENIED,
+            )
+            await native_cli(
+                ["identity", "whoami"], key="sk-never-minted", expected=ExitCode.PERMISSION_DENIED
+            )
+            userset = [
+                "group",
+                f"cli-team-{suffix}",
+                "viewer",
+                "file",
+                paths["alice"],
+                "--zone-id",
+                "sharedzone",
+            ]
+            await native_cli(["rebac", "create", *userset])
+            await native_cli(["rebac", "create", *userset, "--subject-relation", "member"])
+            removed = await native_cli(
+                ["rebac", "delete", *userset, "--subject-relation", "member"]
+            )
+            assert removed["data"]["existed"] is True
+            remaining = (await native_cli(["rebac", "list", "--zone-id", "sharedzone"]))["data"][
+                "tuples"
+            ]
+            remaining = [item for item in remaining if item["subject_id"] == f"cli-team-{suffix}"]
+            assert len(remaining) == 1 and remaining[0].get("subject_relation") is None
+            await native_cli(["rebac", "delete", *userset])
 
             # Index through the actual CLI, then consume its committed result.
             _, indexed = await cli(["index", "/docs", "--no-recursive"])
@@ -246,7 +319,10 @@ async def main() -> None:
                 key=keys["alice"],
             )
             assert json.loads(revoked_grant) == []
-            await admin_request("DELETE", f"/v2/auth/keys/{hashes['bob']}")
+            revoked = await native_cli(["admin", "revoke-key", hashes["bob"]])
+            assert revoked["data"]["existed"] is True
+            repeated = await native_cli(["admin", "revoke-key", hashes["bob"]])
+            assert repeated["data"]["existed"] is False
             await cli(["query", needle, "--mode", "keyword"], key=keys["bob"], expected=77)
             await cli(["query", needle, "--mode", "keyword"], key="sk-never-minted", expected=77)
 
@@ -344,7 +420,7 @@ async def main() -> None:
                 )
                 assert "absolute VFS directory" in error, safe(error)
             print(
-                "Rust HTTP Search CLI passed: index/query/stats/path-contexts/isolation/path/zone/admin/revocation/benchmark"
+                "Rust HTTP CLI passed: native-identity/keys/full-tuples/index/query/stats/path-contexts/isolation/path/zone/admin/revocation/benchmark"
             )
         finally:
             await channel.close()

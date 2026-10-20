@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from nexus.cli.clients.base import BaseServiceClient, NexusAPIError
+from nexus.cli.clients.base import BaseServiceClient
 
 
 class SearchClient(BaseServiceClient):
@@ -18,18 +18,6 @@ class SearchClient(BaseServiceClient):
     ) -> None:
         super().__init__(url, api_key, timeout=timeout)
         self._zone_id = zone_id
-
-    def _request(
-        self,
-        method: str,
-        path: str,
-        params: dict[str, Any] | None = None,
-        json_body: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        body = super()._request(method, path, params=params, json_body=json_body)
-        if body.get("error"):
-            raise NexusAPIError(503, str(body["error"]))
-        return body
 
     def query(
         self,

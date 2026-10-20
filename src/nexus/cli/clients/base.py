@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Any
-
-logger = logging.getLogger(__name__)
 
 __all__ = ["BaseServiceClient", "NexusAPIError"]
 
@@ -22,7 +19,7 @@ class NexusAPIError(Exception):
 class BaseServiceClient:
     """Shared HTTP client base for Nexus service-level REST endpoints.
 
-    Subclasses add domain-specific methods (e.g. IdentityClient.show()).
+    Subclasses bind the native host's domain endpoints.
     """
 
     def __init__(self, url: str, api_key: str | None = None, *, timeout: float = 30.0) -> None:
@@ -68,25 +65,8 @@ class BaseServiceClient:
             return {}
 
         result: dict[str, Any] = response.json()
+        if not isinstance(result, dict):
+            raise NexusAPIError(502, "Expected a JSON object from the native host")
+        if result.get("error"):
+            raise NexusAPIError(503, str(result["error"]))
         return result
-
-    def _request_text(
-        self,
-        method: str,
-        path: str,
-        params: dict[str, Any] | None = None,
-    ) -> str:
-        """Make HTTP request and return raw text response."""
-        if params:
-            params = {k: v for k, v in params.items() if v is not None}
-
-        response = self._client.request(method, path, params=params)
-
-        if response.status_code >= 400:
-            try:
-                detail = response.json().get("detail", response.text)
-            except Exception:
-                detail = response.text
-            raise NexusAPIError(response.status_code, str(detail))
-
-        return response.text

@@ -28,7 +28,7 @@ from nexus.cli.theme import console
 
 # ---------------------------------------------------------------------------
 # Shared config search paths (single source of truth — was duplicated in
-# stack.py, status.py, demo_data.py)
+# stack.py, status.py)
 # ---------------------------------------------------------------------------
 
 CONFIG_SEARCH_PATHS = ("./nexus.yaml", "./nexus.yml")

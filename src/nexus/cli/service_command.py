@@ -29,6 +29,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+import click
+
+from nexus.cli.config import resolve_connection
 from nexus.cli.output import OutputOptions, render_error, render_output
 from nexus.cli.timing import CommandTiming
 
@@ -63,15 +66,13 @@ def _validate_url(remote_url: str | None) -> str:
 
 
 def service_command(
-    func: Callable[..., ServiceResult] | None = None,
     *,
-    client_class: type | None = None,
+    client_class: type,
 ) -> Any:
     """Decorator that wraps a service CLI command with timing, client, and output.
 
     Args:
-        func: The command function (when used without arguments).
-        client_class: Domain-specific client class (e.g. IdentityClient). Required.
+        client_class: Domain-specific HTTP client class.
 
     The wrapped function receives a ``client`` keyword argument and must return
     a :class:`ServiceResult`.  The decorator handles:
@@ -92,16 +93,12 @@ def service_command(
             remote_api_key: str | None,
             **kwargs: Any,
         ) -> None:
-            url = _validate_url(remote_url)
             timing = CommandTiming()
             try:
-                cls = client_class
-                if cls is None:
-                    raise ValueError(
-                        "service_command requires client_class parameter — "
-                        "NexusServiceClient has been removed (Issue #1133)"
-                    )
-                client = cls(url=url, api_key=remote_api_key)
+                ctx = click.get_current_context(silent=True)
+                profile = (ctx.obj or {}).get("profile") if ctx else None
+                connection = resolve_connection(remote_url, remote_api_key, profile_name=profile)
+                client = client_class(url=_validate_url(connection.url), api_key=connection.api_key)
                 with timing.phase("server"), client:
                     result = fn(client=client, **kwargs)
                 render_output(
@@ -118,8 +115,4 @@ def service_command(
 
         return wrapper
 
-    if func is not None:
-        # Used as @service_command without arguments
-        return decorator(func)
-    # Used as @service_command(client_class=...) with arguments
     return decorator

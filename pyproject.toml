@@ -818,7 +818,6 @@ module = [
     "nexus.cli.commands.init_cmd",
     "nexus.cli.commands.stack",
     "nexus.cli.commands.status",
-    "nexus.cli.commands.demo",
 ]
 # PyYAML stubs — same as other CLI modules (config.py, config_resolver.py)
 disable_error_code = ["import-untyped", "no-any-return"]

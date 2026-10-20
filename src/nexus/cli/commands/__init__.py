@@ -37,13 +37,9 @@ _REGISTER_COMMANDS: dict[str, tuple[str, ...]] = {
     "versions": ("versions",),
     "inspect": ("info", "version", "size"),
     "plugins": ("plugins",),
-    "operations": ("ops", "undo"),
-    "workflows": ("workflows",),
     "mounts": ("mounts",),
-    "connectors": ("connectors",),
     "llm": ("llm",),
     "mcp": ("mcp",),
-    "cache": ("cache",),
     "migrate": ("migrate",),
     "network": ("network",),
     "tls": ("tls",),
@@ -60,11 +56,6 @@ _REGISTER_COMMANDS: dict[str, tuple[str, ...]] = {
     "env_cmd": ("env", "run"),
     # Issue #2929: MCL replay for index rebuild
     "reindex": ("reindex",),
-    # Issue #2930: Catalog and aspects commands
-    "catalog": ("catalog",),
-    "aspects": ("aspects",),
-    # Issue #3417: Lineage tracking commands
-    "lineage": ("lineage",),
     # Issue #3773: Path context descriptions (admin CRUD)
     "path_context": ("path-context",),
     # Issue #3793: Signed zone archive snapshots
@@ -79,6 +70,7 @@ _ADD_COMMAND: dict[str, tuple[str, str]] = {
     "extensions": ("extensions", "extensions"),
     "acp_cli": ("acp", "acp"),
     "admin": ("admin", "admin"),
+    "identity": ("identity", "identity"),
     "sandbox": ("sandbox", "sandbox"),
     "oauth": ("oauth", "oauth"),
     "auth_cli": ("auth", "auth"),
@@ -92,8 +84,6 @@ _ADD_COMMAND: dict[str, tuple[str, str]] = {
     "snapshots": ("snapshot", "snapshot"),
     "federation": ("federation", "federation"),
     "hub": ("hub", "hub"),
-    # Issue #2915: Demo data management + preset-aware init
-    "demo": ("demo", "demo"),
     "init_cmd": ("init", "init"),
 }
 

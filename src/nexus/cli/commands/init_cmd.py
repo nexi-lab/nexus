@@ -374,8 +374,6 @@ def _print_shared_summary(config: dict[str, Any], config_path: Path, data_dir: P
     console.print()
     console.print("[bold]Next steps:[/bold]")
     console.print("  nexus up")
-    if preset == "demo":
-        console.print("  nexus demo init")
 
 
 @click.command(name="init")

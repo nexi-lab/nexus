@@ -4,14 +4,7 @@ This module provides the transport and proxy infrastructure for REMOTE
 deployment profile. Use ``nexus.connect(config={"profile": "remote", ...})``
 to create a remote NexusFS instance.
 
-Domain-specific operations are organized into domain clients:
-- SandboxClient / AsyncSandboxClient
-- OAuthClient / AsyncOAuthClient
-- MCPClient / AsyncMCPClient
-- ShareLinksClient / AsyncShareLinksClient
-- MemoryClient / AsyncMemoryClient
-- AsyncAdminClient (async-only)
-- AsyncLLMClient (async-only)
+AgentClient accesses the native daemon's transient runtime registry.
 
 Example:
     >>> import nexus
@@ -24,32 +17,10 @@ from nexus.contracts.exceptions import (
     RemoteFilesystemError,
     RemoteTimeoutError,
 )
-from nexus.remote.domain import (
-    AsyncAdminClient,
-    AsyncMCPClient,
-    AsyncOAuthClient,
-    AsyncSandboxClient,
-    AsyncShareLinksClient,
-    MCPClient,
-    OAuthClient,
-    SandboxClient,
-    ShareLinksClient,
-)
 
 __all__ = [
     # Error classes
     "RemoteFilesystemError",
     "RemoteConnectionError",
     "RemoteTimeoutError",
-    # Domain clients (sync + async)
-    "SandboxClient",
-    "AsyncSandboxClient",
-    "OAuthClient",
-    "AsyncOAuthClient",
-    "MCPClient",
-    "AsyncMCPClient",
-    "ShareLinksClient",
-    "AsyncShareLinksClient",
-    # Async-only domain clients
-    "AsyncAdminClient",
 ]

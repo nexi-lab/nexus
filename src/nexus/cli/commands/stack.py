@@ -1,6 +1,6 @@
 """Stack lifecycle commands — up, down, logs, restart, upgrade, stop, start.
 
-These commands manage the Docker Compose stack for ``shared`` and ``demo``
+These commands manage the Docker Compose stack for the ``shared``
 presets.  They wrap ``docker compose`` via subprocess, adding pre-flight
 port conflict detection, parallel health polling, and rich status output.
 
@@ -163,7 +163,7 @@ def _derive_project_env(
         env.pop("NEXUS_GRPC_BIND_ALL", None)
     else:
         env["NEXUS_GRPC_TLS"] = "false"
-        # Standalone demo/shared stacks expose gRPC through a published Docker
+        # Shared stacks expose gRPC through a published Docker
         # port, so the server must not stay bound to container loopback.
         env["NEXUS_GRPC_BIND_ALL"] = "true"
 

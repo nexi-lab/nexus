@@ -54,11 +54,13 @@ The Python SDK uses the same native transport:
 ```python
 import nexus
 
-nx = nexus.connect(config={
-    "profile": "remote",
-    "url": "http://127.0.0.1:2327",
-    "api_key": "<native credential>",
-})
+nx = nexus.connect(
+    config={
+        "profile": "remote",
+        "url": "http://127.0.0.1:2327",
+        "api_key": "<native credential>",
+    }
+)
 try:
     content = nx.sys_read("/docs/report.txt")
 finally:
@@ -122,6 +124,27 @@ nexus rebac delete group engineering viewer file /docs/report.txt --subject-rela
 ```
 
 These operations use the same native tuple store as file and Search authorization. The CLI forwards the full tuple. A revoke receipt reports whether it existed; test access through the native file or Search operation.
+
+## Inspect native agent processes
+
+The runtime registry holds current process state in the daemon. Its PID identifies the external OS process; a micro-agent's PID also includes its local ID. Runtime registration and identity enrollment have independent responsibilities.
+
+```sh
+nexus agent list --zone-id sharedzone --json
+nexus agent info <pid> --json
+nexus agent heartbeat <pid> --json
+nexus agent transition <pid> ready --json
+```
+
+The daemon validates every state transition. External runtimes can register their actual process and connection metadata:
+
+```sh
+nexus agent register "Local worker" --owner-id alice --zone-id sharedzone --connection-id <connection> --host-pid <os-pid> --json
+nexus agent signal <pid> SIGUSR1 --label steering=continue --json
+nexus agent delete <pid> --yes --json
+```
+
+These commands use the native gRPC endpoint and the existing credential. The Python SDK exposes the same bindings through `nexus.remote.agent_client.AgentClient`, which owns and closes its channel with a `with` statement.
 
 ## Use the terminal interface
 

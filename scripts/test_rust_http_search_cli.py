@@ -1,4 +1,4 @@
-"""Live CLI -> Rust HTTP -> signed Search plugin, without Python server RPCs.
+"""Live CLI -> native HTTP/gRPC -> registry and signed Search plugin.
 
 Uses the isolated ReBAC/mTLS fixture configured by NEXUS_SEARCH_TEST_HTTP,
 NEXUS_SEARCH_TEST_ADMIN_KEY and NEXUS_SEARCH_PLUGIN_TLS_*.
@@ -89,6 +89,90 @@ async def main() -> None:
         )
         return json.loads(stdout)
 
+    agent_env = {
+        "NEXUS_GRPC_PORT": target.rsplit(":", 1)[1],
+        "NEXUS_GRPC_TLS": "true",
+        "NEXUS_TLS_CA": os.environ["NEXUS_SEARCH_PLUGIN_TLS_CA"],
+        "NEXUS_TLS_CERT": os.environ["NEXUS_SEARCH_PLUGIN_TLS_CERT"],
+        "NEXUS_TLS_KEY": os.environ["NEXUS_SEARCH_PLUGIN_TLS_KEY"],
+    }
+
+    async def agent_cli(args, expected=0, key=admin):
+        return await native_cli(["agent", *args], key=key, expected=expected, extra_env=agent_env)
+
+    async def verify_agent_registry():
+        owner = f"cli-runtime-{suffix}"
+        register = [
+            "register",
+            "CLI native acceptance",
+            "--owner-id",
+            owner,
+            "--connection-id",
+            f"cli-{suffix}",
+            "--host-pid",
+            str(os.getpid()),
+            "--label",
+            f"acceptance={suffix}",
+        ]
+        parent = str(os.getpid())
+        child = f"{parent}.7"
+        created = []
+        try:
+            record = (await agent_cli(register))["data"]
+            created.append(parent)
+            assert record["pid"] == parent and record["state"] == "REGISTERED", record
+            assert record["owner_id"] == owner and record["zone_id"] == "sharedzone", record
+            assert record["labels"]["acceptance"] == suffix, record
+            assert record["external_info"]["connection_id"] == f"cli-{suffix}", record
+            assert "host_pid" not in record["external_info"] and "api_key" not in record, record
+            duplicate = await agent_cli(register, expected=1)
+            assert duplicate["error"] and duplicate["data"] is None, duplicate
+
+            micro = (await agent_cli([*register, "--local-id", "7", "--parent-pid", parent]))[
+                "data"
+            ]
+            created.append(child)
+            assert micro["pid"] == child and micro["parent_pid"] == parent, micro
+            assert set((await agent_cli(["info", parent]))["data"]["children"]) == {child}
+            records = (await agent_cli(["list", "--owner-id", owner]))["data"]
+            assert {r["pid"] for r in records} == {parent, child}, records
+            assert not (await agent_cli(["list", "--owner-id", owner, "--zone-id", "otherzone"]))[
+                "data"
+            ]
+
+            rejected = await agent_cli(["transition", child, "ready"], expected=1)
+            assert rejected["error"] and rejected["data"] is None, rejected
+            assert (await agent_cli(["info", child]))["data"]["state"] == "REGISTERED"
+            for state in ("warming_up", "ready", "busy", "awaiting_input", "busy", "ready"):
+                record = (await agent_cli(["transition", child, state]))["data"]
+                assert record["state"] == state.upper(), record
+            ready = (await agent_cli(["list", "--owner-id", owner, "--state", "ready"]))["data"]
+            assert [r["pid"] for r in ready] == [child], ready
+            heartbeat = (await agent_cli(["heartbeat", child]))["data"]
+            assert heartbeat["external_info"]["last_heartbeat_ms"] > 0, heartbeat
+            steered = (
+                await agent_cli(["signal", child, "SIGUSR1", "--label", "steering=accepted"])
+            )["data"]
+            assert steered["labels"]["steering"] == "accepted" and steered["state"] == "READY", (
+                steered
+            )
+            terminated = (await agent_cli(["signal", child, "SIGTERM"]))["data"]
+            assert terminated["state"] == "TERMINATED", terminated
+            rejected = await agent_cli(["transition", child, "ready"], expected=1)
+            assert rejected["error"] and rejected["data"] is None, rejected
+            await agent_cli(["list"], key="sk-never-minted", expected=1)
+            assert (await agent_cli(["delete", child, "--yes"]))["data"] == {"unregistered": True}
+            created.remove(child)
+            missing = await agent_cli(["info", child], expected=1)
+            assert missing["error"]["code"] == "NOT_FOUND", missing
+            assert not (await agent_cli(["info", parent]))["data"]["children"]
+            print(
+                "Native agent CLI passed: canonical PID, parent/child, filters, state machine, heartbeat, signals, auth, unregister"
+            )
+        finally:
+            for pid in reversed(created):
+                await agent_cli(["delete", pid, "--yes"])
+
     async with httpx.AsyncClient(base_url=base, timeout=20, trust_env=False) as rust:
 
         async def admin_request(method, url, **kwargs):
@@ -116,6 +200,7 @@ async def main() -> None:
             )["data"]
 
         try:
+            await verify_agent_registry()
             for name, path in paths.items():
                 minted = (
                     await native_cli(

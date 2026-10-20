@@ -633,7 +633,7 @@ operations:
   transports:
     cli:
       name: nexus agent delete
-      source: src/nexus/cli/commands/agent.py:302
+      source: src/nexus/cli/commands/agent.py:84
   profiles:
     lite: unverified
     sandbox: unverified
@@ -650,7 +650,7 @@ operations:
   transports:
     cli:
       name: nexus agent heartbeat
-      source: src/nexus/cli/commands/agent.py:395
+      source: src/nexus/cli/commands/agent.py:102
     grpc_expose:
       name: agent_heartbeat
       source: src/nexus/services/agents/agent_rpc_service.py:862
@@ -670,7 +670,7 @@ operations:
   transports:
     cli:
       name: nexus agent info
-      source: src/nexus/cli/commands/agent.py:214
+      source: src/nexus/cli/commands/agent.py:73
   profiles:
     lite: unverified
     sandbox: unverified
@@ -687,7 +687,7 @@ operations:
   transports:
     cli:
       name: nexus agent list
-      source: src/nexus/cli/commands/agent.py:161
+      source: src/nexus/cli/commands/agent.py:63
   profiles:
     lite: unverified
     sandbox: unverified
@@ -721,7 +721,7 @@ operations:
   transports:
     cli:
       name: nexus agent register
-      source: src/nexus/cli/commands/agent.py:73
+      source: src/nexus/cli/commands/agent.py:44
   profiles:
     lite: unverified
     sandbox: unverified
@@ -749,64 +749,13 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4137
-- id: agent.spec
+- id: agent.signal
   module: agent_log
   summary: ''
   transports:
     cli:
-      name: nexus agent spec
-      source: src/nexus/cli/commands/agent.py:465
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: agent.spec_set
-  module: agent_log
-  summary: ''
-  transports:
-    cli:
-      name: nexus agent spec set
-      source: src/nexus/cli/commands/agent.py:494
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: agent.spec_show
-  module: agent_log
-  summary: ''
-  transports:
-    cli:
-      name: nexus agent spec show
-      source: src/nexus/cli/commands/agent.py:470
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: agent.status
-  module: agent_log
-  summary: ''
-  transports:
-    cli:
-      name: nexus agent status
-      source: src/nexus/cli/commands/agent.py:421
+      name: nexus agent signal
+      source: src/nexus/cli/commands/agent.py:110
   profiles:
     lite: unverified
     sandbox: unverified
@@ -823,7 +772,7 @@ operations:
   transports:
     cli:
       name: nexus agent transition
-      source: src/nexus/cli/commands/agent.py:346
+      source: src/nexus/cli/commands/agent.py:93
     grpc_expose:
       name: agent_transition
       source: src/nexus/services/agents/agent_rpc_service.py:811
@@ -839,47 +788,13 @@ operations:
     and :92
   gap_issue: null
   owning_issue: 4137
-- id: agent.update
-  module: agent_log
-  summary: ''
-  transports:
-    cli:
-      name: nexus agent update
-      source: src/nexus/cli/commands/agent.py:252
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: agent.warmup
-  module: agent_log
-  summary: ''
-  transports:
-    cli:
-      name: nexus agent warmup
-      source: src/nexus/cli/commands/agent.py:515
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
 - id: agent_log.agent
   module: agent_log
   summary: CLI group for registering, updating, listing, inspecting, deleting, transitioning, and heartbeating agents.
   transports:
     cli:
       name: nexus agent
-      source: src/nexus/cli/commands/agent.py:47
+      source: src/nexus/cli/commands/agent.py:39
   profiles:
     lite: supported
     sandbox: supported
@@ -2078,7 +1993,7 @@ operations:
   transports:
     cli:
       name: nexus init
-      source: src/nexus/cli/commands/init_cmd.py:379
+      source: src/nexus/cli/commands/init_cmd.py:372
   profiles:
     lite: supported
     sandbox: supported
@@ -2301,9 +2216,6 @@ operations:
     grpc_expose:
       name: backfill_directory_index
       source: src/nexus/core/nexus_fs_metadata.py:2115
-    sdk:
-      name: MCPClient.backfill_directory_index
-      source: src/nexus/remote/domain/mcp.py:91
   profiles:
     lite: supported
     sandbox: supported
@@ -2787,23 +2699,6 @@ operations:
   perf_link: invoked by the agent-eviction background task (~every 2 min), not on a request hot path
   gap_issue: null
   owning_issue: 4268
-- id: create.key
-  module: auth
-  summary: ''
-  transports:
-    sdk:
-      name: AsyncAdminClient.create_key
-      source: src/nexus/remote/domain/admin.py:18
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/e2e/server/test_auth_security_e2e.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
-  gap_issue: null
-  owning_issue: 4138
 - id: create.pipe
   module: uncategorized
   summary: ''
@@ -3401,23 +3296,6 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4137
-- id: exchange.code
-  module: auth
-  summary: ''
-  transports:
-    sdk:
-      name: OAuthClient.exchange_code
-      source: src/nexus/remote/domain/oauth.py:35
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/e2e/server/test_issue_4136_api_surface_e2e.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
-  gap_issue: null
-  owning_issue: 4136
 - id: execute.workflow
   module: workflows
   summary: Execute a named workflow through MCP; visible from the full profile.
@@ -4535,23 +4413,6 @@ operations:
   perf_link: human-invoked metadata or inventory surface; not on a request hot path
   gap_issue: null
   owning_issue: 4133
-- id: fs.access
-  module: filesystem
-  summary: ''
-  transports:
-    sdk:
-      name: ShareLinksClient.access
-      source: src/nexus/remote/domain/share_links.py:55
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/unit/services/test_share_link_service.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
-  gap_issue: null
-  owning_issue: 4133
 - id: fs.close
   module: filesystem
   summary: ''
@@ -4569,57 +4430,6 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4133
-- id: fs.connect
-  module: filesystem
-  summary: ''
-  transports:
-    sdk:
-      name: SandboxClient.connect
-      source: src/nexus/remote/domain/sandbox.py:17
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/integration/test_sandbox_boot.py:1
-  perf_class: setup
-  perf_link: setup/bootstrap surface; invoked outside steady-state request hot paths
-  gap_issue: null
-  owning_issue: 4127
-- id: fs.create
-  module: filesystem
-  summary: ''
-  transports:
-    sdk:
-      name: ShareLinksClient.create
-      source: src/nexus/remote/domain/share_links.py:15
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/unit/services/test_share_link_service.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
-  gap_issue: null
-  owning_issue: 4133
-- id: fs.disconnect
-  module: filesystem
-  summary: ''
-  transports:
-    sdk:
-      name: SandboxClient.disconnect
-      source: src/nexus/remote/domain/sandbox.py:114
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/integration/test_sandbox_boot.py:1
-  perf_class: setup
-  perf_link: setup/bootstrap surface; invoked outside steady-state request hot paths
-  gap_issue: null
-  owning_issue: 4127
 - id: fs.get
   module: filesystem
   summary: ''
@@ -4659,8 +4469,8 @@ operations:
   summary: ''
   transports:
     sdk:
-      name: ShareLinksClient.list
-      source: src/nexus/remote/domain/share_links.py:37
+      name: AgentClient.list
+      source: src/nexus/remote/agent_client.py:62
   profiles:
     lite: supported
     sandbox: supported
@@ -4688,23 +4498,6 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
-- id: fs.mount
-  module: mount
-  summary: ''
-  transports:
-    sdk:
-      name: MCPClient.mount
-      source: src/nexus/remote/domain/mcp.py:56
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/e2e/server/test_issue_4136_api_surface_e2e.py:1
-  perf_class: setup
-  perf_link: setup/bootstrap surface; invoked outside steady-state request hot paths
-  gap_issue: null
-  owning_issue: 4136
 - id: fs.open
   module: filesystem
   summary: ''
@@ -4722,23 +4515,6 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4133
-- id: fs.pause
-  module: filesystem
-  summary: ''
-  transports:
-    sdk:
-      name: SandboxClient.pause
-      source: src/nexus/remote/domain/sandbox.py:64
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/integration/test_sandbox_boot.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
-  gap_issue: null
-  owning_issue: 4127
 - id: fs.register
   module: filesystem
   summary: ''
@@ -4754,40 +4530,6 @@ operations:
   correctness_test: tests/integration/test_sandbox_boot.py:1
   perf_class: setup
   perf_link: setup/bootstrap surface; invoked outside steady-state request hot paths
-  gap_issue: null
-  owning_issue: 4133
-- id: fs.resume
-  module: filesystem
-  summary: ''
-  transports:
-    sdk:
-      name: SandboxClient.resume
-      source: src/nexus/remote/domain/sandbox.py:67
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/integration/test_sandbox_boot.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
-  gap_issue: null
-  owning_issue: 4127
-- id: fs.revoke
-  module: filesystem
-  summary: ''
-  transports:
-    sdk:
-      name: ShareLinksClient.revoke
-      source: src/nexus/remote/domain/share_links.py:52
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/unit/services/test_share_link_service.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4133
 - id: fs.rmdir
@@ -4807,23 +4549,6 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
-- id: fs.run
-  module: filesystem
-  summary: ''
-  transports:
-    sdk:
-      name: SandboxClient.run
-      source: src/nexus/remote/domain/sandbox.py:40
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/integration/test_sandbox_boot.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
-  gap_issue: null
-  owning_issue: 4127
 - id: fs.signal
   module: filesystem
   summary: ''
@@ -4841,74 +4566,6 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4133
-- id: fs.status
-  module: filesystem
-  summary: ''
-  transports:
-    sdk:
-      name: SandboxClient.status
-      source: src/nexus/remote/domain/sandbox.py:92
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/integration/test_sandbox_boot.py:1
-  perf_class: hot_path
-  perf_link: tests/benchmarks/bench_read_write_overhead.py:1
-  gap_issue: null
-  owning_issue: 4127
-- id: fs.stop
-  module: filesystem
-  summary: ''
-  transports:
-    sdk:
-      name: SandboxClient.stop
-      source: src/nexus/remote/domain/sandbox.py:70
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/integration/test_sandbox_boot.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
-  gap_issue: null
-  owning_issue: 4127
-- id: fs.sync
-  module: filesystem
-  summary: ''
-  transports:
-    sdk:
-      name: MCPClient.sync
-      source: src/nexus/remote/domain/mcp.py:88
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/e2e/server/test_issue_4136_api_surface_e2e.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
-  gap_issue: null
-  owning_issue: 4133
-- id: fs.unmount
-  module: mount
-  summary: ''
-  transports:
-    sdk:
-      name: MCPClient.unmount
-      source: src/nexus/remote/domain/mcp.py:85
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/e2e/server/test_issue_4136_api_surface_e2e.py:1
-  perf_class: setup
-  perf_link: setup/bootstrap surface; invoked outside steady-state request hot paths
-  gap_issue: null
-  owning_issue: 4136
 - id: fs.unregister
   module: filesystem
   summary: ''
@@ -4926,23 +4583,6 @@ operations:
   perf_link: setup/bootstrap surface; invoked outside steady-state request hot paths
   gap_issue: null
   owning_issue: 4133
-- id: fs.validate
-  module: filesystem
-  summary: ''
-  transports:
-    sdk:
-      name: SandboxClient.validate
-      source: src/nexus/remote/domain/sandbox.py:128
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/integration/test_sandbox_boot.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
-  gap_issue: null
-  owning_issue: 4127
 - id: fs.write
   module: filesystem
   summary: ''
@@ -4988,23 +4628,6 @@ operations:
   perf_link: null
   gap_issue: 4210
   owning_issue: 4133
-- id: get.access_logs
-  module: agent_log
-  summary: ''
-  transports:
-    sdk:
-      name: ShareLinksClient.get_access_logs
-      source: src/nexus/remote/domain/share_links.py:72
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/unit/services/test_share_link_service.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
-  gap_issue: null
-  owning_issue: 4137
 - id: get.agent
   module: agent_log
   summary: Fetch one registered agent and enrich it from its config when available.
@@ -5023,23 +4646,6 @@ operations:
     and :92
   gap_issue: null
   owning_issue: 4137
-- id: get.auth_url
-  module: auth
-  summary: ''
-  transports:
-    sdk:
-      name: OAuthClient.get_auth_url
-      source: src/nexus/remote/domain/oauth.py:21
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/e2e/server/test_issue_4136_api_surface_e2e.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
-  gap_issue: null
-  owning_issue: 4136
 - id: get.content_id
   module: filesystem
   summary: ''
@@ -5077,23 +4683,6 @@ operations:
   perf_link: control-plane config lookup; dynamic read overhead is covered by tests/benchmarks/bench_rebac_scale.py
   gap_issue: null
   owning_issue: 4134
-- id: get.key
-  module: auth
-  summary: ''
-  transports:
-    sdk:
-      name: AsyncAdminClient.get_key
-      source: src/nexus/remote/domain/admin.py:62
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/e2e/server/test_auth_security_e2e.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
-  gap_issue: null
-  owning_issue: 4138
 - id: get.mount
   module: mount
   summary: ''
@@ -5145,40 +4734,6 @@ operations:
   perf_link: setup/control-plane schema operation; not on the per-request permission hot path
   gap_issue: null
   owning_issue: 4134
-- id: get.oauth_url
-  module: auth
-  summary: ''
-  transports:
-    sdk:
-      name: MCPClient.get_oauth_url
-      source: src/nexus/remote/domain/mcp.py:33
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/e2e/server/test_issue_4136_api_surface_e2e.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
-  gap_issue: null
-  owning_issue: 4136
-- id: get.or_create
-  module: uncategorized
-  summary: ''
-  transports:
-    sdk:
-      name: SandboxClient.get_or_create
-      source: src/nexus/remote/domain/sandbox.py:95
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/integration/test_sandbox_boot.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
-  gap_issue: null
-  owning_issue: 4138
 - id: get.rebac_option
   module: rebac
   summary: Read a ReBAC service tuning option.
@@ -6020,23 +5575,6 @@ operations:
     and covered by connector/search benchmarks when enabled.
   gap_issue: null
   owning_issue: 4136
-- id: list.credentials
-  module: filesystem
-  summary: ''
-  transports:
-    sdk:
-      name: OAuthClient.list_credentials
-      source: src/nexus/remote/domain/oauth.py:57
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/e2e/server/test_issue_4136_api_surface_e2e.py:1
-  perf_class: hot_path
-  perf_link: tests/benchmarks/bench_read_write_overhead.py:1
-  gap_issue: null
-  owning_issue: 4133
 - id: list.files
   module: filesystem
   summary: List directory contents through MCP; visible from the minimal profile for read-only workspace inspection.
@@ -6073,23 +5611,6 @@ operations:
   perf_link: tests/benchmarks/test_rebac_latency.py; tests/benchmarks/bench_rebac_scale.py
   gap_issue: null
   owning_issue: 4134
-- id: list.keys
-  module: filesystem
-  summary: ''
-  transports:
-    sdk:
-      name: AsyncAdminClient.list_keys
-      source: src/nexus/remote/domain/admin.py:45
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/integration/test_sandbox_boot.py:1
-  perf_class: hot_path
-  perf_link: tests/benchmarks/bench_read_write_overhead.py:1
-  gap_issue: null
-  owning_issue: 4133
 - id: list.mounts
   module: mount
   summary: List active backend mounts visible to the caller after permission filtering.
@@ -6097,9 +5618,6 @@ operations:
     grpc_expose:
       name: list_mounts
       source: src/nexus/bricks/mount/mount_service.py:1094
-    sdk:
-      name: MCPClient.list_mounts
-      source: src/nexus/remote/domain/mcp.py:43
   profiles:
     lite: supported
     sandbox: supported
@@ -6145,23 +5663,6 @@ operations:
   perf_link: tests/benchmarks/bench_read_write_overhead.py:1
   gap_issue: null
   owning_issue: 4133
-- id: list.providers
-  module: filesystem
-  summary: ''
-  transports:
-    sdk:
-      name: OAuthClient.list_providers
-      source: src/nexus/remote/domain/oauth.py:18
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/e2e/server/test_issue_4136_api_surface_e2e.py:1
-  perf_class: hot_path
-  perf_link: tests/benchmarks/bench_read_write_overhead.py:1
-  gap_issue: null
-  owning_issue: 4133
 - id: list.saved_mounts
   module: mount
   summary: ''
@@ -6196,23 +5697,6 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: 4134
   owning_issue: 4134
-- id: list.tools
-  module: filesystem
-  summary: ''
-  transports:
-    sdk:
-      name: MCPClient.list_tools
-      source: src/nexus/remote/domain/mcp.py:53
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/e2e/server/test_issue_4136_api_surface_e2e.py:1
-  perf_class: hot_path
-  perf_link: tests/benchmarks/bench_read_write_overhead.py:1
-  gap_issue: null
-  owning_issue: 4133
 - id: list.versions
   module: versioning
   summary: List file version history.
@@ -9624,40 +9108,6 @@ operations:
   perf_link: control-plane operation; outside the per-request permission hot path, so no dedicated benchmark is required
   gap_issue: null
   owning_issue: 4134
-- id: revoke.credential
-  module: auth
-  summary: ''
-  transports:
-    sdk:
-      name: OAuthClient.revoke_credential
-      source: src/nexus/remote/domain/oauth.py:67
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/e2e/server/test_issue_4136_api_surface_e2e.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
-  gap_issue: null
-  owning_issue: 4136
-- id: revoke.key
-  module: auth
-  summary: ''
-  transports:
-    sdk:
-      name: AsyncAdminClient.revoke_key
-      source: src/nexus/remote/domain/admin.py:66
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/e2e/server/test_auth_security_e2e.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
-  gap_issue: null
-  owning_issue: 4138
 - id: revoke.share
   module: rebac
   summary: Revoke a resource share by deleting the matching shared-* tuple.
@@ -11515,23 +10965,6 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4137
-- id: test.credential
-  module: auth
-  summary: ''
-  transports:
-    sdk:
-      name: OAuthClient.test_credential
-      source: src/nexus/remote/domain/oauth.py:77
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/e2e/server/test_issue_4136_api_surface_e2e.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
-  gap_issue: null
-  owning_issue: 4136
 - id: tls.forget_zone
   module: uncategorized
   summary: ''
@@ -11961,23 +11394,6 @@ operations:
     and :92
   gap_issue: null
   owning_issue: 4137
-- id: update.key
-  module: auth
-  summary: ''
-  transports:
-    sdk:
-      name: AsyncAdminClient.update_key
-      source: src/nexus/remote/domain/admin.py:70
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/e2e/server/test_auth_security_e2e.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
-  gap_issue: null
-  owning_issue: 4138
 - id: update.mount
   module: mount
   summary: Attempt to update runtime mount backend configuration while preserving mount metadata and permissions.
@@ -12732,31 +12148,7 @@ parity_warnings:
   - grpc_typed
   - http
   - mcp
-- operation_id: agent.spec
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: agent.spec_set
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: agent.spec_show
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: agent.status
+- operation_id: agent.signal
   has:
   - cli
   missing:
@@ -12765,22 +12157,6 @@ parity_warnings:
   - mcp
   - sdk
 - operation_id: agent.transition
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: agent.update
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: agent.warmup
   has:
   - cli
   missing:
@@ -13420,14 +12796,6 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: backfill.directory_index
-  has:
-  - sdk
-  missing:
-  - cli
-  - grpc_typed
-  - http
-  - mcp
 - operation_id: batch.batch
   has:
   - http
@@ -13637,14 +13005,6 @@ parity_warnings:
   - mcp
   - sdk
 - operation_id: count.by_state
-  has:
-  - sdk
-  missing:
-  - cli
-  - grpc_typed
-  - http
-  - mcp
-- operation_id: create.key
   has:
   - sdk
   missing:
@@ -13868,14 +13228,6 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: exchange.code
-  has:
-  - sdk
-  missing:
-  - cli
-  - grpc_typed
-  - http
-  - mcp
 - operation_id: execute.workflow
   has:
   - mcp
@@ -14212,39 +13564,7 @@ parity_warnings:
   - http
   - mcp
   - sdk
-- operation_id: fs.access
-  has:
-  - sdk
-  missing:
-  - cli
-  - grpc_typed
-  - http
-  - mcp
 - operation_id: fs.close
-  has:
-  - sdk
-  missing:
-  - cli
-  - grpc_typed
-  - http
-  - mcp
-- operation_id: fs.connect
-  has:
-  - sdk
-  missing:
-  - cli
-  - grpc_typed
-  - http
-  - mcp
-- operation_id: fs.create
-  has:
-  - sdk
-  missing:
-  - cli
-  - grpc_typed
-  - http
-  - mcp
-- operation_id: fs.disconnect
   has:
   - sdk
   missing:
@@ -14284,23 +13604,7 @@ parity_warnings:
   - grpc_typed
   - http
   - mcp
-- operation_id: fs.mount
-  has:
-  - sdk
-  missing:
-  - cli
-  - grpc_typed
-  - http
-  - mcp
 - operation_id: fs.open
-  has:
-  - sdk
-  missing:
-  - cli
-  - grpc_typed
-  - http
-  - mcp
-- operation_id: fs.pause
   has:
   - sdk
   missing:
@@ -14316,31 +13620,7 @@ parity_warnings:
   - grpc_typed
   - http
   - mcp
-- operation_id: fs.resume
-  has:
-  - sdk
-  missing:
-  - cli
-  - grpc_typed
-  - http
-  - mcp
-- operation_id: fs.revoke
-  has:
-  - sdk
-  missing:
-  - cli
-  - grpc_typed
-  - http
-  - mcp
 - operation_id: fs.rmdir
-  has:
-  - sdk
-  missing:
-  - cli
-  - grpc_typed
-  - http
-  - mcp
-- operation_id: fs.run
   has:
   - sdk
   missing:
@@ -14356,47 +13636,7 @@ parity_warnings:
   - grpc_typed
   - http
   - mcp
-- operation_id: fs.status
-  has:
-  - sdk
-  missing:
-  - cli
-  - grpc_typed
-  - http
-  - mcp
-- operation_id: fs.stop
-  has:
-  - sdk
-  missing:
-  - cli
-  - grpc_typed
-  - http
-  - mcp
-- operation_id: fs.sync
-  has:
-  - sdk
-  missing:
-  - cli
-  - grpc_typed
-  - http
-  - mcp
-- operation_id: fs.unmount
-  has:
-  - sdk
-  missing:
-  - cli
-  - grpc_typed
-  - http
-  - mcp
 - operation_id: fs.unregister
-  has:
-  - sdk
-  missing:
-  - cli
-  - grpc_typed
-  - http
-  - mcp
-- operation_id: fs.validate
   has:
   - sdk
   missing:
@@ -14412,22 +13652,6 @@ parity_warnings:
   - grpc_typed
   - http
   - mcp
-- operation_id: get.access_logs
-  has:
-  - sdk
-  missing:
-  - cli
-  - grpc_typed
-  - http
-  - mcp
-- operation_id: get.auth_url
-  has:
-  - sdk
-  missing:
-  - cli
-  - grpc_typed
-  - http
-  - mcp
 - operation_id: get.content_id
   has:
   - sdk
@@ -14436,31 +13660,7 @@ parity_warnings:
   - grpc_typed
   - http
   - mcp
-- operation_id: get.key
-  has:
-  - sdk
-  missing:
-  - cli
-  - grpc_typed
-  - http
-  - mcp
 - operation_id: get.mount_points
-  has:
-  - sdk
-  missing:
-  - cli
-  - grpc_typed
-  - http
-  - mcp
-- operation_id: get.oauth_url
-  has:
-  - sdk
-  missing:
-  - cli
-  - grpc_typed
-  - http
-  - mcp
-- operation_id: get.or_create
   has:
   - sdk
   missing:
@@ -14772,14 +13972,6 @@ parity_warnings:
   - grpc_typed
   - http
   - mcp
-- operation_id: list.credentials
-  has:
-  - sdk
-  missing:
-  - cli
-  - grpc_typed
-  - http
-  - mcp
 - operation_id: list.files
   has:
   - mcp
@@ -14788,39 +13980,7 @@ parity_warnings:
   - grpc_typed
   - http
   - sdk
-- operation_id: list.keys
-  has:
-  - sdk
-  missing:
-  - cli
-  - grpc_typed
-  - http
-  - mcp
-- operation_id: list.mounts
-  has:
-  - sdk
-  missing:
-  - cli
-  - grpc_typed
-  - http
-  - mcp
 - operation_id: list.processes
-  has:
-  - sdk
-  missing:
-  - cli
-  - grpc_typed
-  - http
-  - mcp
-- operation_id: list.providers
-  has:
-  - sdk
-  missing:
-  - cli
-  - grpc_typed
-  - http
-  - mcp
-- operation_id: list.tools
   has:
   - sdk
   missing:
@@ -15972,22 +15132,6 @@ parity_warnings:
   - grpc_typed
   - http
   - sdk
-- operation_id: revoke.credential
-  has:
-  - sdk
-  missing:
-  - cli
-  - grpc_typed
-  - http
-  - mcp
-- operation_id: revoke.key
-  has:
-  - sdk
-  missing:
-  - cli
-  - grpc_typed
-  - http
-  - mcp
 - operation_id: rpc.api_nfs
   has:
   - http
@@ -16700,14 +15844,6 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: test.credential
-  has:
-  - sdk
-  missing:
-  - cli
-  - grpc_typed
-  - http
-  - mcp
 - operation_id: tls.forget_zone
   has:
   - cli
@@ -16893,14 +16029,6 @@ parity_warnings:
   - http
   - mcp
 - operation_id: unregister.hook
-  has:
-  - sdk
-  missing:
-  - cli
-  - grpc_typed
-  - http
-  - mcp
-- operation_id: update.key
   has:
   - sdk
   missing:

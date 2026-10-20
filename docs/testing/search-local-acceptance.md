@@ -560,7 +560,7 @@ pnpm exec playwright test --headed
 
 本轮清除 50 个失效源码文件、23 项直接依赖与 233 个无用包版本，保留下来的依赖版本全部未变；导入图没有孤立源码。用户已确认按当前 Rust 能力收敛：移除缺少实现的 workspace/memory/skills 注册及旧 Connector/Chat 业务页面，原生 managed-agent 能力仍由自身生命周期管理。前端没有 `/api/nfs` 消费、合成 namespace、目录级 SKILL 探测或隐式工作区注册；API key 与 ReBAC 使用独立 typed adapter，原生身份字段不再翻译成 SQL 账户别名。上传/编辑共用写入 hook，下载共用字节实现。保留首次失败证据：下拉框用角色定位；外部字体链接删除；Nginx 等待既有 healthcheck，探针明确访问 IPv4 listener；凭证列表接受原生 `agent:<name>` 标识，证书 agent 只读；通用 MIME 的 SVG 回退被真实解码用例保护。未改 Kernel syscall、ABI、Raft 或生产。
 
-scode #973 的历史已验收提交为 `0532a13c2cc3f60e8115c11eb2f8ff50ce9c9386`：本地实际 CLI/managed Nexus/Vault 九组通过，常规 CI 33 通过、4 项按配置跳过。2026-10-20 已用普通 merge 接入 main `4d6eaf4da13f27aad7e8969d2d92f65e4ee08e6d`，当前源为 `6e244f1e5537524048f8fd93acd4d0ffa349f260`，无冲突且保留全部历史；新的常规 CI 和完整真实模型验收正在排队，不能沿用历史通过数代表当前源。新验收仍使用原有 CI provider 配置和凭证。此前 Windows 模型旅程通过 Azure 文件结果和两组子代理审批，后续 hook 被 provider 以 `403 pre_consume_token_quota_failed` 拒绝；本次实际结果收齐前，PR 保持草稿。编译单 Cargo job、BelowNormal，实际测试/CLI 为 Normal。
+scode #973 已在提交 `6e244f1e5537524048f8fd93acd4d0ffa349f260` 上完成[真实模型 CI](https://github.com/sudoprivacy/sudocode/actions/runs/39359060560)：live API/mailbox、provider 契约、Windows/Linux 实际 PTY 进程树四个 job 全部通过。实际响应和模型路由证据已下载保留，该源不再受此前 `403 pre_consume_token_quota_failed` 的额度问题阻塞。随后以普通 merge 纳入 main `5b914c20c869159a3c5278e83016b691b929b140` 的图片压缩修复，当前源为 `39ad2740de42e2f303ecbc8053bbd515f1fe1c12`，无冲突且保留全部历史。当前源已重新构建，本地实际 CLI/managed Nexus/签名 Vault 九组通过；[新的完整模型 CI](https://github.com/sudoprivacy/sudocode/actions/runs/39363693989) 与常规 PR CI 正在运行/排队，不能用前一源的通过数替代。PR 仍保持草稿。验收沿用既有 CI provider、凭证和模型；编译单 Cargo job、BelowNormal，实际测试/CLI 为 Normal，已核验 compiler/linker 优先级。
 
 ### RTS 与 TUI 按现有 Rust 能力收敛（2026-10-20）
 
@@ -621,7 +621,11 @@ Search 保留 keyword/semantic/hybrid、glob 和 grep，使用显式 Search owne
 
 API 覆盖清单的六处 Search 源码行号已用仓库生成器同步；清单校验及运行时发现相关 46 项通过，一项未提交 HTML 的检查按配置跳过。
 
-TUI 最终 CI、合并及合并后结果以 #4932 为准，当前仍在等待完整 CI。`Native TUI acceptance` 在 Linux 构建同一固定 revision 的 daemon/plugin，验证真实授权链；常规 TUI job 启动实际 CLI/tmux；Windows job 验证公共启动器。
+TUI 当前源为 `0565f41be6e15e6494f4dc5ca0b5e4615d04ac4f`。`98911a349` 的 Linux 原生八步、完整模型 Docker、源码测试和安装包终端旅程均已通过；随后提交只修正文档构建，native/TUI/SDK/CLI 源树保持一致。最后一次本地原生验收为八个步骤、八组 TUI、86 项断言通过；keyword 模式有一项明确的真实模型跳过。最终源的文档及 Docker CI 通过，仍在等待其余完整 CI。合并及合并后结果以 #4932 为准。
+
+安装包验收会将构建好的 tarball 安装到 checkout 外的独立目录，核对内置 SDK 与 canonical build 的 SHA-256，并执行安装后的命令。Linux 再通过已安装包运行实际 tmux 键盘旅程；Windows 已实际通过 ConPTY 进入界面、按 q、恢复终端并以 0 退出。修复前实际捕获了缺失运行配置、SDK 无法解析和模块格式不一致导致的错误类型失配，现有断言保持。源码入口和安装包都使用同一 SDK 实现。
+
+文档严格构建还捕获了生成导航文件的 Git 时间告警与 Google Font 下载连接重置。生成导航不再伪装成有独立 Git 历史的页面，nexus-fs 文档使用系统字体，Pages PR 检查也覆盖子站实际输入；严格校验保持，本地与对应文档 CI 均通过。
 
 复跑 TUI：
 
@@ -635,13 +639,13 @@ $env:NEXUS_API_KEY = '<隔离 native key>'
 bun run start --zone-id sharedzone
 ```
 
-自动化入口为 `bun test`、`bun run lint`、仓库根目录的 `python -m pytest tests/unit/cli/test_tui_launcher.py -n 0 -q`，以及前文 `scripts/test_search_local.py`。真实模型验收使用同一 runner 的模型参数。
+自动化入口为 `bun test`、`bun run lint`、`bun run test:package`、仓库根目录的 `python -m pytest tests/unit/cli/test_tui_launcher.py -n 0 -q`，以及前文 `scripts/test_search_local.py`。`bun run pack` 生成同一待验收安装包，不会发布到 registry。真实模型验收使用同一 runner 的模型参数。
 
 #### 当前文档发布与剩余调用方
 
 前一版指南的 [GitHub Pages run](https://github.com/nexi-lab/nexus/actions/runs/39277184496) 已构建、部署成功，无待审批 deployment；[实际指南页面](https://nexi-lab.github.io/nexus/testing/search-local-acceptance/) 返回 HTTP 200，并已核对 ACCOUNT/BROWSER 验收内容。此结果不涉及腾讯云。
 
-只读 AST 盘点仍发现 CLI 的 23 个文件引用旧 HTTP 路径或 server 模块；remote RPC 参数和 MCP token 工具也有 server 依赖，独立支付 SDK 仍调用 `/api/v2/pay`。这是后续调用方范围，不能因为 RTS/TUI 已收敛就声称 Python server 可以直接删除。CLI/SDK 的无 Rust 功能收敛范围正在向用户确认。
+用户已确认 CLI/SDK 同样按现有 Rust 能力收敛。独立分支已清理支付 SDK、支付/Exchange 命令，以及 9 组仅依赖旧 HTTP 的命令、客户端和失效测试；悬空 memory 注册已移除。输出契约中因旧函数名而跳过的检查已恢复，保留功能的本地回归为 83 通过、1 项 Unix 专属跳过；API 清单的 39 个失效 CLI-only 行已逐项核对移除，相关清单/运行时发现回归 46 通过、1 项未提交 HTML 的配置跳过。这部分尚未合并，剩余 CLI 管理入口、remote RPC 参数、MCP token 工具和 Python server 仍需完成清理；不能据此声称整体退役完成。
 
 ## 六、代码与验收待办
 
@@ -662,7 +666,7 @@ CODE-04 的剩余范围：
 
 - Rust 人类账号的注册、密码登录及变更、邮件验证、profile、Google OAuth 和注销均已合并，保留原有 user ID、bcrypt 和 provider/subject 绑定。前端已切换这些契约；仍需完成真人 Google 验收。已确认保留显式 native 连接；原生文件授权继续由实际 native 身份决定。
 - `nexus-frontend` 已按用户确认收敛到现有 Rust 能力，失效注册、旧业务 RPC 和依赖已清理；原生文件、Search、凭证与 ReBAC 及独立人类账号均有本地和 CI 保护。仍需真人 Google/实际网关验收及前端发布方案，当前不合并到会自动部署 Firebase 的 main。
-- `nexus-ui` #87 已收敛并合并，合并前后 CI 全绿。TUI #4932 的本地、真实 native 和实际终端验收完成，最终 CI 正在收齐。残余 CLI/支付 SDK 的产品范围待确认，remote/MCP 的 server 依赖及 Python 服务端仍需清理。
+- `nexus-ui` #87 已收敛并合并，合并前后 CI 全绿。TUI #4932 的本地、真实 native、实际终端和独立安装包验收完成，最终 CI 正在收齐。CLI/SDK 收敛已获确认并开始清理；剩余 CLI、remote/MCP 的 server 依赖及 Python 服务端仍需完成。
 - 收齐这些调用方和账号后端，删除其替代的 Python 服务端，再跑完整用户旅程和 CI。上述事项完成前，整条 Python server 退役主线仍未 code complete。
 
 ## 七、评论和结果模板

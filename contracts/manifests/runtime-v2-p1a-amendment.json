@@ -1,0 +1,42 @@
+{
+  "schema": "runtime-v2-p1a-amendment",
+  "work_item": "SW-20260915-002-NEXUS-RUNTIME-ZONE (P1a)",
+  "recorded_at": "2026-09-21",
+  "status": "p1a-recorded-amendment",
+  "disclaimer": "ADR-001 (sudostack docs/adr) is Proposed and NOT frozen. This file records, inside the nexus owner repo, the P1a subset this codebase implements and the deviations it adds. It confers no freeze and creates no cross-repo distribution obligation; moss consumes a local thin-type copy by explicit user decision (plan, phase 5).",
+  "implements_from_adr001": {
+    "section_3_1_session_metadata": [
+      "session_id", "owner", "home_zone_id", "state", "created_at", "updated_at",
+      "agent_principal (opaque string in P1a)", "task_ids (recorded-gap: no Task records yet)",
+      "current_attempt_id", "current_pid"
+    ],
+    "section_4_2_surface": [
+      "POST /v2/sessions", "GET /v2/sessions/{session_id}",
+      "POST /v2/runtime/start", "POST /v2/runtime/resume",
+      "GET /v2/runtime/runs/{pid}", "POST /v2/runtime/runs/{pid}/cancel"
+    ],
+    "section_6_persistence": "/sessions/{sid}/session.json + per-record paths under /sessions/{sid}/ (zone-scoped VFS writes through the typed kernel)"
+  },
+  "p1a_amendments": [
+    {
+      "field": "RuntimeRun.execution_zone_id",
+      "reason": "§8.9 P1a item 3: the PID/runtime descriptor must solidify the execution zone; ADR-001 §3.3 predates it and only binds zones narratively (ADR-002 §2.8)."
+    },
+    {
+      "field": "RuntimeRun.delegation_ref / grant_ref / authorization_epoch",
+      "reason": "§8.9 P1a item 3: dependency references enabling the grant/epoch → runtime dependency index for cancellation and revocation_pending."
+    },
+    {
+      "field": "RuntimeRun.decision_reason / policy_version",
+      "reason": "§8.9 P1a item 6: cross-zone execution records its explicit policy decision; same-zone runs leave them empty."
+    },
+    {
+      "field": "RuntimeRun.state adds 'revocation_pending'",
+      "reason": "§11.4 P1a item 7: a run that cannot terminate immediately must be parked revocation_pending and may not obtain new resources."
+    }
+  ],
+  "recorded_gaps": [
+    "Task records are not introduced in P1a; session task_ids stays empty and the gap is recorded here instead of fabricating records (§8.9 item 2).",
+    "The true Attempt model (execution_zone_id on Attempt) remains P1b (§8.9 note); the runtime-run descriptor is a PID record, not an Attempt rename."
+  ]
+}

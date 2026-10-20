@@ -5,6 +5,7 @@ from __future__ import annotations
 import statistics
 import time
 import uuid
+from functools import partial
 from typing import Any
 
 import grpc
@@ -12,15 +13,13 @@ import pytest
 
 pytestmark = [pytest.mark.e2e]
 
-ADMIN_KEY = "test-e2e-api-key-12345"
-
 
 def _call_rpc(
     stub: Any,
     method: str,
     params: dict[str, Any] | None = None,
     *,
-    api_key: str = ADMIN_KEY,
+    api_key: str,
     timeout: float = 20.0,
 ) -> tuple[float, dict[str, Any]]:
     from nexus.grpc.vfs import vfs_pb2
@@ -49,6 +48,7 @@ def test_full_profile_control_plane_rpc_correctness_and_latency(nexus_server) ->
     channel = grpc.insecure_channel(target)
     grpc.channel_ready_future(channel).result(timeout=20)
     stub = vfs_pb2_grpc.NexusVFSServiceStub(channel)
+    call_rpc = partial(_call_rpc, api_key=nexus_server["api_key"])
     timings: dict[str, float] = {}
 
     try:
@@ -87,11 +87,11 @@ def test_full_profile_control_plane_rpc_correctness_and_latency(nexus_server) ->
             ("federation_list_zones", {}),
             ("federation_cluster_info", {"zone_id": "root"}),
         ]:
-            elapsed, body = _call_rpc(stub, method, params)
+            elapsed, body = call_rpc(stub, method, params)
             timings[method] = elapsed
             assert "result" in body
 
-        key_id = _call_rpc(
+        key_id = call_rpc(
             stub,
             "admin_create_key",
             {
@@ -108,7 +108,7 @@ def test_full_profile_control_plane_rpc_correctness_and_latency(nexus_server) ->
             ("admin_update_key", {"key_id": key_id, "name": f"e2e-renamed-{suffix}"}),
             ("admin_revoke_key", {"key_id": key_id}),
         ]:
-            elapsed, body = _call_rpc(stub, method, params)
+            elapsed, body = call_rpc(stub, method, params)
             timings[method] = elapsed
             assert "result" in body
 

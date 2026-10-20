@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.sudo.dev/schemas/auth/v1/zone-delegation-issue-request.schema.json",
+  "title": "ZoneDelegationIssueRequest",
+  "description": "Trusted Moss request for a short-lived, grant-bound and capability-scoped user delegation.",
+  "type": "object",
+  "properties": {
+    "api_version": { "const": "auth.sudo.dev/v1" },
+    "kind": { "const": "ZoneDelegationIssueRequest" },
+    "user_id": { "type": "string", "minLength": 1 },
+    "org_id": { "type": "string", "minLength": 1 },
+    "membership_version": { "type": "string", "minLength": 1 },
+    "zone_id": {
+      "$ref": "https://nexus-vfs.dev/contracts/zone-id/existing-zone-id-ref.schema.gen.json"
+    },
+    "audience": { "type": "string", "minLength": 1 },
+    "ttl_s": { "type": "integer", "minimum": 60, "maximum": 3600, "default": 900 },
+    "grant_id": { "type": "string", "minLength": 1 },
+    "purpose": { "enum": ["data-access", "runtime"], "default": "data-access" },
+    "scope_rules": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "https://contracts.sudo.dev/schemas/auth/v1/zone-delegation-scope-rule.schema.json"
+      }
+    }
+  },
+  "required": ["api_version", "kind", "user_id", "org_id", "membership_version", "zone_id", "audience"],
+  "additionalProperties": true
+}

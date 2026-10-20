@@ -393,6 +393,7 @@ where = ["src"]
     "schemas/common/v1/fixtures/valid/*.json",
     "schemas/common/v1/fixtures/invalid/*.json",
     "schemas/common/v1/vendor/nexus-vfs/*.json",
+    "schemas/vendor/nexus-vfs.gen/*.json",
 ]
 "nexus.extensions._index" = ["extensions.json"]
 
@@ -738,6 +739,8 @@ module = [
     "nexus.core.metadata_pb2",
     "nexus.grpc.vfs.vfs_pb2",
     "nexus.grpc.vfs.vfs_pb2_grpc",
+    "nexus.grpc.vfs.zone_runtime_pb2",
+    "nexus.grpc.vfs.zone_runtime_pb2_grpc",
     "nexus.grpc.vfs",
     "nexus.grpc.approvals.approvals_pb2",
     "nexus.grpc.approvals.approvals_pb2_grpc",
@@ -834,6 +837,8 @@ exclude = [
     "src/nexus/core/protocols/",               # Generated at install time
     "src/nexus/grpc/vfs/vfs_pb2.py",           # Generated gRPC stub
     "src/nexus/grpc/vfs/vfs_pb2_grpc.py",      # Generated gRPC stub
+    "src/nexus/grpc/vfs/zone_runtime_pb2.py",      # Generated gRPC stub
+    "src/nexus/grpc/vfs/zone_runtime_pb2_grpc.py", # Generated gRPC stub
     "src/nexus/grpc/approvals/approvals_pb2.py",       # Generated gRPC stub
     "src/nexus/grpc/approvals/approvals_pb2_grpc.py",  # Generated gRPC stub
     "src/nexus/grpc/search/v1/search_pb2.py",        # Checked against the pinned VFS proto in CI

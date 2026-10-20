@@ -832,3 +832,85 @@ def ensure_postgres_schema_invariants(engine: Engine) -> None:
 
         if "metadata_change_log" in table_names:
             _ensure_mcl_sequence(conn)
+
+
+def ensure_zone_v1_schema_invariants(engine: Engine) -> None:
+    """Expand-only upgrade of ``rebac_relation_sources.zone_id`` (d4797ec230).
+
+    ``Base.metadata.create_all`` builds fresh installs with the column, but
+    installs created before the zone-v1 canonical persistence layer carry
+    the table without it, and every grant-projection write then fails with
+    ``no such column: rebac_relation_sources.zone_id``. Both SQLite and
+    PostgreSQL installs bootstrap through ``create_all`` (the deployment
+    and CLI paths run no Alembic upgrade), so the repair is dialect-free:
+
+    - table missing / column already present → skip (idempotent;
+      partial-schema environments stay non-fatal, cf. ``ensure_root_zone``);
+    - ``zone_grants`` missing while relation sources exist → raise (broken
+      schema: the backfill cannot resolve zone ownership);
+    - otherwise ``ADD COLUMN zone_id`` (nullable — SQLite cannot ALTER an
+      existing table to NOT NULL; the ORM enforces it on writes), backfill
+      from ``zone_grants`` via ``source_grant_id``, and recreate the
+      model-declared ``ix_rebac_rel_src_zone`` index;
+    - authoritative rows (``source_grant_id IS NULL``) have no grant to
+      resolve and would keep ``zone_id`` NULL, silently corrupting
+      cross-zone projections — a remaining NULL count fails closed with
+      the row count instead.
+    """
+    inspector = inspect(engine)
+    if "rebac_relation_sources" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("rebac_relation_sources")}
+    if "zone_id" in columns:
+        return
+
+    if "zone_grants" not in inspector.get_table_names():
+        raise RuntimeError(
+            "rebac_relation_sources exists without zone_grants: the zone_id "
+            "backfill cannot resolve zone ownership; repair the schema manually"
+        )
+
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                ALTER TABLE rebac_relation_sources
+                ADD COLUMN zone_id VARCHAR(255)
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                UPDATE rebac_relation_sources
+                SET zone_id = (
+                    SELECT g.zone_id FROM zone_grants g
+                    WHERE g.grant_id = rebac_relation_sources.source_grant_id
+                )
+                WHERE zone_id IS NULL AND source_grant_id IS NOT NULL
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE INDEX IF NOT EXISTS ix_rebac_rel_src_zone
+                ON rebac_relation_sources (zone_id)
+                """
+            )
+        )
+        remaining = conn.execute(
+            text(
+                """
+                SELECT COUNT(*) FROM rebac_relation_sources
+                WHERE zone_id IS NULL
+                """
+            )
+        ).scalar_one()
+
+    if remaining:
+        raise RuntimeError(
+            f"rebac_relation_sources.zone_id backfill left {remaining} row(s) "
+            "NULL (authoritative rows with no source grant): assign their "
+            "zone manually before restarting"
+        )

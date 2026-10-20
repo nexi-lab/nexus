@@ -21,6 +21,17 @@ export { SearchClient } from "./search-client.js";
 export type { SearchHit, SearchResponse, SearchQuery, SearchBatchResponse, GlobResponse, GrepResponse, GrepHit, SearchConnection, DiscoveryOptions, SearchHealth, LocatedDocument } from "./search-client.js";
 export { IndexingClient } from "./indexing-client.js";
 export type { IndexedDirectory, IndexedDirectories, IndexingMode, IndexingModes, IndexStatistics, IndexDocument, DocumentBatchResult, FileIndexResult, FileDeleteResult } from "./indexing-client.js";
+export { ZoneClient } from "./zones.js";
+export type {
+  ZoneCreateInput,
+  ZoneDelegationInput,
+  ZoneDelegation,
+  ZoneDelegationScopeRule,
+  ZoneGrantInput,
+  ZoneMount,
+  ZoneOperation,
+  ZoneRef,
+} from "./zones.js";
 
 // SSE
 export { SseClient, RingBuffer } from "./sse-client.js";

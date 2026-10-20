@@ -33,17 +33,13 @@ from __future__ import annotations
 
 import os
 import subprocess
-import sys
 import threading
 import time
 from pathlib import Path
-from shutil import which
 
 import httpx
 
-from tests.e2e.conftest import find_free_port, start_membership_stub
-
-_SRC = Path(__file__).resolve().parents[2].parents[1] / "src"
+from tests.e2e.conftest import SOURCE_ROOT, find_free_port, server_command, start_membership_stub
 
 
 class ServerHarness:
@@ -65,24 +61,9 @@ class ServerHarness:
         self.stderr_lines: list[str] = []
 
     # ── key material ────────────────────────────────────────────────────────
-    def _kernel_binary(self) -> str:
-        for name in ("nexusd-cluster", "nexus-cluster"):
-            hit = which(name)
-            if hit:
-                return hit
-        repo_root = Path(__file__).resolve().parents[3]
-        for profile in ("debug", "release"):
-            candidate = (
-                repo_root
-                / "target"
-                / profile
-                / ("nexusd-cluster.exe" if os.name == "nt" else "nexusd-cluster")
-            )
-            if candidate.is_file():
-                return str(candidate)
-        raise AssertionError("kernel binary not found")
-
     def _mint_key(self) -> str:
+        from nexus.remote.kernel_client import _resolve_kernel_binary
+
         env = {
             **os.environ,
             "NEXUS_API_KEY_SECRET": "test-e2e-kernel-secret-12345",
@@ -92,7 +73,7 @@ class ServerHarness:
         }
         minted = subprocess.run(
             [
-                self._kernel_binary(),
+                _resolve_kernel_binary(),
                 "auth",
                 "mint",
                 "--subject-type",
@@ -130,62 +111,67 @@ class ServerHarness:
             "NEXUS_ZONE_MEMBERSHIP_URL": self.membership.url,
             "NEXUS_ZONE_MEMBERSHIP_TOKEN": self.membership.token,
             "HOME": str(self.home_dir),
-            "PYTHONPATH": str(_SRC),
+            "PYTHONPATH": str(SOURCE_ROOT),
         }
 
-    def start(self, attempts: int = 2) -> int:
-        """Spawn and wait for readiness.
+    def start(self) -> int:
+        """Spawn once; observe readiness and early exit on either log stream."""
+        port = find_free_port(3)
+        self.proc = subprocess.Popen(
+            server_command(
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(port),
+                "--data-dir",
+                str(self.data_dir),
+                "--profile",
+                "full",
+            ),
+            env=self._env(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        process = self.proc
+        ready = threading.Event()
+        completed = threading.Event()
+        self.stderr_lines = []
+        self.stdout_lines = []
 
-        The fault-injection restart can race the OS releasing the killed
-        process's sqlite handles: the server then aborts during lifespan
-        before uvicorn reports ready. That is an environment window, not the
-        behaviour under test, so a failed spawn is retried once on a fresh
-        port before giving up.
-        """
-        last_tail = ""
-        for _attempt in range(1, attempts + 1):
-            port = find_free_port(3)
-            self.proc = subprocess.Popen(
-                [
-                    sys.executable,
-                    "-c",
-                    "from nexus.daemon.main import main; import sys; main(sys.argv[1:])",
-                    "--host",
-                    "127.0.0.1",
-                    "--port",
-                    str(port),
-                    "--data-dir",
-                    str(self.data_dir),
-                    "--profile",
-                    "full",
-                ],
-                env=self._env(),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-            ready = threading.Event()
-            tail: list[str] = []
-            stdout: list[str] = []
-            self.stderr_lines = tail
-            self.stdout_lines = stdout
-
-            def drain(stream, _tail=tail, _ready=ready) -> None:  # noqa: B008
+        def drain(stream, lines: list[str]) -> None:
+            try:
                 for line in iter(stream.readline, b""):
                     text = line.decode("utf-8", "replace")
-                    _tail.append(text)
+                    lines.append(text)
                     if "Application startup complete" in text:
-                        _ready.set()
+                        ready.set()
+                        completed.set()
+            finally:
+                stream.close()
 
-            threading.Thread(target=drain, args=(self.proc.stderr,), daemon=True).start()
-            threading.Thread(
-                target=drain, args=(self.proc.stdout, stdout, threading.Event()), daemon=True
-            ).start()
-            if ready.wait(120):
-                self.port = port
-                return port
-            last_tail = "".join(tail[-20:])
-            self.close()  # kill() alone would leak the membership stub (M-12)
-        raise AssertionError(f"server did not become ready after {attempts} attempts: {last_tail}")
+        readers = [
+            threading.Thread(target=drain, args=(process.stderr, self.stderr_lines), daemon=True),
+            threading.Thread(target=drain, args=(process.stdout, self.stdout_lines), daemon=True),
+        ]
+        for reader in readers:
+            reader.start()
+
+        def observe_exit() -> None:
+            process.wait()
+            completed.set()
+
+        threading.Thread(target=observe_exit, daemon=True).start()
+        if completed.wait(120) and ready.is_set() and process.poll() is None:
+            self.port = port
+            return port
+        self.close()
+        for reader in readers:
+            reader.join(timeout=2)
+        raise AssertionError(
+            f"server failed before readiness (exit={process.returncode})\n"
+            f"stdout: {''.join(self.stdout_lines[-40:])}\n"
+            f"stderr: {''.join(self.stderr_lines[-40:])}"
+        )
 
     def kill(self) -> None:
         owned_kernel_pids: list[int] = []

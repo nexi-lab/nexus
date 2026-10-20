@@ -30,16 +30,13 @@ from __future__ import annotations
 import os
 import sqlite3
 import subprocess
-import sys
 import threading
 import time
 from pathlib import Path
 
 import httpx
 
-from tests.e2e.conftest import find_free_port, start_membership_stub
-
-_SRC = Path(__file__).resolve().parents[2].parents[1] / "src"
+from tests.e2e.conftest import SOURCE_ROOT, find_free_port, server_command, start_membership_stub
 
 
 def _wait_operation(
@@ -836,7 +833,7 @@ def test_p0_scenario_17_state_survives_full_restart(tmp_path) -> None:
     operations stay queryable and committed revocations still deny after a
     hard kill + restart.
     """
-    from shutil import which
+    from nexus.remote.kernel_client import _resolve_kernel_binary
 
     membership = start_membership_stub()
     data_dir = tmp_path / "s17"
@@ -851,23 +848,6 @@ def test_p0_scenario_17_state_survives_full_restart(tmp_path) -> None:
     def _find_port() -> int:
         return find_free_port(3)
 
-    def _kernel_binary() -> str:
-        for name in ("nexusd-cluster", "nexus-cluster"):
-            hit = which(name)
-            if hit:
-                return hit
-        repo_root = Path(__file__).resolve().parents[3]
-        for profile in ("debug", "release"):
-            candidate = (
-                repo_root
-                / "target"
-                / profile
-                / ("nexusd-cluster.exe" if os.name == "nt" else "nexusd-cluster")
-            )
-            if candidate.is_file():
-                return str(candidate)
-        raise AssertionError("kernel binary not found")
-
     mint_env = {
         "NEXUS_API_KEY_SECRET": "test-e2e-kernel-secret-12345",
         "NEXUS_IDENTITY_DIR": str(identity_dir),
@@ -876,7 +856,7 @@ def test_p0_scenario_17_state_survives_full_restart(tmp_path) -> None:
     }
     minted = subprocess.run(
         [
-            _kernel_binary(),
+            _resolve_kernel_binary(),
             "auth",
             "mint",
             "--subject-type",
@@ -915,13 +895,10 @@ def test_p0_scenario_17_state_survives_full_restart(tmp_path) -> None:
             "NEXUS_ZONE_MEMBERSHIP_URL": membership.url,
             "NEXUS_ZONE_MEMBERSHIP_TOKEN": membership.token,
             "HOME": str(home_dir),
-            "PYTHONPATH": str(_SRC),
+            "PYTHONPATH": str(SOURCE_ROOT),
         }
         return subprocess.Popen(
-            [
-                sys.executable,
-                "-c",
-                "from nexus.daemon.main import main; import sys; main(sys.argv[1:])",
+            server_command(
                 "--host",
                 "127.0.0.1",
                 "--port",
@@ -930,7 +907,7 @@ def test_p0_scenario_17_state_survives_full_restart(tmp_path) -> None:
                 str(data_dir),
                 "--profile",
                 "full",
-            ],
+            ),
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

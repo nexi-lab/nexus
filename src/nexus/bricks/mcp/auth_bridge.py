@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS
+    from nexus.remote.client import RemoteNexusFS
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +111,7 @@ def authenticate_api_key(auth_provider: Any, api_key: str) -> Any:
 
 
 def resolve_mcp_operation_context(
-    nx_instance: NexusFS,
+    nx_instance: NexusFS | RemoteNexusFS,
     auth_provider: Any | None = None,
 ) -> Any:
     """Resolve an explicit ``OperationContext`` for MCP search calls.
@@ -127,6 +128,11 @@ def resolve_mcp_operation_context(
     from nexus.contracts.constants import ROOT_ZONE_ID
     from nexus.contracts.types import OperationContext
     from nexus.lib.request_credentials import request_api_key
+    from nexus.remote.client import RemoteNexusFS
+
+    if isinstance(nx_instance, RemoteNexusFS):
+        # The native transport verifies each request's credential at the owner.
+        return None
 
     # (0) Per-request API key — most authoritative when MCP is behind
     # HTTP middleware that sets _request_api_key (#3731).
@@ -141,7 +147,7 @@ def resolve_mcp_operation_context(
     if (
         request_key is not None
         and auth_provider is None
-        and not callable(getattr(nx_instance, "_nexus_remote_call_rpc", None))
+        and not callable(getattr(nx_instance, "call_rpc", None))
     ):
         return None
     if request_key is not None and auth_provider is not None:

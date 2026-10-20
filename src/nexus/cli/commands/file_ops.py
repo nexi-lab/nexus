@@ -9,6 +9,7 @@ import click
 from rich.syntax import Syntax
 
 from nexus.cli.dry_run import add_dry_run_option, dry_run_preview, render_dry_run
+from nexus.cli.io import write_stdout
 from nexus.cli.output import OutputOptions, add_output_options, render_error, render_output
 from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import (
@@ -32,14 +33,12 @@ def register_commands(cli: click.Group) -> None:
     cli.add_command(rename_batch_cmd)
     cli.add_command(rm_batch_cmd)
     cli.add_command(write)
-    cli.add_command(append)
     cli.add_command(write_batch)
     cli.add_command(cp)
     cli.add_command(copy_cmd)
     cli.add_command(move_cmd)
     cli.add_command(sync_cmd)
     cli.add_command(rm)
-    cli.add_command(edit)
 
 
 @click.command()
@@ -148,27 +147,29 @@ def cat(
                             sys.exit(2)
                         end = offset + length if length is not None else nx.stat(path)["size"]
                         if stream_mode:
-                            for ch in nx.stream_range(
-                                path,
-                                offset,
-                                end,
-                                chunk_size=chunk_size,
-                                context=cast(Any, operation_context),
-                            ):
-                                sys.stdout.buffer.write(ch)
+                            write_stdout(
+                                nx.stream_range(
+                                    path,
+                                    offset,
+                                    end,
+                                    chunk_size=chunk_size,
+                                    context=cast(Any, operation_context),
+                                )
+                            )
                         else:
                             chunk = nx.read_range(
                                 path, offset, end, context=cast(Any, operation_context)
                             )
-                            sys.stdout.buffer.write(chunk)
+                            write_stdout((chunk,))
                         return
                     if stream_mode:
-                        for ch in nx.stream(
-                            path,
-                            chunk_size=chunk_size,
-                            context=cast(Any, operation_context),
-                        ):
-                            sys.stdout.buffer.write(ch)
+                        write_stdout(
+                            nx.stream(
+                                path,
+                                chunk_size=chunk_size,
+                                context=cast(Any, operation_context),
+                            )
+                        )
                         return
                     if metadata:
                         read_result = nx.read(
@@ -220,11 +221,11 @@ def cat(
                         if file_size > STREAM_THRESHOLD and not section:
                             sys.stderr.write(f"Streaming large file ({file_size:,} bytes)...\n")
                             sys.stderr.flush()
-                            for chunk in nx.stream(
-                                path, chunk_size=65536, context=cast(Any, operation_context)
-                            ):
-                                sys.stdout.buffer.write(chunk)
-                            sys.stdout.buffer.flush()
+                            write_stdout(
+                                nx.stream(
+                                    path, chunk_size=65536, context=cast(Any, operation_context)
+                                )
+                            )
                             return
 
                         content = nx.sys_read(path, context=cast(Any, operation_context))
@@ -692,33 +693,10 @@ def rm_batch_cmd(
 @click.command()
 @click.argument("path", type=str)
 @click.argument("content", type=str, required=False)
-@click.option("-i", "--input", "input_file", type=click.File("rb"), help="Read from file or stdin")
 @click.option(
-    "--if-match",
-    type=str,
-    help="Only write if current ETag matches (optimistic concurrency control)",
+    "-i", "--input", "input_file", type=click.File("rb"), help="Read bytes from a file or stdin."
 )
-@click.option(
-    "--if-none-match",
-    is_flag=True,
-    help="Only write if file doesn't exist (create-only mode)",
-)
-@click.option(
-    "--force",
-    is_flag=True,
-    help="Force overwrite without version check (dangerous - can cause data loss!)",
-)
-@click.option(
-    "--show-metadata",
-    is_flag=True,
-    help="Show metadata (content_id, version) after writing",
-)
-@click.option(
-    "--stream",
-    "stream_mode",
-    is_flag=True,
-    help="Read content from stdin in chunks and write via write_stream",
-)
+@click.option("--show-metadata", is_flag=True, help="Show the native write receipt.")
 @add_dry_run_option
 @add_backend_options
 @add_context_options
@@ -726,198 +704,28 @@ def write(
     path: str,
     content: str | None,
     input_file: Any,
-    if_match: str | None,
-    if_none_match: bool,
-    force: bool,
     show_metadata: bool,
-    stream_mode: bool,
     dry_run: bool,
     remote_url: str | None,
     remote_api_key: str | None,
     operation_context: dict[str, Any],
 ) -> None:
-    """Write content to a file with optional optimistic concurrency control.
-
-    Examples:
-        # Simple write
-        nexus write /workspace/data.txt "Hello World"
-
-        # Write from stdin
-        echo "Hello World" | nexus write /workspace/data.txt --input -
-
-        # Write from file
-        nexus write /workspace/data.txt --input local_file.txt
-
-        # Optimistic concurrency control (prevent overwriting concurrent changes)
-        nexus write /doc.txt "Updated content" --if-match abc123...
-
-        # Create-only mode (fail if file exists)
-        nexus write /new.txt "Initial content" --if-none-match
-
-        # Show metadata after writing
-        nexus write /doc.txt "Content" --show-metadata
-
-        # Dry run (preview without writing)
-        nexus write /workspace/data.txt "Hello" --dry-run
-    """
+    """Create or replace a complete file through the native Write RPC."""
 
     async def _impl() -> None:
         try:
-            if stream_mode:
-                # Read stdin in chunks and write via write_stream. OCC
-                # flags do NOT compose with streaming — the OCC helper
-                # requires the full payload in memory for the
-                # compare-and-write critical section. Refuse the combo
-                # explicitly instead of silently overwriting (data-loss
-                # path the advertised contract forbids).
-                if (if_match or if_none_match) and not force:
-                    render_error(
-                        error=ValueError(
-                            "--stream is incompatible with --if-match / "
-                            "--if-none-match (OCC requires the full payload "
-                            "in one compare-and-write critical section). "
-                            "Drop --stream for a conditional write, or pass "
-                            "--force to bypass OCC."
-                        )
-                    )
-                    sys.exit(2)
-                raw = sys.stdin.buffer.read()
-                if dry_run:
-                    preview = dry_run_preview("write-stream", path=path, details={"size": len(raw)})
-                    render_dry_run(preview)
-                    return
-                cs = 65536
-                chunks = (raw[i : i + cs] for i in range(0, len(raw), cs))
-                async with open_filesystem(
-                    remote_url, remote_api_key, allow_local_default=True
-                ) as nx:
-                    result = nx.write_stream(path, chunks)
-                if show_metadata:
-                    console.print(result)
-                else:
-                    console.print(
-                        f"[nexus.success]✓[/nexus.success] {len(raw)} bytes -> [nexus.path]{path}[/nexus.path]"
-                    )
-                return
-
-            file_content = resolve_content(content, input_file)
-
+            payload = resolve_content(content, input_file)
             if dry_run:
-                preview = dry_run_preview("write", path=path, details={"size": len(file_content)})
-                render_dry_run(preview)
+                render_dry_run(dry_run_preview("write", path=path, details={"size": len(payload)}))
                 return
-
-            async with open_filesystem(
-                remote_url,
-                remote_api_key,
-                allow_local_default=True,
-            ) as nx:
-                # OCC: use lib/occ helper if CAS params present (Issue #1323).
-                ctx = cast(Any, operation_context)
-                if (if_match or if_none_match) and not force:
-                    from nexus.lib.occ import occ_write
-
-                    result = await occ_write(
-                        nx,
-                        path,
-                        file_content,
-                        context=ctx,
-                        if_match=if_match,
-                        if_none_match=if_none_match,
-                    )
-                else:
-                    result = nx.write(path, file_content, context=ctx)
-
-            console.print(
-                f"[nexus.success]✓[/nexus.success] Wrote {len(file_content)} bytes to [nexus.path]{path}[/nexus.path]"
-            )
-
+            async with open_filesystem(remote_url, remote_api_key, allow_local_default=True) as nx:
+                receipt = nx.write(path, payload, context=cast(Any, operation_context))
             if show_metadata:
-                console.print(f"[nexus.muted]Content-ID:[/nexus.muted] {result['content_id']}")
-                console.print(f"[nexus.muted]Version:[/nexus.muted]  {result['version']}")
-                console.print(f"[nexus.muted]Size:[/nexus.muted]     {result['size']} bytes")
-                console.print(f"[nexus.muted]Modified:[/nexus.muted] {result['modified_at']}")
-        except Exception as e:
-            handle_error(e)
-
-    asyncio.run(_impl())
-
-
-@click.command()
-@click.argument("path", type=str)
-@click.argument("content", type=str, required=False)
-@click.option("-i", "--input", "input_file", type=click.File("rb"), help="Read from file or stdin")
-@click.option(
-    "--if-match",
-    type=str,
-    help="Only append if current ETag matches (optimistic concurrency control)",
-)
-@click.option(
-    "--force",
-    is_flag=True,
-    help="Force append without version check (dangerous - can cause data loss!)",
-)
-@click.option(
-    "--show-metadata",
-    is_flag=True,
-    help="Show metadata (content_id, version) after appending",
-)
-@add_backend_options
-@add_context_options
-def append(
-    path: str,
-    content: str | None,
-    input_file: Any,
-    if_match: str | None,
-    force: bool,
-    show_metadata: bool,
-    remote_url: str | None,
-    remote_api_key: str | None,
-    operation_context: dict[str, Any],
-) -> None:
-    """Append content to a file (creates file if it doesn't exist).
-
-    This is useful for building log files, JSONL files, and other
-    append-only data structures without reading the entire file first.
-
-    Examples:
-        nexus append /workspace/app.log "New log entry\\n"
-        echo "New line" | nexus append /workspace/data.txt --input -
-        nexus append /workspace/output.txt --input input.txt
-        nexus append /doc.txt "New content" --if-match abc123...
-        nexus append /log.txt "Entry\\n" --show-metadata
-    """
-
-    async def _impl() -> None:
-        try:
-            file_content = resolve_content(content, input_file)
-
-            async with open_filesystem(
-                remote_url,
-                remote_api_key,
-                allow_local_default=True,
-            ) as nx:
-                # Append with OCC parameters and context.
-                # CAS params (if_match, force) are NexusFS-specific (transitional, see #1323).
-                result = cast(Any, nx).append(
-                    path,
-                    file_content,
-                    context=operation_context,
-                    if_match=if_match,
-                    force=force,
-                )
-
-            console.print(
-                f"[nexus.success]✓[/nexus.success] Appended {len(file_content)} bytes to [nexus.path]{path}[/nexus.path]"
-            )
-
-            if show_metadata:
-                console.print(f"[nexus.muted]Content-ID:[/nexus.muted] {result['content_id']}")
-                console.print(f"[nexus.muted]Version:[/nexus.muted]  {result['version']}")
-                console.print(f"[nexus.muted]Size:[/nexus.muted]     {result['size']} bytes")
-                console.print(f"[nexus.muted]Modified:[/nexus.muted] {result['modified_at']}")
-        except Exception as e:
-            handle_error(e)
+                console.print(receipt)
+            else:
+                console.print(f"Wrote {len(payload)} bytes to {path}")
+        except Exception as exc:
+            handle_error(exc)
 
     asyncio.run(_impl())
 
@@ -1251,7 +1059,7 @@ def copy_cmd(
 @click.command(name="move")
 @click.argument("source", type=str)
 @click.argument("dest", type=str)
-@click.option("-f", "--force", is_flag=True, help="Don't ask for confirmation")
+@click.option("-f", "--force", is_flag=True, help="Don't ask for confirmation.")
 @add_dry_run_option
 @add_backend_options
 def move_cmd(
@@ -1262,51 +1070,20 @@ def move_cmd(
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
-    """Move files or directories.
-
-    Move files from source to destination. This is an efficient rename
-    when possible, otherwise copy + delete.
-
-    Examples:
-        nexus move /workspace/old.txt /workspace/new.txt
-        nexus move /workspace/old_dir/ /workspace/new_dir/ --force
-        nexus move /workspace/old.txt /workspace/new.txt --dry-run
-    """
+    """Rename a path through the owning native filesystem."""
 
     async def _impl() -> None:
         try:
             if dry_run:
-                preview = dry_run_preview("move", path=source, details={"dest": dest})
-                render_dry_run(preview)
+                render_dry_run(dry_run_preview("move", path=source, details={"dest": dest}))
                 return
-
-            from nexus.sync import move_file
-
-            nx = await get_filesystem(remote_url, remote_api_key, allow_local_default=True)
-
-            # Confirm unless --force
             if not force and not click.confirm(f"Move {source} to {dest}?"):
-                console.print("[nexus.warning]Cancelled[/nexus.warning]")
-                nx.close()
                 return
-
-            with console.status(
-                f"[nexus.warning]Moving {source} to {dest}...[/nexus.warning]", spinner="dots"
-            ):
-                success = await move_file(nx, source, dest, force=force)
-
-            nx.close()
-
-            if success:
-                console.print(
-                    f"[nexus.success]✓[/nexus.success] Moved [nexus.path]{source}[/nexus.path] → [nexus.path]{dest}[/nexus.path]"
-                )
-            else:
-                console.print(f"[nexus.error]Error:[/nexus.error] Failed to move {source}")
-                sys.exit(1)
-
-        except Exception as e:
-            handle_error(e)
+            async with open_filesystem(remote_url, remote_api_key, allow_local_default=True) as nx:
+                nx.sys_rename(source, dest)
+            console.print(f"Moved {source} to {dest}")
+        except Exception as exc:
+            handle_error(exc)
 
     asyncio.run(_impl())
 
@@ -1459,122 +1236,6 @@ def rm(
             console.print(
                 f"[nexus.success]✓[/nexus.success] Deleted [nexus.path]{path}[/nexus.path]"
             )
-        except Exception as e:
-            handle_error(e)
-
-    asyncio.run(_impl())
-
-
-@click.command()
-@click.argument("path", type=str)
-@click.argument("old_string", type=str)
-@click.argument("new_string", type=str)
-@click.option(
-    "--fuzzy",
-    type=float,
-    default=None,
-    help="Fuzzy matching threshold (0.0-1.0). Default: exact match only.",
-)
-@click.option(
-    "--if-match",
-    type=str,
-    default=None,
-    help="Only edit if current ETag matches (optimistic concurrency control).",
-)
-@click.option(
-    "--preview",
-    is_flag=True,
-    help="Show what would change without writing.",
-)
-@add_backend_options
-def edit(
-    path: str,
-    old_string: str,
-    new_string: str,
-    fuzzy: float | None,
-    if_match: str | None,
-    preview: bool,
-    remote_url: str | None,
-    remote_api_key: str | None,
-) -> None:
-    """Surgical search-and-replace edit on a file.
-
-    Finds OLD_STRING in the file and replaces it with NEW_STRING.
-    Creates a new version on success. Supports exact, whitespace-normalized,
-    and fuzzy matching.
-
-    Examples:
-        # Exact replacement
-        nexus edit /workspace/doc.md "old text" "new text"
-
-        # Fuzzy match (tolerates typos, threshold 0.0-1.0)
-        nexus edit /workspace/doc.md "aproximate" "approximate" --fuzzy 0.8
-
-        # Preview changes without writing
-        nexus edit /workspace/doc.md "old" "new" --preview
-
-        # OCC: only edit if no one else modified the file
-        nexus edit /workspace/doc.md "old" "new" --if-match abc123
-    """
-
-    async def _impl() -> None:
-        try:
-            nx = await get_filesystem(remote_url, remote_api_key, allow_local_default=True)
-
-            kwargs: dict[str, Any] = {
-                "edits": [(old_string, new_string)],
-                "preview": preview,
-            }
-            if fuzzy is not None:
-                kwargs["fuzzy_threshold"] = fuzzy
-            if if_match is not None:
-                kwargs["if_match"] = if_match
-
-            result = nx.edit(path, **kwargs)
-            nx.close()
-
-            success = result.get("success", False)
-            applied = result.get("applied_count", 0)
-            diff = result.get("diff", "")
-            matches = result.get("matches", [])
-            content_id = result.get("content_id", "")
-
-            if preview:
-                if success and applied > 0:
-                    console.print(
-                        f"[nexus.warning]Preview:[/nexus.warning] {applied} edit(s) would apply"
-                    )
-                    if diff:
-                        syntax = Syntax(diff, "diff", theme="monokai")
-                        console.print(syntax)
-                else:
-                    console.print("[nexus.warning]Preview:[/nexus.warning] No matches found")
-                return
-
-            if success and applied > 0:
-                console.print(
-                    f"[nexus.success]✓[/nexus.success] {applied} edit(s) applied to [nexus.path]{path}[/nexus.path]"
-                )
-                if content_id:
-                    console.print(f"  [nexus.muted]content_id: {content_id}[/nexus.muted]")
-                for m in matches:
-                    sim = m.get("similarity")
-                    method = m.get("method", "exact")
-                    if sim and sim < 1.0:
-                        console.print(
-                            f"  [nexus.muted]match: similarity={sim:.2f} ({method})[/nexus.muted]"
-                        )
-                if diff:
-                    syntax = Syntax(diff, "diff", theme="monokai")
-                    console.print(syntax)
-            else:
-                console.print(
-                    f"[nexus.warning]No matches found[/nexus.warning] for the search string in {path}"
-                )
-                if fuzzy is None:
-                    console.print(
-                        "[nexus.muted]Hint: use --fuzzy 0.8 for approximate matching[/nexus.muted]"
-                    )
         except Exception as e:
             handle_error(e)
 

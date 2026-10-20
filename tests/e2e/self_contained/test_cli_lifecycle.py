@@ -13,16 +13,12 @@ import subprocess
 import sys
 import time
 from contextlib import closing
-from pathlib import Path
 
 import pytest
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-# Use the console_scripts entry point from the same venv as the test runner.
-_NEXUS_BIN = str(Path(sys.executable).parent / "nexus")
 
 
 def _run_nexus(
@@ -31,19 +27,12 @@ def _run_nexus(
     """Run ``nexus <args>`` as a subprocess and return the result."""
     merged_env = {**os.environ, **(env or {})}
     return subprocess.run(
-        [_NEXUS_BIN, *args],
+        [sys.executable, "-m", "nexus.cli.main", *args],
         capture_output=True,
         text=True,
         timeout=timeout,
         env=merged_env,
     )
-
-
-def _find_free_port() -> int:
-    with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
-        s.bind(("", 0))
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        return s.getsockname()[1]
 
 
 # ============================================================================
@@ -97,16 +86,16 @@ class TestStatusE2E:
     """Run ``nexus status`` as a real subprocess."""
 
     def test_status_json_no_server(self) -> None:
-        """Status against a port with no server should return valid JSON."""
-        port = _find_free_port()
-        result = _run_nexus("status", "--json", "--url", f"http://127.0.0.1:{port}")
-        assert result.returncode == 0, f"status exited {result.returncode}: {result.stderr}"
+        """An unavailable native host returns a failed status with structured output."""
+        with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as reserved:
+            if os.name == "nt":
+                reserved.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            reserved.bind(("127.0.0.1", 0))
+            port = reserved.getsockname()[1]
+            result = _run_nexus("status", "--json", "--remote-url", f"http://127.0.0.1:{port}")
+        assert result.returncode != 0, result.stdout
         envelope = json.loads(result.stdout)
-        data = envelope.get("data", envelope)  # unwrap JSON envelope
-        # server_reachable may be True (if something responds on the port, e.g. 502)
-        # or False (connection refused). Either is valid — the key assertion is
-        # that the command succeeds and returns valid JSON.
-        assert "server_reachable" in data
+        assert envelope["data"] is None and envelope["error"], envelope
 
 
 # ============================================================================

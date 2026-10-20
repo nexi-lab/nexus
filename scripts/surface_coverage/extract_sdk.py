@@ -13,6 +13,7 @@ from pathlib import Path
 
 # Class-name patterns that mark a class as part of the SDK surface
 _SDK_CLASS_SUFFIXES = ("Client", "Backend", "Metastore", "Proxy", "Wrapper")
+_SDK_CLASS_NAMES = frozenset({"RemoteNexusFS"})
 
 
 @dataclass(frozen=True)
@@ -60,7 +61,7 @@ def _extract_from_file(py_path: Path, *, class_names: tuple[str, ...]) -> list[R
         if class_names:
             if node.name not in class_names:
                 continue
-        elif not any(node.name.endswith(suf) for suf in _SDK_CLASS_SUFFIXES):
+        elif node.name not in _SDK_CLASS_NAMES and not node.name.endswith(_SDK_CLASS_SUFFIXES):
             continue
         for item in node.body:
             if not isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):

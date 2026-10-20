@@ -126,6 +126,7 @@ from nexus.contracts.rebac_types import WILDCARD_SUBJECT, CheckResult, Entity, G
 from nexus.contracts.types import OperationContext
 from nexus.core.nexus_fs import NexusFS
 from nexus.core.nexus_fs import NexusFS as Filesystem
+from nexus.remote.client import RemoteNexusFS
 
 # =============================================================================
 # LAZY IMPORTS for optional bricks (#3230)
@@ -180,7 +181,7 @@ def __dir__() -> list[str]:
 
 async def connect(
     config: str | Path | dict | Config | None = None,
-) -> Filesystem:
+) -> Filesystem | RemoteNexusFS:
     """
     Connect to Nexus filesystem.
 

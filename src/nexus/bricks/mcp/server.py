@@ -34,6 +34,7 @@ from nexus.lib.request_credentials import request_api_key as _request_api_key
 if TYPE_CHECKING:
     from nexus.bricks.approvals.policy_gate import PolicyGate
     from nexus.core.nexus_fs import NexusFS
+    from nexus.remote.client import RemoteNexusFS
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +105,7 @@ def register_policy_gate_dependency(app: Any, gate: PolicyGate) -> None:
 
 
 async def create_mcp_server(
-    nx: NexusFS | None = None,
+    nx: NexusFS | RemoteNexusFS | None = None,
     name: str = "nexus",
     remote_url: str | None = None,
     api_key: str | None = None,
@@ -194,9 +195,9 @@ async def create_mcp_server(
                 pass  # Graceful degradation — tool returns "unavailable"
 
     assert nx is not None  # guaranteed by the if-block above
-    _default_nx: NexusFS = nx
+    _default_nx: NexusFS | RemoteNexusFS = nx
 
-    def _get_nexus_instance(_ctx: Context | None = None) -> NexusFS:
+    def _get_nexus_instance(_ctx: Context | None = None) -> NexusFS | RemoteNexusFS:
         """Borrow the filesystem; its transport reads the request credential."""
         return _default_nx
 
@@ -360,7 +361,7 @@ async def create_mcp_server(
     # Markdown structure helpers (Issue #3718)
     # =========================================================================
 
-    def _md_get_content_id(nx_instance: NexusFS, path: str) -> str:
+    def _md_get_content_id(nx_instance: NexusFS | RemoteNexusFS, path: str) -> str:
         """Get the authoritative file content_id from the metastore primary row."""
         meta = getattr(nx_instance, "metadata", None)
         if meta is None:
@@ -372,7 +373,7 @@ async def create_mcp_server(
             return ""
 
     def _md_section_read(
-        nx_instance: NexusFS,
+        nx_instance: NexusFS | RemoteNexusFS,
         path: str,
         content: bytes,
         section: str,
@@ -392,7 +393,7 @@ async def create_mcp_server(
         return hook.read_section(path, content, content_id, section, block_type)
 
     def _md_get_structure_listing(
-        nx_instance: NexusFS,
+        nx_instance: NexusFS | RemoteNexusFS,
         path: str,
         content: bytes | None = None,
         content_id: str = "",
@@ -417,7 +418,7 @@ async def create_mcp_server(
         method: str,
         params: dict[str, Any],
     ) -> str:
-        call_rpc = getattr(nx_instance, "_nexus_remote_call_rpc", None)
+        call_rpc = getattr(nx_instance, "call_rpc", None)
         op_context = _resolve_mcp_operation_context(nx_instance, auth_provider=auth_provider)
         if not getattr(op_context, "is_admin", False):
             request_key = _request_api_key.get()

@@ -114,7 +114,7 @@ class TestResolveMCPOperationContext:
         context = SimpleNamespace(zone_id="selected-zone", is_admin=True)
         nx = SimpleNamespace(_init_cred=context)
         if remote:
-            nx._nexus_remote_call_rpc = Mock()
+            nx.call_rpc = Mock()
         scope = request_api_key.set("incoming-key")
         try:
             result = _resolve_mcp_operation_context(nx)

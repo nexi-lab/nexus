@@ -2299,8 +2299,8 @@ operations:
   summary: Dispatch service calls on the owning kernel's authenticated channel.
   transports:
     sdk:
-      name: KernelClient.call_rpc
-      source: src/nexus/remote/kernel_client.py:520
+      name: RemoteNexusFS.call_rpc
+      source: src/nexus/remote/client.py:54
   profiles:
     lite: supported
     sandbox: supported
@@ -2963,6 +2963,9 @@ operations:
     grpc_expose:
       name: delete_batch
       source: src/nexus/core/nexus_fs_metadata.py:1485
+    sdk:
+      name: RemoteNexusFS.delete_batch
+      source: src/nexus/remote/client.py:186
   profiles:
     lite: supported
     sandbox: supported
@@ -3323,8 +3326,8 @@ operations:
       name: exists_batch
       source: src/nexus/core/nexus_fs_metadata.py:1380
     sdk:
-      name: KernelClient.exists_batch
-      source: src/nexus/remote/kernel_client.py:894
+      name: RemoteNexusFS.exists_batch
+      source: src/nexus/remote/client.py:195
   profiles:
     lite: supported
     sandbox: supported
@@ -3779,9 +3782,6 @@ operations:
   module: filesystem
   summary: ''
   transports:
-    cli:
-      name: nexus append
-      source: src/nexus/cli/commands/file_ops.py:846
     grpc_expose:
       name: append
       source: src/nexus/core/nexus_fs_content.py:1096
@@ -3802,7 +3802,7 @@ operations:
   transports:
     cli:
       name: nexus cat
-      source: src/nexus/cli/commands/file_ops.py:45
+      source: src/nexus/cli/commands/file_ops.py:43
   profiles:
     lite: supported
     sandbox: supported
@@ -3836,7 +3836,7 @@ operations:
   transports:
     cli:
       name: nexus copy
-      source: src/nexus/cli/commands/file_ops.py:1151
+      source: src/nexus/cli/commands/file_ops.py:956
   profiles:
     lite: supported
     sandbox: supported
@@ -3853,7 +3853,7 @@ operations:
   transports:
     cli:
       name: nexus cp
-      source: src/nexus/cli/commands/file_ops.py:1107
+      source: src/nexus/cli/commands/file_ops.py:912
   profiles:
     lite: supported
     sandbox: supported
@@ -3905,7 +3905,7 @@ operations:
   transports:
     cli:
       name: nexus exists
-      source: src/nexus/cli/commands/file_ops.py:487
+      source: src/nexus/cli/commands/file_ops.py:485
     grpc_call:
       name: exists
       source: src/nexus/server/_kernel_syscall_dispatch.py:50
@@ -4015,7 +4015,7 @@ operations:
   transports:
     cli:
       name: nexus metadata
-      source: src/nexus/cli/commands/file_ops.py:446
+      source: src/nexus/cli/commands/file_ops.py:444
   profiles:
     lite: supported
     sandbox: supported
@@ -4056,7 +4056,7 @@ operations:
   transports:
     cli:
       name: nexus move
-      source: src/nexus/cli/commands/file_ops.py:1251
+      source: src/nexus/cli/commands/file_ops.py:1056
   profiles:
     lite: supported
     sandbox: supported
@@ -4125,7 +4125,7 @@ operations:
   transports:
     cli:
       name: nexus read-bulk
-      source: src/nexus/cli/commands/file_ops.py:549
+      source: src/nexus/cli/commands/file_ops.py:547
   profiles:
     lite: supported
     sandbox: supported
@@ -4178,7 +4178,7 @@ operations:
   transports:
     cli:
       name: nexus rename-batch
-      source: src/nexus/cli/commands/file_ops.py:602
+      source: src/nexus/cli/commands/file_ops.py:600
   profiles:
     lite: supported
     sandbox: supported
@@ -4196,7 +4196,7 @@ operations:
   transports:
     cli:
       name: nexus rm
-      source: src/nexus/cli/commands/file_ops.py:1415
+      source: src/nexus/cli/commands/file_ops.py:1189
   profiles:
     lite: supported
     sandbox: supported
@@ -4213,7 +4213,7 @@ operations:
   transports:
     cli:
       name: nexus rm-batch
-      source: src/nexus/cli/commands/file_ops.py:649
+      source: src/nexus/cli/commands/file_ops.py:647
   profiles:
     lite: supported
     sandbox: supported
@@ -4272,7 +4272,7 @@ operations:
   transports:
     cli:
       name: nexus stat
-      source: src/nexus/cli/commands/file_ops.py:398
+      source: src/nexus/cli/commands/file_ops.py:396
     grpc_expose:
       name: stat
       source: src/nexus/core/nexus_fs_metadata.py:1160
@@ -4327,7 +4327,7 @@ operations:
   transports:
     cli:
       name: nexus sync
-      source: src/nexus/cli/commands/file_ops.py:1314
+      source: src/nexus/cli/commands/file_ops.py:1088
   profiles:
     lite: supported
     sandbox: supported
@@ -4362,7 +4362,7 @@ operations:
   transports:
     cli:
       name: nexus write
-      source: src/nexus/cli/commands/file_ops.py:692
+      source: src/nexus/cli/commands/file_ops.py:690
     grpc_call:
       name: write
       source: src/nexus/server/_kernel_syscall_dispatch.py:70
@@ -4385,7 +4385,7 @@ operations:
   transports:
     cli:
       name: nexus write-batch
-      source: src/nexus/cli/commands/file_ops.py:925
+      source: src/nexus/cli/commands/file_ops.py:730
   profiles:
     lite: supported
     sandbox: supported
@@ -4413,6 +4413,23 @@ operations:
   perf_link: human-invoked metadata or inventory surface; not on a request hot path
   gap_issue: null
   owning_issue: 4133
+- id: fs.access
+  module: filesystem
+  summary: ''
+  transports:
+    sdk:
+      name: RemoteNexusFS.access
+      source: src/nexus/remote/client.py:83
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: fs.close
   module: filesystem
   summary: ''
@@ -4430,6 +4447,40 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4133
+- id: fs.closed
+  module: filesystem
+  summary: ''
+  transports:
+    sdk:
+      name: RemoteNexusFS.closed
+      source: src/nexus/remote/client.py:51
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: fs.exists
+  module: filesystem
+  summary: ''
+  transports:
+    sdk:
+      name: RemoteNexusFS.exists
+      source: src/nexus/remote/client.py:80
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: fs.get
   module: filesystem
   summary: ''
@@ -4447,6 +4498,40 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4133
+- id: fs.glob
+  module: search
+  summary: ''
+  transports:
+    sdk:
+      name: RemoteNexusFS.glob
+      source: src/nexus/remote/client.py:234
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: fs.grep
+  module: search
+  summary: ''
+  transports:
+    sdk:
+      name: RemoteNexusFS.grep
+      source: src/nexus/remote/client.py:250
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: fs.heartbeat
   module: filesystem
   summary: ''
@@ -4515,6 +4600,23 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4133
+- id: fs.read
+  module: filesystem
+  summary: ''
+  transports:
+    sdk:
+      name: RemoteNexusFS.read
+      source: src/nexus/remote/client.py:61
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: fs.register
   module: filesystem
   summary: ''
@@ -4549,6 +4651,23 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
+- id: fs.service
+  module: filesystem
+  summary: ''
+  transports:
+    sdk:
+      name: RemoteNexusFS.service
+      source: src/nexus/remote/client.py:58
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: fs.signal
   module: filesystem
   summary: ''
@@ -4566,6 +4685,40 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4133
+- id: fs.stat
+  module: filesystem
+  summary: ''
+  transports:
+    sdk:
+      name: RemoteNexusFS.stat
+      source: src/nexus/remote/client.py:74
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
+- id: fs.stream
+  module: filesystem
+  summary: ''
+  transports:
+    sdk:
+      name: RemoteNexusFS.stream
+      source: src/nexus/remote/client.py:206
+  profiles:
+    lite: unverified
+    sandbox: unverified
+    full: unverified
+  usage_example: null
+  correctness_test: null
+  perf_class: null
+  perf_link: null
+  gap_issue: null
+  owning_issue: null
 - id: fs.unregister
   module: filesystem
   summary: ''
@@ -5386,8 +5539,8 @@ operations:
   summary: ''
   transports:
     sdk:
-      name: KernelClient.is_directory
-      source: src/nexus/remote/kernel_client.py:876
+      name: RemoteNexusFS.is_directory
+      source: src/nexus/remote/client.py:89
   profiles:
     lite: supported
     sandbox: supported
@@ -5980,23 +6133,6 @@ operations:
   perf_link: tests/benchmarks/bench_permission_hotpath.py::TestMCPToolNamespaceFiltering::test_cached_tool_list_filtering_latency
   gap_issue: 4128
   owning_issue: 4128
-- id: mcp.llm
-  module: mcp
-  summary: ''
-  transports:
-    cli:
-      name: nexus llm
-      source: src/nexus/cli/commands/llm.py:31
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/e2e/server/test_issue_4136_api_surface_e2e.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
-  gap_issue: null
-  owning_issue: 4136
 - id: mcp.mount
   module: mcp
   summary: Mount an external MCP server over stdio, SSE, HTTP, or Klavis and discover its tools.
@@ -6203,6 +6339,9 @@ operations:
     grpc_expose:
       name: metadata_batch
       source: src/nexus/core/nexus_fs_metadata.py:1390
+    sdk:
+      name: RemoteNexusFS.metadata_batch
+      source: src/nexus/remote/client.py:101
   profiles:
     lite: supported
     sandbox: supported
@@ -6247,176 +6386,6 @@ operations:
   perf_link: tests/benchmarks/bench_read_write_overhead.py:1
   gap_issue: null
   owning_issue: 4133
-- id: migrate.backup
-  module: uncategorized
-  summary: ''
-  transports:
-    cli:
-      name: nexus migrate backup
-      source: src/nexus/cli/commands/migrate.py:396
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: migrate.import_fs
-  module: portability
-  summary: ''
-  transports:
-    cli:
-      name: nexus migrate import-fs
-      source: src/nexus/cli/commands/migrate.py:664
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: migrate.import_gcs
-  module: portability
-  summary: ''
-  transports:
-    cli:
-      name: nexus migrate import-gcs
-      source: src/nexus/cli/commands/migrate.py:577
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: migrate.import_s3
-  module: portability
-  summary: ''
-  transports:
-    cli:
-      name: nexus migrate import-s3
-      source: src/nexus/cli/commands/migrate.py:496
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: migrate.plan
-  module: uncategorized
-  summary: ''
-  transports:
-    cli:
-      name: nexus migrate plan
-      source: src/nexus/cli/commands/migrate.py:143
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: migrate.restore
-  module: uncategorized
-  summary: ''
-  transports:
-    cli:
-      name: nexus migrate restore
-      source: src/nexus/cli/commands/migrate.py:451
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: migrate.rollback
-  module: uncategorized
-  summary: ''
-  transports:
-    cli:
-      name: nexus migrate rollback
-      source: src/nexus/cli/commands/migrate.py:309
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: migrate.status
-  module: filesystem
-  summary: ''
-  transports:
-    cli:
-      name: nexus migrate status
-      source: src/nexus/cli/commands/migrate.py:43
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: migrate.upgrade
-  module: uncategorized
-  summary: ''
-  transports:
-    cli:
-      name: nexus migrate upgrade
-      source: src/nexus/cli/commands/migrate.py:219
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: migrate.validate
-  module: uncategorized
-  summary: ''
-  transports:
-    cli:
-      name: nexus migrate validate
-      source: src/nexus/cli/commands/migrate.py:737
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
 - id: mount.down
   module: mount
   summary: ''
@@ -8600,8 +8569,8 @@ operations:
       name: read_batch
       source: src/nexus/core/nexus_fs_content.py:1635
     sdk:
-      name: KernelClient.read_batch
-      source: src/nexus/remote/kernel_client.py:728
+      name: RemoteNexusFS.read_batch
+      source: src/nexus/remote/client.py:104
   profiles:
     lite: supported
     sandbox: supported
@@ -8621,6 +8590,9 @@ operations:
     grpc_expose:
       name: read_bulk
       source: src/nexus/core/nexus_fs_content.py:242
+    sdk:
+      name: RemoteNexusFS.read_bulk
+      source: src/nexus/remote/client.py:119
   profiles:
     lite: supported
     sandbox: supported
@@ -8657,6 +8629,9 @@ operations:
     grpc_expose:
       name: read_range
       source: src/nexus/core/nexus_fs_content.py:415
+    sdk:
+      name: RemoteNexusFS.read_range
+      source: src/nexus/remote/client.py:201
   profiles:
     lite: supported
     sandbox: supported
@@ -9044,6 +9019,9 @@ operations:
     grpc_expose:
       name: rename_batch
       source: src/nexus/core/nexus_fs_metadata.py:1624
+    sdk:
+      name: RemoteNexusFS.rename_batch
+      source: src/nexus/remote/client.py:174
   profiles:
     lite: supported
     sandbox: supported
@@ -9948,6 +9926,9 @@ operations:
     mcp:
       name: nexus_semantic_search
       source: src/nexus/config/tool_profiles.yaml:1
+    sdk:
+      name: RemoteNexusFS.semantic_search
+      source: src/nexus/remote/client.py:253
   profiles:
     lite: supported
     sandbox: supported
@@ -9966,6 +9947,9 @@ operations:
     grpc_expose:
       name: semantic_search_index
       source: src/nexus/bricks/search/search_service.py:274
+    sdk:
+      name: RemoteNexusFS.semantic_search_index
+      source: src/nexus/remote/client.py:256
   profiles:
     lite: supported
     sandbox: supported
@@ -9983,6 +9967,9 @@ operations:
     grpc_expose:
       name: semantic_search_stats
       source: src/nexus/bricks/search/search_service.py:297
+    sdk:
+      name: RemoteNexusFS.semantic_search_stats
+      source: src/nexus/remote/client.py:259
   profiles:
     lite: supported
     sandbox: supported
@@ -10544,6 +10531,9 @@ operations:
     grpc_expose:
       name: stat_bulk
       source: src/nexus/core/nexus_fs_metadata.py:1248
+    sdk:
+      name: RemoteNexusFS.stat_bulk
+      source: src/nexus/remote/client.py:93
   profiles:
     lite: supported
     sandbox: supported
@@ -10578,6 +10568,9 @@ operations:
     grpc_expose:
       name: stream_range
       source: src/nexus/core/nexus_fs_content.py:528
+    sdk:
+      name: RemoteNexusFS.stream_range
+      source: src/nexus/remote/client.py:219
   profiles:
     lite: supported
     sandbox: supported
@@ -10712,8 +10705,8 @@ operations:
   summary: ''
   transports:
     sdk:
-      name: KernelClient.sys_copy
-      source: src/nexus/remote/kernel_client.py:662
+      name: RemoteNexusFS.sys_copy
+      source: src/nexus/remote/client.py:144
   profiles:
     lite: supported
     sandbox: supported
@@ -10831,8 +10824,8 @@ operations:
   summary: ''
   transports:
     sdk:
-      name: KernelClient.sys_setattr
-      source: src/nexus/remote/kernel_client.py:596
+      name: RemoteNexusFS.sys_setattr
+      source: src/nexus/remote/client.py:149
   profiles:
     lite: supported
     sandbox: supported
@@ -11256,23 +11249,6 @@ operations:
   perf_link: human-invoked metadata or inventory surface; not on a request hot path
   gap_issue: null
   owning_issue: 4138
-- id: uncategorized.migrate
-  module: uncategorized
-  summary: ''
-  transports:
-    cli:
-      name: nexus migrate
-      source: src/nexus/cli/commands/migrate.py:25
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/unit/server/test_full_profile_control_plane_surface.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
-  gap_issue: null
-  owning_issue: 4138
 - id: uncategorized.network
   module: uncategorized
   summary: ''
@@ -11644,8 +11620,8 @@ operations:
       name: write_batch
       source: src/nexus/core/nexus_fs_content.py:1467
     sdk:
-      name: KernelClient.write_batch
-      source: src/nexus/remote/kernel_client.py:1181
+      name: RemoteNexusFS.write_batch
+      source: src/nexus/remote/client.py:129
   profiles:
     lite: supported
     sandbox: supported
@@ -13091,6 +13067,14 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
+- operation_id: delete.batch
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
 - operation_id: delete.file
   has:
   - mcp
@@ -13347,14 +13331,6 @@ parity_warnings:
   - grpc_typed
   - http
   - sdk
-- operation_id: filesystem.append
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
 - operation_id: filesystem.cat
   has:
   - cli
@@ -13547,6 +13523,14 @@ parity_warnings:
   - http
   - mcp
   - sdk
+- operation_id: fs.access
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
 - operation_id: fs.close
   has:
   - sdk
@@ -13555,7 +13539,39 @@ parity_warnings:
   - grpc_typed
   - http
   - mcp
+- operation_id: fs.closed
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: fs.exists
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
 - operation_id: fs.get
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: fs.glob
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: fs.grep
   has:
   - sdk
   missing:
@@ -13595,6 +13611,14 @@ parity_warnings:
   - grpc_typed
   - http
   - mcp
+- operation_id: fs.read
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
 - operation_id: fs.register
   has:
   - sdk
@@ -13611,7 +13635,31 @@ parity_warnings:
   - grpc_typed
   - http
   - mcp
+- operation_id: fs.service
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
 - operation_id: fs.signal
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: fs.stat
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: fs.stream
   has:
   - sdk
   missing:
@@ -14043,14 +14091,6 @@ parity_warnings:
   - http
   - mcp
   - sdk
-- operation_id: mcp.llm
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
 - operation_id: mcp.mounts
   has:
   - http
@@ -14115,6 +14155,14 @@ parity_warnings:
   - http
   - mcp
   - sdk
+- operation_id: metadata.batch
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
 - operation_id: metastore.list_iter
   has:
   - sdk
@@ -14131,86 +14179,6 @@ parity_warnings:
   - grpc_typed
   - http
   - mcp
-- operation_id: migrate.backup
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: migrate.import_fs
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: migrate.import_gcs
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: migrate.import_s3
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: migrate.plan
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: migrate.restore
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: migrate.rollback
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: migrate.status
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: migrate.upgrade
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: migrate.validate
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
 - operation_id: mount.down
   has:
   - cli
@@ -15027,6 +14995,14 @@ parity_warnings:
   - grpc_typed
   - http
   - mcp
+- operation_id: read.bulk
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
 - operation_id: read.file
   has:
   - mcp
@@ -15035,6 +15011,14 @@ parity_warnings:
   - grpc_typed
   - http
   - sdk
+- operation_id: read.range
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
 - operation_id: rebac.cli
   has:
   - cli
@@ -15092,6 +15076,14 @@ parity_warnings:
   - http
   - mcp
 - operation_id: register.native_hook
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: rename.batch
   has:
   - sdk
   missing:
@@ -15430,11 +15422,27 @@ parity_warnings:
 - operation_id: semantic.search
   has:
   - mcp
+  - sdk
   missing:
   - cli
   - grpc_typed
   - http
+- operation_id: semantic.search_index
+  has:
   - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: semantic.search_stats
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
 - operation_id: service.close_all
   has:
   - sdk
@@ -15643,7 +15651,23 @@ parity_warnings:
   - grpc_typed
   - http
   - mcp
+- operation_id: stat.bulk
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
 - operation_id: stream.collect_all
+  has:
+  - sdk
+  missing:
+  - cli
+  - grpc_typed
+  - http
+  - mcp
+- operation_id: stream.range
   has:
   - sdk
   missing:
@@ -15956,14 +15980,6 @@ parity_warnings:
   - mcp
   - sdk
 - operation_id: uncategorized.info
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: uncategorized.migrate
   has:
   - cli
   missing:

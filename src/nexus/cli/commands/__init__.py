@@ -23,7 +23,6 @@ _REGISTER_COMMANDS: dict[str, tuple[str, ...]] = {
         "rename-batch",
         "rm-batch",
         "write",
-        "append",
         "write-batch",
         "cp",
         "copy",
@@ -38,9 +37,7 @@ _REGISTER_COMMANDS: dict[str, tuple[str, ...]] = {
     "inspect": ("info", "version", "size"),
     "plugins": ("plugins",),
     "mounts": ("mounts",),
-    "llm": ("llm",),
     "mcp": ("mcp",),
-    "migrate": ("migrate",),
     "network": ("network",),
     "tls": ("tls",),
     "status": ("status",),  # status [--watch] [--json]

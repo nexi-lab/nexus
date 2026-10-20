@@ -44,7 +44,9 @@ async def main() -> None:
             text = text.replace(secret, "[redacted]")
         return re.sub(r"sk-[A-Za-z0-9_.-]+", "[redacted]", text)
 
-    async def run(args, key=admin, zone="sharedzone", expected=0, extra_env=None):
+    async def run(
+        args, key=admin, zone="sharedzone", expected=0, extra_env=None, bytes_output=False
+    ):
         env = os.environ.copy()
         env.update(
             {
@@ -73,9 +75,9 @@ async def main() -> None:
                 process.kill()
                 await process.wait()
             raise
-        output = stdout.decode() + stderr.decode()
+        output = stdout.decode(errors="replace") + stderr.decode(errors="replace")
         assert process.returncode == expected, (args, process.returncode, safe(output))
-        return stdout.decode(), output
+        return (stdout if bytes_output else stdout.decode()), output
 
     async def cli(args, key=admin, zone="sharedzone", expected=0):
         return await run(["-m", "nexus.cli.main", "search", *args], key, zone, expected)
@@ -173,6 +175,124 @@ async def main() -> None:
             for pid in reversed(created):
                 await agent_cli(["delete", pid, "--yes"])
 
+    async def verify_file_cli(client_data_dir):
+        prefix = f"/docs/cli-files-{suffix}"
+        path = f"{prefix}/字节 文件.bin"
+        moved = f"{prefix}/renamed.bin"
+        content = bytes(range(256)) + "Native 文件\r\n".encode()
+        file_env = {
+            **agent_env,
+            "NEXUS_KERNEL_BINARY": "/file-cli-must-use-native-grpc",
+            "NEXUS_PROFILE": "",
+            "NEXUS_DATA_DIR": str(client_data_dir),
+        }
+
+        async def file_cli(args, **options):
+            return await run(["-m", "nexus.cli.main", *args], extra_env=file_env, **options)
+
+        created = False
+        try:
+            await file_cli(["mkdir", prefix])
+            created = True
+            with tempfile.TemporaryDirectory(prefix="native-cli-bytes-") as temp:
+                source = Path(temp) / "原始字节.bin"
+                source.write_bytes(content)
+                await file_cli(["write", path, "--input", str(source)])
+            read = await vfs.Read(vfs_pb2.ReadRequest(path=path, auth_token=admin))
+            assert not read.is_error and bytes(read.content) == content, safe(str(read))
+            stdout, _ = await file_cli(["cat", path, "--json"])
+            preview = json.loads(stdout)["data"]
+            assert preview["binary"] is True and preview["content"] is None, preview
+            assert preview["size"] == len(content), preview
+            raw, _ = await file_cli(
+                ["cat", path, "--offset", "12", "--length", "96"], bytes_output=True
+            )
+            assert raw == content[12:108], raw
+            raw, _ = await file_cli(
+                ["cat", path, "--stream", "--chunk-size", "31"], bytes_output=True
+            )
+            assert raw == content, (len(raw), len(content))
+            stdout, _ = await file_cli(["stat", path, "--json"])
+            metadata = json.loads(stdout)["data"]
+            assert metadata["size"] == len(content) and metadata["content_id"], metadata
+            stdout, _ = await file_cli(["ls", prefix, "--json"])
+            assert path in {row["path"] for row in json.loads(stdout)["data"]}, stdout
+            copied = f"{prefix}/copied.bin"
+            await file_cli(["cp", path, copied])
+            raw, _ = await file_cli(["cat", copied, "--stream"], bytes_output=True)
+            assert raw == content, (len(raw), len(content))
+            with tempfile.TemporaryDirectory(prefix="native-cli-batch-") as temp:
+                source = Path(temp)
+                (source / "first.txt").write_bytes(b"first native batch")
+                (source / "second.txt").write_bytes(b"second native batch")
+                await file_cli(["write-batch", str(source), "--dest-prefix", prefix])
+            first, second = f"{prefix}/first.txt", f"{prefix}/second.txt"
+            missing = f"{prefix}/missing.txt"
+            stdout, _ = await file_cli(["read-bulk", first, second, missing, "--json"])
+            assert json.loads(stdout)["data"] == {
+                first: "first native batch",
+                second: "second native batch",
+                missing: None,
+            }
+            stdout, _ = await file_cli(
+                ["rename-batch", f"{first}:{first}.moved", f"{missing}:{missing}.moved", "--json"]
+            )
+            renamed = json.loads(stdout)["data"]
+            assert renamed[first]["success"] is True and renamed[missing]["success"] is False, (
+                renamed
+            )
+            stdout, _ = await file_cli(["rm-batch", first + ".moved", second, missing, "--json"])
+            deleted = json.loads(stdout)["data"]
+            assert (
+                deleted[first + ".moved"]["success"] is True and deleted[second]["success"] is True
+            ), deleted
+            assert deleted[missing]["success"] is False, deleted
+            denied, _ = await file_cli(
+                ["cat", path, "--json", "--subject", "user:forged-admin", "--is-admin"],
+                key=keys["alice"],
+                expected=1,
+            )
+            assert json.loads(denied)["error"]["code"] == "PERMISSION_DENIED", safe(denied)
+            await native_cli(
+                [
+                    "rebac",
+                    "create",
+                    "user",
+                    f"cli-alice-{suffix}",
+                    "viewer",
+                    "file",
+                    path,
+                    "--zone-id",
+                    "sharedzone",
+                ]
+            )
+            raw, _ = await file_cli(["cat", path, "--stream"], key=keys["alice"], bytes_output=True)
+            assert raw == content, (len(raw), len(content))
+            await native_cli(
+                [
+                    "rebac",
+                    "delete",
+                    "user",
+                    f"cli-alice-{suffix}",
+                    "viewer",
+                    "file",
+                    path,
+                    "--zone-id",
+                    "sharedzone",
+                ]
+            )
+            await file_cli(["cat", path, "--json"], key=keys["alice"], expected=1)
+            await file_cli(["move", path, moved, "--force"])
+            read = await vfs.Read(vfs_pb2.ReadRequest(path=moved, auth_token=admin))
+            assert not read.is_error and bytes(read.content) == content, safe(str(read))
+            await file_cli(["rm", moved, "--force"])
+            print(
+                "Native file CLI passed: Unicode paths, binary exact bytes, range/stream, metadata/list, forged identity denial, immediate grant/revoke, rename/delete"
+            )
+        finally:
+            if created:
+                await file_cli(["rmdir", prefix, "--recursive", "--force"])
+
     async with httpx.AsyncClient(base_url=base, timeout=20, trust_env=False) as rust:
 
         async def admin_request(method, url, **kwargs):
@@ -237,6 +357,10 @@ async def main() -> None:
                 )
             )["data"]
             assert identity["subject_id"] == f"cli-alice-{suffix}" and identity["is_admin"] is False
+            with tempfile.TemporaryDirectory(prefix="native-cli-no-local-state-") as temp:
+                client_data_dir = Path(temp)
+                await verify_file_cli(client_data_dir)
+                assert not list(client_data_dir.iterdir()), "Remote CLI created local kernel state"
             status = (await native_cli(["status"], key=keys["alice"]))["data"]
             assert status["server"]["status"] == "ok" and status["server"]["version"], status
             assert status["identity"] == identity, status

@@ -532,11 +532,9 @@ class RPCTransport:
     ) -> list[Any]:
         """Vectored batch write via the typed BatchWrite RPC — one round-trip.
 
-        Native bytes — no base64/JSON tax. The kernel attempts every item
-        (create-or-overwrite, per-item isolated); this raises the first
-        per-item failure, preserving the all-or-nothing contract of the
-        former generic ``write_batch`` Call. Returns the per-item success
-        responses in input order.
+        The kernel attempts every item independently. This raises the first
+        per-item error; successful writes remain committed. Results preserve
+        input order when all writes succeed.
         """
         request = vfs_pb2.BatchWriteRequest(
             auth_token=self._vfs_credential(),

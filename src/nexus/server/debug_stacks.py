@@ -23,13 +23,14 @@ def install_stack_dump_signal() -> None:
         return
 
     sigusr1 = getattr(signal, "SIGUSR1", None)
-    if sigusr1 is None:
+    register = getattr(faulthandler, "register", None)
+    if sigusr1 is None or register is None:
         logger.warning("NEXUS_DEBUG_STACK_DUMP requested, but SIGUSR1 is unavailable")
         return
 
     faulthandler.enable(file=sys.stderr, all_threads=True)
     try:
-        faulthandler.register(sigusr1, file=sys.stderr, all_threads=True, chain=False)
+        register(sigusr1, file=sys.stderr, all_threads=True, chain=False)
     except RuntimeError as exc:
         logger.warning("Failed to register SIGUSR1 stack dump handler: %s", exc)
         return

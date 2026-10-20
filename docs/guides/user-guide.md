@@ -72,6 +72,10 @@ finally:
     nx.close()
 ```
 
+Remote SDK connections call the owning host directly and need its configured endpoints and native credential. Writes create or replace a complete file; `--show-metadata` prints the native write receipt. `cp` and `move` use the owning host's native operations.
+
+`write-batch` uses the native BatchWrite RPC. Each file commits independently. `rename-batch` and `rm-batch` report success or failure for each input path. `read-bulk --atomic` returns a complete result or an error.
+
 ## Search and discovery
 
 Index an existing directory through the owning Rust Search host, then query it:

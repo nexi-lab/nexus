@@ -187,7 +187,7 @@ def test_cat_no_range_unchanged(patched_fs, cli_runner: CliRunner):
 
 
 # ---------------------------------------------------------------------------
-# Task 9: cat --stream / write --stream
+# Task 9: cat --stream
 # ---------------------------------------------------------------------------
 
 
@@ -200,15 +200,6 @@ def test_cat_stream_matches_full(patched_fs, cli_runner: CliRunner):
     res = cli_runner.invoke(cat, ["/strm.bin", "--stream", "--chunk-size", "65536"])
     assert res.exit_code == 0, res.output
     assert res.stdout_bytes == body
-
-
-def test_write_stream_from_stdin(patched_fs, cli_runner: CliRunner):
-    from nexus.cli.commands.file_ops import write
-
-    nx = patched_fs
-    res = cli_runner.invoke(write, ["/ws.txt", "--stream"], input="streamed-bytes")
-    assert res.exit_code == 0, res.output
-    assert nx.read("/ws.txt") == b"streamed-bytes"
 
 
 # ---------------------------------------------------------------------------
@@ -302,7 +293,7 @@ def test_cat_stream_survives_broken_pipe(patched_fs):
     import tempfile
 
     with tempfile.TemporaryDirectory() as tmp:
-        env = dict(os.environ, TMPDIR_FX=tmp, PYTHONPATH=":".join(sys.path))
+        env = dict(os.environ, TMPDIR_FX=tmp, PYTHONPATH=os.pathsep.join(sys.path))
         p1 = subprocess.Popen(
             [sys.executable, "-c", driver],
             stdout=subprocess.PIPE,
@@ -313,10 +304,12 @@ def test_cat_stream_survives_broken_pipe(patched_fs):
         assert p1.stdout is not None
         first = p1.stdout.read(1024)
         p1.stdout.close()
+        p1.stdout = None
         try:
             _, stderr = p1.communicate(timeout=15)
         except subprocess.TimeoutExpired as exc:
             p1.kill()
+            p1.communicate()
             raise AssertionError("cat --stream hung after pipe close") from exc
 
     # Must not propagate raw Python traceback to stderr.

@@ -35,3 +35,9 @@ def test_extract_sdk_recursive_real_tree_smoke(repo_root: Path):
         return
     results = extract_sdk_methods(real)
     assert len(results) >= 20, f"expected many SDK methods, got {len(results)}"
+
+
+def test_remote_filesystem_facade_is_in_the_sdk_inventory(repo_root: Path):
+    results = extract_sdk_methods(repo_root / "src/nexus/remote")
+    methods = {item.method_name for item in results if item.class_name == "RemoteNexusFS"}
+    assert {"read", "write_batch", "read_bulk", "stream", "glob", "grep", "close"} <= methods

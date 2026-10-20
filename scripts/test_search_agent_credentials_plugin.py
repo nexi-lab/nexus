@@ -22,7 +22,6 @@ from nexus.contracts.rpc_types import RPCErrorCode
 from nexus.grpc.search.v1 import search_pb2, search_pb2_grpc
 from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
 from nexus.lib.request_credentials import request_api_key
-from nexus.remote.rpc_transport import RPCTransport
 
 
 async def denied(call, code):
@@ -45,7 +44,6 @@ async def main() -> None:
     grants = set()
     channels = []
     agents = {}
-    transports = {}
     filesystems = {}
     mcp_servers = {}
 
@@ -108,8 +106,7 @@ async def main() -> None:
             mcp_servers[name] = await create_mcp_server(
                 nx=filesystem, remote_url=f"grpcs://{target}"
             )
-            transports[name] = filesystem._nexus_remote_call_rpc.__self__
-            assert isinstance(transports[name], RPCTransport)
+            assert not filesystem.closed
             written = await vfs.Write(
                 vfs_pb2.WriteRequest(
                     path=paths[name], content=f"{needle} {name}".encode(), auth_token=admin
@@ -270,7 +267,7 @@ async def main() -> None:
                 assert info["exists"] and not info["is_directory"]
             else:
                 assert metadata.startswith("Error:"), "MCP stat ignored revocation"
-            assert not transports[name]._closed, "MCP closed its borrowed transport"
+            assert not filesystems[name].closed, "MCP closed its borrowed filesystem"
 
         async def sdk_denied(name, method, *args, **kwargs):
             try:

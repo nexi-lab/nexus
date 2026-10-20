@@ -1,13 +1,11 @@
-"""Remote SDK startup releases real channels and kernel subprocesses."""
+"""Remote SDK owns one real channel and starts no local kernel process."""
 
 from collections.abc import Iterator
-from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
 
 import nexus
-from nexus.core.nexus_fs import NexusFS
 from nexus.remote.kernel_client import KernelClient
 from nexus.remote.rpc_transport import RPCTransport
 
@@ -27,14 +25,10 @@ def remote_peer(monkeypatch: pytest.MonkeyPatch) -> Iterator[KernelClient]:
 
 @pytest.fixture
 def acquired_resources(remote_peer: KernelClient, monkeypatch: pytest.MonkeyPatch):
-    kernels = []
     transports = []
-    open_kernel = nexus._open_local_kernel
 
-    def track_kernel(*args, **kwargs):
-        kernel = open_kernel(*args, **kwargs)
-        kernels.append((kernel, kernel._process, kernel._ephemeral_dir))
-        return kernel
+    def forbidden_local_kernel(*args, **kwargs):
+        raise AssertionError("A remote SDK must not start another kernel")
 
     def track_transport(*args, **kwargs):
         transport = RPCTransport(*args, **kwargs)
@@ -43,103 +37,51 @@ def acquired_resources(remote_peer: KernelClient, monkeypatch: pytest.MonkeyPatc
         transports.append((transport, close))
         return transport
 
-    monkeypatch.setattr(nexus, "_open_local_kernel", track_kernel)
+    monkeypatch.setattr(nexus, "_open_local_kernel", forbidden_local_kernel)
     monkeypatch.setattr("nexus.remote.rpc_transport.RPCTransport", track_transport)
     try:
-        yield kernels, transports
+        yield transports
     finally:
-        # A regression must not leave the test's own children running.
-        for kernel, _, _ in kernels:
-            kernel.close()
         for transport, _ in transports:
-            transport.close()
+            if not transport._closed:
+                transport.close()
 
 
 def remote_config(peer: KernelClient) -> dict:
     return {"profile": "remote", "url": f"grpc://{peer._server_address}", "timeout": 3}
 
 
-def assert_released(resources):
-    kernels, transports = resources
-    for kernel, process, ephemeral_dir in kernels:
-        assert process is not None and process.poll() is not None
-        assert kernel._transport is None
-        assert ephemeral_dir is not None and not Path(ephemeral_dir).exists()
-    assert len(transports) == 1
-    transports[0][1].assert_called_once()
-
-
-@pytest.mark.parametrize("phase", ["kernel", "filesystem", "mount", "services", "overrides"])
-def test_failed_remote_connect_releases_acquired_resources(
-    remote_peer: KernelClient, acquired_resources, monkeypatch: pytest.MonkeyPatch, phase: str
+@pytest.mark.parametrize(
+    "failure", [RuntimeError("Construction failed"), KeyboardInterrupt("Interrupted")]
+)
+def test_failed_remote_construction_closes_the_owned_channel(
+    remote_peer: KernelClient,
+    acquired_resources,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: BaseException,
 ):
-    failure = RuntimeError(f"Failed during {phase}")
-
     def fail(*args, **kwargs):
         raise failure
 
-    if phase == "kernel":
-        monkeypatch.setattr(nexus, "_open_local_kernel", fail)
-    elif phase == "filesystem":
-        monkeypatch.setattr("nexus.core.nexus_fs.NexusFS", fail)
-    elif phase == "mount":
-        setattr_original = NexusFS.sys_setattr
-
-        def fail_mount(self, path, *args, **kwargs):
-            if path == "/" and kwargs.get("backend_type") == "remote":
-                raise failure
-            return setattr_original(self, path, *args, **kwargs)
-
-        monkeypatch.setattr(NexusFS, "sys_setattr", fail_mount)
-    else:
-        import nexus.factory._remote as remote
-
-        name = "_boot_remote_services" if phase == "services" else "wire_remote_filesystem"
-        original = getattr(remote, name)
-
-        def fail_after_wiring(*args, **kwargs):
-            original(*args, **kwargs)
-            raise failure
-
-        monkeypatch.setattr(remote, name, fail_after_wiring)
-
-    with pytest.raises(RuntimeError) as caught:
+    monkeypatch.setattr("nexus.remote.client.RemoteNexusFS", fail)
+    with pytest.raises(type(failure)) as caught:
         nexus.connect(remote_config(remote_peer))
     assert caught.value is failure
-    assert_released(acquired_resources)
-    assert remote_peer._transport.health_check()
-
-
-def test_interrupted_remote_connect_drains_despite_service_cleanup_failure(
-    remote_peer: KernelClient, acquired_resources, monkeypatch: pytest.MonkeyPatch
-):
-    def interrupted(filesystem, **kwargs):
-        def failed_cleanup():
-            raise RuntimeError("Service close failed")
-
-        monkeypatch.setattr(filesystem._kernel, "service_close_all", failed_cleanup)
-        raise KeyboardInterrupt("Startup interrupted")
-
-    monkeypatch.setattr("nexus.factory._remote._boot_remote_services", interrupted)
-    with pytest.raises(KeyboardInterrupt, match="Startup interrupted"):
-        nexus.connect(remote_config(remote_peer))
-    assert_released(acquired_resources)
+    assert len(acquired_resources) == 1
+    acquired_resources[0][1].assert_called_once()
     assert remote_peer._transport.health_check()
 
 
 def test_remote_connect_transfers_ownership_and_can_reconnect(
     remote_peer: KernelClient, acquired_resources
 ):
-    kernels, transports = acquired_resources
     for attempt in range(2):
         filesystem = nexus.connect(remote_config(remote_peer))
-        kernel, process, ephemeral_dir = kernels[attempt]
-        transport, close = transports[attempt]
+        transport, close = acquired_resources[attempt]
         try:
             close.assert_not_called()
-            assert not hasattr(filesystem, "parser_registry")
-            assert not hasattr(filesystem, "provider_registry")
-            assert process is not None and process.poll() is None
+            assert not hasattr(filesystem, "_kernel")
+            assert not hasattr(filesystem, "record_store")
             assert transport.health_check()
             filesystem.sys_write("/remote-ownership.txt", f"attempt {attempt}".encode())
             assert filesystem.sys_read("/remote-ownership.txt") == f"attempt {attempt}".encode()
@@ -147,9 +89,7 @@ def test_remote_connect_transfers_ownership_and_can_reconnect(
             filesystem.close()
             filesystem.close()
         close.assert_called_once()
-        assert process.poll() is not None
-        assert kernel._transport is None
-        assert ephemeral_dir is not None and not Path(ephemeral_dir).exists()
+        assert filesystem.closed
         assert remote_peer._transport.health_check()
 
 
@@ -271,3 +211,21 @@ def test_single_batch_read_preserves_ipc_cursor_semantics(
     response = transport.batch_read([(path, offset, None)])[0]
     assert not response.is_error, response
     assert response.content == b"complete second frame"
+
+
+@pytest.mark.parametrize("operation", ["rename", "delete", "attributes"])
+def test_invalid_batch_or_attributes_preserve_files(remote_peer: KernelClient, operation: str):
+    with nexus.connect(remote_config(remote_peer)) as filesystem:
+        filesystem.write("/preserved.txt", b"original")
+        with pytest.raises(ValueError):
+            if operation == "rename":
+                filesystem.rename_batch(
+                    [("/preserved.txt", "/first.txt"), ("/preserved.txt", "/second.txt")]
+                )
+            elif operation == "delete":
+                filesystem.delete_batch(["/preserved.txt", "/preserved.txt"])
+            else:
+                filesystem.sys_setattr("/preserved.txt", invented_attribute="bad")
+        assert filesystem.read("/preserved.txt") == b"original"
+        assert not filesystem.exists("/first.txt")
+        assert not filesystem.exists("/second.txt")

@@ -415,7 +415,7 @@ def _register_vfs_hooks(
 
     Issue #1708/1709: All hooks enlisted via coordinator.enlist() —
     single entry point, no fallback.  Coordinator is always available
-    (created in _do_link for local profiles, _boot_remote_services for REMOTE).
+    (created in _do_link for local profiles).
     """
     from nexus.factory._helpers import _make_gate
 

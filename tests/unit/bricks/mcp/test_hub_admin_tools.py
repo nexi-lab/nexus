@@ -28,7 +28,7 @@ async def test_hub_admin_tool_forwards_to_remote_rpc():
         subject_id="admin",
         zone_id="root",
         is_admin=True,
-        _nexus_remote_call_rpc=fake_call_rpc,
+        call_rpc=fake_call_rpc,
     )
     server = await create_mcp_server(nx=nx)
     tool = _get_tool(server, "nexus_hub_token_list")
@@ -51,7 +51,7 @@ async def test_hub_admin_tool_rejects_non_admin_before_rpc():
         subject_id="alice",
         zone_id="root",
         is_admin=False,
-        _nexus_remote_call_rpc=fake_call_rpc,
+        call_rpc=fake_call_rpc,
     )
     server = await create_mcp_server(nx=nx)
     tool = _get_tool(server, "nexus_hub_token_list")
@@ -73,7 +73,7 @@ async def test_hub_admin_tool_delegates_admin_check_for_per_request_remote_conne
 
     nx = SimpleNamespace(
         _init_cred=SimpleNamespace(user_id="remote", is_admin=False),
-        _nexus_remote_call_rpc=fake_call_rpc,
+        call_rpc=fake_call_rpc,
     )
     server = await create_mcp_server(nx=nx)
     tool = _get_tool(server, "nexus_hub_token_list")

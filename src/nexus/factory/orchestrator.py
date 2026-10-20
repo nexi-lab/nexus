@@ -75,7 +75,7 @@ logger = logging.getLogger(__name__)
 def create_nexus_services(
     record_store: "RecordStoreABC",
     metadata_store: "Any",
-    backend: "Backend",
+    backend: "Backend | None",
     dlc: Any = None,
     *,
     permissions: PermissionConfig | None = None,
@@ -239,7 +239,7 @@ def create_nexus_services(
 
 
 def create_nexus_fs(
-    backend: "Backend",
+    backend: "Backend | None",
     metadata_store: "Any | str | Path | None",
     record_store: "RecordStoreABC | None" = None,
     *,
@@ -264,7 +264,7 @@ def create_nexus_fs(
     """Create NexusFS with default services — the recommended entry point.
 
     Args:
-        backend: Backend instance for file storage.
+        backend: Explicit root backend, or None to use the native workspace root.
         metadata_store: One of: a pre-built ``RustMetastoreProxy`` (typically
             ``RustMetastoreProxy`` from ``nexus.open_local_metastore``),
             a redb file path (``str`` or ``Path``) — NexusFS constructs a
@@ -295,9 +295,6 @@ def create_nexus_fs(
         DistributedConfig as _DistributedConfig,
     )
     from nexus.core.nexus_fs import NexusFS
-
-    # Mount table is owned by the Rust kernel (F2). Root mount is deferred
-    # to sys_setattr(DT_MOUNT) after NexusFS construction.
 
     # KERNEL-ARCHITECTURE §2: No CacheStore AND no Redis/Dragonfly → EventBus disabled.
     # EventBus uses Redis/Dragonfly pub/sub independently of CacheStore, so only
@@ -343,7 +340,8 @@ def create_nexus_fs(
     # Root mount — Rust kernel DLC handles routing + metastore + dcache.
     from nexus.contracts.metadata import DT_MOUNT
 
-    nx.sys_setattr("/", entry_type=DT_MOUNT, backend=backend)
+    if backend is not None:
+        nx.sys_setattr("/", entry_type=DT_MOUNT, backend=backend)
 
     # Service-tier routing: kernel.route() + DLC for backend refs.
     # PathRouter eliminated — callers use kernel + DLC directly.

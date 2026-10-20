@@ -3,7 +3,6 @@
 import asyncio
 import json
 from concurrent.futures import ThreadPoolExecutor
-from types import SimpleNamespace
 from typing import Any, cast
 
 import grpc
@@ -83,21 +82,6 @@ class DiscoveryHost(search_pb2_grpc.SearchServiceServicer, vfs_pb2_grpc.NexusVFS
         return response
 
 
-class CachedIdentityProvider:
-    def authenticate(self, token: str) -> Any:
-        if token not in ("alice-key", "bob-key"):
-            return None
-        return SimpleNamespace(
-            authenticated=True,
-            subject_type="user",
-            subject_id=token,
-            zone_id="team",
-            zone_set=("team",),
-            zone_perms=(("team", "r"),),
-            is_admin=False,
-        )
-
-
 class SearchNexus:
     def __init__(self, search: SearchService) -> None:
         self.search = search
@@ -135,7 +119,7 @@ def discovery():
 @pytest.mark.parametrize("method", ["glob", "grep"])
 async def test_discovery_credentials_pagination_and_revocation(discovery, method):
     host, nx = discovery
-    mcp = await create_mcp_server(nx=cast(NexusFS, nx), auth_provider=CachedIdentityProvider())
+    mcp = await create_mcp_server(nx=cast(NexusFS, nx))
 
     async def invoke(token, **params):
         return await _invoke(mcp, method, token, **params)
@@ -188,7 +172,7 @@ async def test_discovery_credentials_pagination_and_revocation(discovery, method
 @pytest.mark.parametrize("method", ["glob", "grep"])
 async def test_discovery_failures_and_filter_acknowledgment(discovery, method):
     host, nx = discovery
-    mcp = await create_mcp_server(nx=cast(NexusFS, nx), auth_provider=CachedIdentityProvider())
+    mcp = await create_mcp_server(nx=cast(NexusFS, nx))
     scope = set_request_api_key("bob-key")
     try:
 

@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from nexus import CASLocalBackend
+from nexus.backends.storage.path_local import PathLocalBackend
 from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs
 
@@ -27,7 +27,7 @@ async def nexus_fs(tmp_path_factory):
     """Create a NexusFS instance for testing via factory."""
     base = tmp_path_factory.mktemp("nexus_timestamp")
     (base / "data").mkdir()
-    backend = CASLocalBackend(str(base / "data"))
+    backend = PathLocalBackend(str(base / "data"))
     metadata_store = str(base / "meta")
     nx = create_nexus_fs(
         backend=backend, metadata_store=metadata_store, permissions=PermissionConfig(enforce=False)

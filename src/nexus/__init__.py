@@ -304,11 +304,16 @@ def connect(
     # ── Local node (single-node or federated, auto-detected) ────────
     # Heavy imports for local profiles
     from nexus.backends.base.backend import Backend
-    from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.core.nexus_fs import NexusFS
 
+    if cfg.backend not in ("local", "path_local", "gcs"):
+        raise ValueError(
+            f"Unsupported workspace root backend: {cfg.backend!r}; "
+            "use nexus.fs.mount() for explicit backend mounts"
+        )
+
     # Create backend based on configuration
-    backend: Backend
+    backend: Backend | None
     if cfg.backend == "gcs":
         from nexus.backends.storage.cas_gcs import CASGCSBackend
 
@@ -336,33 +341,10 @@ def connect(
         # (~/.nexus/data), the parent (~/.nexus) is still used as nexus_root
         # for backward compatibility.
         nexus_root = data_dir if cfg.data_dir is not None else str(Path(data_dir).parent)
-        if cfg.backend == "path_local":
-            from nexus.backends.storage.path_local import PathLocalBackend
-
-            backend = PathLocalBackend(root_path=Path(data_dir).resolve())
-        else:
-            # Parse tiering config from YAML if present (Issue #3406)
-            tiering_cfg = None
-            if cfg.tiering and cfg.tiering.get("enabled"):
-                from nexus.core.config import TieringConfig
-
-                t = cfg.tiering
-                tiering_cfg = TieringConfig(
-                    enabled=True,
-                    quiet_period_seconds=float(t.get("quiet_period", 3600)),
-                    min_volume_size_bytes=int(t.get("min_volume_size", 100 * 1024 * 1024)),
-                    cloud_backend=str(t.get("cloud_backend", "gcs")),
-                    cloud_bucket=str(t.get("cloud_bucket", "")),
-                    upload_rate_limit_bytes=int(t.get("upload_rate_limit", 25 * 1024 * 1024)),
-                    sweep_interval_seconds=float(t.get("sweep_interval", 60)),
-                    local_cache_size_bytes=int(t.get("local_cache_size", 10 * 1024 * 1024 * 1024)),
-                    burst_read_threshold=int(t.get("burst_read_threshold", 5)),
-                    burst_read_window_seconds=float(t.get("burst_read_window", 60)),
-                )
-            backend = CASLocalBackend(
-                root_path=Path(data_dir).resolve(),
-                tiering_config=tiering_cfg,
-            )
+        if cfg.tiering and cfg.tiering.get("enabled"):
+            raise ValueError("Local tiering is unavailable in the native workspace profile")
+        # The native process opens its durable root using metadata_path.
+        backend = None
 
     # Resolve paths — new fields take precedence, db_path is a legacy fallback
     # only when it is a filesystem path. Docker/demo configs use db_path for a

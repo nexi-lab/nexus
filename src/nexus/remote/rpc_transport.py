@@ -310,17 +310,16 @@ class RPCTransport:
 
     def _credential(self, override: str | None = None) -> str | None:
         """Select one call's credential without changing the channel identity."""
-        caller = request_api_key.get()
-        if caller is not None:
-            return caller
-        return override if override is not None else self._auth_token
+        credential = request_api_key.get()
+        if credential is None:
+            credential = override if override is not None else self._auth_token
+        if credential == "":
+            raise AuthenticationError("Authentication required: empty request credential")
+        return credential
 
     def _vfs_credential(self, override: str | None = None) -> str:
         """VFS's string field cannot represent an explicitly empty bearer."""
-        credential = self._credential(override)
-        if credential == "":
-            raise AuthenticationError("Authentication required: empty request credential")
-        return credential or ""
+        return self._credential(override) or ""
 
     def call_rpc(
         self,
@@ -715,7 +714,9 @@ class RPCTransport:
         for key in _BACKEND_PARAM_KEYS:
             val = kwargs.get(key)
             if val is not None:
-                if isinstance(val, bytes):
+                if isinstance(val, bool):
+                    val = "true" if val else "false"
+                elif isinstance(val, bytes):
                     val = val.decode("utf-8", "replace")
                 request.backend_params[key] = str(val)
 
@@ -726,23 +727,13 @@ class RPCTransport:
             self._raise_transport_error(exc, timeout, "Setattr")
         if response.is_error:
             self._handle_typed_error(response.error_payload)
-        # Version-skew guard (#4262): a provider-built DT_MOUNT (s3/gcs/remote)
-        # is constructed server-side and must report ``created=true``. A
-        # non-error response with ``created=false`` means an older server
-        # ignored the backend params (SetattrRequest fields 15-30) and took
-        # the legacy synthetic-ack path — installing no backend. Fail closed
-        # so the caller can't write into a phantom mount whose writes silently
-        # fall through to the parent mount.
+        # A backend construction request must install a live mount. Reject
+        # an acknowledgement from a server that ignored construction params.
         _bt = kwargs.get("backend_type") or ""
-        if (
-            int(kwargs.get("entry_type", 0) or 0) == 2
-            and _bt in ("s3", "gcs", "remote")
-            and not response.created
-        ):
+        if int(kwargs.get("entry_type", 0) or 0) == 2 and _bt and not response.created:
             raise BackendError(
                 f"DT_MOUNT backend_type={_bt!r} was acknowledged but not installed "
-                f"(created=false); the gRPC server likely predates the #4262 "
-                f"backend-params bridge.",
+                "(created=false); use a server that supports this backend construction request.",
                 path=path,
             )
         return response

@@ -13,7 +13,7 @@ from fastmcp import Client
 from google.protobuf.message_factory import GetMessageClass
 
 from nexus.bricks.mcp.server import create_mcp_server
-from nexus.contracts.exceptions import AuthenticationError
+from nexus.contracts.exceptions import AuthenticationError, BackendError
 from nexus.core.nexus_fs import NexusFS
 from nexus.grpc.vfs import vfs_pb2
 from nexus.lib.request_credentials import request_api_key
@@ -127,6 +127,36 @@ OPERATIONS = [
     ("Ping", "ping", ()),
     ("Call", "call_rpc", ("whoami",)),
 ]
+
+
+@pytest.mark.parametrize(
+    "backend_type",
+    ["path_local", "cas-local", "local_connector", "s3", "gcs", "remote", "future-driver"],
+)
+def test_backend_mounts_require_installation_and_send_canonical_parameters(peer, backend_type):
+    host, transport, _ = peer
+    scope = request_api_key.set("alice-key")
+    try:
+        with pytest.raises(BackendError, match="acknowledged but not installed"):
+            transport.setattr(
+                "/workspace",
+                entry_type=2,
+                backend_type=backend_type,
+                local_root="fixture-data",
+                fsync=True,
+                follow_symlinks=False,
+            )
+    finally:
+        request_api_key.reset(scope)
+    assert len(host.calls) == 1
+    method, request = host.calls[0]
+    assert method == "Setattr" and request.auth_token == "alice-key"
+    assert request.backend_type == backend_type
+    assert dict(request.backend_params) == {
+        "local_root": "fixture-data",
+        "fsync": "true",
+        "follow_symlinks": "false",
+    }
 
 
 @pytest.mark.parametrize("rpc,method,args", OPERATIONS, ids=[item[0] for item in OPERATIONS])

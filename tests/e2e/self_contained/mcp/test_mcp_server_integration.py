@@ -1,6 +1,6 @@
 """Integration tests for MCP server with real NexusFS instances.
 
-These tests use actual NexusFS instances with CASLocalBackend to test
+These tests use actual NexusFS instances with PathLocalBackend to test
 end-to-end workflows and real component interactions.
 """
 
@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from nexus.backends.storage.cas_local import CASLocalBackend
+from nexus.backends.storage.path_local import PathLocalBackend
 from nexus.bricks.mcp.server import create_mcp_server
 from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs
@@ -79,10 +79,10 @@ def extract_items(result: str | list | dict) -> list:
 
 @pytest.fixture(scope="module")
 async def nexus_fs(tmp_path_factory):
-    """Create a real NexusFS instance with CASLocalBackend for testing."""
+    """Create a real NexusFS instance with PathLocalBackend for testing."""
     base = tmp_path_factory.mktemp("nexus_mcp_integration")
     (base / "storage").mkdir()
-    backend = CASLocalBackend(root_path=str(base / "storage"))
+    backend = PathLocalBackend(root_path=str(base / "storage"))
     nx = create_nexus_fs(
         backend=backend,
         metadata_store=str(base / "meta"),
@@ -282,8 +282,8 @@ class TestServerConfiguration:
 
     @pytest.mark.asyncio
     async def test_server_with_local_backend(self, isolated_db, tmp_path):
-        """Test server creation with CASLocalBackend."""
-        backend = CASLocalBackend(root_path=str(tmp_path / "storage"))
+        """Test server creation with PathLocalBackend."""
+        backend = PathLocalBackend(root_path=str(tmp_path / "storage"))
         nx = create_nexus_fs(
             backend=backend,
             metadata_store=str(isolated_db).replace(".db", "-raft"),

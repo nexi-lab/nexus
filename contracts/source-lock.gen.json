@@ -5,7 +5,7 @@
     "hand-maintained pin would defeat the point."
   ],
   "source": "https://github.com/nexi-lab/nexus-vfs",
-  "rev": "f070d0faa7328a1fbde2c66418290b584d128bf3",
+  "rev": "dcb582f9421526f97b3c8bde0b1e3b48241db9fa",
   "files": [
     {
       "path": "contracts/vendor/nexus-vfs.gen/existing-zone-id-ref.schema.gen.json",

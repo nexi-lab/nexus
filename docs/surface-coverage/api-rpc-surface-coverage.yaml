@@ -1833,7 +1833,7 @@ operations:
   transports:
     grpc_expose:
       name: backfill_directory_index
-      source: src/nexus/core/nexus_fs_metadata.py:2115
+      source: src/nexus/core/nexus_fs_metadata.py:2100
   profiles:
     lite: supported
     sandbox: supported
@@ -2580,7 +2580,7 @@ operations:
   transports:
     grpc_expose:
       name: delete_batch
-      source: src/nexus/core/nexus_fs_metadata.py:1485
+      source: src/nexus/core/nexus_fs_metadata.py:1470
     sdk:
       name: RemoteNexusFS.delete_batch
       source: src/nexus/remote/client.py:196
@@ -2896,7 +2896,7 @@ operations:
   transports:
     grpc_expose:
       name: exists_batch
-      source: src/nexus/core/nexus_fs_metadata.py:1380
+      source: src/nexus/core/nexus_fs_metadata.py:1365
     sdk:
       name: RemoteNexusFS.exists_batch
       source: src/nexus/remote/client.py:205
@@ -3719,7 +3719,7 @@ operations:
       source: src/nexus/cli/commands/file_ops.py:179
     grpc_expose:
       name: stat
-      source: src/nexus/core/nexus_fs_metadata.py:1160
+      source: src/nexus/core/nexus_fs_metadata.py:1145
   profiles:
     lite: supported
     sandbox: supported
@@ -3846,7 +3846,7 @@ operations:
   transports:
     grpc_expose:
       name: flush_write_observer
-      source: src/nexus/core/nexus_fs_metadata.py:2145
+      source: src/nexus/core/nexus_fs_metadata.py:2130
   profiles:
     lite: supported
     sandbox: supported
@@ -4249,7 +4249,7 @@ operations:
   transports:
     grpc_expose:
       name: get_content_id
-      source: src/nexus/core/nexus_fs_metadata.py:630
+      source: src/nexus/core/nexus_fs_metadata.py:615
     sdk:
       name: KernelClient.get_content_id
       source: src/nexus/remote/kernel_client.py:927
@@ -5439,7 +5439,7 @@ operations:
   transports:
     grpc_expose:
       name: metadata_batch
-      source: src/nexus/core/nexus_fs_metadata.py:1390
+      source: src/nexus/core/nexus_fs_metadata.py:1375
     sdk:
       name: RemoteNexusFS.metadata_batch
       source: src/nexus/remote/client.py:111
@@ -7741,7 +7741,7 @@ operations:
   transports:
     grpc_expose:
       name: rename_batch
-      source: src/nexus/core/nexus_fs_metadata.py:1624
+      source: src/nexus/core/nexus_fs_metadata.py:1609
     sdk:
       name: RemoteNexusFS.rename_batch
       source: src/nexus/remote/client.py:184
@@ -9119,7 +9119,7 @@ operations:
   transports:
     grpc_expose:
       name: stat_bulk
-      source: src/nexus/core/nexus_fs_metadata.py:1248
+      source: src/nexus/core/nexus_fs_metadata.py:1233
     sdk:
       name: RemoteNexusFS.stat_bulk
       source: src/nexus/remote/client.py:103

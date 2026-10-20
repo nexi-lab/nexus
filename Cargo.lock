@@ -277,7 +277,7 @@ dependencies = [
 [[package]]
 name = "backends"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=f070d0faa7328a1fbde2c66418290b584d128bf3#f070d0faa7328a1fbde2c66418290b584d128bf3"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=dcb582f9421526f97b3c8bde0b1e3b48241db9fa#dcb582f9421526f97b3c8bde0b1e3b48241db9fa"
 dependencies = [
  "ahash",
  "base64 0.22.1",
@@ -379,7 +379,7 @@ dependencies = [
  "bitflags 2.13.1",
  "cexpr",
  "clang-sys",
- "itertools 0.12.1",
+ "itertools",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -692,7 +692,7 @@ checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 [[package]]
 name = "contracts"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=f070d0faa7328a1fbde2c66418290b584d128bf3#f070d0faa7328a1fbde2c66418290b584d128bf3"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=dcb582f9421526f97b3c8bde0b1e3b48241db9fa#dcb582f9421526f97b3c8bde0b1e3b48241db9fa"
 dependencies = [
  "parking_lot",
  "serde",
@@ -1925,15 +1925,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "itertools"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba291022dbbd398a455acf126c1e341954079855bc60dfdda641363bd6922569"
-dependencies = [
- "either",
-]
-
-[[package]]
 name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2031,7 +2022,7 @@ dependencies = [
 [[package]]
 name = "kernel"
 version = "0.10.1"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=f070d0faa7328a1fbde2c66418290b584d128bf3#f070d0faa7328a1fbde2c66418290b584d128bf3"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=dcb582f9421526f97b3c8bde0b1e3b48241db9fa#dcb582f9421526f97b3c8bde0b1e3b48241db9fa"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -2114,7 +2105,7 @@ dependencies = [
 [[package]]
 name = "lib"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=f070d0faa7328a1fbde2c66418290b584d128bf3#f070d0faa7328a1fbde2c66418290b584d128bf3"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=dcb582f9421526f97b3c8bde0b1e3b48241db9fa#dcb582f9421526f97b3c8bde0b1e3b48241db9fa"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -2144,6 +2135,7 @@ dependencies = [
  "tokio-stream",
  "tonic",
  "tracing",
+ "windows-sys 0.61.2",
  "x509-parser",
 ]
 
@@ -2405,7 +2397,7 @@ dependencies = [
 [[package]]
 name = "nexus-plugin-abi"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=f070d0faa7328a1fbde2c66418290b584d128bf3#f070d0faa7328a1fbde2c66418290b584d128bf3"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=dcb582f9421526f97b3c8bde0b1e3b48241db9fa#dcb582f9421526f97b3c8bde0b1e3b48241db9fa"
 dependencies = [
  "http",
  "tonic",
@@ -2588,7 +2580,7 @@ version = "5.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "51e219e79014df21a225b1860a479e2dcd7cbd9130f4defd4bd0e191ea31d67d"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.21.7",
  "chrono",
  "getrandom 0.2.17",
  "http",
@@ -2641,7 +2633,7 @@ dependencies = [
  "ed25519-dalek",
  "hmac",
  "http",
- "itertools 0.10.5",
+ "itertools",
  "log",
  "oauth2",
  "p256",
@@ -2938,7 +2930,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "03da047801ff44bb6a4d407d4860c05fd70bb81714e6b2f3812603d5b145b042"
 dependencies = [
  "heck",
- "itertools 0.12.1",
+ "itertools",
  "log",
  "multimap",
  "petgraph",
@@ -2959,7 +2951,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b570b25f7617e43d59005d0990ccb79e950a423952cea19671b7a876da390adf"
 dependencies = [
  "anyhow",
- "itertools 0.12.1",
+ "itertools",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -4072,7 +4064,7 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 [[package]]
 name = "subprocess"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=f070d0faa7328a1fbde2c66418290b584d128bf3#f070d0faa7328a1fbde2c66418290b584d128bf3"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=dcb582f9421526f97b3c8bde0b1e3b48241db9fa#dcb582f9421526f97b3c8bde0b1e3b48241db9fa"
 dependencies = [
  "kernel",
  "libc",

@@ -7,7 +7,8 @@ import { useGlobalStore } from "../../src/stores/global-store.js";
 import { StatusBar } from "../../src/shared/components/status-bar.js";
 import { SearchResults } from "../../src/panels/search/search-results.js";
 import { searchFiles } from "../../src/panels/files/file-search.js";
-import { testRender } from "../helpers/render.js";
+import { testRender, waitForFrame } from "../helpers/render.js";
+import { App } from "../../src/app.js";
 
 const fixturePath = process.env.NEXUS_TS_SEARCH_FIXTURE;
 const hybridFixturePath = process.env.NEXUS_TS_SEARCH_HYBRID_FIXTURE;
@@ -20,6 +21,43 @@ describe.skipIf(!fixturePath)("native Search through the TUI worker and terminal
   const connection = fixture ? { url: fixture.url, zoneId: "sharedzone" } : undefined;
 
   afterAll(() => manager?.terminate());
+
+  it("runs the full terminal file editor against actual native VFS", async () => {
+    const config = { apiKey: fixture.adminKey, baseUrl: fixture.url, zoneId: "sharedzone", maxRetries: 0, transformKeys: false };
+    const administrator = createWorkerManager(config);
+    const files = new VfsClient(administrator.client as unknown as FetchClient);
+    const directory = `${fixture.root}/native-ui`;
+    const path = `${directory}/notes.txt`;
+    let setup: Awaited<ReturnType<typeof testRender>> | undefined;
+    try {
+      await files.mkdir(directory);
+      await files.write(path, "start");
+      useGlobalStore.setState({ config, client: administrator.client as unknown as FetchClient, activePanel: "files" });
+      await useGlobalStore.getState().testConnection();
+      expect(useGlobalStore.getState().connectionStatus).toBe("connected");
+      setup = await testRender(() => <App />, { width: 180, height: 35 });
+      await waitForFrame(setup, "Files: /");
+      setup.mockInput.pressKey("g");
+      await waitForFrame(setup, "Directory path (Enter");
+      setup.mockInput.pressKey("END");
+      await setup.mockInput.pasteBracketedText(directory.slice(1));
+      setup.mockInput.pressEnter();
+      await waitForFrame(setup, path);
+      setup.mockInput.pressKey("e");
+      await waitForFrame(setup, "Ctrl+S:save");
+      setup.mockInput.pressKey("END");
+      await setup.mockInput.typeText(" updated");
+      await waitForFrame(setup, "[modified]");
+      setup.mockInput.pressKey("s", { ctrl: true });
+      await waitForFrame(setup, `${path} | Ctrl+S:save`);
+      expect(new TextDecoder().decode(await files.read(path))).toBe("start updated");
+    } finally {
+      setup?.renderer.destroy();
+      useGlobalStore.getState().setConnectionStatus("disconnected");
+      useGlobalStore.setState({ client: null });
+      try { await files.delete(directory, true); } finally { administrator.terminate(); }
+    }
+  }, 10000);
 
   it("preserves actual native file bytes and mutation receipts through the worker", async () => {
     const administrator = createWorkerManager({ apiKey: fixture.adminKey, baseUrl: fixture.url, maxRetries: 0 });

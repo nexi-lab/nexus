@@ -1,7 +1,7 @@
 {
   "name": "@nexus-ai-fs/tui",
   "version": "0.10.1",
-  "description": "Terminal UI for Nexus \u2014 file explorer, API inspector, and monitoring dashboard",
+  "description": "Terminal UI for native Nexus files, Search and HTTP requests",
   "type": "module",
   "bin": {
     "nexus-tui": "./src/index.tsx"
@@ -22,9 +22,7 @@
     "@nexus-ai-fs/api-client": "file:../nexus-api-client",
     "@opentui/core": "0.1.96",
     "@opentui/solid": "0.1.96",
-    "anser": "^2.3.5",
-    "solid-js": "1.9.11",
-    "zustand": "^5.0.0"
+    "solid-js": "1.9.11"
   },
   "devDependencies": {
     "@types/bun": "^1.2.0",

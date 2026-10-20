@@ -26,7 +26,7 @@ jobs:
         with:
           node-version: "18"
 
-      - run: npm install
+      - run: npm ci
       - run: npm run lint
       - run: npm run test:coverage
 
@@ -45,7 +45,7 @@ jobs:
           node-version: "18"
 
       # Build api-client first (nexus-pay-ts depends on it)
-      - run: cd ../nexus-api-client && npm install && npm run build
+      - run: cd ../nexus-api-client && npm ci
       - run: npm install
       - run: npm run lint
       - run: npm run test:coverage
@@ -65,7 +65,7 @@ jobs:
           bun-version: 1.3.14
 
       # Build api-client first
-      - run: cd ../nexus-api-client && npm install && npm run build
+      - run: cd ../nexus-api-client && npm ci
 
       - run: bun install --frozen-lockfile
       - name: Install the terminal E2E dependency
@@ -86,3 +86,62 @@ jobs:
           "$build_dir/install/bin/tmux" -V
       - run: bun test
       - run: bun run lint
+
+  native-tui:
+    name: Native TUI acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    needs: api-client
+    env:
+      PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
+      CARGO_BUILD_JOBS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Build the shared native API client
+        working-directory: packages/nexus-api-client
+        run: npm ci
+      - name: Install the terminal consumer
+        working-directory: packages/nexus-tui
+        run: bun install --frozen-lockfile
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - uses: astral-sh/setup-uv@v3
+      - name: Install native fixture tools
+        run: |
+          uv venv --python 3.14
+          uv pip install -e ".[dev,test]"
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          cache: false
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+          shared-key: e2e-search-fixture
+      - name: Build the pinned native daemon and plugin
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
+        run: nice -n 10 bash scripts/build_search_fixture.sh
+      - name: Verify native terminal files, identity, Search and revocation
+        timeout-minutes: 10
+        run: |
+          uv run --no-sync python scripts/test_search_local.py \
+            --kernel-binary "$NEXUS_KERNEL_BINARY" \
+            --plugin-library "$NEXUS_SEARCH_PLUGIN_LIBRARY" \
+            --output-dir "$RUNNER_TEMP/native-tui" \
+            --keyword-only
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-tui-evidence
+          path: |
+            ${{ runner.temp }}/native-tui/run-*/results.json
+            ${{ runner.temp }}/native-tui/run-*/*tui.log
+          retention-days: 7

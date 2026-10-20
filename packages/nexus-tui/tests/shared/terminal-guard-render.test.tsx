@@ -12,8 +12,9 @@
 
 import { describe, it, expect, afterEach, beforeEach } from "bun:test";
 import { testRender } from "../helpers/render.js";
+import { onCleanup } from "solid-js";
 import { TerminalGuard } from "../../src/shared/components/terminal-guard.js";
-import { TERMINAL_GUARD_MIN_COLS, TERMINAL_GUARD_MIN_ROWS } from "../../src/shared/components/side-nav-utils.js";
+import { TERMINAL_GUARD_MIN_COLS, TERMINAL_GUARD_MIN_ROWS } from "../../src/shared/terminal-dimensions.js";
 import { terminalDimensions, _setDimensionsForTesting } from "../../src/shared/terminal-dimensions.js";
 
 // =============================================================================
@@ -236,6 +237,27 @@ describe("signal-driven boundary (via _setDimensionsForTesting)", () => {
 // =============================================================================
 // Non-TTY path
 // =============================================================================
+
+describe("draft lifetime across terminal resizing", () => {
+  it("hides content without destroying its owner", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+    _setDimensionsForTesting({ width: 100, height: 30 });
+    let disposed = 0;
+    function Draft() { onCleanup(() => { disposed++; }); return <text>{"unsaved draft"}</text>; }
+    setup = await testRender(() => <TerminalGuard><Draft /></TerminalGuard>, { width: 100, height: 30 });
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("unsaved draft");
+    _setDimensionsForTesting({ width: 40, height: 10 });
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("Terminal too small");
+    expect(setup.captureCharFrame()).not.toContain("unsaved draft");
+    expect(disposed).toBe(0);
+    _setDimensionsForTesting({ width: 100, height: 30 });
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("unsaved draft");
+    expect(disposed).toBe(0);
+  });
+});
 
 describe("non-TTY path", () => {
   it("renders children unconditionally in non-TTY environment", async () => {

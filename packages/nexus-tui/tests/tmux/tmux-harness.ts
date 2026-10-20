@@ -62,6 +62,7 @@ export interface TmuxSessionOptions {
   url?: string;
   /** API key for auth. */
   apiKey?: string;
+  zoneId?: string;
 }
 
 export class TmuxSession {
@@ -142,6 +143,12 @@ export class TmuxSession {
     await proc.exited;
     // Small delay for TUI to process the keystroke
     await sleep(200);
+  }
+
+  async resize(width: number, height: number): Promise<void> {
+    const proc = Bun.spawn(["tmux", "-S", TMUX_SOCKET, "resize-window", "-t", this.sessionName,
+      "-x", String(width), "-y", String(height)], { stdout: "pipe", stderr: "pipe" });
+    if (await proc.exited !== 0) throw new Error(`Could not resize test terminal: ${await new Response(proc.stderr).text()}`);
   }
 
   /**
@@ -270,6 +277,7 @@ function buildTuiCommand(options: TmuxSessionOptions): string {
   const parts = ["bun", "run", "src/index.tsx"];
   if (options.url) parts.push("--url", options.url);
   if (options.apiKey) parts.push("--api-key", options.apiKey);
+  if (options.zoneId) parts.push("--zone-id", options.zoneId);
   return parts.map(shellQuote).join(" ");
 }
 

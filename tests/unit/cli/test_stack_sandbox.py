@@ -1109,12 +1109,6 @@ class TestPreExistingConfigDiscovery:
             assert emitted["NEXUS_PROFILE"] == "sandbox"
             assert ":3030" in emitted["NEXUS_URL"]
 
-            from nexus.cli.commands.status import status as status_cmd
-
-            st_result = runner.invoke(status_cmd, ["--json"])
-            assert st_result.exit_code in (0, 1), st_result.output
-            assert "3030" in json.dumps(json.loads(st_result.output)), st_result.output
-
     def test_existing_project_config_and_state_byte_unchanged_no_explicit_ddir(
         self, runner: CliRunner, tmp_path: Path
     ) -> None:

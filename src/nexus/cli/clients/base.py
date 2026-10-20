@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Self
 
 __all__ = ["BaseServiceClient", "NexusAPIError"]
 
@@ -32,11 +32,11 @@ class BaseServiceClient:
             headers["Authorization"] = f"Bearer {api_key}"
         self._client = httpx.Client(base_url=self._url, headers=headers, timeout=timeout)
 
-    def __enter__(self) -> BaseServiceClient:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *args: Any) -> None:
-        self._client.close()
+        self.close()
 
     def close(self) -> None:
         self._client.close()
@@ -47,12 +47,15 @@ class BaseServiceClient:
         path: str,
         params: dict[str, Any] | None = None,
         json_body: dict[str, Any] | None = None,
+        *,
+        timeout: float | None = None,
     ) -> dict[str, Any]:
         """Make HTTP request and return parsed JSON response."""
         if params:
             params = {k: v for k, v in params.items() if v is not None}
 
-        response = self._client.request(method, path, params=params, json=json_body)
+        options: dict[str, Any] = {"timeout": timeout} if timeout is not None else {}
+        response = self._client.request(method, path, params=params, json=json_body, **options)
 
         if response.status_code >= 400:
             try:

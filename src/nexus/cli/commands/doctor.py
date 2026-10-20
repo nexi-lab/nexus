@@ -108,31 +108,18 @@ def check_docker_daemon() -> CheckResult:
 
 
 def check_server_reachable() -> CheckResult:
-    """Check that the Nexus HTTP server is reachable."""
-    url = os.getenv("NEXUS_URL", "http://localhost:2026")
-    try:
-        import httpx
+    """Check the selected native HTTP host with its actual credential."""
+    from nexus.cli.config import resolve_connection
 
-        with httpx.Client(timeout=2.0) as client:
-            resp = client.get(f"{url}/health")
-            if resp.status_code == 200:
-                return CheckResult(
-                    name="server-http",
-                    status=CheckStatus.OK,
-                    message=f"Server reachable at {url}.",
-                )
-            return CheckResult(
-                name="server-http",
-                status=CheckStatus.WARNING,
-                message=f"Server returned HTTP {resp.status_code}.",
-            )
-    except Exception:
+    connection = resolve_connection(os.getenv("NEXUS_URL"), os.getenv("NEXUS_API_KEY"))
+    if not connection.url:
         return CheckResult(
             name="server-http",
-            status=CheckStatus.WARNING,
-            message=f"Server not reachable at {url}.",
-            fix_hint="Start the server: nexusd",
+            status=CheckStatus.ERROR,
+            message="No native HTTP host configured.",
+            fix_hint="Set NEXUS_URL or select a connection profile.",
         )
+    return _check_remote_http(connection.url, connection.api_key, name="server-http")
 
 
 def check_grpc_port() -> CheckResult:
@@ -635,37 +622,24 @@ def doctor(ctx: click.Context, output_opts: OutputOptions, auto_fix: bool) -> No
 # ---------------------------------------------------------------------------
 
 
-def _check_remote_http(url: str) -> CheckResult:
-    """GET {url}/health — OK on 200, ERROR otherwise.
+def _check_remote_http(url: str, api_key: str | None, *, name: str = "remote-http") -> CheckResult:
+    """Verify native status and authenticated whoami with the shared probe."""
+    from nexus.cli.clients.host import HostClient
 
-    This is a *preflight*: a non-200 health response means the remote
-    path is not usable, so it is an ERROR (non-zero exit), not a
-    soft WARNING.
-    """
-    health_url = url.rstrip("/") + "/health"
     try:
-        import httpx
-
-        with httpx.Client(timeout=2.0) as client:
-            resp = client.get(health_url)
-            if resp.status_code == 200:
-                return CheckResult(
-                    name="remote-http",
-                    status=CheckStatus.OK,
-                    message=f"HTTP health OK at {health_url}.",
-                )
-            return CheckResult(
-                name="remote-http",
-                status=CheckStatus.ERROR,
-                message=f"HTTP health returned {resp.status_code} at {health_url}.",
-                fix_hint=f"Check the hub server is running and {health_url} is accessible.",
-            )
+        with HostClient(url, api_key) as client:
+            result = client.probe()
+        return CheckResult(
+            name=name,
+            status=CheckStatus.OK,
+            message=f"Native HTTP authenticated at {url} (version={result['server']['version']}).",
+        )
     except Exception as exc:
         return CheckResult(
-            name="remote-http",
+            name=name,
             status=CheckStatus.ERROR,
-            message=f"HTTP health unreachable at {health_url}: {exc}",
-            fix_hint=f"Check NEXUS_URL and that the hub is running at {url}.",
+            message=f"Native HTTP check failed at {url}: {exc}",
+            fix_hint="Check the owning host's URL and native credential.",
         )
 
 
@@ -815,7 +789,7 @@ def doctor_remote(output_opts: OutputOptions, url: str | None, api_key: str | No
     """Probe a remote hub's HTTP and gRPC reachability.
 
     Runs two checks and returns an actionable diagnosis:
-      1. HTTP health (GET <url>/health)
+      1. Native HTTP status and authenticated identity
       2. gRPC reachability (via RPCTransport ping)
 
     Examples:
@@ -828,7 +802,7 @@ def doctor_remote(output_opts: OutputOptions, url: str | None, api_key: str | No
     try:
         timing = CommandTiming()
         with timing.phase("remote-checks"):
-            http_result = _check_remote_http(url)
+            http_result = _check_remote_http(url, api_key)
             grpc_result = _check_remote_grpc(url, api_key)
 
         results: list[CheckResult] = [http_result, grpc_result]

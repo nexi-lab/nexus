@@ -33,7 +33,7 @@ import sys
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, Never, cast
 
 import click
 
@@ -240,7 +240,7 @@ def render_error(
     output_opts: OutputOptions | None = None,
     exit_code: ExitCode = ExitCode.GENERAL_ERROR,
     timing: CommandTiming | None = None,
-) -> None:
+) -> Never:
     """Render an error and exit with the appropriate code.
 
     In JSON mode, outputs a structured error object. In human mode, prints

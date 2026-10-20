@@ -9,8 +9,8 @@ from nexus.cli.clients.base import BaseServiceClient, NexusAPIError
 
 
 class AuthClient(BaseServiceClient):
-    def whoami(self) -> dict[str, Any]:
-        result = self._request("GET", "/v2/auth/whoami")
+    def whoami(self, *, timeout: float | None = None) -> dict[str, Any]:
+        result = self._request("GET", "/v2/auth/whoami", timeout=timeout)
         if not (
             all(
                 isinstance(result.get(name), str)

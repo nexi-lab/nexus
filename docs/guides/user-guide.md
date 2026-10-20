@@ -29,11 +29,16 @@ Replace `/docs` below with a directory mounted by your host. Use its actual zone
 
 ```sh
 nexus identity whoami --json
+nexus status --json
+nexus ready --timeout 10 --json
+nexus doctor remote --json
 nexus profile list
 nexus config show
 ```
 
 The identity response comes from `/v2/auth/whoami`, including the authenticated subject, administrator flag and zone grants. Human account login in nexus-frontend and native file credentials have independent identity boundaries.
+
+`status` reports current native HTTP status and the authenticated principal. `ready` waits for both within one deadline; authorization failures exit immediately. `doctor remote` also checks the configured gRPC endpoint. Connection profiles store connection settings; runtime reports come from the selected host.
 
 ## Read and write files
 

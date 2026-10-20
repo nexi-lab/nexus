@@ -3209,7 +3209,7 @@ operations:
   transports:
     cli:
       name: nexus doctor remote
-      source: src/nexus/cli/commands/doctor.py:799
+      source: src/nexus/cli/commands/doctor.py:773
   profiles:
     lite: unverified
     sandbox: unverified
@@ -4090,7 +4090,7 @@ operations:
   transports:
     cli:
       name: nexus profile
-      source: src/nexus/cli/commands/profile.py:33
+      source: src/nexus/cli/commands/profile.py:26
   profiles:
     lite: supported
     sandbox: supported
@@ -4143,7 +4143,7 @@ operations:
   transports:
     cli:
       name: nexus ready
-      source: src/nexus/cli/commands/ready.py:142
+      source: src/nexus/cli/commands/ready.py:20
   profiles:
     lite: supported
     sandbox: supported
@@ -4293,7 +4293,7 @@ operations:
   transports:
     cli:
       name: nexus status
-      source: src/nexus/cli/commands/status.py:436
+      source: src/nexus/cli/commands/status.py:16
   profiles:
     lite: supported
     sandbox: supported
@@ -8467,24 +8467,7 @@ operations:
   transports:
     cli:
       name: nexus profile add
-      source: src/nexus/cli/commands/profile.py:114
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: profile.contract
-  module: filesystem
-  summary: ''
-  transports:
-    cli:
-      name: nexus profile contract
-      source: src/nexus/cli/commands/profile.py:243
+      source: src/nexus/cli/commands/profile.py:107
   profiles:
     lite: unverified
     sandbox: unverified
@@ -8501,7 +8484,7 @@ operations:
   transports:
     cli:
       name: nexus profile delete
-      source: src/nexus/cli/commands/profile.py:152
+      source: src/nexus/cli/commands/profile.py:145
   profiles:
     lite: unverified
     sandbox: unverified
@@ -8518,7 +8501,7 @@ operations:
   transports:
     cli:
       name: nexus profile list
-      source: src/nexus/cli/commands/profile.py:49
+      source: src/nexus/cli/commands/profile.py:42
   profiles:
     lite: unverified
     sandbox: unverified
@@ -8535,7 +8518,7 @@ operations:
   transports:
     cli:
       name: nexus profile rename
-      source: src/nexus/cli/commands/profile.py:216
+      source: src/nexus/cli/commands/profile.py:215
   profiles:
     lite: unverified
     sandbox: unverified
@@ -8552,7 +8535,7 @@ operations:
   transports:
     cli:
       name: nexus profile show
-      source: src/nexus/cli/commands/profile.py:182
+      source: src/nexus/cli/commands/profile.py:175
   profiles:
     lite: unverified
     sandbox: unverified
@@ -8569,7 +8552,7 @@ operations:
   transports:
     cli:
       name: nexus profile use
-      source: src/nexus/cli/commands/profile.py:89
+      source: src/nexus/cli/commands/profile.py:82
   profiles:
     lite: unverified
     sandbox: unverified
@@ -11209,7 +11192,7 @@ operations:
   transports:
     cli:
       name: nexus doctor
-      source: src/nexus/cli/commands/doctor.py:580
+      source: src/nexus/cli/commands/doctor.py:567
   profiles:
     lite: supported
     sandbox: supported
@@ -14989,14 +14972,6 @@ parity_warnings:
   - mcp
   - sdk
 - operation_id: profile.add
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: profile.contract
   has:
   - cli
   missing:

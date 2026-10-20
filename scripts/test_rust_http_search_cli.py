@@ -237,6 +237,74 @@ async def main() -> None:
                 )
             )["data"]
             assert identity["subject_id"] == f"cli-alice-{suffix}" and identity["is_admin"] is False
+            status = (await native_cli(["status"], key=keys["alice"]))["data"]
+            assert status["server"]["status"] == "ok" and status["server"]["version"], status
+            assert status["identity"] == identity, status
+            assert "deployment_profile" not in status and "enabled_bricks" not in status, status
+            ready = (await native_cli(["ready", "--timeout", "10"], key=keys["alice"]))["data"]
+            assert ready["ready"] is True and ready["identity"] == identity, ready
+            for args in (["status"], ["ready", "--timeout", "10"]):
+                denied = await native_cli(
+                    args, key="sk-never-minted", expected=ExitCode.PERMISSION_DENIED
+                )
+                assert denied["error"]["code"] == "PERMISSION_DENIED", denied
+            stdout, _ = await run(
+                ["-m", "nexus.cli.main", "profile", "show", "--test"], key=keys["alice"]
+            )
+            assert "Native HTTP connection OK" in stdout and identity["subject_id"] in stdout, safe(
+                stdout
+            )
+            await run(
+                ["-m", "nexus.cli.main", "profile", "show", "--test"],
+                key="sk-never-minted",
+                expected=1,
+            )
+            doctor = await native_cli(["doctor", "remote"], key=keys["alice"], extra_env=agent_env)
+            assert {check["name"] for check in doctor["data"]} == {"remote-http", "remote-grpc"}, (
+                doctor
+            )
+            assert all(check["status"] == "ok" for check in doctor["data"]), doctor
+
+            routes = []
+
+            async def unrelated_server(reader, writer):
+                try:
+                    request = await reader.readuntil(b"\r\n\r\n")
+                    route = request.split(b" ")[1].decode()
+                    routes.append(route)
+                    body = json.dumps(
+                        {"status": "ok", "version": "unrelated"} if route == "/v2/status" else {}
+                    ).encode()
+                    writer.write(
+                        b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: "
+                        + str(len(body)).encode()
+                        + b"\r\n\r\n"
+                        + body
+                    )
+                    await writer.drain()
+                finally:
+                    writer.close()
+                    await writer.wait_closed()
+
+            fake = await asyncio.start_server(unrelated_server, "127.0.0.1", 0)
+            async with fake:
+                port = fake.sockets[0].getsockname()[1]
+                wrong_host = {"NEXUS_URL": f"http://127.0.0.1:{port}"}
+                rejected = await native_cli(
+                    ["status"],
+                    key="sk-disposable-fixture",
+                    expected=ExitCode.INTERNAL_ERROR,
+                    extra_env=wrong_host,
+                )
+                assert rejected["data"] is None and rejected["error"], rejected
+                timed_out = await native_cli(
+                    ["ready", "--timeout", "1"],
+                    key="sk-disposable-fixture",
+                    expected=ExitCode.TEMPFAIL,
+                    extra_env=wrong_host,
+                )
+                assert timed_out["data"]["ready"] is False, timed_out
+            assert set(routes) == {"/v2/status", "/v2/auth/whoami"}, routes
             listed = (
                 await native_cli(["admin", "list-keys", "--subject-id", f"cli-alice-{suffix}"])
             )["data"]["keys"]

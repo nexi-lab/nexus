@@ -19,7 +19,7 @@ import { terminalDimensions, isTooSmall } from "../terminal-dimensions.js";
 import {
   TERMINAL_GUARD_MIN_COLS,
   TERMINAL_GUARD_MIN_ROWS,
-} from "./side-nav-utils.js";
+} from "../terminal-dimensions.js";
 import { statusColor } from "../theme.js";
 import { textStyle } from "../text-style.js";
 
@@ -34,9 +34,9 @@ export function TerminalGuard(props: TerminalGuardProps): JSX.Element {
 
   return (
     <box height="100%" width="100%" flexDirection="column">
-      <Show when={!tooSmall()}>{props.children}</Show>
+      <box height="100%" width="100%" visible={!tooSmall()}>{props.children}</box>
       <Show when={tooSmall()}>
-        <box height="100%" width="100%" justifyContent="center" alignItems="center" flexDirection="column">
+        <box position="absolute" top={0} left={0} height="100%" width="100%" justifyContent="center" alignItems="center" flexDirection="column">
           <text style={textStyle({ bold: true, fg: statusColor.warning })}>
             {"Terminal too small"}
           </text>

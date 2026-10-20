@@ -10,7 +10,7 @@
 
 import { describe, it, expect, mock, beforeEach, afterEach } from "bun:test";
 import { readDimensions, terminalDimensions, _setDimensionsForTesting } from "../../src/shared/terminal-dimensions.js";
-import { TERMINAL_GUARD_MIN_COLS, TERMINAL_GUARD_MIN_ROWS, RESIZE_DEBOUNCE_MS } from "../../src/shared/components/side-nav-utils.js";
+import { TERMINAL_GUARD_MIN_COLS, TERMINAL_GUARD_MIN_ROWS, RESIZE_DEBOUNCE_MS } from "../../src/shared/terminal-dimensions.js";
 
 // =============================================================================
 // readDimensions

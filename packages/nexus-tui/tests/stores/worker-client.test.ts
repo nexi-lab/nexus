@@ -406,7 +406,7 @@ describe("WorkerFetchClient", () => {
         status: 200,
         statusText: "OK",
         headers: [["Upload-Offset", "1024"], ["Upload-Length", "4096"]],
-        body: "",
+        body: new Uint8Array(),
         ok: true,
       },
     });

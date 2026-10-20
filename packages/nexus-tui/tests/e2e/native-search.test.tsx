@@ -1,13 +1,14 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
-import { FetchClient, IndexingClient, SearchClient, type IndexingMode } from "@nexus-ai-fs/api-client";
+import { FetchClient, IndexingClient, SearchClient, VfsClient, type IndexingMode } from "@nexus-ai-fs/api-client";
 import { createWorkerManager } from "../../src/worker/worker-manager.js";
 import { useSearchStore } from "../../src/stores/search-store.js";
 import { useGlobalStore } from "../../src/stores/global-store.js";
 import { StatusBar } from "../../src/shared/components/status-bar.js";
 import { SearchResults } from "../../src/panels/search/search-results.js";
 import { searchFiles } from "../../src/panels/files/file-search.js";
-import { testRender } from "../helpers/render.js";
+import { testRender, waitForFrame } from "../helpers/render.js";
+import { App } from "../../src/app.js";
 
 const fixturePath = process.env.NEXUS_TS_SEARCH_FIXTURE;
 const hybridFixturePath = process.env.NEXUS_TS_SEARCH_HYBRID_FIXTURE;
@@ -20,6 +21,67 @@ describe.skipIf(!fixturePath)("native Search through the TUI worker and terminal
   const connection = fixture ? { url: fixture.url, zoneId: "sharedzone" } : undefined;
 
   afterAll(() => manager?.terminate());
+
+  it("runs the full terminal file editor against actual native VFS", async () => {
+    const config = { apiKey: fixture.adminKey, baseUrl: fixture.url, zoneId: "sharedzone", maxRetries: 0, transformKeys: false };
+    const administrator = createWorkerManager(config);
+    const files = new VfsClient(administrator.client as unknown as FetchClient);
+    const directory = `${fixture.root}/native-ui`;
+    const path = `${directory}/notes.txt`;
+    let setup: Awaited<ReturnType<typeof testRender>> | undefined;
+    try {
+      await files.mkdir(directory);
+      await files.write(path, "start");
+      useGlobalStore.setState({ config, client: administrator.client as unknown as FetchClient, activePanel: "files" });
+      await useGlobalStore.getState().testConnection();
+      expect(useGlobalStore.getState().connectionStatus).toBe("connected");
+      setup = await testRender(() => <App />, { width: 180, height: 35 });
+      await waitForFrame(setup, frame => frame.includes("Files: /") && !frame.includes("Loading…") && !frame.includes("Error: "));
+      setup.mockInput.pressKey("g");
+      await waitForFrame(setup, "Directory path (Enter");
+      setup.mockInput.pressKey("END");
+      await setup.mockInput.pasteBracketedText(directory.slice(1));
+      setup.mockInput.pressEnter();
+      await waitForFrame(setup, `FILE ${path} (`);
+      setup.mockInput.pressKey("e");
+      await waitForFrame(setup, "Ctrl+S:save");
+      setup.mockInput.pressKey("END");
+      await setup.mockInput.typeText(" updated");
+      await waitForFrame(setup, "[modified]");
+      setup.mockInput.pressKey("s", { ctrl: true });
+      await waitForFrame(setup, `${path} | Ctrl+S:save`);
+      expect(new TextDecoder().decode(await files.read(path))).toBe("start updated");
+    } finally {
+      setup?.renderer.destroy();
+      useGlobalStore.getState().setConnectionStatus("disconnected");
+      useGlobalStore.setState({ client: null });
+      try { await files.delete(directory, true); } finally { administrator.terminate(); }
+    }
+  }, 10000);
+
+  it("preserves actual native file bytes and mutation receipts through the worker", async () => {
+    const administrator = createWorkerManager({ apiKey: fixture.adminKey, baseUrl: fixture.url, maxRetries: 0 });
+    const files = new VfsClient(administrator.client as unknown as FetchClient);
+    const directory = `${fixture.root}/native-files`;
+    const path = `${directory}/日本語 & bytes.bin`;
+    const renamed = `${directory}/renamed.bin`;
+    try {
+      await files.mkdir(directory);
+      const bytes = new Uint8Array([0, 255, 254, 128, 13, 10]);
+      const receipt = await files.write(path, bytes);
+      expect(receipt.size).toBe(bytes.length);
+      expect(receipt.content_id).toBeTruthy();
+      expect(await files.read(path)).toEqual(bytes);
+      expect((await files.metadata(path)).is_directory).toBe(false);
+      expect((await files.list(directory)).map((entry) => entry.path)).toContain(path);
+      await files.rename(path, renamed);
+      expect(await files.read(renamed)).toEqual(bytes);
+      expect(await files.delete(renamed)).toBe(true);
+      expect(await files.list(directory)).toEqual([]);
+    } finally {
+      try { await files.delete(directory, true); } finally { administrator.terminate(); }
+    }
+  });
 
   it("connects to the native daemon and renders its authenticated identity", async () => {
     const config = {

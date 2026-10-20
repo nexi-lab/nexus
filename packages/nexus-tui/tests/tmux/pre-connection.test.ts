@@ -1,80 +1,16 @@
-/**
- * tmux capture-pane test: Pre-connection screen (Screen 1).
- *
- * Tests the TUI startup flow without a running Nexus server.
- * Verifies the pre-connection screen renders with expected elements.
- *
- * @see Issue #3248 Screen 1 wireframe
- */
-
-import { describe, test, expect, afterAll } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { TmuxSession, cleanupTestSessions } from "./tmux-harness.js";
-
-afterAll(async () => {
-  await cleanupTestSessions();
-});
-
-describe.skipIf(process.platform === "win32")("Pre-connection screen", () => {
-  test("renders NEXUS logo and connection menu on startup", async () => {
-    const session = await TmuxSession.create({
-      width: 120,
-      height: 40,
-      // No server running — TUI shows pre-connection screen
-      url: "http://localhost:19999",  // Unreachable port
-    });
-
+afterAll(cleanupTestSessions);
+describe.skipIf(process.platform === "win32")("native CLI connection and exit", () => {
+  test("shows explicit native connection guidance and preserves a zero quit status", async () => {
+    const session = await TmuxSession.create({ width: 120, height: 40, url: "http://127.0.0.1:1", apiKey: "unreachable-fixture" });
     try {
-      // Wait for TUI to render the pre-connection screen
-      const content = await session.waitForText("NEXUS", 8000);
-
-      // Verify ASCII logo is present
-      expect(content).toContain("NEXUS");
-
-      // Verify connection state message is shown
-      // Should show either "No server" or "Connecting" or similar
-      expect(content.toLowerCase()).toMatch(/(connect|server|setup|retry)/);
-
-      // Verify status bar is present at bottom
-      expect(content).toMatch(/(help|setup)/i);
-    } finally {
-      await session.destroy();
-    }
-  }, 15000);
-
-  test("renders status bar with help hint", async () => {
-    const session = await TmuxSession.create({
-      width: 120,
-      height: 40,
-      url: "http://localhost:19999",
-    });
-
-    try {
-      await session.waitForText("NEXUS", 8000);
-      const content = await session.capturePane();
-
-      // Status bar should show help hint prominently (Issue #3245 fix)
-      expect(content).toContain("?:help");
-    } finally {
-      await session.destroy();
-    }
-  }, 15000);
-
-  test("q key exits the TUI", async () => {
-    const session = await TmuxSession.create({
-      width: 120,
-      height: 40,
-      url: "http://localhost:19999",
-    });
-
-    try {
-      await session.waitForText("NEXUS", 8000);
-
-      // Send 'q' to quit
+      const frame = await session.waitForText("Nexus native", 8000);
+      expect(frame).toContain("1:Files");
+      expect(frame).toContain("3:Console");
+      expect(frame).not.toContain("nexus serve");
       await session.sendKeys("q");
-
       expect(await session.waitForExit(5000)).toBe(0);
-    } finally {
-      await session.destroy();
-    }
+    } finally { await session.destroy(); }
   }, 15000);
 });

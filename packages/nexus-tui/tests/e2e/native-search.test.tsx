@@ -36,13 +36,13 @@ describe.skipIf(!fixturePath)("native Search through the TUI worker and terminal
       await useGlobalStore.getState().testConnection();
       expect(useGlobalStore.getState().connectionStatus).toBe("connected");
       setup = await testRender(() => <App />, { width: 180, height: 35 });
-      await waitForFrame(setup, "Files: /");
+      await waitForFrame(setup, `DIR /${directory.split("/")[1]} (`);
       setup.mockInput.pressKey("g");
       await waitForFrame(setup, "Directory path (Enter");
       setup.mockInput.pressKey("END");
       await setup.mockInput.pasteBracketedText(directory.slice(1));
       setup.mockInput.pressEnter();
-      await waitForFrame(setup, path);
+      await waitForFrame(setup, `FILE ${path} (`);
       setup.mockInput.pressKey("e");
       await waitForFrame(setup, "Ctrl+S:save");
       setup.mockInput.pressKey("END");

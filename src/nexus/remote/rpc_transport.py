@@ -1,19 +1,7 @@
-"""Sync gRPC transport client for the REMOTE deployment profile.
+"""Authenticated native RPCs over one synchronous gRPC channel.
 
-Client-side gRPC transport that replaces the duplicated HTTP/JSON-RPC
-transport (httpx + tenacity) in ``RemoteBackend`` and ``RemoteMetastore`` (now Rust)
-with a single gRPC channel.
-
-Phase 1 (PR #2667): Generic ``call_rpc()`` — method name + JSON payload.
-Phase 2: Typed methods (``read_file``, ``write_file``, ``delete_file``,
-``ping``) with native ``bytes`` fields — no JSON/base64
-overhead for content operations.
-
-Generic ``call_rpc()`` stays for 25+ service proxy methods and metadata ops.
-Typed methods only for content-heavy operations and health checks.
-
-Issue #1133: Unified gRPC transport.
-Issue #1202: gRPC for REMOTE profile.
+Each transport operation makes one attempt. A failed response can follow a
+completed mutation or a consumed IPC message; the caller owns explicit retries.
 """
 
 from __future__ import annotations
@@ -24,12 +12,6 @@ from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
 import grpc
-from tenacity import (
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
 
 from nexus.contracts.exceptions import (
     AuthenticationError,
@@ -243,12 +225,6 @@ class RPCTransport:
             raise AuthenticationError("Authentication required: empty request credential")
         return credential or ""
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(RemoteConnectionError),
-        reraise=True,
-    )
     def call_rpc(
         self,
         method: str,
@@ -331,12 +307,6 @@ class RPCTransport:
         error_dict = decode_rpc_message(error_payload)
         self._error_handler._handle_rpc_error(error_dict)
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(RemoteConnectionError),
-        reraise=True,
-    )
     def read_file(
         self, path: str, *, content_id: str = "", read_timeout: float | None = None
     ) -> bytes:
@@ -379,12 +349,6 @@ class RPCTransport:
             self._handle_typed_error(response.error_payload)
         return response
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(RemoteConnectionError),
-        reraise=True,
-    )
     def write_file(
         self,
         path: str,
@@ -419,12 +383,6 @@ class RPCTransport:
             **_revision_fields(response),
         }
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(RemoteConnectionError),
-        reraise=True,
-    )
     def delete(
         self,
         path: str,
@@ -460,12 +418,6 @@ class RPCTransport:
         ``success`` bool that the legacy callers expect."""
         return bool(self.delete(path, recursive, read_timeout).success)
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(RemoteConnectionError),
-        reraise=True,
-    )
     def mkdir(
         self,
         path: str,
@@ -486,12 +438,6 @@ class RPCTransport:
             self._handle_typed_error(response.error_payload)
         return response
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(RemoteConnectionError),
-        reraise=True,
-    )
     def batch_read(
         self,
         items: list[tuple[str, int, int | None]],
@@ -519,12 +465,6 @@ class RPCTransport:
             self._raise_transport_error(exc, timeout, "BatchRead")
         return list(response.results)
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(RemoteConnectionError),
-        reraise=True,
-    )
     def batch_write(
         self,
         files: list[tuple[str, bytes]],
@@ -552,18 +492,6 @@ class RPCTransport:
                 self._handle_typed_error(item.error_payload)
         return list(response.results)
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(RemoteConnectionError),
-        reraise=True,
-    )
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(RemoteConnectionError),
-        reraise=True,
-    )
     def readdir(self, path: str, zone_id: str = "", read_timeout: float | None = None) -> list[Any]:
         """List directory entries via the typed Readdir RPC.
 
@@ -584,12 +512,6 @@ class RPCTransport:
             self._handle_typed_error(response.error_payload)
         return list(response.entries)
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(RemoteConnectionError),
-        reraise=True,
-    )
     def batch_stat(
         self,
         paths: list[str],
@@ -613,12 +535,6 @@ class RPCTransport:
             self._raise_transport_error(exc, timeout, "BatchStat")
         return list(response.results)
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(RemoteConnectionError),
-        reraise=True,
-    )
     def stat(self, path: str, zone_id: str = "", read_timeout: float | None = None) -> Any | None:
         """Stat a path via the typed Stat RPC.
 
@@ -636,12 +552,6 @@ class RPCTransport:
             self._handle_typed_error(response.error_payload)
         return response if response.found else None
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(RemoteConnectionError),
-        reraise=True,
-    )
     def setattr(self, path: str, read_timeout: float | None = None, **kwargs: Any) -> Any:
         """Set attributes via the typed Setattr RPC.
 
@@ -740,12 +650,6 @@ class RPCTransport:
             )
         return response
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(RemoteConnectionError),
-        reraise=True,
-    )
     def rename(self, path: str, new_path: str, read_timeout: float | None = None) -> Any:
         """Rename via the typed Rename RPC. Returns the RenameResponse."""
         request = vfs_pb2.RenameRequest(
@@ -760,12 +664,6 @@ class RPCTransport:
             self._handle_typed_error(response.error_payload)
         return response
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(RemoteConnectionError),
-        reraise=True,
-    )
     def copy(self, src: str, dst: str, read_timeout: float | None = None) -> Any:
         """Server-side copy via the typed Copy RPC. Returns the CopyResponse."""
         request = vfs_pb2.CopyRequest(src=src, dst=dst, auth_token=self._vfs_credential())
@@ -778,12 +676,6 @@ class RPCTransport:
             self._handle_typed_error(response.error_payload)
         return response
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(RemoteConnectionError),
-        reraise=True,
-    )
     def lock(
         self,
         path: str,
@@ -811,12 +703,6 @@ class RPCTransport:
             self._handle_typed_error(response.error_payload)
         return response
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(RemoteConnectionError),
-        reraise=True,
-    )
     def unlock(
         self,
         path: str,
@@ -837,12 +723,6 @@ class RPCTransport:
             self._handle_typed_error(response.error_payload)
         return response
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(RemoteConnectionError),
-        reraise=True,
-    )
     def watch(
         self,
         path: str,
@@ -869,12 +749,6 @@ class RPCTransport:
             self._handle_typed_error(response.error_payload)
         return response
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(RemoteConnectionError),
-        reraise=True,
-    )
     def get_xattr(self, path: str, key: str, read_timeout: float | None = None) -> Any:
         """Get a single xattr via the typed GetXattr RPC.
 
@@ -891,12 +765,6 @@ class RPCTransport:
             self._handle_typed_error(response.error_payload)
         return response
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(RemoteConnectionError),
-        reraise=True,
-    )
     def set_xattr(self, path: str, key: str, value: str, read_timeout: float | None = None) -> None:
         """Set an xattr via the typed SetXattr RPC."""
         request = vfs_pb2.SetXattrRequest(
@@ -910,12 +778,6 @@ class RPCTransport:
         if response.is_error:
             self._handle_typed_error(response.error_payload)
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(RemoteConnectionError),
-        reraise=True,
-    )
     def get_xattr_bulk(
         self, paths: list[str], key: str, read_timeout: float | None = None
     ) -> list[Any]:
@@ -941,12 +803,6 @@ class RPCTransport:
     def _ipc_path_request(self, path: str) -> Any:
         return vfs_pb2.IpcPathRequest(path=path, auth_token=self._vfs_credential())
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(RemoteConnectionError),
-        reraise=True,
-    )
     def close_pipe(self, path: str, read_timeout: float | None = None) -> None:
         """Close a pipe via the typed ClosePipe RPC."""
         timeout = read_timeout if read_timeout is not None else self._timeout
@@ -957,12 +813,6 @@ class RPCTransport:
         if resp.is_error:
             self._handle_typed_error(resp.error_payload)
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(RemoteConnectionError),
-        reraise=True,
-    )
     def has_pipe(self, path: str, read_timeout: float | None = None) -> bool:
         """Has-pipe query via the typed HasPipe RPC."""
         timeout = read_timeout if read_timeout is not None else self._timeout
@@ -974,12 +824,6 @@ class RPCTransport:
             self._handle_typed_error(resp.error_payload)
         return bool(resp.present)
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(RemoteConnectionError),
-        reraise=True,
-    )
     def close_all_pipes(self, read_timeout: float | None = None) -> None:
         """Close every pipe via the typed CloseAllPipes RPC."""
         timeout = read_timeout if read_timeout is not None else self._timeout
@@ -992,12 +836,6 @@ class RPCTransport:
         if resp.is_error:
             self._handle_typed_error(resp.error_payload)
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(RemoteConnectionError),
-        reraise=True,
-    )
     def close_stream(self, path: str, read_timeout: float | None = None) -> None:
         """Close a stream via the typed CloseStream RPC."""
         timeout = read_timeout if read_timeout is not None else self._timeout
@@ -1008,12 +846,6 @@ class RPCTransport:
         if resp.is_error:
             self._handle_typed_error(resp.error_payload)
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(RemoteConnectionError),
-        reraise=True,
-    )
     def has_stream(self, path: str, read_timeout: float | None = None) -> bool:
         """Has-stream query via the typed HasStream RPC."""
         timeout = read_timeout if read_timeout is not None else self._timeout
@@ -1025,12 +857,6 @@ class RPCTransport:
             self._handle_typed_error(resp.error_payload)
         return bool(resp.present)
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(RemoteConnectionError),
-        reraise=True,
-    )
     def stream_write_nowait(self, path: str, data: bytes, read_timeout: float | None = None) -> int:
         """Non-blocking stream write via the typed StreamWriteNowait RPC.
 
@@ -1048,12 +874,6 @@ class RPCTransport:
             self._handle_typed_error(resp.error_payload)
         return int(resp.offset)
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(RemoteConnectionError),
-        reraise=True,
-    )
     def stream_read_at(
         self,
         path: str,
@@ -1090,12 +910,6 @@ class RPCTransport:
             self._handle_typed_error(resp.error_payload)
         return resp
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(RemoteConnectionError),
-        reraise=True,
-    )
     def stream_collect_all(self, path: str, read_timeout: float | None = None) -> bytes:
         """Collect all bytes from a stream via the typed StreamCollectAll RPC."""
         timeout = read_timeout if read_timeout is not None else self._timeout
@@ -1107,12 +921,6 @@ class RPCTransport:
             self._handle_typed_error(resp.error_payload)
         return bytes(resp.data)
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(RemoteConnectionError),
-        reraise=True,
-    )
     def ping(self) -> dict[str, Any]:
         """Ping server — returns version, zone_id, uptime."""
         request = vfs_pb2.PingRequest(auth_token=self._vfs_credential())

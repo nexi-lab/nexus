@@ -229,3 +229,70 @@ def test_invalid_batch_or_attributes_preserve_files(remote_peer: KernelClient, o
         assert filesystem.read("/preserved.txt") == b"original"
         assert not filesystem.exists("/first.txt")
         assert not filesystem.exists("/second.txt")
+
+
+@pytest.mark.parametrize("operation", ["write", "batch_write", "stream_append"])
+def test_a_lost_reply_does_not_replay_a_completed_operation(
+    remote_peer: KernelClient, operation: str
+):
+    from concurrent.futures import ThreadPoolExecutor
+
+    import grpc
+
+    from nexus.contracts.exceptions import RemoteConnectionError
+    from nexus.grpc.vfs import vfs_pb2_grpc
+
+    owner = remote_peer._transport
+    path = "/reply-loss"
+    if operation == "stream_append":
+        owner.setattr(path, entry_type=4, capacity=4096, io_profile="memory")
+    receipts = []
+
+    def lose_reply(method, request, context):
+        context.send_initial_metadata(())
+        response = getattr(owner._stub, method)(request, timeout=3)
+        receipts.append(response)
+        context.abort(grpc.StatusCode.UNAVAILABLE, "Injected reply loss after owner completed")
+
+    class LossyReplies(vfs_pb2_grpc.NexusVFSServiceServicer):
+        def Write(self, request, context):
+            return lose_reply("Write", request, context)
+
+        def BatchWrite(self, request, context):
+            return lose_reply("BatchWrite", request, context)
+
+        def StreamWriteNowait(self, request, context):
+            return lose_reply("StreamWriteNowait", request, context)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        proxy = grpc.server(pool)
+        vfs_pb2_grpc.add_NexusVFSServiceServicer_to_server(LossyReplies(), proxy)
+        port = proxy.add_insecure_port("127.0.0.1:0")
+        assert port
+        proxy.start()
+        try:
+            transport = RPCTransport(f"127.0.0.1:{port}", timeout=3, connect_timeout=3)
+            try:
+                with pytest.raises(RemoteConnectionError):
+                    if operation == "write":
+                        transport.write_file(path, b"one committed write")
+                    elif operation == "batch_write":
+                        transport.batch_write([(path, b"one committed write")])
+                    else:
+                        transport.stream_write_nowait(path, b"one frame")
+            finally:
+                transport.close()
+        finally:
+            assert proxy.stop(grace=0).wait(timeout=3)
+
+    assert len(receipts) == 1, "The client replayed an operation after the owner completed it"
+    if operation == "stream_append":
+        frame = owner.stream_read_at(path, 0)
+        assert frame.data == b"one frame"
+        following = owner.stream_read_at(path, frame.next_offset)
+        assert following.eof and not following.data
+    else:
+        assert owner.read_file(path) == b"one committed write"
+        receipt = receipts[0].results[0] if operation == "batch_write" else receipts[0]
+        assert not receipt.is_error
+        assert owner.stat(path).gen == receipt.gen

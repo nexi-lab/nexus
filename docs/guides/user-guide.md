@@ -177,6 +177,35 @@ The Python entry point is `nexus tui`. The terminal supports file editing, Unico
 
 Build and verify an independently installable artifact with `bun run pack` and `bun run test:package`. Publishing a new package is a separate release step.
 
+## Use MCP tools
+
+Start a stdio connection for an agent with the configured native credential or certificate:
+
+```sh
+nexus mcp serve --remote-url grpc://localhost:2028
+```
+
+For HTTP clients, connect the MCP service to the native owner:
+
+```sh
+nexus mcp serve --transport http --remote-url grpc://localhost:2028 --port 8081
+```
+
+Each HTTP/SSE client supplies one `Authorization: Bearer <native-key>` or `X-Nexus-API-Key` header. Missing, invalid or conflicting credentials cannot use the service's credential or certificate. The native owner verifies each credential and enforces file permissions and Search filtering. HTTP/SSE requires a remote native connection.
+
+The tools cover file read, write, delete, metadata, list, mkdir, rmdir, rename, glob, grep, Search, and four tool discovery operations. Discovery descriptions and input schemas come from the registered MCP tools.
+
+Inspect the packaged tool profiles with `nexus mcp profile list` or `nexus mcp profile show full`. Profiles describe tool groups; file authority comes from native credentials and ReBAC tuples.
+
+| Profile | Available tools |
+| --- | --- |
+| `minimal` | Read, list, metadata and glob |
+| `coding` | Minimal plus write, delete, mkdir, rmdir, rename and grep |
+| `search` | Minimal plus grep and Search |
+| `full` | All 15 tools, including discovery |
+
+The local acceptance runner exercises all tools through the MCP protocol and a real Rust owner. Its HTTP cases verify caller credentials, anonymous denial, conflicting headers, scope cleanup and certificate-only stdio calls.
+
 ## Verify a local deployment
 
 Use the [local acceptance guide](../testing/search-local-acceptance.md) for the feature inventory, actual validation receipts and assignable manual cases.

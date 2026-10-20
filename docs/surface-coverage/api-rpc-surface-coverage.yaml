@@ -2794,12 +2794,10 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: 'CLI: nexus rm /workspace/old.txt; MCP: tools/call nexus_delete_file {"path":"/workspace/old.txt"}.'
-  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestFileOperationTools::test_delete_file_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
-    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
-    tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
+  usage_example: 'MCP: tools/call nexus_delete_file; inspect tools/list for its input schema.'
+  correctness_test: scripts/test_search_agent_credentials_plugin.py; tests/unit/cli/test_mcp_transport.py
   perf_class: hot
-  perf_link: tests/benchmarks/bench_permission_hotpath.py::TestMCPToolNamespaceFiltering::test_cached_tool_list_filtering_latency
+  perf_link: scripts/test_search_local.py
   gap_issue: null
   owning_issue: 4131
 - id: delete.saved_mount
@@ -2875,8 +2873,7 @@ operations:
   owning_issue: 4137
 - id: discovery.get_tool_details
   module: discovery
-  summary: MCP discovery tool details are filtered through the caller's ReBAC-derived tool namespace; invisible tools return
-    not found.
+  summary: Describe one registered MCP tool and its input schema.
   transports:
     mcp:
       name: nexus_discovery_get_tool_details
@@ -2885,16 +2882,15 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: 'MCP: nexus_discovery_get_tool_details("nexus_write_file") returns details only when /tools/nexus_write_file
-    is visible to the subject.'
-  correctness_test: tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestProfileGrantIntegration::test_profile_grants_drive_list_filtering_and_call_denial
+  usage_example: 'MCP: tools/call nexus_discovery_get_tool_details; inspect tools/list for its input schema.'
+  correctness_test: scripts/test_search_agent_credentials_plugin.py; tests/unit/cli/test_mcp_transport.py
   perf_class: hot
-  perf_link: tests/benchmarks/bench_permission_hotpath.py::TestMCPToolNamespaceFiltering::test_cached_tool_list_filtering_latency
+  perf_link: scripts/test_search_local.py
   gap_issue: null
   owning_issue: 4128
 - id: discovery.list_servers
   module: discovery
-  summary: MCP discovery server listing reports tool counts after the caller's ReBAC-derived tool namespace filter.
+  summary: List registered MCP tool providers and counts.
   transports:
     mcp:
       name: nexus_discovery_list_servers
@@ -2903,15 +2899,15 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: 'MCP: nexus_discovery_list_servers() reports only tools visible through the caller''s assigned tool profile.'
-  correctness_test: tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestProfileGrantIntegration::test_profile_grants_drive_list_filtering_and_call_denial
+  usage_example: 'MCP: tools/call nexus_discovery_list_servers; inspect tools/list for its input schema.'
+  correctness_test: scripts/test_search_agent_credentials_plugin.py; tests/unit/cli/test_mcp_transport.py
   perf_class: hot
-  perf_link: tests/benchmarks/bench_permission_hotpath.py::TestMCPToolNamespaceFiltering::test_cached_tool_list_filtering_latency
+  perf_link: scripts/test_search_local.py
   gap_issue: null
   owning_issue: 4128
 - id: discovery.load_tools
   module: discovery
-  summary: MCP discovery load treats tools outside the caller's ReBAC-derived namespace as not found before loading.
+  summary: Select registered MCP tool descriptions for a client.
   transports:
     mcp:
       name: nexus_discovery_load_tools
@@ -2920,15 +2916,15 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: 'MCP: nexus_discovery_load_tools(["nexus_write_file"]) loads only if the assigned profile grants /tools/nexus_write_file.'
-  correctness_test: tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestProfileGrantIntegration::test_profile_grants_drive_list_filtering_and_call_denial
+  usage_example: 'MCP: tools/call nexus_discovery_load_tools; inspect tools/list for its input schema.'
+  correctness_test: scripts/test_search_agent_credentials_plugin.py; tests/unit/cli/test_mcp_transport.py
   perf_class: hot
-  perf_link: tests/benchmarks/bench_permission_hotpath.py::TestMCPToolNamespaceFiltering::test_cached_tool_list_filtering_latency
+  perf_link: scripts/test_search_local.py
   gap_issue: null
   owning_issue: 4128
 - id: discovery.search_tools
   module: discovery
-  summary: MCP discovery search over-fetches then filters results through the caller's ReBAC-derived tool namespace.
+  summary: Search the registered MCP tool descriptions.
   transports:
     mcp:
       name: nexus_discovery_search_tools
@@ -2937,11 +2933,10 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: 'MCP: nexus_discovery_search_tools("write file") returns nexus_write_file only after the subject has a profile
-    grant for /tools/nexus_write_file.'
-  correctness_test: tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestProfileGrantIntegration::test_profile_grants_drive_list_filtering_and_call_denial
+  usage_example: 'MCP: tools/call nexus_discovery_search_tools; inspect tools/list for its input schema.'
+  correctness_test: scripts/test_search_agent_credentials_plugin.py; tests/unit/cli/test_mcp_transport.py
   perf_class: hot
-  perf_link: tests/benchmarks/bench_permission_hotpath.py::TestMCPToolNamespaceFiltering::test_cached_tool_list_filtering_latency
+  perf_link: scripts/test_search_local.py
   gap_issue: null
   owning_issue: 4128
 - id: dispatch.post_hooks
@@ -3012,25 +3007,6 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
-- id: edit.file
-  module: filesystem
-  summary: Apply structured file edits through MCP; visible from the coding profile and broader profiles.
-  transports:
-    mcp:
-      name: nexus_edit_file
-      source: src/nexus/config/tool_profiles.yaml:1
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: 'CLI: use nexus write/cat for simple edits; MCP: tools/call nexus_edit_file {"path":"/workspace/app.py","edits":[...]}.'
-  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestEditFileTool::test_edit_file_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
-    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
-    tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
-  perf_class: hot
-  perf_link: tests/benchmarks/bench_permission_hotpath.py::TestMCPToolNamespaceFiltering::test_cached_tool_list_filtering_latency
-  gap_issue: null
-  owning_issue: 4131
 - id: events.replay
   module: agent_log
   summary: ''
@@ -3085,25 +3061,6 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4137
-- id: execute.workflow
-  module: workflows
-  summary: Execute a named workflow through MCP; visible from the full profile.
-  transports:
-    mcp:
-      name: nexus_execute_workflow
-      source: src/nexus/config/tool_profiles.yaml:1
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: 'CLI: nexus workflows execute tag-incoming; MCP: tools/call nexus_execute_workflow {"name":"tag-incoming","inputs":"{}"}.'
-  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestWorkflowTools::test_execute_workflow_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
-    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
-    tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
-  perf_class: control
-  perf_link: control-plane/workflow execution path; workflow body dominates latency, not MCP namespace filtering
-  gap_issue: null
-  owning_issue: 4131
 - id: exists.batch
   module: filesystem
   summary: ''
@@ -3428,12 +3385,10 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: 'CLI: nexus info /workspace/hello.txt; MCP: tools/call nexus_file_info {"path":"/workspace/hello.txt"}.'
-  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestFileOperationTools::test_file_info_exists; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
-    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
-    tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
+  usage_example: 'MCP: tools/call nexus_file_info; inspect tools/list for its input schema.'
+  correctness_test: scripts/test_search_agent_credentials_plugin.py; tests/unit/cli/test_mcp_transport.py
   perf_class: hot
-  perf_link: tests/benchmarks/bench_permission_hotpath.py::TestMCPToolNamespaceFiltering::test_cached_tool_list_filtering_latency
+  perf_link: scripts/test_search_local.py
   gap_issue: null
   owning_issue: 4131
 - id: filesystem.append
@@ -3702,10 +3657,10 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: 'CLI: nexus mkdir/rmdir/rename-batch/rm-batch /workspace/...; sandbox kernel/RPC: Call(sys_*, {"path":"/zone/local/..."})'
-  correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk
+  usage_example: 'MCP: tools/call nexus_mkdir; inspect tools/list for its input schema.'
+  correctness_test: scripts/test_search_agent_credentials_plugin.py; tests/unit/cli/test_mcp_transport.py
   perf_class: not_perf_sensitive
-  perf_link: 'Local edit mutation behavior is tested for #4127; read/write/list and batch throughput are the named hot benchmarks.'
+  perf_link: scripts/test_search_local.py
   gap_issue: null
   owning_issue: 4127
 - id: filesystem.move
@@ -3900,10 +3855,10 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: 'CLI: nexus mkdir/rmdir/rename-batch/rm-batch /workspace/...; sandbox kernel/RPC: Call(sys_*, {"path":"/zone/local/..."})'
-  correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk
+  usage_example: 'MCP: tools/call nexus_rmdir; inspect tools/list for its input schema.'
+  correctness_test: scripts/test_search_agent_credentials_plugin.py; tests/unit/cli/test_mcp_transport.py
   perf_class: not_perf_sensitive
-  perf_link: 'Local edit mutation behavior is tested for #4127; read/write/list and batch throughput are the named hot benchmarks.'
+  perf_link: scripts/test_search_local.py
   gap_issue: null
   owning_issue: 4127
 - id: filesystem.size
@@ -4856,44 +4811,6 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4133
-- id: hub.admin
-  module: hub
-  summary: Administer hub tokens through the generic MCP hub admin tool; visible from the full profile but still requires
-    an admin bearer token.
-  transports:
-    mcp:
-      name: nexus_hub_admin
-      source: src/nexus/config/tool_profiles.yaml:1
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: 'CLI: nexus hub status --remote https://hub.example.com/mcp --admin-token "$NEXUS_HUB_ADMIN_TOKEN"; MCP:
-    tools/call nexus_hub_admin {"action":"status","arguments":{}}.'
-  correctness_test: tests/unit/cli/test_hub_remote.py::test_remote_status_calls_mcp_tool_and_renders_json; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
-    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
-    tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
-  perf_class: control
-  perf_link: admin/control-plane surface; not performance-sensitive compared with remote hub RPC latency
-  gap_issue: null
-  owning_issue: 4131
-- id: hub.cli
-  module: hub
-  summary: ''
-  transports:
-    cli:
-      name: nexus hub
-      source: src/nexus/cli/commands/hub.py:56
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/unit/server/test_full_profile_control_plane_surface.py:1
-  perf_class: not_perf_sensitive
-  perf_link: human-invoked metadata or inventory surface; not on a request hot path
-  gap_issue: null
-  owning_issue: 4138
 - id: hub.deploy
   module: hub
   summary: Bootstrap a hub deployment from CLI (currently helm/manual).
@@ -4908,196 +4825,6 @@ operations:
   perf_link: null
   gap_issue: 4205
   owning_issue: 4138
-- id: hub.status
-  module: hub
-  summary: Read hub health via the MCP admin surface; sandbox federation control plane.
-  transports:
-    cli:
-      name: nexus hub status
-      source: src/nexus/cli/commands/hub.py:416
-    mcp:
-      name: nexus_hub_status
-      source: src/nexus/config/tool_profiles.yaml:1
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: 'MCP: tools/call nexus_hub_status {}; CLI: nexus hub status'
-  correctness_test: tests/unit/cli/test_hub_remote.py::test_remote_status_calls_mcp_tool_and_renders_json
-  perf_class: control
-  perf_link: admin/control-plane status check; not on a query hot path
-  gap_issue: null
-  owning_issue: 4130
-- id: hub.token
-  module: hub
-  summary: ''
-  transports:
-    cli:
-      name: nexus hub token
-      source: src/nexus/cli/commands/hub.py:61
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: hub.token_create
-  module: hub
-  summary: ''
-  transports:
-    cli:
-      name: nexus hub token create
-      source: src/nexus/cli/commands/hub.py:66
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: hub.token_list
-  module: hub
-  summary: ''
-  transports:
-    cli:
-      name: nexus hub token list
-      source: src/nexus/cli/commands/hub.py:163
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: hub.token_revoke
-  module: hub
-  summary: ''
-  transports:
-    cli:
-      name: nexus hub token revoke
-      source: src/nexus/cli/commands/hub.py:230
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: hub.token_zones
-  module: hub
-  summary: ''
-  transports:
-    cli:
-      name: nexus hub token zones
-      source: src/nexus/cli/commands/hub.py:259
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: hub.token_zones_add
-  module: hub
-  summary: ''
-  transports:
-    cli:
-      name: nexus hub token zones add
-      source: src/nexus/cli/commands/hub.py:277
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: hub.token_zones_remove
-  module: hub
-  summary: ''
-  transports:
-    cli:
-      name: nexus hub token zones remove
-      source: src/nexus/cli/commands/hub.py:314
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: hub.token_zones_show
-  module: hub
-  summary: ''
-  transports:
-    cli:
-      name: nexus hub token zones show
-      source: src/nexus/cli/commands/hub.py:329
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: hub.zone
-  module: hub
-  summary: ''
-  transports:
-    cli:
-      name: nexus hub zone
-      source: src/nexus/cli/commands/hub.py:349
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: hub.zone_list
-  module: hub
-  summary: ''
-  transports:
-    cli:
-      name: nexus hub zone list
-      source: src/nexus/cli/commands/hub.py:354
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
 - id: identity.brick
   module: identity
   summary: ''
@@ -5371,12 +5098,10 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: 'CLI: nexus ls /workspace -l; MCP: tools/call nexus_list_files {"path":"/workspace","recursive":false}.'
-  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestFileOperationTools::test_list_files_basic; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
-    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
-    tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
+  usage_example: 'MCP: tools/call nexus_list_files; inspect tools/list for its input schema.'
+  correctness_test: scripts/test_search_agent_credentials_plugin.py; tests/unit/cli/test_mcp_transport.py
   perf_class: hot
-  perf_link: tests/benchmarks/bench_permission_hotpath.py::TestMCPToolNamespaceFiltering::test_cached_tool_list_filtering_latency
+  perf_link: scripts/test_search_local.py
   gap_issue: null
   owning_issue: 4131
 - id: list.incoming_shares
@@ -5499,25 +5224,6 @@ operations:
   perf_link: version list/diff guardrail in tests/benchmarks/test_lifecycle_surface_latency.py:165
   gap_issue: 4137
   owning_issue: 4137
-- id: list.workflows
-  module: workflows
-  summary: List available workflows through MCP; visible from the full profile.
-  transports:
-    mcp:
-      name: nexus_list_workflows
-      source: src/nexus/config/tool_profiles.yaml:1
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: 'CLI: nexus workflows list; MCP: tools/call nexus_list_workflows {}.'
-  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestWorkflowTools::test_list_workflows_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
-    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
-    tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
-  perf_class: control
-  perf_link: control-plane inspection; workflow listing is not on the per-tool-call data hot path
-  gap_issue: null
-  owning_issue: 4131
 - id: load.mount
   module: mount
   summary: Load a saved mount configuration and activate it through the normal add_mount path.
@@ -5679,7 +5385,7 @@ operations:
   transports:
     cli:
       name: nexus mcp
-      source: src/nexus/cli/commands/mcp.py:234
+      source: src/nexus/cli/commands/mcp.py:62
   profiles:
     lite: supported
     sandbox: supported
@@ -5696,7 +5402,7 @@ operations:
   transports:
     grpc_expose:
       name: mcp_connect
-      source: src/nexus/bricks/mcp/mcp_service.py:602
+      source: src/nexus/bricks/mcp/mcp_service.py:528
   profiles:
     lite: unavailable
     sandbox: supported
@@ -5715,7 +5421,7 @@ operations:
   transports:
     cli:
       name: nexus mcp export-tools
-      source: src/nexus/cli/commands/mcp.py:957
+      source: src/nexus/cli/commands/mcp.py:212
   profiles:
     lite: unverified
     sandbox: unverified
@@ -5732,7 +5438,7 @@ operations:
   transports:
     grpc_expose:
       name: mcp_list_mounts
-      source: src/nexus/bricks/mcp/mcp_service.py:218
+      source: src/nexus/bricks/mcp/mcp_service.py:144
   profiles:
     lite: unavailable
     sandbox: supported
@@ -5752,7 +5458,7 @@ operations:
   transports:
     grpc_expose:
       name: mcp_list_tools
-      source: src/nexus/bricks/mcp/mcp_service.py:284
+      source: src/nexus/bricks/mcp/mcp_service.py:210
   profiles:
     lite: unavailable
     sandbox: supported
@@ -5771,7 +5477,7 @@ operations:
   transports:
     grpc_expose:
       name: mcp_mount
-      source: src/nexus/bricks/mcp/mcp_service.py:374
+      source: src/nexus/bricks/mcp/mcp_service.py:300
   profiles:
     lite: unavailable
     sandbox: supported
@@ -5827,41 +5533,7 @@ operations:
   transports:
     cli:
       name: nexus mcp profile
-      source: src/nexus/cli/commands/mcp.py:417
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: mcp.profile_assign
-  module: mcp
-  summary: Assign a configured MCP tool profile through the public ReBAC service.
-  transports:
-    cli:
-      name: nexus mcp profile assign
-      source: src/nexus/cli/commands/mcp.py:478
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: nexus mcp profile assign agent demo-agent coding --format json
-  correctness_test: tests/unit/cli/test_mcp_profile_cli.py; tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py
-  perf_class: setup
-  perf_link: tests/benchmarks/bench_permission_hotpath.py; profile assignment runs only during setup
-  gap_issue: null
-  owning_issue: 4128
-- id: mcp.profile_inspect
-  module: mcp
-  summary: ''
-  transports:
-    cli:
-      name: nexus mcp profile inspect
-      source: src/nexus/cli/commands/mcp.py:566
+      source: src/nexus/cli/commands/mcp.py:99
   profiles:
     lite: unverified
     sandbox: unverified
@@ -5878,7 +5550,7 @@ operations:
   transports:
     cli:
       name: nexus mcp profile list
-      source: src/nexus/cli/commands/mcp.py:423
+      source: src/nexus/cli/commands/mcp.py:105
   profiles:
     lite: unverified
     sandbox: unverified
@@ -5895,7 +5567,7 @@ operations:
   transports:
     cli:
       name: nexus mcp profile show
-      source: src/nexus/cli/commands/mcp.py:453
+      source: src/nexus/cli/commands/mcp.py:135
   profiles:
     lite: unverified
     sandbox: unverified
@@ -5912,7 +5584,7 @@ operations:
   transports:
     cli:
       name: nexus mcp serve
-      source: src/nexus/cli/commands/mcp.py:648
+      source: src/nexus/cli/commands/mcp.py:160
   profiles:
     lite: unverified
     sandbox: unverified
@@ -5929,7 +5601,7 @@ operations:
   transports:
     grpc_expose:
       name: mcp_sync
-      source: src/nexus/bricks/mcp/mcp_service.py:546
+      source: src/nexus/bricks/mcp/mcp_service.py:472
   profiles:
     lite: unavailable
     sandbox: supported
@@ -5949,7 +5621,7 @@ operations:
   transports:
     grpc_expose:
       name: mcp_unmount
-      source: src/nexus/bricks/mcp/mcp_service.py:497
+      source: src/nexus/bricks/mcp/mcp_service.py:423
   profiles:
     lite: unavailable
     sandbox: supported
@@ -8042,12 +7714,10 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: 'CLI: nexus cat /workspace/hello.txt; MCP: tools/call nexus_read_file {"path":"/workspace/hello.txt"}.'
-  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestFileOperationTools::test_read_file_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
-    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
-    tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
+  usage_example: 'MCP: tools/call nexus_read_file; inspect tools/list for its input schema.'
+  correctness_test: scripts/test_search_agent_credentials_plugin.py; tests/unit/cli/test_mcp_transport.py
   perf_class: hot
-  perf_link: tests/benchmarks/bench_permission_hotpath.py::TestMCPToolNamespaceFiltering::test_cached_tool_list_filtering_latency
+  perf_link: scripts/test_search_local.py
   gap_issue: null
   owning_issue: 4131
 - id: read.range
@@ -8472,12 +8142,10 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: 'CLI: nexus mv /workspace/old.txt /workspace/new.txt; MCP: tools/call nexus_rename_file {"old_path":"/workspace/old.txt","new_path":"/workspace/new.txt"}.'
-  correctness_test: tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
-    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
-    tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
+  usage_example: 'MCP: tools/call nexus_rename_file; inspect tools/list for its input schema.'
+  correctness_test: scripts/test_search_agent_credentials_plugin.py; tests/unit/cli/test_mcp_transport.py
   perf_class: hot
-  perf_link: tests/benchmarks/bench_permission_hotpath.py::TestMCPToolNamespaceFiltering::test_cached_tool_list_filtering_latency
+  perf_link: scripts/test_search_local.py
   gap_issue: null
   owning_issue: 4131
 - id: revoke.consent
@@ -8565,46 +8233,6 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4133
-- id: sandbox.create
-  module: sandbox
-  summary: Create a sandbox runtime through MCP when the sandbox provider is available; visible from the execution profile
-    and full profile.
-  transports:
-    mcp:
-      name: nexus_sandbox_create
-      source: src/nexus/config/tool_profiles.yaml:1
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: 'CLI: nexus sandbox create demo-box --provider docker; MCP: tools/call nexus_sandbox_create {"name":"demo-box","ttl_minutes":15}.'
-  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestSandboxTools::test_sandbox_create_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
-    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
-    tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
-  perf_class: setup
-  perf_link: setup path; sandbox provider startup dominates latency and this is not a per-request namespace hot path
-  gap_issue: null
-  owning_issue: 4131
-- id: sandbox.list
-  module: sandbox
-  summary: List sandbox runtimes through MCP when sandbox support is available; visible from the execution profile and full
-    profile.
-  transports:
-    mcp:
-      name: nexus_sandbox_list
-      source: src/nexus/config/tool_profiles.yaml:1
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: 'CLI: nexus sandbox list; MCP: tools/call nexus_sandbox_list {}.'
-  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestSandboxTools::test_sandbox_list_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
-    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
-    tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
-  perf_class: control
-  perf_link: control-plane inspection; not performance-sensitive compared with sandbox provider API latency
-  gap_issue: null
-  owning_issue: 4131
 - id: sandbox.run
   module: sandbox
   summary: Run a command with Nexus connection env vars injected. Shares the exact state-consumption path as `nexus env` (env_cmd.py
@@ -8624,26 +8252,6 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4126
-- id: sandbox.stop
-  module: sandbox
-  summary: Stop a sandbox runtime through MCP when sandbox support is available; visible from the execution profile and full
-    profile.
-  transports:
-    mcp:
-      name: nexus_sandbox_stop
-      source: src/nexus/config/tool_profiles.yaml:1
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: 'CLI: nexus sandbox stop sb_123; MCP: tools/call nexus_sandbox_stop {"sandbox_id":"sb_123"}.'
-  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestSandboxTools::test_sandbox_stop_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
-    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
-    tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
-  perf_class: control
-  perf_link: control-plane teardown; provider latency dominates and this is not a namespace filtering hot path
-  gap_issue: null
-  owning_issue: 4131
 - id: save.mount
   module: mount
   summary: Persist a mount configuration so it can be loaded on demand or restored after restart.
@@ -8845,12 +8453,10 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: nexus glob "**/*.py" /workspace --plain; POST /v2/search/glob
-  correctness_test: tests/integration/search/test_discovery_client.py::test_sdk_refinement_preserves_scope_context_and_live_responses;
-    scripts/test_search_credentials_plugin.py
+  usage_example: 'MCP: tools/call nexus_glob; inspect tools/list for its input schema.'
+  correctness_test: scripts/test_search_agent_credentials_plugin.py; tests/unit/cli/test_mcp_transport.py
   perf_class: hot
-  perf_link: scripts/test_discovery_service_plugin.py guards bounded selections and result caps; traversal I/O budgets are
-    enforced by the pinned VFS discovery journeys
+  perf_link: scripts/test_search_local.py
   gap_issue: null
   owning_issue: 4129
 - id: search.grep
@@ -8876,12 +8482,10 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: nexus grep "token" /docs/api.md --in-section "## API"; POST /v2/search/grep
-  correctness_test: tests/integration/search/test_discovery_client.py::test_sdk_refinement_preserves_scope_context_and_live_responses;
-    scripts/test_search_credentials_plugin.py; tests/e2e/self_contained/test_mcp_discovery.py; scripts/test_discovery_service_plugin.py
+  usage_example: 'MCP: tools/call nexus_grep; inspect tools/list for its input schema.'
+  correctness_test: scripts/test_search_agent_credentials_plugin.py; tests/unit/cli/test_mcp_transport.py
   perf_class: hot
-  perf_link: scripts/test_discovery_service_plugin.py guards bounded selections and result caps; traversal I/O budgets are
-    enforced by the pinned VFS discovery journeys
+  perf_link: scripts/test_search_local.py
   gap_issue: null
   owning_issue: 4129
 - id: search.health
@@ -9233,11 +8837,10 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: 'MCP: nexus_semantic_search(query="auth flow", search_mode="hybrid", limit=5)'
-  correctness_test: tests/integration/search/test_indexed_client.py; scripts/test_search_service_plugin.py; scripts/test_search_agent_credentials_plugin.py;
-    tests/e2e/self_contained/test_sandbox_mcp.py
+  usage_example: 'MCP: tools/call nexus_semantic_search; inspect tools/list for its input schema.'
+  correctness_test: scripts/test_search_agent_credentials_plugin.py; tests/unit/cli/test_mcp_transport.py
   perf_class: hot
-  perf_link: scripts/test_published_search_quality.py; docs/benchmarks/2026-04-18-sandbox-vs-gbrain.md
+  perf_link: scripts/test_search_local.py
   gap_issue: null
   owning_issue: 4129
 - id: semantic.search_index
@@ -10742,12 +10345,10 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: 'CLI: nexus write /workspace/hello.txt "hello"; MCP: tools/call nexus_write_file {"path":"/workspace/hello.txt","content":"hello"}.'
-  correctness_test: tests/unit/bricks/mcp/test_mcp_server_tools.py::TestFileOperationTools::test_write_file_success; tests/unit/bricks/mcp/test_tool_profiles.py::TestDefaultConfigValidity::test_default_profiles_match_expected_tool_matrix;
-    tests/unit/bricks/mcp/test_tool_namespace_middleware.py::TestDefaultToolProfileEnforcement::test_default_profile_grants_filter_list_and_call;
-    tests/e2e/self_contained/mcp/test_issue_4131_mcp_profile_story_e2e.py::test_issue_4131_mcp_profiles_real_protocol_and_perf
+  usage_example: 'MCP: tools/call nexus_write_file; inspect tools/list for its input schema.'
+  correctness_test: scripts/test_search_agent_credentials_plugin.py; tests/unit/cli/test_mcp_transport.py
   perf_class: hot
-  perf_link: tests/benchmarks/bench_permission_hotpath.py::TestMCPToolNamespaceFiltering::test_cached_tool_list_filtering_latency
+  perf_link: scripts/test_search_local.py
   gap_issue: null
   owning_issue: 4131
 - id: write.stream
@@ -12150,14 +11751,6 @@ parity_warnings:
   - http
   - mcp
   - sdk
-- operation_id: edit.file
-  has:
-  - mcp
-  missing:
-  - cli
-  - grpc_typed
-  - http
-  - sdk
 - operation_id: events.replay
   has:
   - http
@@ -12181,14 +11774,6 @@ parity_warnings:
   - cli
   - grpc_typed
   - mcp
-  - sdk
-- operation_id: execute.workflow
-  has:
-  - mcp
-  missing:
-  - cli
-  - grpc_typed
-  - http
   - sdk
 - operation_id: exists.batch
   has:
@@ -12686,110 +12271,6 @@ parity_warnings:
   - grpc_typed
   - http
   - mcp
-- operation_id: hub.admin
-  has:
-  - mcp
-  missing:
-  - cli
-  - grpc_typed
-  - http
-  - sdk
-- operation_id: hub.cli
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: hub.status
-  has:
-  - cli
-  - mcp
-  missing:
-  - grpc_typed
-  - http
-  - sdk
-- operation_id: hub.token
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: hub.token_create
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: hub.token_list
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: hub.token_revoke
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: hub.token_zones
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: hub.token_zones_add
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: hub.token_zones_remove
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: hub.token_zones_show
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: hub.zone
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: hub.zone_list
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
 - operation_id: identity.cli
   has:
   - cli
@@ -12902,14 +12383,6 @@ parity_warnings:
   - grpc_typed
   - http
   - mcp
-- operation_id: list.workflows
-  has:
-  - mcp
-  missing:
-  - cli
-  - grpc_typed
-  - http
-  - sdk
 - operation_id: lock.info
   has:
   - cli
@@ -12991,22 +12464,6 @@ parity_warnings:
   - mcp
   - sdk
 - operation_id: mcp.profile
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: mcp.profile_assign
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: mcp.profile_inspect
   has:
   - cli
   missing:
@@ -13894,22 +13351,6 @@ parity_warnings:
   - grpc_typed
   - mcp
   - sdk
-- operation_id: sandbox.create
-  has:
-  - mcp
-  missing:
-  - cli
-  - grpc_typed
-  - http
-  - sdk
-- operation_id: sandbox.list
-  has:
-  - mcp
-  missing:
-  - cli
-  - grpc_typed
-  - http
-  - sdk
 - operation_id: sandbox.run
   has:
   - cli
@@ -13917,14 +13358,6 @@ parity_warnings:
   - grpc_typed
   - http
   - mcp
-  - sdk
-- operation_id: sandbox.stop
-  has:
-  - mcp
-  missing:
-  - cli
-  - grpc_typed
-  - http
   - sdk
 - operation_id: scheduler.classify
   has:

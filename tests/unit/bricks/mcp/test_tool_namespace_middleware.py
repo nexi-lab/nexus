@@ -456,8 +456,8 @@ class TestDefaultToolProfileEnforcement:
             ),
             (
                 "coding",
-                ["nexus_read_file", "nexus_write_file", "nexus_edit_file", "nexus_grep"],
-                "nexus_python",
+                ["nexus_read_file", "nexus_write_file", "nexus_grep"],
+                "nexus_semantic_search",
             ),
             (
                 "search",
@@ -465,19 +465,13 @@ class TestDefaultToolProfileEnforcement:
                 "nexus_write_file",
             ),
             (
-                "execution",
-                ["nexus_write_file", "nexus_python", "nexus_bash", "nexus_sandbox_create"],
-                "nexus_discovery_search_tools",
-            ),
-            (
                 "full",
                 [
-                    "nexus_python",
+                    "nexus_write_file",
                     "nexus_discovery_search_tools",
-                    "nexus_list_workflows",
-                    "nexus_hub_admin",
+                    "nexus_semantic_search",
                 ],
-                "nexus_context_branch",
+                "third_party_tool",
             ),
         ],
     )

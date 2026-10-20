@@ -6,11 +6,10 @@ is actually started. These tests verify:
 
 * Direct-instance pass-through (backward compat)
 * Deferred-callable success path (factory invoked once, instance installed)
-* Deferred-callable ImportError path (graceful degradation, no crash)
+* A configured middleware must load before the server accepts requests
 """
 
-import logging
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -67,24 +66,38 @@ class TestDeferredMiddleware:
         assert server is not None
         assert len(invocations) == 1, "factory must be invoked exactly once"
 
-    async def test_deferred_callable_import_error_degrades(self, mock_nx, caplog):
-        """ImportError from the factory is logged and MCP server still creates.
-
-        Mirrors the prior eager-boot policy in factory/_bricks.py where a
-        missing middleware module skipped the optional brick wiring instead
-        of failing the whole connect path.
-        """
-
+    async def test_deferred_callable_import_error_refuses_startup(self, mock_nx):
         def bad_factory():
             raise ImportError("simulated missing fastmcp")
 
-        with caplog.at_level(logging.WARNING, logger="nexus.bricks.mcp.server"):
-            server = await create_mcp_server(nx=mock_nx, tool_namespace_middleware=bad_factory)
+        with pytest.raises(ImportError, match="simulated missing fastmcp"):
+            await create_mcp_server(nx=mock_nx, tool_namespace_middleware=bad_factory)
+        mock_nx.close.assert_not_called()
 
-        assert server is not None, "create_mcp_server must not crash on factory ImportError"
-        assert any(
-            "ToolNamespaceMiddleware unavailable" in rec.message for rec in caplog.records
-        ), "expected WARNING about deferred middleware import failure"
+    async def test_failed_startup_closes_an_owned_filesystem(self, mock_nx):
+        def bad_factory():
+            raise ImportError("configured middleware unavailable")
+
+        with (
+            patch("nexus.connect", return_value=mock_nx),
+            pytest.raises(ImportError, match="configured middleware unavailable"),
+        ):
+            await create_mcp_server(tool_namespace_middleware=bad_factory)
+        mock_nx.close.assert_called_once_with()
+
+    @pytest.mark.parametrize("borrowed", [False, True])
+    async def test_shutdown_closes_only_an_owned_filesystem(self, mock_nx, borrowed):
+        from fastmcp import Client
+
+        with patch("nexus.connect", return_value=mock_nx):
+            server = await create_mcp_server(nx=mock_nx if borrowed else None)
+        async with Client(server) as client:
+            assert await client.list_tools()
+            mock_nx.close.assert_not_called()
+        if borrowed:
+            mock_nx.close.assert_not_called()
+        else:
+            mock_nx.close.assert_called_once_with()
 
     async def test_none_passes_through(self, mock_nx):
         """None is the no-op case — server creates without middleware."""

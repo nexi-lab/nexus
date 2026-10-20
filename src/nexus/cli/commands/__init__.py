@@ -67,7 +67,6 @@ _ADD_COMMAND: dict[str, tuple[str, str]] = {
     "daemon_cli": ("daemon", "daemon"),
     "zone": ("zone", "zone"),
     "locks": ("lock", "lock"),
-    "hub": ("hub", "hub"),
     "init_cmd": ("init", "init"),
 }
 

@@ -109,7 +109,6 @@ MODULES_TO_SCAN: list[str] = [
     # OAuth credential service (moved into bricks/auth/oauth/)
     "nexus.bricks.auth.oauth.credential_service",
     # post-refactor canonical locations (was nexus.system_services.*)
-    "nexus.services.workspace.workspace_rpc_service",
     "nexus.services.agents.agent_rpc_service",
     "nexus.services.metadata_export",
     # Brick services with @rpc_expose
@@ -533,7 +532,7 @@ def main() -> int:
 
     if check_mode:
         if OUTPUT_PATH.exists():
-            existing = OUTPUT_PATH.read_text()
+            existing = OUTPUT_PATH.read_text(encoding="utf-8")
             if existing == content:
                 print("OK: Generated file is up-to-date", file=sys.stderr)
                 return 0
@@ -548,7 +547,7 @@ def main() -> int:
             return 1
 
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT_PATH.write_text(content)
+    OUTPUT_PATH.write_text(content, encoding="utf-8", newline="\n")
     print(f"Wrote {OUTPUT_PATH} ({len(content)} bytes)", file=sys.stderr)
     return 0
 

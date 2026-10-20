@@ -462,8 +462,9 @@ async def main() -> None:
                 reset_request_api_key,
                 set_request_api_key,
             )
+            from nexus.remote.client import RemoteNexusFS
 
-            mcp = await create_mcp_server(nx=app.state.nexus_fs, auth_provider=provider)
+            mcp = await create_mcp_server(nx=RemoteNexusFS(transport, zone_id="sharedzone"))
 
             async def mcp_discovery(mcp_client, name, *, allowed=True):
                 for operation, pattern in (("glob", "*.txt"), ("grep", needle)):

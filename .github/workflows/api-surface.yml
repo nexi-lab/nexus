@@ -248,4 +248,5 @@ jobs:
             tests/surface_coverage/test_runtime_discovery.py \
             tests/surface_coverage/test_gap_backlog.py \
             tests/surface_coverage/test_merge.py \
+            tests/surface_coverage/test_native_mcp_contract.py \
             -v

@@ -11,8 +11,10 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
+from starlette.datastructures import Headers
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from nexus.bricks.mcp.credentials import http_api_key
 from nexus.contracts.protocols.activity import EventKind, Result, emit
 
 logger = logging.getLogger("nexus.mcp.audit")
@@ -47,11 +49,7 @@ async def _publish_record(record: dict[str, Any]) -> None:
 
 
 async def _record_metrics(record: dict[str, Any]) -> None:
-    """Record MCP hub metrics for Prometheus and the Redis CLI fallback.
-
-    Prometheus metrics back the MCP ``/metrics`` endpoint (#3873).
-    Redis counters remain as the compatibility path for
-    ``nexus hub status`` (#3784).
+    """Record MCP traffic metrics for Prometheus and Redis consumers.
 
     - ``nexus:hub:qps:<epoch-minute>``: INCR per audited request (10 min TTL).
     - ``nexus:hub:active:<epoch-minute>``: SADD subject_id (10 min TTL).
@@ -98,23 +96,6 @@ async def _record_metrics(record: dict[str, Any]) -> None:
         return
     finally:
         await client.close()
-
-
-def _extract_raw_token(headers: dict[str, str]) -> str | None:
-    """Return the raw bearer token from either supported header form.
-
-    Accepts ``X-Nexus-API-Key`` or ``Authorization: Bearer …`` so both
-    documented auth modes are attributed in audit logs. Preserves the
-    original case of the token so the hash matches what the auth
-    layer produced.
-    """
-    api_key = headers.get("x-nexus-api-key")
-    if api_key:
-        return api_key
-    auth_header = headers.get("authorization", "")
-    if auth_header.lower().startswith("bearer "):
-        return auth_header[7:]
-    return None
 
 
 def _hash_token(raw_token: str | None) -> str | None:
@@ -214,30 +195,13 @@ class MCPAuditLogMiddleware:
         headers = {
             k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers", [])
         }
-        raw_token = _extract_raw_token(headers)
+        raw_token = http_api_key(Headers(scope=scope))
         token_hash = _hash_token(raw_token)
         user_agent = headers.get("user-agent", "")
         identity = scope.get("nexus.identity") or {}
 
-        # If scope["nexus.identity"] wasn't populated by an upstream middleware,
-        # fall back to AuthIdentityCache by token hash. The first tool call
-        # for a token populates the cache; subsequent calls find zone/subject
-        # here even without explicit scope threading.
         zone_id = identity.get("zone_id")
         subject_id = identity.get("subject_id")
-        if zone_id is None and raw_token:
-            try:
-                from nexus.bricks.mcp.auth_cache import (
-                    get_auth_identity_cache,
-                    hash_api_key,
-                )
-
-                cached = get_auth_identity_cache().get(hash_api_key(raw_token))
-                if cached is not None:
-                    zone_id = cached.zone_id
-                    subject_id = cached.subject_id
-            except Exception:
-                pass
 
         record = {
             "ts": datetime.now(tz=UTC).isoformat(),

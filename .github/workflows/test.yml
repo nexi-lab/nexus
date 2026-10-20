@@ -157,6 +157,11 @@ jobs:
         run: |
           uv run --no-sync pytest tests/integration/search/test_indexed_client.py -q -o "addopts="
 
+      - name: Verify MCP tools and caller credential isolation
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        run: |
+          uv run --no-sync pytest tests/unit/bricks/mcp tests/unit/cli/test_mcp_transport.py -q -o "addopts="
+
       - name: Verify benchmark collection
         if: needs.detect-changes.outputs.code_changed == 'true' && matrix.os == 'ubuntu-latest'
         run: |

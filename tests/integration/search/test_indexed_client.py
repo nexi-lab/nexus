@@ -118,7 +118,7 @@ async def test_kernel_facade_forwards_caller_credentials_without_python_policy(i
     # The context supplies a target zone. Only the transmitted credential can
     # grant authority; Python enforcers and SQL projections are not consulted.
     context = OperationContext(user_id="claimed-user", groups=[], zone_id="legal")
-    for credential in ("alice-key", "bob-key", ""):
+    for credential in ("alice-key", "bob-key"):
         scope = request_api_key.set(credential)
         try:
             hits = await service.semantic_search("marigold", limit=2, context=context)
@@ -129,6 +129,16 @@ async def test_kernel_facade_forwards_caller_credentials_without_python_policy(i
         assert request.zone_id == "legal" and request.limit == 2
         assert metadata["authorization"] == f"Bearer {credential}"
         assert not request.auth_token
+    calls = len(host.calls)
+    scope = request_api_key.set("")
+    try:
+        with pytest.raises(AuthenticationError, match="empty request credential"):
+            await service.semantic_search("marigold", limit=2, context=context)
+    finally:
+        request_api_key.reset(scope)
+    assert len(host.calls) == calls
+    await service.semantic_search("marigold", context=context)
+    assert host.calls[-1][1]["authorization"] == "Bearer operator-key"
 
 
 @pytest.mark.asyncio
@@ -154,17 +164,23 @@ def test_request_credentials_take_precedence_over_per_call_and_default_keys(inde
     host, transport, _search, _service = indexed
     scope = request_api_key.set("caller-key")
     try:
-        transport.call_rpc("semantic_search", {"query": "marigold"}, auth_token="override-key")
+        for override in ("override-key", ""):
+            transport.call_rpc("semantic_search", {"query": "marigold"}, auth_token=override)
+            assert host.calls[-1][1]["authorization"] == "Bearer caller-key"
     finally:
         request_api_key.reset(scope)
     assert host.calls[-1][1]["authorization"] == "Bearer caller-key"
-    transport.call_rpc("semantic_search", {"query": "marigold"}, auth_token="")
-    assert host.calls[-1][1]["authorization"] == "Bearer "
+    calls = len(host.calls)
+    with pytest.raises(AuthenticationError, match="empty request credential"):
+        transport.call_rpc("semantic_search", {"query": "marigold"}, auth_token="")
+    assert len(host.calls) == calls
 
 
 @pytest.mark.parametrize("client_type", [RPCTransport, KernelClient])
 @pytest.mark.parametrize("credential", [None, "", "caller-key"])
-def test_configured_credential_presence_is_preserved_on_the_wire(indexed, credential, client_type):
+def test_configured_credentials_preserve_absence_and_reject_explicit_empty(
+    indexed, credential, client_type
+):
     host, transport, _search, _service = indexed
     configured = client_type(server_address=transport.server_address, auth_token=credential)
     try:
@@ -179,6 +195,11 @@ def test_configured_credential_presence_is_preserved_on_the_wire(indexed, creden
             configured.close()
             configured.open()
             assert configured._process is None
+        if credential == "":
+            with pytest.raises(AuthenticationError, match="empty request credential"):
+                configured.call_rpc("semantic_search", {"query": "marigold"})
+            assert host.calls == []
+            return
         configured.call_rpc("semantic_search", {"query": "marigold"})
     finally:
         configured.close()

@@ -8,6 +8,7 @@ from typing import Any
 import grpc
 import pytest
 
+from nexus.contracts.exceptions import AuthenticationError
 from nexus.grpc.search.v1 import search_pb2, search_pb2_grpc
 from nexus.lib.request_credentials import request_api_key
 from nexus.remote.rpc_transport import RPCTransport
@@ -97,9 +98,9 @@ def test_sdk_refinement_preserves_scope_context_and_live_responses(discovery):
     assert all(metadata["authorization"] == "Bearer default-key" for _, _, metadata in host.calls)
 
 
-def test_credentials_are_request_scoped_and_empty_bearer_remains_explicit(discovery):
+def test_credentials_are_request_scoped_and_empty_bearer_is_rejected(discovery):
     host, _transport, search = discovery
-    for credential in ("alice-key", "bob-key", ""):
+    for credential in ("alice-key", "bob-key"):
         token = request_api_key.set(credential)
         try:
             search.grep("needle", files=["/docs/a.md"])
@@ -107,6 +108,14 @@ def test_credentials_are_request_scoped_and_empty_bearer_remains_explicit(discov
             request_api_key.reset(token)
         assert host.calls[-1][2]["authorization"] == f"Bearer {credential}"
         assert host.calls[-1][1].auth_token == ""
+    calls = len(host.calls)
+    empty = request_api_key.set("")
+    try:
+        with pytest.raises(AuthenticationError, match="empty request credential"):
+            search.grep("needle", files=[])
+    finally:
+        request_api_key.reset(empty)
+    assert len(host.calls) == calls
     search.grep("needle")
     assert host.calls[-1][2]["authorization"] == "Bearer default-key"
 
@@ -120,11 +129,14 @@ def test_glob_refinement_rejects_an_incomplete_working_set(discovery):
 
 def test_per_call_credentials_preserve_presence_and_request_identity(discovery):
     host, transport, _search = discovery
-    transport.call_rpc("grep", {"pattern": "needle", "files": []}, auth_token="")
-    assert host.calls[-1][2]["authorization"] == "Bearer "
+    with pytest.raises(AuthenticationError, match="empty request credential"):
+        transport.call_rpc("grep", {"pattern": "needle", "files": []}, auth_token="")
+    assert host.calls == []
     caller = request_api_key.set("caller-key")
     try:
-        transport.call_rpc("grep", {"pattern": "needle"}, auth_token="override-key")
+        for override in ("override-key", ""):
+            transport.call_rpc("grep", {"pattern": "needle"}, auth_token=override)
+            assert host.calls[-1][2]["authorization"] == "Bearer caller-key"
     finally:
         request_api_key.reset(caller)
     assert host.calls[-1][2]["authorization"] == "Bearer caller-key"

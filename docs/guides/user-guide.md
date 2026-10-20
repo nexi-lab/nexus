@@ -97,6 +97,17 @@ Hybrid and semantic queries require the host's configured embedding model. Index
 
 For an explicit Search endpoint, pass `--remote-url <HTTP origin>` on the Search command. Keep that endpoint tied to the data owner and use the same native caller credential.
 
+The Python SDK sends Search through its native gRPC connection:
+
+```python
+import nexus
+
+with nexus.connect(config={"profile": "remote", "url": "grpc://localhost:2028"}) as nx:
+    hits = nx.semantic_search(query="native filesystem", path="/docs", search_mode="keyword")
+```
+
+HTTP clients use `POST /v2/search/query` with `q` and `query_type`, or `POST /v2/search/grep` with `pattern` and `root_path`. Supply the native caller credential with each request. Use `nexus grep --in-section "## API" "status" /docs/spec.md` to restrict matches to a Markdown heading. The Rust host enforces file permissions on these searches.
+
 Administrators can manage durable Search path descriptions and ranking weights:
 
 ```sh

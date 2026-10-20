@@ -7,7 +7,6 @@ from nexus.server.api.v2.routers import (
     events_replay,
     eviction,
     operations,
-    replay,
     workflows,
 )
 
@@ -17,6 +16,5 @@ __all__ = [
     "connectors",
     "events_replay",
     "operations",
-    "replay",
     "workflows",
 ]

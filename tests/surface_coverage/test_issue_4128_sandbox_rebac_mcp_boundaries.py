@@ -21,7 +21,6 @@ _MCP_SECURITY_ROWS = {
     "discovery.list_servers",
     "discovery.load_tools",
     "discovery.search_tools",
-    "mcp.list_tools",
 }
 
 
@@ -44,16 +43,16 @@ def test_issue_4128_rebac_core_rows_are_available_in_sandbox() -> None:
         _assert_supported_sandbox_story_row(op_id)
 
 
-def test_issue_4128_mcp_security_rows_are_linked_to_profile_grant_tests() -> None:
+def test_mcp_discovery_rows_link_to_native_credential_acceptance() -> None:
     ops = _operations_by_id()
 
     for op_id in sorted(_MCP_SECURITY_ROWS):
         _assert_supported_sandbox_story_row(op_id)
         op = ops[op_id]
         assert op.owning_issue == 4128, op_id
-        assert "test_tool_namespace_middleware.py" in op.correctness_test, op_id
+        assert "scripts/test_search_agent_credentials_plugin.py" in op.correctness_test, op_id
         assert op.perf_class in {PerfClass.HOT, PerfClass.HOT_PATH}, op_id
-        assert "bench_permission_hotpath.py" in op.perf_link, op_id
+        assert "scripts/test_search_local.py" in op.perf_link, op_id
 
 
 def test_issue_4128_remote_zone_readonly_write_denial_is_linked() -> None:
@@ -72,17 +71,6 @@ def test_issue_4128_remote_zone_readonly_write_denial_is_linked() -> None:
     assert "test_sandbox_federation_e2e.py" in whoami.correctness_test
     assert whoami.perf_class == PerfClass.CONTROL
     assert whoami.perf_link
-
-
-def test_issue_4128_tool_profile_assignment_cli_is_supported() -> None:
-    op = _operations_by_id()["mcp.profile_assign"]
-    assert op.owning_issue == 4128
-    assert op.gap_issue is None
-    assert all(status == ProfileStatus.SUPPORTED for status in op.profiles.values())
-    assert op.transports["cli"].name == "nexus mcp profile assign"
-    assert "tests/unit/cli/test_mcp_profile_cli.py" in op.correctness_test
-    assert op.perf_class == PerfClass.SETUP
-    assert "bench_permission_hotpath.py" in op.perf_link
 
 
 def test_issue_4128_default_mcp_tool_profiles_are_packaged() -> None:

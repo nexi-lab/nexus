@@ -949,12 +949,6 @@ ignore_imports = [
     "nexus.bricks.mcp.server -> nexus",
     # Ratchet entries exposed by expanding the module list to all active bricks.
     "nexus.bricks.approvals.grpc_auth -> nexus.bricks.auth.types",
-    "nexus.bricks.archive.cli_glue -> nexus.cli.utils",
-    "nexus.bricks.archive.cli_glue -> nexus.bricks.portability.export_service",
-    "nexus.bricks.archive.cli_glue -> nexus.bricks.portability.import_service",
-    "nexus.bricks.archive.cli_glue -> nexus.bricks.portability.models",
-    "nexus.bricks.archive.cli_glue -> nexus.bricks.portability.signer",
-    "nexus.bricks.archive.cli_glue -> nexus.bricks.portability.trust",
     "nexus.bricks.archive.orchestrator -> nexus.bricks.portability.models",
     "nexus.bricks.archive.tests.unit.test_verify -> nexus.bricks.portability.signer",
     "nexus.bricks.archive.verify -> nexus.bricks.portability.signer",

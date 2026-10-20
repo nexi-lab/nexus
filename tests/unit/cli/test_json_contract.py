@@ -62,7 +62,6 @@ _UNIFIED_MODULES = [
     ("nexus.cli.commands.zone", "list_zones_cmd"),
     ("nexus.cli.commands.status", "status"),
     ("nexus.cli.commands.doctor", "doctor"),
-    ("nexus.cli.commands.mounts", "list_mounts"),
     ("nexus.cli.commands.admin", "list_keys"),
     ("nexus.cli.commands.locks", "lock_list"),
     ("nexus.cli.commands.config_cmd", "show_cmd"),

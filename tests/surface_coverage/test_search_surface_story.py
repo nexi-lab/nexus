@@ -29,7 +29,6 @@ SUPPORTED_ROWS = {
     "search.locate",
     "search.query",
     "search.batch_query",
-    "search.reindex",
     "search.stats",
     "semantic.search",
     "semantic.search_index",
@@ -101,17 +100,16 @@ def test_search_story_mcp_tools_link_to_story_rows() -> None:
     assert by_id["semantic.search"].transports["mcp"].name == "nexus_semantic_search"
 
 
-def test_user_guide_contains_search_story_inventory_and_quality_claims() -> None:
+def test_user_guide_contains_supported_search_and_authorization_contracts() -> None:
     text = _USER_GUIDE.read_text(encoding="utf-8")
 
     for needle in [
-        "Search surface coverage matrix",
+        "Search and discovery",
         "/v2/search/query",
         "/v2/search/grep",
         "nexus path-context",
-        "RRF",
-        "docs/benchmarks/2026-04-18-sandbox-vs-gbrain.md",
-        "section-aware grep",
-        "parser introspection",
+        "--in-section",
+        "same native caller credential",
+        "scripts/test_search_local.py",
     ]:
         assert needle in text

@@ -161,8 +161,8 @@ async def wait_for_projection(
     Every write returns ``projection_seq`` — the ``operation_log`` sequence
     of the row that also carries its ``version_history`` / ``file_paths``
     update.  This endpoint polls the RecordStore until that row exists in
-    the caller's zone, so a client can fence ``list_versions``, operation
-    replay and the search zone join on it instead of calling the admin-only
+    the caller's zone, so a client can fence ``list_versions`` and the
+    search zone join on it instead of calling the admin-only
     ``flush_write_observer`` RPC.  With the write-through observer the
     sequence is normally already committed when the write returns; the
     wait matters for a non-strict audit mode that timed out, and for other

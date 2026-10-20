@@ -34,7 +34,6 @@ _REGISTER_COMMANDS: dict[str, tuple[str, ...]] = {
     "search": ("glob", "grep", "search"),
     "rebac": ("rebac",),
     "inspect": ("info", "version", "size"),
-    "mounts": ("mounts",),
     "mcp": ("mcp",),
     "network": ("network",),
     "tls": ("tls",),
@@ -49,12 +48,8 @@ _REGISTER_COMMANDS: dict[str, tuple[str, ...]] = {
     "stack": ("up", "down", "logs", "restart", "upgrade", "stop", "start"),
     # DX: environment variable management
     "env_cmd": ("env", "run"),
-    # Issue #2929: MCL replay for index rebuild
-    "reindex": ("reindex",),
     # Issue #3773: Path context descriptions (admin CRUD)
     "path_context": ("path-context",),
-    # Issue #3793: Signed zone archive snapshots
-    "archive": ("archive",),
 }
 
 # Modules that expose a single Click command/group to add via cli.add_command

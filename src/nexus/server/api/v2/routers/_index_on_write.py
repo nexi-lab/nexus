@@ -1,7 +1,7 @@
 """Write-to-searchable helpers (#4736).
 
 Shared by ``POST /files/write`` and ``POST /files/batch/write`` (the
-optional ``index`` option) and by administrative reindexing.
+optional ``index`` option).
 These helpers pass text the server already holds to ``IndexDocuments``
 and translate the plugin's
 aggregate answer back into a per-path verdict the caller can act on.
@@ -15,9 +15,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-import time
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any, Final, Literal
 
@@ -44,16 +42,6 @@ REASON_OVERSIZE = (
     "(plugin-side walk)"
 )
 REASON_NOT_A_PATH = "not a VFS path (entity URN or relative name); nothing to index"
-
-# Bulk reindex (admin /reindex) batching.  IndexDocuments carries the text
-# inline and the plugin's tonic server decodes at most 4 MiB per message, so
-# a batch stays well under that; one oversize file is skipped with a reason
-# instead of failing the whole pass.
-REINDEX_MAX_DOC_BYTES = 2 * 1024 * 1024
-REINDEX_BATCH_DOCS = 64
-REINDEX_BATCH_BYTES = 2 * 1024 * 1024
-# Response-body cap for per-path lists (matches the pre-existing 25).
-REINDEX_PATH_LIST_CAP = 25
 
 _SKIP_KIND: Final[dict[str, str]] = {
     REASON_EMPTY: "empty",
@@ -313,142 +301,3 @@ async def read_written_bytes(fs: Any, path: str, context: Any) -> tuple[bytes, i
     except Exception:  # mtime only speeds up a later Refresh; never a reason to fail
         mtime_ms = None
     return content, mtime_ms
-
-
-# ── Bulk reindex (POST /api/v2/admin/reindex, #4241 / #4736) ─────────
-
-
-@dataclass
-class ReindexSearchOutcome:
-    """Per-path accounting for a bulk search reindex.
-
-    Post-P12 the plugin indexes SYNCHRONOUSLY and ``NotifyFileChange`` for
-    create / update is a no-op ack, so there is no queue to report.  Every
-    replayed path lands in exactly one bucket: ``indexed``, ``deleted``
-    (evicted), ``skipped`` (with a reason histogram) or ``errors``.
-    """
-
-    indexed: int = 0
-    deleted: int = 0
-    skipped: int = 0
-    skip_reasons: dict[str, int] = field(default_factory=dict)
-    skipped_paths: list[str] = field(default_factory=list)
-    errors: int = 0
-    failed_paths: list[str] = field(default_factory=list)
-    first_error: str | None = None
-    #: Highest plugin ``index_seq`` seen — ``/search/stats`` ``last_index_seq
-    #: >= index_seq`` means everything this pass indexed is served.
-    index_seq: int | None = None
-    #: Epoch seconds when the last plugin call returned (``None`` if none ran).
-    completed_at: float | None = None
-
-    def skip(self, path: str, reason: str) -> None:
-        self.skipped += 1
-        kind = _SKIP_KIND.get(reason, "other")
-        self.skip_reasons[kind] = self.skip_reasons.get(kind, 0) + 1
-        if len(self.skipped_paths) < REINDEX_PATH_LIST_CAP:
-            self.skipped_paths.append(path)
-
-    def fail(self, path: str, error: str) -> None:
-        self.errors += 1
-        if len(self.failed_paths) < REINDEX_PATH_LIST_CAP:
-            self.failed_paths.append(path)
-        if self.first_error is None:
-            self.first_error = error
-
-    def note_seq(self, seq: int | None) -> None:
-        if seq:
-            self.index_seq = max(self.index_seq or 0, int(seq))
-        self.completed_at = time.time()
-
-    @classmethod
-    def unavailable(cls, paths: Mapping[str, str], reason: str) -> ReindexSearchOutcome:
-        """Every path failed because the plugin / VFS could not be reached."""
-        out = cls()
-        for path in paths:
-            out.fail(path, reason)
-        return out
-
-
-async def reindex_paths(
-    search_daemon: Any,
-    fs: Any,
-    context: Any,
-    changes: Mapping[str, str],
-    *,
-    zone_id: str,
-) -> ReindexSearchOutcome:
-    """Drive the search plugin for every path a reindex replay touched.
-
-    ``changes`` maps path → ``"delete"`` | ``"update"``.  Deletes evict via
-    ``NotifyFileChange``; updates are read through the VFS with ``context``
-    (the admin caller) and indexed in bounded ``IndexDocuments`` batches
-    (``REINDEX_BATCH_DOCS`` docs / ``REINDEX_BATCH_BYTES`` bytes).  A
-    single unreadable, oversize or non-text file never aborts the pass — it
-    is counted and named in the outcome.
-    """
-    out = ReindexSearchOutcome()
-    batch: list[dict[str, Any]] = []
-    batch_bytes = 0
-
-    async def _flush() -> None:
-        nonlocal batch, batch_bytes
-        if not batch:
-            return
-        verdicts = await index_documents_for_paths(search_daemon, batch, zone_id=zone_id)
-        for doc in batch:
-            verdict = verdicts[doc["path"]]
-            if verdict.status == STATUS_INDEXED:
-                out.indexed += 1
-                out.note_seq(verdict.index_seq)
-            elif verdict.status == STATUS_SKIPPED:
-                out.skip(doc["path"], verdict.reason or REASON_EMPTY)
-            else:
-                out.fail(doc["path"], verdict.error or "index failed")
-        out.completed_at = time.time()
-        batch = []
-        batch_bytes = 0
-
-    for path, change in changes.items():
-        if not path.startswith("/"):
-            # Defensive twin of the route-side filter: an entity URN or
-            # relative name is not a document, so it is neither read nor
-            # evicted — and never a failure.
-            out.skip(path, REASON_NOT_A_PATH)
-            continue
-        if change == "delete":
-            try:
-                result = await search_daemon.notify_file_change(path, "delete", zone_id=zone_id)
-            except Exception as exc:
-                logger.warning("reindex: evict failed for %s: %s", path, exc)
-                out.fail(path, f"{type(exc).__name__}: {exc}")
-                continue
-            out.deleted += 1
-            out.note_seq(result.get("index_seq") if isinstance(result, dict) else None)
-            continue
-
-        try:
-            content, mtime_ms = await read_written_bytes(fs, path, context)
-        except HTTPException as exc:
-            out.fail(path, f"read failed ({exc.status_code}): {exc.detail}")
-            continue
-        except Exception as exc:
-            logger.warning("reindex: read failed for %s: %s", path, exc)
-            out.fail(path, f"read failed: {type(exc).__name__}: {exc}")
-            continue
-        if len(content) > REINDEX_MAX_DOC_BYTES:
-            out.skip(path, REASON_OVERSIZE)
-            continue
-        text = decode_index_text(content)
-        if text is None:
-            out.skip(path, REASON_NON_TEXT)
-            continue
-        if batch and (
-            len(batch) >= REINDEX_BATCH_DOCS or batch_bytes + len(content) > REINDEX_BATCH_BYTES
-        ):
-            await _flush()
-        batch.append(build_document(path, text, mtime_ms=mtime_ms))
-        batch_bytes += len(content)
-
-    await _flush()
-    return out

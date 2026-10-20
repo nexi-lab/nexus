@@ -7,20 +7,14 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
-from fastapi import HTTPException
-
 from nexus.server.api.v2.routers._index_on_write import (
     REASON_EMPTY,
     REASON_NON_TEXT,
-    REINDEX_BATCH_DOCS,
-    REINDEX_MAX_DOC_BYTES,
     IndexOnWrite,
-    ReindexSearchOutcome,
     effective_index_option,
     index_after_batch_write,
     index_requested,
     index_text_for,
-    reindex_paths,
     to_epoch_ms,
     verdict_for_path,
 )
@@ -116,163 +110,4 @@ def test_index_after_batch_write_with_nothing_requested_skips_the_plugin() -> No
         index_after_batch_write(daemon, [("/a.md", b"alpha", None, None)], zone_id=None)
     )
     assert verdicts == {}
-    daemon.index_documents.assert_not_awaited()
-
-
-# ── reindex_paths (admin /reindex, #4241) ─────────────────────────────
-
-
-class _FS:
-    def __init__(self, files: dict[str, bytes]) -> None:
-        self.files = files
-
-    def read(self, path: str, *, context=None, **_):
-        from nexus.contracts.exceptions import NexusFileNotFoundError
-
-        if path not in self.files:
-            raise NexusFileNotFoundError(path)
-        return self.files[path]
-
-    def sys_stat(self, path: str, *, context=None, **_):
-        return {"modified_at_ms": 1_700_000_000_000}
-
-
-def _reindex_daemon(*, skipped_paths: list[str] | None = None, seq: int = 7) -> MagicMock:
-    daemon = MagicMock()
-    calls: list[list[dict]] = []
-
-    async def _index(docs, *, zone_id):
-        calls.append(list(docs))
-        return {
-            "indexed": len(docs),
-            "skipped_paths": skipped_paths or [],
-            "index_seq": seq + len(calls),
-        }
-
-    async def _notify(path, change_type, *, zone_id):
-        return {"status": "accepted", "index_seq": 100}
-
-    daemon.index_documents = AsyncMock(side_effect=_index)
-    daemon.notify_file_change = AsyncMock(side_effect=_notify)
-    daemon.calls = calls
-    return daemon
-
-
-def test_reindex_paths_buckets_every_path_exactly_once() -> None:
-    fs = _FS(
-        {
-            "/a.md": b"alpha text",
-            "/b.md": b"bravo text",
-            "/blob.bin": b"\xff\xfe\x00",
-            "/big.txt": b"x" * (REINDEX_MAX_DOC_BYTES + 1),
-            "/empty.md": b"   ",
-        }
-    )
-    daemon = _reindex_daemon(skipped_paths=["/empty.md"])
-    changes = {
-        "/a.md": "update",
-        "/b.md": "update",
-        "/blob.bin": "update",
-        "/big.txt": "update",
-        "/empty.md": "update",
-        "/missing.md": "update",
-        "/gone.md": "delete",
-    }
-
-    out = asyncio.run(reindex_paths(daemon, fs, context=None, changes=changes, zone_id="eng"))
-
-    assert out.indexed == 2
-    assert out.deleted == 1
-    assert out.skipped == 3
-    assert out.skip_reasons == {"non_text": 1, "oversize": 1, "empty": 1}
-    assert sorted(out.skipped_paths) == ["/big.txt", "/blob.bin", "/empty.md"]
-    assert out.errors == 1 and out.failed_paths == ["/missing.md"]
-    assert "404" in (out.first_error or "")
-    assert out.indexed + out.deleted + out.skipped + out.errors == len(changes)
-    # Highest seq wins: the evict returned 100, the batch 8.
-    assert out.index_seq == 100
-    assert out.completed_at is not None
-
-    # One IndexDocuments call for the three readable text docs, in the
-    # token zone, with the stat mtime attached; the binary and oversize
-    # files never reached the plugin.
-    assert len(daemon.calls) == 1
-    assert [d["path"] for d in daemon.calls[0]] == ["/a.md", "/b.md", "/empty.md"]
-    assert daemon.index_documents.await_args.kwargs == {"zone_id": "eng"}
-    assert all(d["mtime_ms"] == 1_700_000_000_000 for d in daemon.calls[0])
-    daemon.notify_file_change.assert_awaited_once_with("/gone.md", "delete", zone_id="eng")
-
-
-def test_reindex_paths_batches_large_replays() -> None:
-    n = REINDEX_BATCH_DOCS * 2 + 5
-    fs = _FS({f"/doc{i}.md": f"document {i}".encode() for i in range(n)})
-    daemon = _reindex_daemon()
-
-    out = asyncio.run(
-        reindex_paths(
-            daemon, fs, context=None, changes=dict.fromkeys(fs.files, "update"), zone_id="z"
-        )
-    )
-
-    assert out.indexed == n
-    assert [len(c) for c in daemon.calls] == [REINDEX_BATCH_DOCS, REINDEX_BATCH_DOCS, 5]
-
-
-def test_reindex_paths_plugin_failure_marks_the_batch_failed_not_the_pass() -> None:
-    fs = _FS({"/a.md": b"alpha", "/b.md": b"bravo"})
-    daemon = MagicMock()
-    daemon.index_documents = AsyncMock(side_effect=RuntimeError("plugin down"))
-    daemon.notify_file_change = AsyncMock(side_effect=RuntimeError("plugin down"))
-
-    out = asyncio.run(
-        reindex_paths(
-            daemon,
-            fs,
-            context=None,
-            changes={"/a.md": "update", "/b.md": "update", "/c.md": "delete"},
-            zone_id="z",
-        )
-    )
-
-    assert out.errors == 3 and out.indexed == 0 and out.deleted == 0
-    assert sorted(out.failed_paths) == ["/a.md", "/b.md", "/c.md"]
-    assert "plugin down" in (out.first_error or "")
-
-
-def test_reindex_outcome_unavailable_fails_every_path_with_the_reason() -> None:
-    out = ReindexSearchOutcome.unavailable({"/a": "update", "/b": "delete"}, "search unavailable")
-    assert out.errors == 2
-    assert out.failed_paths == ["/a", "/b"]
-    assert out.first_error == "search unavailable"
-    assert out.indexed == out.deleted == out.skipped == 0
-
-
-def test_reindex_paths_skips_non_vfs_paths_without_touching_the_plugin() -> None:
-    daemon = _reindex_daemon()
-    out = asyncio.run(
-        reindex_paths(
-            daemon,
-            _FS({}),
-            context=None,
-            changes={"urn:nexus:file:root:abc": "update", "relative.md": "delete"},
-            zone_id="z",
-        )
-    )
-    assert out.skipped == 2 and out.errors == 0
-    assert out.skip_reasons == {"not_a_path": 2}
-    daemon.index_documents.assert_not_awaited()
-    daemon.notify_file_change.assert_not_awaited()
-
-
-def test_reindex_paths_read_permission_error_is_a_per_path_failure() -> None:
-    class _DenyFS(_FS):
-        def read(self, path, *, context=None, **_):
-            raise HTTPException(status_code=403, detail="nope")
-
-    daemon = _reindex_daemon()
-    out = asyncio.run(
-        reindex_paths(daemon, _DenyFS({}), context=None, changes={"/a.md": "update"}, zone_id="z")
-    )
-    assert out.errors == 1
-    assert "403" in (out.first_error or "")
     daemon.index_documents.assert_not_awaited()

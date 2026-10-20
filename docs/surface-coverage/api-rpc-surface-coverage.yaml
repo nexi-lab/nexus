@@ -405,41 +405,6 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
-- id: admin.reconcile_projections
-  module: uncategorized
-  summary: Repair file_paths / version_history / operation_log from the kernel after a crash, outage or dropped projection
-    event (#4738).
-  transports:
-    http:
-      name: POST /api/v2/admin/reconcile-projections
-      source: src/nexus/server/api/v2/routers/replay.py:250
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/unit/server/api/v2/test_admin_reconcile_projections.py; tests/unit/storage/test_projection_reconcile.py
-  perf_class: control
-  perf_link: operator recovery surface; walks the kernel under a prefix, not on the data-plane hot path
-  gap_issue: null
-  owning_issue: 4738
-- id: admin.reindex
-  module: search
-  summary: ''
-  transports:
-    http:
-      name: POST /api/v2/admin/reindex
-      source: src/nexus/server/api/v2/routers/replay.py:95
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/unit/test_reindex.py:1
-  perf_class: setup
-  perf_link: setup/bootstrap surface; invoked outside steady-state request hot paths
-  gap_issue: null
-  owning_issue: 4135
 - id: admin.revoke_key
   module: uncategorized
   summary: ''
@@ -1080,159 +1045,6 @@ operations:
     grpc_typed:
       name: ApprovalsV1.Watch
       source: src/nexus/grpc/approvals/approvals_pb2_grpc.py:57
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: archive.cli
-  module: archive
-  summary: ''
-  transports:
-    cli:
-      name: nexus archive
-      source: src/nexus/cli/commands/archive.py:20
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/e2e/test_archive_round_trip.py:1
-  perf_class: not_perf_sensitive
-  perf_link: human-invoked metadata or inventory surface; not on a request hot path
-  gap_issue: null
-  owning_issue: 4138
-- id: archive.create
-  module: archive
-  summary: ''
-  transports:
-    cli:
-      name: nexus archive create
-      source: src/nexus/cli/commands/archive.py:52
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: archive.diff
-  module: archive
-  summary: ''
-  transports:
-    cli:
-      name: nexus archive diff
-      source: src/nexus/cli/commands/archive.py:142
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: archive.inspect
-  module: archive
-  summary: ''
-  transports:
-    cli:
-      name: nexus archive inspect
-      source: src/nexus/cli/commands/archive.py:25
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: archive.keys
-  module: archive
-  summary: ''
-  transports:
-    cli:
-      name: nexus archive keys
-      source: src/nexus/cli/commands/archive.py:159
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: archive.keys_rotate
-  module: archive
-  summary: ''
-  transports:
-    cli:
-      name: nexus archive keys rotate
-      source: src/nexus/cli/commands/archive.py:164
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: archive.keys_trust
-  module: archive
-  summary: ''
-  transports:
-    cli:
-      name: nexus archive keys trust
-      source: src/nexus/cli/commands/archive.py:173
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: archive.restore
-  module: archive
-  summary: Restore a signed archive into a zone.
-  transports:
-    cli:
-      name: nexus archive restore
-      source: src/nexus/cli/commands/archive.py:98
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: 'WANTED: We can create archives (1 op) but no documented restore path.'
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: 4207
-  owning_issue: 4138
-- id: archive.verify
-  module: archive
-  summary: ''
-  transports:
-    cli:
-      name: nexus archive verify
-      source: src/nexus/cli/commands/archive.py:37
   profiles:
     lite: unverified
     sandbox: unverified
@@ -3657,8 +3469,9 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: 'MCP: tools/call nexus_mkdir; inspect tools/list for its input schema.'
-  correctness_test: scripts/test_search_agent_credentials_plugin.py; tests/unit/cli/test_mcp_transport.py
+  usage_example: 'CLI: nexus mkdir/rmdir/rename-batch/rm-batch /workspace/...; sandbox kernel/RPC: Call(sys_*, {"path":"/zone/local/..."})'
+  correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
+    scripts/test_search_agent_credentials_plugin.py; tests/unit/cli/test_mcp_transport.py
   perf_class: not_perf_sensitive
   perf_link: scripts/test_search_local.py
   gap_issue: null
@@ -3855,8 +3668,9 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: 'MCP: tools/call nexus_rmdir; inspect tools/list for its input schema.'
-  correctness_test: scripts/test_search_agent_credentials_plugin.py; tests/unit/cli/test_mcp_transport.py
+  usage_example: 'CLI: nexus mkdir/rmdir/rename-batch/rm-batch /workspace/...; sandbox kernel/RPC: Call(sys_*, {"path":"/zone/local/..."})'
+  correctness_test: tests/unit/cli/test_fs_parity.py; tests/e2e/self_contained/cli/test_sandbox_federation_e2e.py::TestSandboxZonePermissions::test_write_to_local_zone_stays_on_disk;
+    scripts/test_search_agent_credentials_plugin.py; tests/unit/cli/test_mcp_transport.py
   perf_class: not_perf_sensitive
   perf_link: scripts/test_search_local.py
   gap_issue: null
@@ -5707,25 +5521,6 @@ operations:
   perf_link: setup/bootstrap surface; invoked outside steady-state request hot paths
   gap_issue: null
   owning_issue: 4136
-- id: mount.mounts
-  module: mount
-  summary: 'CLI command group for connector mount lifecycle: add, list, info, remove, update, and reauth.'
-  transports:
-    cli:
-      name: nexus mounts
-      source: src/nexus/cli/commands/mounts.py:30
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: 'CLI: nexus mounts add /sources/hn hn ''{}'' && nexus mounts list --json; RPC: add_mount/list_mounts/remove_mount
-    provide the equivalent lifecycle.'
-  correctness_test: tests/unit/services/test_mount_service.py; tests/integration/services/test_connectors_router.py; tests/e2e/server/test_issue_4136_api_surface_e2e.py
-  perf_class: control
-  perf_link: control/setup path; mount add/list are not per-request hot paths, connector read/list latency is backend-specific
-    and covered by connector/search benchmarks when enabled.
-  gap_issue: null
-  owning_issue: 4136
 - id: mount.restart
   module: mount
   summary: ''
@@ -5796,142 +5591,6 @@ operations:
   perf_link: one-time boot per session; sandbox daemon start measured in test_sandbox_boot_smoke.py
   gap_issue: null
   owning_issue: 4126
-- id: mounts.add
-  module: mount
-  summary: ''
-  transports:
-    cli:
-      name: nexus mounts add
-      source: src/nexus/cli/commands/mounts.py:58
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: mounts.info
-  module: mount
-  summary: ''
-  transports:
-    cli:
-      name: nexus mounts info
-      source: src/nexus/cli/commands/mounts.py:326
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: mounts.list
-  module: mount
-  summary: ''
-  transports:
-    cli:
-      name: nexus mounts list
-      source: src/nexus/cli/commands/mounts.py:228
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: mounts.reauth
-  module: mount
-  summary: ''
-  transports:
-    cli:
-      name: nexus mounts reauth
-      source: src/nexus/cli/commands/mounts.py:553
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: mounts.remove
-  module: mount
-  summary: ''
-  transports:
-    cli:
-      name: nexus mounts remove
-      source: src/nexus/cli/commands/mounts.py:180
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: mounts.schema
-  module: mount
-  summary: ''
-  transports:
-    cli:
-      name: nexus mounts schema
-      source: src/nexus/cli/commands/mounts.py:473
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: mounts.skills
-  module: mount
-  summary: ''
-  transports:
-    cli:
-      name: nexus mounts skills
-      source: src/nexus/cli/commands/mounts.py:386
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: mounts.update
-  module: mount
-  summary: ''
-  transports:
-    cli:
-      name: nexus mounts update
-      source: src/nexus/cli/commands/mounts.py:630
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
 - id: namespace.delete
   module: rebac
   summary: Delete or clean up ReBAC namespace data for an object type.
@@ -6938,23 +6597,6 @@ operations:
   perf_link: read-your-writes fence; one indexed EXISTS probe per poll, not on the data-plane hot path
   gap_issue: null
   owning_issue: 4738
-- id: ops.replay
-  module: uncategorized
-  summary: ''
-  transports:
-    http:
-      name: GET /api/v2/ops/replay
-      source: src/nexus/server/api/v2/routers/replay.py:37
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/unit/server/test_full_profile_control_plane_surface.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
-  gap_issue: null
-  owning_issue: 4138
 - id: parsers.list
   module: parsers
   summary: Missing parser introspection surface for listing registered parser providers and formats.
@@ -8453,10 +8095,12 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: 'MCP: tools/call nexus_glob; inspect tools/list for its input schema.'
-  correctness_test: scripts/test_search_agent_credentials_plugin.py; tests/unit/cli/test_mcp_transport.py
+  usage_example: nexus glob "**/*.py" /workspace --plain; POST /v2/search/glob
+  correctness_test: tests/integration/search/test_discovery_client.py::test_sdk_refinement_preserves_scope_context_and_live_responses;
+    scripts/test_search_credentials_plugin.py; scripts/test_search_agent_credentials_plugin.py; tests/unit/cli/test_mcp_transport.py
   perf_class: hot
-  perf_link: scripts/test_search_local.py
+  perf_link: scripts/test_discovery_service_plugin.py guards bounded selections and result caps; traversal I/O budgets are
+    enforced by the pinned VFS discovery journeys
   gap_issue: null
   owning_issue: 4129
 - id: search.grep
@@ -8482,10 +8126,13 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: 'MCP: tools/call nexus_grep; inspect tools/list for its input schema.'
-  correctness_test: scripts/test_search_agent_credentials_plugin.py; tests/unit/cli/test_mcp_transport.py
+  usage_example: nexus grep "token" /docs/api.md --in-section "## API"; POST /v2/search/grep
+  correctness_test: tests/integration/search/test_discovery_client.py::test_sdk_refinement_preserves_scope_context_and_live_responses;
+    scripts/test_search_credentials_plugin.py; tests/e2e/self_contained/test_mcp_discovery.py; scripts/test_discovery_service_plugin.py;
+    scripts/test_search_agent_credentials_plugin.py; tests/unit/cli/test_mcp_transport.py
   perf_class: hot
-  perf_link: scripts/test_search_local.py
+  perf_link: scripts/test_discovery_service_plugin.py guards bounded selections and result caps; traversal I/O budgets are
+    enforced by the pinned VFS discovery journeys
   gap_issue: null
   owning_issue: 4129
 - id: search.health
@@ -8723,23 +8370,6 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: 4135
-- id: search.reindex
-  module: search
-  summary: CLI workflow for rebuilding search indexes from durable filesystem mutation state.
-  transports:
-    cli:
-      name: nexus reindex
-      source: src/nexus/cli/commands/reindex.py:49
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: nexus reindex --zone-id root --limit 1000
-  correctness_test: tests/e2e/self_contained/test_search_surface_live_e2e.py
-  perf_class: setup
-  perf_link: tests/e2e/self_contained/test_search_surface_live_e2e.py
-  gap_issue: null
-  owning_issue: 4135
 - id: search.remove_indexed_directory
   module: search
   summary: Remove a directory registration; an absent record returns removed=false.
@@ -8837,10 +8467,11 @@ operations:
     lite: supported
     sandbox: supported
     full: supported
-  usage_example: 'MCP: tools/call nexus_semantic_search; inspect tools/list for its input schema.'
-  correctness_test: scripts/test_search_agent_credentials_plugin.py; tests/unit/cli/test_mcp_transport.py
+  usage_example: 'MCP: nexus_semantic_search(query="auth flow", search_mode="hybrid", limit=5)'
+  correctness_test: tests/integration/search/test_indexed_client.py; scripts/test_search_service_plugin.py; scripts/test_search_agent_credentials_plugin.py;
+    tests/e2e/self_contained/test_sandbox_mcp.py; tests/unit/cli/test_mcp_transport.py
   perf_class: hot
-  perf_link: scripts/test_search_local.py
+  perf_link: scripts/test_published_search_quality.py; docs/benchmarks/2026-04-18-sandbox-vs-gbrain.md
   gap_issue: null
   owning_issue: 4129
 - id: semantic.search_index
@@ -10655,22 +10286,6 @@ parity_warnings:
   - http
   - mcp
   - sdk
-- operation_id: admin.reconcile_projections
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
-- operation_id: admin.reindex
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
 - operation_id: admin.revoke_key
   has:
   - cli
@@ -10948,78 +10563,6 @@ parity_warnings:
   - grpc_typed
   missing:
   - cli
-  - http
-  - mcp
-  - sdk
-- operation_id: archive.cli
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: archive.create
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: archive.diff
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: archive.inspect
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: archive.keys
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: archive.keys_rotate
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: archive.keys_trust
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: archive.restore
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: archive.verify
-  has:
-  - cli
-  missing:
-  - grpc_typed
   - http
   - mcp
   - sdk
@@ -12527,14 +12070,6 @@ parity_warnings:
   - http
   - mcp
   - sdk
-- operation_id: mount.mounts
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
 - operation_id: mount.restart
   has:
   - cli
@@ -12560,70 +12095,6 @@ parity_warnings:
   - mcp
   - sdk
 - operation_id: mount.up
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: mounts.add
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: mounts.info
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: mounts.list
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: mounts.reauth
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: mounts.remove
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: mounts.schema
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: mounts.skills
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: mounts.update
   has:
   - cli
   missing:
@@ -12928,14 +12399,6 @@ parity_warnings:
   - mcp
   - sdk
 - operation_id: operations.wait
-  has:
-  - http
-  missing:
-  - cli
-  - grpc_typed
-  - mcp
-  - sdk
-- operation_id: ops.replay
   has:
   - http
   missing:
@@ -13540,14 +13003,6 @@ parity_warnings:
   - grpc_typed
   missing:
   - cli
-  - http
-  - mcp
-  - sdk
-- operation_id: search.reindex
-  has:
-  - cli
-  missing:
-  - grpc_typed
   - http
   - mcp
   - sdk

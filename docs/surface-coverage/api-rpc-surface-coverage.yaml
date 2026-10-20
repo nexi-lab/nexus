@@ -2276,23 +2276,6 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4136
-- id: auth.exchange
-  module: auth
-  summary: ''
-  transports:
-    cli:
-      name: nexus exchange
-      source: src/nexus/cli/commands/exchange.py:26
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/e2e/server/test_auth_security_e2e.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
-  gap_issue: null
-  owning_issue: 4138
 - id: auth.init
   module: auth
   summary: ''
@@ -2901,57 +2884,6 @@ operations:
   perf_link: null
   gap_issue: null
   owning_issue: null
-- id: conflicts.list
-  module: filesystem
-  summary: ''
-  transports:
-    cli:
-      name: nexus conflicts list
-      source: src/nexus/cli/commands/conflicts.py:32
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: conflicts.resolve
-  module: uncategorized
-  summary: ''
-  transports:
-    cli:
-      name: nexus conflicts resolve
-      source: src/nexus/cli/commands/conflicts.py:109
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: conflicts.show
-  module: uncategorized
-  summary: ''
-  transports:
-    cli:
-      name: nexus conflicts show
-      source: src/nexus/cli/commands/conflicts.py:75
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
 - id: connectors.api_v2
   module: mount
   summary: HTTP endpoint listing registered connector types and capabilities for mount selection.
@@ -3476,91 +3408,6 @@ operations:
   perf_link: human-invoked metadata or inventory surface; not on a request hot path
   gap_issue: null
   owning_issue: 4134
-- id: delegation.cli
-  module: delegation
-  summary: ''
-  transports:
-    cli:
-      name: nexus delegation
-      source: src/nexus/cli/commands/delegation.py:17
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/integration/server/api/v2/routers/test_delegation_router.py:1
-  perf_class: not_perf_sensitive
-  perf_link: human-invoked metadata or inventory surface; not on a request hot path
-  gap_issue: null
-  owning_issue: 4134
-- id: delegation.create
-  module: delegation
-  summary: ''
-  transports:
-    cli:
-      name: nexus delegation create
-      source: src/nexus/cli/commands/delegation.py:33
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: delegation.list
-  module: delegation
-  summary: ''
-  transports:
-    cli:
-      name: nexus delegation list
-      source: src/nexus/cli/commands/delegation.py:90
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: delegation.revoke
-  module: delegation
-  summary: ''
-  transports:
-    cli:
-      name: nexus delegation revoke
-      source: src/nexus/cli/commands/delegation.py:145
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: delegation.show
-  module: delegation
-  summary: ''
-  transports:
-    cli:
-      name: nexus delegation show
-      source: src/nexus/cli/commands/delegation.py:163
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
 - id: delete.agent
   module: agent_log
   summary: Delete an agent registration, revoke keys, and clean related permissions when available.
@@ -3954,23 +3801,6 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4137
-- id: exchange.cancel
-  module: auth
-  summary: ''
-  transports:
-    cli:
-      name: nexus exchange cancel
-      source: src/nexus/cli/commands/exchange.py:128
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
 - id: exchange.code
   module: auth
   summary: ''
@@ -3988,57 +3818,6 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4136
-- id: exchange.create
-  module: auth
-  summary: ''
-  transports:
-    cli:
-      name: nexus exchange create
-      source: src/nexus/cli/commands/exchange.py:71
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: exchange.list
-  module: auth
-  summary: ''
-  transports:
-    cli:
-      name: nexus exchange list
-      source: src/nexus/cli/commands/exchange.py:43
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: exchange.show
-  module: auth
-  summary: ''
-  transports:
-    cli:
-      name: nexus exchange show
-      source: src/nexus/cli/commands/exchange.py:101
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
 - id: execute.workflow
   module: workflows
   summary: Execute a named workflow through MCP; visible from the full profile.
@@ -6413,91 +6192,6 @@ operations:
   perf_link: human-invoked metadata or inventory surface; not on a request hot path
   gap_issue: null
   owning_issue: 4138
-- id: identity.cli
-  module: identity
-  summary: ''
-  transports:
-    cli:
-      name: nexus identity
-      source: src/nexus/cli/commands/identity.py:17
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/e2e/server/test_identity_e2e.py:1
-  perf_class: not_perf_sensitive
-  perf_link: human-invoked metadata or inventory surface; not on a request hot path
-  gap_issue: null
-  owning_issue: 4138
-- id: identity.credentials
-  module: identity
-  summary: ''
-  transports:
-    cli:
-      name: nexus identity credentials
-      source: src/nexus/cli/commands/identity.py:102
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: identity.passport
-  module: identity
-  summary: ''
-  transports:
-    cli:
-      name: nexus identity passport
-      source: src/nexus/cli/commands/identity.py:146
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: identity.show
-  module: identity
-  summary: ''
-  transports:
-    cli:
-      name: nexus identity show
-      source: src/nexus/cli/commands/identity.py:32
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: identity.verify
-  module: identity
-  summary: ''
-  transports:
-    cli:
-      name: nexus identity verify
-      source: src/nexus/cli/commands/identity.py:60
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
 - id: import.metadata
   module: portability
   summary: ''
@@ -7144,91 +6838,6 @@ operations:
   perf_link: control-plane operation; outside the per-request permission hot path, so no dedicated benchmark is required
   gap_issue: null
   owning_issue: 4134
-- id: manifest.create
-  module: uncategorized
-  summary: ''
-  transports:
-    cli:
-      name: nexus manifest create
-      source: src/nexus/cli/commands/manifest_cli.py:33
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: manifest.evaluate
-  module: uncategorized
-  summary: ''
-  transports:
-    cli:
-      name: nexus manifest evaluate
-      source: src/nexus/cli/commands/manifest_cli.py:172
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: manifest.list
-  module: filesystem
-  summary: ''
-  transports:
-    cli:
-      name: nexus manifest list
-      source: src/nexus/cli/commands/manifest_cli.py:94
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: manifest.revoke
-  module: uncategorized
-  summary: ''
-  transports:
-    cli:
-      name: nexus manifest revoke
-      source: src/nexus/cli/commands/manifest_cli.py:206
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: manifest.show
-  module: uncategorized
-  summary: ''
-  transports:
-    cli:
-      name: nexus manifest show
-      source: src/nexus/cli/commands/manifest_cli.py:140
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
 - id: mcp.cli
   module: mcp
   summary: ''
@@ -9468,23 +9077,6 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4138
-- id: pay.cli
-  module: pay
-  summary: ''
-  transports:
-    cli:
-      name: nexus pay
-      source: src/nexus/cli/commands/pay.py:15
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/e2e/self_contained/pay/test_tigerbeetle_integration.py:1
-  perf_class: not_perf_sensitive
-  perf_link: human-invoked metadata or inventory surface; not on a request hot path
-  gap_issue: null
-  owning_issue: 4138
 - id: pay.history
   module: pay
   summary: ''
@@ -10966,23 +10558,6 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: 4134
   owning_issue: 4134
-- id: rlm.infer
-  module: uncategorized
-  summary: ''
-  transports:
-    cli:
-      name: nexus rlm infer
-      source: src/nexus/cli/commands/rlm.py:30
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
 - id: rpc.api_nfs
   module: nexus_fs
   summary: ''
@@ -11260,40 +10835,6 @@ operations:
   perf_link: human-invoked metadata or inventory surface; not on a request hot path
   gap_issue: null
   owning_issue: 4137
-- id: scheduler.queue
-  module: task_manager
-  summary: ''
-  transports:
-    cli:
-      name: nexus scheduler queue
-      source: src/nexus/cli/commands/scheduler_cli.py:86
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: scheduler.status
-  module: task_manager
-  summary: ''
-  transports:
-    cli:
-      name: nexus scheduler status
-      source: src/nexus/cli/commands/scheduler_cli.py:31
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
 - id: scheduler.submit
   module: task_manager
   summary: ''
@@ -11796,23 +11337,6 @@ operations:
   perf_link: scripts/test_search_credentials_plugin.py
   gap_issue: null
   owning_issue: 4135
-- id: secrets.secrets_audit
-  module: secrets
-  summary: ''
-  transports:
-    cli:
-      name: nexus secrets-audit
-      source: src/nexus/cli/commands/secrets_audit.py:17
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/e2e/server/test_audit_e2e.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
-  gap_issue: null
-  owning_issue: 4138
 - id: secrets_audit.events_export
   module: secrets
   summary: ''
@@ -11830,57 +11354,6 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4138
-- id: secrets_audit.export
-  module: secrets
-  summary: ''
-  transports:
-    cli:
-      name: nexus secrets-audit export
-      source: src/nexus/cli/commands/secrets_audit.py:85
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: secrets_audit.list
-  module: secrets
-  summary: ''
-  transports:
-    cli:
-      name: nexus secrets-audit list
-      source: src/nexus/cli/commands/secrets_audit.py:32
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: secrets_audit.verify
-  module: secrets
-  summary: ''
-  transports:
-    cli:
-      name: nexus secrets-audit verify
-      source: src/nexus/cli/commands/secrets_audit.py:132
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
 - id: semantic.search
   module: search
   summary: RPC/MCP semantic and hybrid search over indexed documents.
@@ -12874,23 +12347,6 @@ operations:
   perf_link: tests/benchmarks/bench_read_write_overhead.py:1
   gap_issue: null
   owning_issue: 4133
-- id: task_manager.scheduler
-  module: task_manager
-  summary: ''
-  transports:
-    cli:
-      name: nexus scheduler
-      source: src/nexus/cli/commands/scheduler_cli.py:17
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/integration/services/scheduler/test_classifier.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
-  gap_issue: null
-  owning_issue: 4137
 - id: tasks.events
   module: agent_log
   summary: ''
@@ -13163,23 +12619,6 @@ operations:
   perf_link: operator/control-plane surface; not on data-plane hot path
   gap_issue: null
   owning_issue: 4138
-- id: uncategorized.conflicts
-  module: uncategorized
-  summary: ''
-  transports:
-    cli:
-      name: nexus conflicts
-      source: src/nexus/cli/commands/conflicts.py:17
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/unit/server/test_full_profile_control_plane_surface.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
-  gap_issue: null
-  owning_issue: 4138
 - id: uncategorized.demo
   module: uncategorized
   summary: ''
@@ -13267,40 +12706,6 @@ operations:
   perf_link: human-invoked metadata or inventory surface; not on a request hot path
   gap_issue: null
   owning_issue: 4138
-- id: uncategorized.manifest
-  module: uncategorized
-  summary: ''
-  transports:
-    cli:
-      name: nexus manifest
-      source: src/nexus/cli/commands/manifest_cli.py:17
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/unit/server/test_full_profile_control_plane_surface.py:1
-  perf_class: not_perf_sensitive
-  perf_link: human-invoked metadata or inventory surface; not on a request hot path
-  gap_issue: null
-  owning_issue: 4138
-- id: uncategorized.memory
-  module: uncategorized
-  summary: ''
-  transports:
-    cli:
-      name: nexus memory
-      source: src/nexus/cli/commands/memory.py:1
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/unit/server/test_full_profile_control_plane_surface.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
-  gap_issue: null
-  owning_issue: 4138
 - id: uncategorized.migrate
   module: uncategorized
   summary: ''
@@ -13359,23 +12764,6 @@ operations:
     cli:
       name: nexus plugins
       source: src/nexus/cli/commands/plugins.py:51
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/unit/server/test_full_profile_control_plane_surface.py:1
-  perf_class: control
-  perf_link: operator/control-plane surface; not on data-plane hot path
-  gap_issue: null
-  owning_issue: 4138
-- id: uncategorized.rlm
-  module: uncategorized
-  summary: ''
-  transports:
-    cli:
-      name: nexus rlm
-      source: src/nexus/cli/commands/rlm.py:17
   profiles:
     lite: supported
     sandbox: supported
@@ -13509,57 +12897,6 @@ operations:
   perf_link: tests/benchmarks/bench_read_write_overhead.py:1
   gap_issue: null
   owning_issue: 4133
-- id: upload.cancel
-  module: upload
-  summary: Cancel an in-flight TUS upload.
-  transports:
-    cli:
-      name: nexus upload cancel
-      source: src/nexus/cli/commands/upload.py:61
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: 'WANTED: Pause/resume covered, cancellation isn''t.'
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: 4208
-  owning_issue: 4138
-- id: upload.cli
-  module: upload
-  summary: ''
-  transports:
-    cli:
-      name: nexus upload
-      source: src/nexus/cli/commands/upload.py:18
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/e2e/server/test_tus_upload_e2e.py:1
-  perf_class: not_perf_sensitive
-  perf_link: human-invoked metadata or inventory surface; not on a request hot path
-  gap_issue: null
-  owning_issue: 4138
-- id: upload.status
-  module: upload
-  summary: ''
-  transports:
-    cli:
-      name: nexus upload status
-      source: src/nexus/cli/commands/upload.py:32
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
 - id: versioning.rollback
   module: versioning
   summary: Rollback a file to a previous version and create a new version entry.
@@ -19385,82 +18722,4 @@ parity_warnings:
   - mcp
   - sdk
 unmapped_surfaces: []
-stale_rows:
-- operation_id: auth.exchange
-  reason: present in committed YAML but not detected by extractor
-- operation_id: conflicts.list
-  reason: present in committed YAML but not detected by extractor
-- operation_id: conflicts.resolve
-  reason: present in committed YAML but not detected by extractor
-- operation_id: conflicts.show
-  reason: present in committed YAML but not detected by extractor
-- operation_id: delegation.cli
-  reason: present in committed YAML but not detected by extractor
-- operation_id: delegation.create
-  reason: present in committed YAML but not detected by extractor
-- operation_id: delegation.list
-  reason: present in committed YAML but not detected by extractor
-- operation_id: delegation.revoke
-  reason: present in committed YAML but not detected by extractor
-- operation_id: delegation.show
-  reason: present in committed YAML but not detected by extractor
-- operation_id: exchange.cancel
-  reason: present in committed YAML but not detected by extractor
-- operation_id: exchange.create
-  reason: present in committed YAML but not detected by extractor
-- operation_id: exchange.list
-  reason: present in committed YAML but not detected by extractor
-- operation_id: exchange.show
-  reason: present in committed YAML but not detected by extractor
-- operation_id: identity.cli
-  reason: present in committed YAML but not detected by extractor
-- operation_id: identity.credentials
-  reason: present in committed YAML but not detected by extractor
-- operation_id: identity.passport
-  reason: present in committed YAML but not detected by extractor
-- operation_id: identity.show
-  reason: present in committed YAML but not detected by extractor
-- operation_id: identity.verify
-  reason: present in committed YAML but not detected by extractor
-- operation_id: manifest.create
-  reason: present in committed YAML but not detected by extractor
-- operation_id: manifest.evaluate
-  reason: present in committed YAML but not detected by extractor
-- operation_id: manifest.list
-  reason: present in committed YAML but not detected by extractor
-- operation_id: manifest.revoke
-  reason: present in committed YAML but not detected by extractor
-- operation_id: manifest.show
-  reason: present in committed YAML but not detected by extractor
-- operation_id: pay.cli
-  reason: present in committed YAML but not detected by extractor
-- operation_id: rlm.infer
-  reason: present in committed YAML but not detected by extractor
-- operation_id: scheduler.queue
-  reason: present in committed YAML but not detected by extractor
-- operation_id: scheduler.status
-  reason: present in committed YAML but not detected by extractor
-- operation_id: secrets.secrets_audit
-  reason: present in committed YAML but not detected by extractor
-- operation_id: secrets_audit.export
-  reason: present in committed YAML but not detected by extractor
-- operation_id: secrets_audit.list
-  reason: present in committed YAML but not detected by extractor
-- operation_id: secrets_audit.verify
-  reason: present in committed YAML but not detected by extractor
-- operation_id: task_manager.scheduler
-  reason: present in committed YAML but not detected by extractor
-- operation_id: uncategorized.conflicts
-  reason: present in committed YAML but not detected by extractor
-- operation_id: uncategorized.manifest
-  reason: present in committed YAML but not detected by extractor
-- operation_id: uncategorized.memory
-  reason: present in committed YAML but not detected by extractor
-- operation_id: uncategorized.rlm
-  reason: present in committed YAML but not detected by extractor
-- operation_id: upload.cancel
-  reason: present in committed YAML but not detected by extractor
-- operation_id: upload.cli
-  reason: present in committed YAML but not detected by extractor
-- operation_id: upload.status
-  reason: present in committed YAML but not detected by extractor
+stale_rows: []

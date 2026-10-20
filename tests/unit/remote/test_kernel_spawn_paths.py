@@ -229,12 +229,29 @@ def test_kernel_client_uses_operator_api_key_by_default(monkeypatch: pytest.Monk
     assert client._auth_token == "sk-e2e-admin"
 
 
-def test_kernel_client_explicit_auth_token_wins(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("api_key", [None, ""])
+def test_kernel_client_without_operator_api_key_uses_no_credential(
+    monkeypatch: pytest.MonkeyPatch, api_key: str | None
+) -> None:
+    from nexus.remote.kernel_client import KernelClient
+
+    if api_key is None:
+        monkeypatch.delenv("NEXUS_API_KEY", raising=False)
+    else:
+        monkeypatch.setenv("NEXUS_API_KEY", api_key)
+    client = KernelClient(server_address="127.0.0.1:1")
+    assert client._auth_token is None
+
+
+@pytest.mark.parametrize("auth_token", ["", "sk-explicit"])
+def test_kernel_client_explicit_auth_token_wins(
+    monkeypatch: pytest.MonkeyPatch, auth_token: str
+) -> None:
     from nexus.remote.kernel_client import KernelClient
 
     monkeypatch.setenv("NEXUS_API_KEY", "sk-ambient")
-    client = KernelClient(server_address="127.0.0.1:1", auth_token="")
-    assert client._auth_token == ""
+    client = KernelClient(server_address="127.0.0.1:1", auth_token=auth_token)
+    assert client._auth_token == auth_token
 
 
 def test_set_metastore_path_suffixless_is_explicit_file_intent(tmp_path: Path) -> None:

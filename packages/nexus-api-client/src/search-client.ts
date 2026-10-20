@@ -85,8 +85,9 @@ export class SearchClient {
   constructor(
     private readonly transport: Pick<FetchClient, "get" | "post">,
     private readonly connection: SearchConnection = {},
+    requestOptions: Pick<RequestOptions, "signal"> = {},
   ) {
-    this.options = searchRequestOptions(connection);
+    this.options = { ...searchRequestOptions(connection), ...requestOptions };
   }
 
   health(): Promise<SearchHealth> {

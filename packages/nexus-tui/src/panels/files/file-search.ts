@@ -1,4 +1,4 @@
-import { SearchClient, type FetchClient, type SearchConnection } from "@nexus-ai-fs/api-client";
+import { SearchClient, type FetchClient, type SearchConnection } from "#nexus-api-client";
 
 export interface FileSearchHit {
   readonly path: string;

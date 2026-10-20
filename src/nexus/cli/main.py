@@ -9,6 +9,7 @@ When invoked with no subcommand, ``nexus`` execs into the TUI (``nexus-tui``).
 import os
 import shutil
 import signal
+import subprocess
 import sys
 import warnings
 from pathlib import Path
@@ -22,6 +23,16 @@ from nexus.core import setup_uvloop
 # ---------------------------------------------------------------------------
 # TUI launcher helpers
 # ---------------------------------------------------------------------------
+
+
+def _exec_terminal(binary: str, arguments: list[str]) -> None:
+    if sys.platform == "win32":
+        try:
+            code = subprocess.call([binary, *arguments[1:]])
+        except KeyboardInterrupt:
+            raise SystemExit(130) from None
+        raise SystemExit(code)
+    os.execvp(binary, arguments)
 
 
 def _exec_tui(extra_args: list[str] | None = None) -> None:
@@ -50,24 +61,27 @@ def _exec_tui(extra_args: list[str] | None = None) -> None:
                 / "packages"
                 / "nexus-tui"
                 / "node_modules"
-                / "@nexus"
+                / "@nexus-ai-fs"
                 / "api-client"
                 / "package.json"
             )
             if local_entry.exists() and api_client_dist.exists() and tui_workspace_dep.exists():
-                os.execvp(bun, ["bun", "run", str(local_entry), *args])
+                _exec_terminal(
+                    bun,
+                    ["bun", "run", "--cwd", str(local_entry.parents[1]), "start", *args],
+                )
                 # execvp does not return
 
     # Fast path outside a checkout: use installed nexus-tui on PATH.
     nexus_tui = shutil.which("nexus-tui")
     if nexus_tui is not None:
-        os.execvp(nexus_tui, ["nexus-tui", *args])
+        _exec_terminal(nexus_tui, ["nexus-tui", *args])
         # execvp does not return
 
     # Fallback: use bunx (Bun's npx equivalent) against the scoped package.
     bunx = shutil.which("bunx")
     if bunx is not None:
-        os.execvp(bunx, ["bunx", "@nexus-ai-fs/tui", *args])
+        _exec_terminal(bunx, ["bunx", "@nexus-ai-fs/tui", *args])
         # execvp does not return
 
     # Neither found – give the user actionable guidance.
@@ -152,12 +166,14 @@ def main(ctx: click.Context, profile: str | None) -> None:
 
 @main.command("tui")
 @click.option("--url", default=None, help="Nexus server URL.")
+@click.option("--search-url", default=None, help="Owning Rust Search HTTP URL.")
 @click.option("--api-key", default=None, help="API key for authentication.")
 @click.option("--agent-id", default=None, help="Agent ID to connect as.")
 @click.option("--subject", default=None, help="Subject (user) identity.")
 @click.option("--zone-id", default=None, help="Zone ID to target.")
 def tui_cmd(
     url: str | None,
+    search_url: str | None,
     api_key: str | None,
     agent_id: str | None,
     subject: str | None,
@@ -167,6 +183,8 @@ def tui_cmd(
     args: list[str] = []
     if url is not None:
         args.extend(["--url", url])
+    if search_url is not None:
+        args.extend(["--search-url", search_url])
     if api_key is not None:
         args.extend(["--api-key", api_key])
     if agent_id is not None:

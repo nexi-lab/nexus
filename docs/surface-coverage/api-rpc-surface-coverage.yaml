@@ -11383,7 +11383,7 @@ operations:
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:62
     http:
       name: POST /v2/search/query/batch
-      source: packages/nexus-api-client/src/search-client.ts:115
+      source: packages/nexus-api-client/src/search-client.ts:116
   profiles:
     lite: supported
     sandbox: supported
@@ -11443,7 +11443,7 @@ operations:
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:37
     http:
       name: POST /v2/search/glob
-      source: packages/nexus-api-client/src/search-client.ts:130
+      source: packages/nexus-api-client/src/search-client.ts:131
     mcp:
       name: nexus_glob
       source: src/nexus/config/tool_profiles.yaml:1
@@ -11474,7 +11474,7 @@ operations:
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:42
     http:
       name: POST /v2/search/grep
-      source: packages/nexus-api-client/src/search-client.ts:134
+      source: packages/nexus-api-client/src/search-client.ts:135
     mcp:
       name: nexus_grep
       source: src/nexus/config/tool_profiles.yaml:1
@@ -11499,7 +11499,7 @@ operations:
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:112
     http:
       name: GET /v2/search/health
-      source: packages/nexus-api-client/src/search-client.ts:93
+      source: packages/nexus-api-client/src/search-client.ts:94
   profiles:
     lite: supported
     sandbox: supported
@@ -11636,7 +11636,7 @@ operations:
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:82
     http:
       name: POST /v2/search/locate
-      source: packages/nexus-api-client/src/search-client.ts:97
+      source: packages/nexus-api-client/src/search-client.ts:98
   profiles:
     lite: supported
     sandbox: supported
@@ -11696,7 +11696,7 @@ operations:
       source: src/nexus/grpc/search/v1/search_pb2_grpc.py:47
     http:
       name: POST /v2/search/query
-      source: packages/nexus-api-client/src/search-client.ts:108
+      source: packages/nexus-api-client/src/search-client.ts:109
   profiles:
     lite: supported
     sandbox: supported

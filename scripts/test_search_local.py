@@ -93,6 +93,7 @@ def main() -> int:
     output = args.output_dir.resolve() / f"run-{time.time_ns()}"
     output.mkdir()
     results: list[dict[str, object]] = []
+    process: subprocess.Popen[bytes] | None = None
     env = {
         key: value
         for key, value in os.environ.items()
@@ -138,6 +139,12 @@ def main() -> int:
                 "log": filename,
             }
         )
+        if process is not None and process.poll() is not None:
+            results[-1]["daemon_exit_code"] = process.returncode
+            raise RuntimeError(
+                f"Native daemon exited with code {process.returncode} during {name}; "
+                f"inspect {output / 'daemon.log'}"
+            )
         return code == 0
 
     def script(name: str, *extra: str, overrides: dict[str, str] | None = None) -> bool:

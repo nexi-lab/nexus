@@ -54,9 +54,7 @@ theme:
   icon:
     repo: fontawesome/brands/github
 
-  font:
-    text: Inter
-    code: JetBrains Mono
+  font: false
 
 markdown_extensions:
   - abbr
@@ -132,6 +130,9 @@ plugins:
       type: timeago
       fallback_to_build_date: true
       enable_git_follow: false
+      exclude:
+        # This navigation file is generated in memory and has no Git history.
+        - reference/SUMMARY.md
   - minify:
       minify_html: true
 

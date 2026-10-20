@@ -11,7 +11,7 @@
  * @see §2 Worker thread isolation — Issue #3632
  */
 
-import type { NexusClientOptions, RequestOptions } from "@nexus-ai-fs/api-client";
+import type { NexusClientOptions, RequestOptions } from "#nexus-api-client";
 
 // ─── Shared types ─────────────────────────────────────────────────────────────
 
@@ -26,7 +26,7 @@ export interface SerializedResponse {
   readonly status: number;
   readonly statusText: string;
   readonly headers: readonly [string, string][];
-  readonly body: string;
+  readonly body: Uint8Array;
   readonly ok: boolean;
 }
 

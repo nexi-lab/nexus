@@ -10,7 +10,7 @@
  * @see §2 Worker thread isolation — Issue #3632
  */
 
-import { FetchClient, NexusApiError, RateLimitError } from "@nexus-ai-fs/api-client";
+import { FetchClient, NexusApiError, RateLimitError } from "#nexus-api-client";
 import type {
   ToWorkerMessage,
   FromWorkerMessage,
@@ -82,10 +82,10 @@ self.onmessage = async (event: MessageEvent<ToWorkerMessage>): Promise<void> => 
           const response = await client.rawRequest(
             msg.method,
             msg.path,
-            msg.body as string | undefined,
+            msg.body as string | Uint8Array | undefined,
             opts,
           );
-          const body = await response.text();
+          const body = new Uint8Array(await response.arrayBuffer());
           const headers: [string, string][] = [];
           response.headers.forEach((value, key) => headers.push([key, value]));
           post({

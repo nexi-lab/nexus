@@ -87,6 +87,39 @@ jobs:
       - run: bun test
       - run: bun run lint
 
+  windows-tui-launcher:
+    name: Windows TUI launcher
+    runs-on: windows-latest
+    timeout-minutes: 15
+    needs: api-client
+    env:
+      GOMAXPROCS: "1"
+      CARGO_BUILD_JOBS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Build the shared native API client
+        working-directory: packages/nexus-api-client
+        run: npm ci
+      - name: Install the terminal consumer
+        working-directory: packages/nexus-tui
+        run: bun install --frozen-lockfile
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - uses: astral-sh/setup-uv@v3
+      - name: Install CLI test dependencies
+        run: |
+          uv venv --python 3.14
+          uv pip install -e ".[dev,test]"
+      - name: Verify actual Bun launch and Windows child exit status
+        run: uv run --no-sync python -m pytest tests/unit/cli/test_tui_launcher.py -n 0 -q
+
   native-tui:
     name: Native TUI acceptance
     runs-on: ubuntu-latest

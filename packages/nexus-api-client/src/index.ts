@@ -15,6 +15,8 @@
 
 // Client
 export { FetchClient } from "./fetch-client.js";
+export { VfsClient } from "./vfs-client.js";
+export type { FileMetadata, WriteReceipt } from "./vfs-client.js";
 export { SearchClient } from "./search-client.js";
 export type { SearchHit, SearchResponse, SearchQuery, SearchBatchResponse, GlobResponse, GrepResponse, GrepHit, SearchConnection, DiscoveryOptions, SearchHealth, LocatedDocument } from "./search-client.js";
 export { IndexingClient } from "./indexing-client.js";

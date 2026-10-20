@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
-import { FetchClient, IndexingClient, SearchClient, type IndexingMode } from "@nexus-ai-fs/api-client";
+import { FetchClient, IndexingClient, SearchClient, VfsClient, type IndexingMode } from "@nexus-ai-fs/api-client";
 import { createWorkerManager } from "../../src/worker/worker-manager.js";
 import { useSearchStore } from "../../src/stores/search-store.js";
 import { useGlobalStore } from "../../src/stores/global-store.js";
@@ -20,6 +20,30 @@ describe.skipIf(!fixturePath)("native Search through the TUI worker and terminal
   const connection = fixture ? { url: fixture.url, zoneId: "sharedzone" } : undefined;
 
   afterAll(() => manager?.terminate());
+
+  it("preserves actual native file bytes and mutation receipts through the worker", async () => {
+    const administrator = createWorkerManager({ apiKey: fixture.adminKey, baseUrl: fixture.url, maxRetries: 0 });
+    const files = new VfsClient(administrator.client as unknown as FetchClient);
+    const directory = `${fixture.root}/native-files`;
+    const path = `${directory}/日本語 & bytes.bin`;
+    const renamed = `${directory}/renamed.bin`;
+    try {
+      await files.mkdir(directory);
+      const bytes = new Uint8Array([0, 255, 254, 128, 13, 10]);
+      const receipt = await files.write(path, bytes);
+      expect(receipt.size).toBe(bytes.length);
+      expect(receipt.content_id).toBeTruthy();
+      expect(await files.read(path)).toEqual(bytes);
+      expect((await files.metadata(path)).is_directory).toBe(false);
+      expect((await files.list(directory)).map((entry) => entry.path)).toContain(path);
+      await files.rename(path, renamed);
+      expect(await files.read(renamed)).toEqual(bytes);
+      expect(await files.delete(renamed)).toBe(true);
+      expect(await files.list(directory)).toEqual([]);
+    } finally {
+      try { await files.delete(directory, true); } finally { administrator.terminate(); }
+    }
+  });
 
   it("connects to the native daemon and renders its authenticated identity", async () => {
     const config = {

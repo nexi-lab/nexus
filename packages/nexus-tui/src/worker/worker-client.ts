@@ -336,7 +336,7 @@ export class WorkerFetchClient {
   rawRequest(
     method: string,
     path: string,
-    body?: string,
+    body?: string | Uint8Array,
     options?: RequestOptions,
   ): Promise<Response> {
     const p = this.send<SerializedResponse>(
@@ -345,7 +345,7 @@ export class WorkerFetchClient {
       body,
       options,
       "raw",
-    ).then((serialized) => new Response(serialized.body, {
+    ).then((serialized) => new Response([204, 205, 304].includes(serialized.status) ? null : new Uint8Array(serialized.body), {
       status: serialized.status,
       statusText: serialized.statusText,
       headers: new Headers(serialized.headers as [string, string][]),

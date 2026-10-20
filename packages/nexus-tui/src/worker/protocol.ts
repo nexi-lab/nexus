@@ -26,7 +26,7 @@ export interface SerializedResponse {
   readonly status: number;
   readonly statusText: string;
   readonly headers: readonly [string, string][];
-  readonly body: string;
+  readonly body: Uint8Array;
   readonly ok: boolean;
 }
 

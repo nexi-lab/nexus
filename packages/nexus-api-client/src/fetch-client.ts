@@ -90,7 +90,8 @@ export class FetchClient {
    * no retries. Auth and identity headers are injected automatically.
    * Timeout is enforced (defaults to client timeout, overridable per-request).
    *
-   * Body is sent as-is (no JSON.stringify) since callers provide pre-formatted strings.
+   * Body is sent as-is. The response body is buffered before returning so
+   * cancellation and timeout cover the full transfer, including file bytes.
    *
    * Intended for the API Console and similar exploratory tools that need
    * full control over the request/response while still using real auth.
@@ -98,7 +99,7 @@ export class FetchClient {
   async rawRequest(
     method: string,
     path: string,
-    body?: string,
+    body?: string | Uint8Array,
     options?: RequestOptions,
   ): Promise<Response> {
     const url = this.resolveUrl(path, options);
@@ -119,11 +120,15 @@ export class FetchClient {
     }
 
     try {
-      return await this.fetchFn(url, {
+      const response = await this.fetchFn(url, {
         method,
         headers,
-        body: body ?? undefined,
+        body: body instanceof Uint8Array ? new Uint8Array(body) : body,
         signal: controller.signal,
+      });
+      const bytes = await response.arrayBuffer();
+      return new Response([204, 205, 304].includes(response.status) ? null : bytes, {
+        status: response.status, statusText: response.statusText, headers: response.headers,
       });
     } catch (error) {
       if (isAbortError(error)) {

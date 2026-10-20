@@ -12,7 +12,7 @@
 
 import { createCliRenderer } from "@opentui/core";
 import { render } from "@opentui/solid";
-import { resolveConfig } from "@nexus-ai-fs/api-client";
+import { resolveConfig } from "#nexus-api-client";
 import { useGlobalStore, setClientFactory } from "./stores/global-store.js";
 import { createWorkerManager } from "./worker/worker-manager.js";
 import { App } from "./app.js";
@@ -85,8 +85,8 @@ Config File:
   ~/.nexus/config.yaml   Auto-discovered (same as nexus CLI)
 
 Local development:
-  cd packages/nexus-api-client && npm install && npm run build
-  cd packages/nexus-tui && bun install && bun run src/index.tsx
+  cd packages/nexus-api-client && npm ci
+  cd ../nexus-tui && bun install --frozen-lockfile && bun run start
 `.trim());
       process.exit(0);
     }
@@ -114,18 +114,13 @@ async function main(): Promise<void> {
   // routes through the worker from the very first request.
   const workerManager = createWorkerManager(config);
   setClientFactory((newConfig) => {
-    // On identity switch (setIdentity) the factory is called with updated config.
-    // Reconfigure the worker so subsequent requests carry the new identity headers.
+    // Keep the worker and native transport on the same explicit configuration.
     workerManager.reconfigure(newConfig);
-    // Cast is safe: WorkerFetchClient implements every public FetchClient method
-    // called by stores (get, post, put, patch, delete, postNoContent,
-    // deleteNoContent, rawRequest). Only the knowledge-platform helpers (getAspects
-    // etc.) are absent — none are called by TUI stores.
-    return workerManager.client as unknown as import("@nexus-ai-fs/api-client").FetchClient;
+    // WorkerFetchClient implements the transport methods used by native clients.
+    return workerManager.client as unknown as import("#nexus-api-client").FetchClient;
   });
 
-  // Initialize global store — testConnection() is called automatically by initConfig()
-  // when a client is available (consolidates health + features + auth check, Decision 5A)
+  // Initialize the native connection through the shared worker.
   useGlobalStore.getState().initConfig(config);
 
   // Create OpenTUI renderer and mount the Solid tree
@@ -140,8 +135,6 @@ async function main(): Promise<void> {
 main().catch((err) => {
   // Restore terminal state in case OpenTUI already enabled raw mode / alternate screen.
   resetTerminal();
-  const fs = require("fs");
-  fs.appendFileSync("/tmp/tui-fatal.log", "FATAL: " + String(err) + "\n" + (err?.stack ?? "") + "\n");
   console.error("Fatal error:", err);
   process.exit(1);
 });

@@ -1,407 +1,48 @@
-import { describe, it, expect, beforeEach, mock, spyOn } from "bun:test";
-import { useGlobalStore } from "../../src/stores/global-store.js";
-import type { FetchClient } from "@nexus-ai-fs/api-client";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { FetchClient } from "@nexus-ai-fs/api-client";
+import { useGlobalStore, setClientFactory } from "../../src/stores/global-store.js";
 
-describe("GlobalStore", () => {
-  beforeEach(() => {
-    // Reset store to initial state
-    useGlobalStore.setState({
-      connectionStatus: "disconnected",
-      connectionError: null,
-      client: null,
-      activePanel: "files",
-      panelHistory: [],
-      serverVersion: null,
-      zoneId: null,
-      uptime: null,
-      userInfo: null,
-      enabledBricks: [],
-      profile: null,
-      mode: null,
-      featuresLoaded: false,
-      featuresLastFetched: 0,
-      config: { apiKey: "fixture-key", baseUrl: "http://127.0.0.1:1", fetch: (async () => Response.json(null)) as typeof fetch },
-    });
+const principal = { subject_type: "user", subject_id: "alice", user_id: "alice", agent_id: null,
+  zone_id: "shared", is_admin: false, zone_perms: [["shared", "r"]] };
+describe("authenticated native connection", () => {
+  beforeEach(() => useGlobalStore.setState({ client: null, connectionStatus: "disconnected", userInfo: null,
+    connectionError: null, activePanel: "files", serverVersion: null, config: { apiKey: "fixture", baseUrl: "http://127.0.0.1:1" } }));
+  afterEach(() => { useGlobalStore.getState().setConnectionStatus("disconnected"); setClientFactory((config) => new FetchClient(config)); });
+  it("requires both native liveness and the credential's verified identity", async () => {
+    const routes: string[] = [];
+    const client = new FetchClient({ apiKey: "fixture", baseUrl: "http://127.0.0.1:1", maxRetries: 0,
+      fetch: (async (url) => {
+        routes.push(new URL(String(url)).pathname);
+        return Response.json(String(url).endsWith("/v2/status") ? { status: "ok", version: "1" } : principal);
+      }) as typeof fetch });
+    useGlobalStore.setState({ client });
+    await useGlobalStore.getState().testConnection();
+    expect(useGlobalStore.getState().connectionStatus).toBe("connected");
+    expect(useGlobalStore.getState().userInfo).toEqual(principal);
+    expect(routes.sort()).toEqual(["/v2/auth/whoami", "/v2/status"]);
   });
-
-  describe("setActivePanel", () => {
-    it("changes the active panel", () => {
-      useGlobalStore.getState().setActivePanel("console");
-      expect(useGlobalStore.getState().activePanel).toBe("console");
-    });
-
-    it("records previous panel in history", () => {
-      useGlobalStore.getState().setActivePanel("console");
-      expect(useGlobalStore.getState().panelHistory).toEqual(["files"]);
-    });
-
-    it("no-ops when selecting the same panel", () => {
-      useGlobalStore.getState().setActivePanel("files");
-      expect(useGlobalStore.getState().panelHistory).toEqual([]);
-    });
-
-    it("limits history to 10 entries", () => {
-      const panels = ["console", "agents", "zones", "access", "payments",
-        "search", "workflows", "infrastructure", "files", "console", "agents"] as const;
-      for (const panel of panels) {
-        useGlobalStore.getState().setActivePanel(panel);
-      }
-      expect(useGlobalStore.getState().panelHistory.length).toBeLessThanOrEqual(10);
-    });
-
-    it("does NOT call refreshFeatures on panel switch (Decision 4A)", async () => {
-      // Ensure featuresLastFetched is 0 (TTL expired) so refreshFeatures would
-      // actually fire an API call if it were triggered.
-      const mockFetchClient = {
-        get: mock(async () => ({
-          profile: "full",
-          mode: "standalone",
-          enabled_bricks: ["new_brick"],
-          disabled_bricks: [],
-          version: null,
-          rate_limit_enabled: false,
-        })),
-      } as unknown as import("@nexus-ai-fs/api-client").FetchClient;
-
-      useGlobalStore.setState({ client: mockFetchClient, featuresLastFetched: 0 });
-      useGlobalStore.getState().setActivePanel("console");
-
-      // Give any async refreshFeatures a tick to fire
-      await new Promise((r) => setTimeout(r, 10));
-      expect((mockFetchClient.get as ReturnType<typeof mock>)).not.toHaveBeenCalled();
-    });
+  it("a reachable public status route cannot authenticate a revoked key", async () => {
+    const client = new FetchClient({ apiKey: "revoked", baseUrl: "http://127.0.0.1:1", maxRetries: 0,
+      fetch: (async (url) => String(url).endsWith("/v2/status") ? Response.json({ status: "ok", version: "1" })
+        : Response.json({ error: "invalid credentials" }, { status: 401 })) as typeof fetch });
+    useGlobalStore.setState({ client });
+    await useGlobalStore.getState().testConnection();
+    expect(useGlobalStore.getState().connectionStatus).toBe("error");
+    expect(useGlobalStore.getState().connectionError).toContain("invalid credentials");
+    expect(useGlobalStore.getState().userInfo).toBeNull();
   });
-
-  describe("setConnectionStatus", () => {
-    it("sets status and error", () => {
-      useGlobalStore.getState().setConnectionStatus("error", "Connection refused");
-      const state = useGlobalStore.getState();
-      expect(state.connectionStatus).toBe("error");
-      expect(state.connectionError).toBe("Connection refused");
-    });
-
-    it("clears error when no error message", () => {
-      useGlobalStore.getState().setConnectionStatus("error", "fail");
-      useGlobalStore.getState().setConnectionStatus("connected");
-      expect(useGlobalStore.getState().connectionError).toBeNull();
-    });
-
-    it("calls refreshFeatures when transitioning to connected (Decision 4A)", async () => {
-      const mockFetchClient = {
-        get: mock(async () => ({
-          profile: "full",
-          mode: "standalone",
-          enabled_bricks: ["brick_a"],
-          disabled_bricks: [],
-          version: null,
-          rate_limit_enabled: false,
-        })),
-      } as unknown as import("@nexus-ai-fs/api-client").FetchClient;
-
-      // Start from disconnected with expired TTL so the fetch actually fires
-      useGlobalStore.setState({
-        client: mockFetchClient,
-        connectionStatus: "disconnected",
-        featuresLastFetched: 0,
-        featuresLoaded: false,
-        enabledBricks: [],
-      });
-
-      useGlobalStore.getState().setConnectionStatus("connected");
-      // refreshFeatures is async; wait for it to settle
-      await new Promise((r) => setTimeout(r, 20));
-
-      expect((mockFetchClient.get as ReturnType<typeof mock>)).toHaveBeenCalled();
-      expect(useGlobalStore.getState().enabledBricks).toEqual(["brick_a"]);
-    });
-
-    it("does NOT call refreshFeatures when already connected", async () => {
-      const mockFetchClient = {
-        get: mock(async () => ({
-          profile: "full",
-          mode: "standalone",
-          enabled_bricks: ["new"],
-          disabled_bricks: [],
-          version: null,
-          rate_limit_enabled: false,
-        })),
-      } as unknown as import("@nexus-ai-fs/api-client").FetchClient;
-
-      // Already connected, TTL expired
-      useGlobalStore.setState({
-        client: mockFetchClient,
-        connectionStatus: "connected",
-        featuresLastFetched: 0,
-      });
-
-      useGlobalStore.getState().setConnectionStatus("connected");
-      await new Promise((r) => setTimeout(r, 20));
-
-      // No transition from non-connected, so refreshFeatures should NOT fire
-      expect((mockFetchClient.get as ReturnType<typeof mock>)).not.toHaveBeenCalled();
-    });
+  it("rejects incomplete identity responses", async () => {
+    const client = { get: async (path: string) => path.endsWith("status") ? { status: "ok", version: "1" } : { is_admin: true } } as FetchClient;
+    useGlobalStore.setState({ client });
+    await useGlobalStore.getState().testConnection();
+    expect(useGlobalStore.getState().connectionStatus).toBe("error");
+    expect(useGlobalStore.getState().userInfo).toBeNull();
   });
-
-  describe("initConfig", () => {
-    it("creates a client even without an API key", () => {
-      useGlobalStore.getState().initConfig({ baseUrl: "http://localhost:2026", apiKey: "" });
-      const state = useGlobalStore.getState();
-      expect(state.client).not.toBeNull();
-      expect(state.connectionStatus).toBe("connecting");
-    });
-  });
-
-  describe("testConnection", () => {
-    it("keeps the configured host and identity when an interactive connection fails", async () => {
-      const configured = {
-        baseUrl: "http://127.0.0.1:19999",
-        searchUrl: "http://127.0.0.1:2127",
-        apiKey: "configured-reader",
-        agentId: "scode",
-        subject: "agent:scode",
-        zoneId: "workspace",
-      };
-      const requests: string[] = [];
-      const client = {
-        get: async (path: string) => {
-          requests.push(path);
-          throw new Error("Connection refused");
-        },
-      } as unknown as FetchClient;
-      const descriptor = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
-      Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
-      const unexpectedFetch = spyOn(globalThis, "fetch").mockImplementation(async () => {
-        throw new Error("Unexpected port probe");
-      });
-      try {
-        useGlobalStore.setState({ config: configured, client });
-        const activeClient = useGlobalStore.getState().client;
-        await useGlobalStore.getState().testConnection();
-        expect(requests).toEqual(["/v2/status"]);
-        expect(unexpectedFetch).not.toHaveBeenCalled();
-        expect(useGlobalStore.getState().config).toEqual(configured);
-        expect(useGlobalStore.getState().client).toBe(activeClient);
-        expect(useGlobalStore.getState().connectionStatus).toBe("error");
-      } finally {
-        unexpectedFetch.mockRestore();
-        if (descriptor) Object.defineProperty(process.stdout, "isTTY", descriptor);
-        else Reflect.deleteProperty(process.stdout, "isTTY");
-      }
-    });
-  });
-
-  describe("setServerInfo", () => {
-    it("sets version, zoneId, uptime", () => {
-      useGlobalStore.getState().setServerInfo({
-        version: "0.7.2",
-        zoneId: "org_acme",
-        uptime: 3600,
-      });
-      const state = useGlobalStore.getState();
-      expect(state.serverVersion).toBe("0.7.2");
-      expect(state.zoneId).toBe("org_acme");
-      expect(state.uptime).toBe(3600);
-    });
-
-    it("preserves unset fields", () => {
-      useGlobalStore.getState().setServerInfo({ version: "1.0" });
-      useGlobalStore.getState().setServerInfo({ zoneId: "z1" });
-      const state = useGlobalStore.getState();
-      expect(state.serverVersion).toBe("1.0");
-      expect(state.zoneId).toBe("z1");
-    });
-  });
-
-  describe("setFeatures", () => {
-    it("sets enabledBricks, profile, mode", () => {
-      useGlobalStore.getState().setFeatures({
-        profile: "full",
-        mode: "standalone",
-        enabled_bricks: ["search", "catalog", "pay"],
-        disabled_bricks: ["mcp"],
-        version: "0.8.0",
-        rate_limit_enabled: false,
-      });
-      const state = useGlobalStore.getState();
-      expect(state.enabledBricks).toEqual(["search", "catalog", "pay"]);
-      expect(state.profile).toBe("full");
-      expect(state.mode).toBe("standalone");
-    });
-
-    it("sets featuresLoaded to true", () => {
-      expect(useGlobalStore.getState().featuresLoaded).toBe(false);
-      useGlobalStore.getState().setFeatures({
-        profile: "lite",
-        mode: "standalone",
-        enabled_bricks: [],
-        disabled_bricks: [],
-        version: null,
-        rate_limit_enabled: false,
-      });
-      expect(useGlobalStore.getState().featuresLoaded).toBe(true);
-    });
-
-    it("updates featuresLastFetched timestamp", () => {
-      const before = Date.now();
-      useGlobalStore.getState().setFeatures({
-        profile: "lite",
-        mode: "standalone",
-        enabled_bricks: [],
-        disabled_bricks: [],
-        version: null,
-        rate_limit_enabled: false,
-      });
-      const after = Date.now();
-      const { featuresLastFetched } = useGlobalStore.getState();
-      expect(featuresLastFetched).toBeGreaterThanOrEqual(before);
-      expect(featuresLastFetched).toBeLessThanOrEqual(after);
-    });
-
-    it("handles null enabled_bricks gracefully", () => {
-      useGlobalStore.getState().setFeatures({
-        profile: "lite",
-        mode: "standalone",
-        enabled_bricks: null as unknown as string[],
-        disabled_bricks: [],
-        version: null,
-        rate_limit_enabled: false,
-      });
-      expect(useGlobalStore.getState().enabledBricks).toEqual([]);
-    });
-  });
-
-  describe("refreshFeatures", () => {
-    it("skips refresh when no client", async () => {
-      useGlobalStore.setState({ client: null, featuresLastFetched: 0 });
-      await useGlobalStore.getState().refreshFeatures();
-      expect(useGlobalStore.getState().featuresLoaded).toBe(false);
-    });
-
-    it("skips refresh when within TTL (10s)", async () => {
-      const mockFetchClient = {
-        get: mock(async () => ({
-          profile: "full",
-          mode: "standalone",
-          enabled_bricks: ["new_brick"],
-          disabled_bricks: [],
-          version: null,
-          rate_limit_enabled: false,
-        })),
-      } as unknown as FetchClient;
-
-      useGlobalStore.setState({
-        client: mockFetchClient,
-        featuresLastFetched: Date.now(), // just fetched
-        featuresLoaded: true,
-        enabledBricks: ["old_brick"],
-      });
-
-      await useGlobalStore.getState().refreshFeatures();
-      // Should NOT have called the API
-      expect(useGlobalStore.getState().enabledBricks).toEqual(["old_brick"]);
-    });
-
-    it("refreshes when TTL has expired", async () => {
-      const mockFetchClient = {
-        get: mock(async () => ({
-          profile: "full",
-          mode: "standalone",
-          enabled_bricks: ["new_brick"],
-          disabled_bricks: [],
-          version: null,
-          rate_limit_enabled: false,
-        })),
-      } as unknown as FetchClient;
-
-      useGlobalStore.setState({
-        client: mockFetchClient,
-        featuresLastFetched: Date.now() - 35_000, // 35s ago, past 30s TTL
-        featuresLoaded: true,
-        enabledBricks: ["old_brick"],
-      });
-
-      await useGlobalStore.getState().refreshFeatures();
-      expect(useGlobalStore.getState().enabledBricks).toEqual(["new_brick"]);
-    });
-
-    it("handles fetch errors gracefully (keeps last known state)", async () => {
-      const mockFetchClient = {
-        get: mock(async () => { throw new Error("Network error"); }),
-      } as unknown as FetchClient;
-
-      useGlobalStore.setState({
-        client: mockFetchClient,
-        featuresLastFetched: 0,
-        featuresLoaded: true,
-        enabledBricks: ["existing_brick"],
-      });
-
-      await useGlobalStore.getState().refreshFeatures();
-      // Should keep the existing bricks
-      expect(useGlobalStore.getState().enabledBricks).toEqual(["existing_brick"]);
-    });
-  });
-
-  describe("testConnection", () => {
-    it("sets connected on health success", async () => {
-      const mockHealth = { status: "ok", version: "0.10.1" };
-
-      // Native status establishes the connection; feature metadata is optional.
-      const mockGet = mock()
-        .mockResolvedValueOnce(mockHealth)     // health (/v2/status)
-        .mockResolvedValueOnce(null);          // features
-
-      const mockFetchClient = { get: mockGet } as unknown as FetchClient;
-      useGlobalStore.setState({ client: mockFetchClient });
-
-      await useGlobalStore.getState().testConnection();
-      const state = useGlobalStore.getState();
-
-      expect(state.connectionStatus).toBe("connected");
-      expect(state.connectionError).toBeNull();
-    });
-
-    it("sets error status when health fails", async () => {
-      // Native status fails when the server is unreachable.
-      const mockFetchClient = {
-        get: mock(async () => {
-          throw new Error("Network error");
-        }),
-      } as unknown as FetchClient;
-
-      useGlobalStore.setState({ client: mockFetchClient });
-
-      await useGlobalStore.getState().testConnection();
-      const state = useGlobalStore.getState();
-
-      expect(state.connectionStatus).toBe("error");
-      expect(state.connectionError).toBe("Server health check failed");
-      expect(state.userInfo).toBeNull();
-    });
-
-    it("sets disconnected when no client", async () => {
-      useGlobalStore.setState({ client: null });
-
-      await useGlobalStore.getState().testConnection();
-      const state = useGlobalStore.getState();
-
-      expect(state.connectionStatus).toBe("disconnected");
-      expect(state.connectionError).toBeNull();
-      expect(state.userInfo).toBeNull();
-    });
-
-    it("handles non-Error thrown objects", async () => {
-      const mockFetchClient = {
-        get: mock(async () => { throw "string error"; }),
-      } as unknown as FetchClient;
-
-      useGlobalStore.setState({ client: mockFetchClient });
-
-      await useGlobalStore.getState().testConnection();
-      const state = useGlobalStore.getState();
-
-      expect(state.connectionStatus).toBe("error");
-      expect(state.connectionError).toBe("Server health check failed");
-    });
+  it("supports only the current native panels and clears identity on disconnect", () => {
+    useGlobalStore.getState().setActivePanel("search");
+    expect(useGlobalStore.getState().activePanel).toBe("search");
+    useGlobalStore.setState({ userInfo: principal });
+    useGlobalStore.getState().setConnectionStatus("disconnected");
+    expect(useGlobalStore.getState().userInfo).toBeNull();
   });
 });

@@ -12,8 +12,9 @@
 
 import { describe, it, expect, afterEach, beforeEach } from "bun:test";
 import { testRender } from "../helpers/render.js";
+import { onCleanup } from "solid-js";
 import { TerminalGuard } from "../../src/shared/components/terminal-guard.js";
-import { TERMINAL_GUARD_MIN_COLS, TERMINAL_GUARD_MIN_ROWS } from "../../src/shared/components/side-nav-utils.js";
+import { TERMINAL_GUARD_MIN_COLS, TERMINAL_GUARD_MIN_ROWS } from "../../src/shared/terminal-dimensions.js";
 import { terminalDimensions, _setDimensionsForTesting } from "../../src/shared/terminal-dimensions.js";
 
 // =============================================================================
@@ -39,9 +40,20 @@ async function renderGuard(
   return setup.captureCharFrame();
 }
 
+let savedDimensions: { width: number; height: number };
+let savedIsTTY: PropertyDescriptor | undefined;
+beforeEach(() => {
+  savedDimensions = { ...terminalDimensions() };
+  savedIsTTY = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+});
 afterEach(() => {
-  if (setup) {
-    setup.renderer.destroy();
+  try {
+    setup?.renderer.destroy();
+  } finally {
+    setup = undefined as unknown as TestSetup;
+    _setDimensionsForTesting(savedDimensions);
+    if (savedIsTTY) Object.defineProperty(process.stdout, "isTTY", savedIsTTY);
+    else Reflect.deleteProperty(process.stdout, "isTTY");
   }
 });
 
@@ -143,24 +155,6 @@ describe("resize message", () => {
 // =============================================================================
 
 describe("signal-driven boundary (via _setDimensionsForTesting)", () => {
-  let savedDimensions: { width: number; height: number };
-  let savedIsTTY: boolean | undefined;
-
-  beforeEach(() => {
-    savedDimensions = { ...terminalDimensions() };
-    savedIsTTY = process.stdout.isTTY;
-  });
-
-  afterEach(() => {
-    _setDimensionsForTesting(savedDimensions);
-    Object.defineProperty(process.stdout, "isTTY", { value: savedIsTTY, configurable: true });
-    // Destroy here; null setup so the outer afterEach doesn't double-destroy.
-    if (setup) {
-      setup.renderer.destroy();
-      setup = undefined as unknown as TestSetup;
-    }
-  });
-
   it("shows resize message when signal reports below-minimum cols (isTTY=true)", async () => {
     Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
     _setDimensionsForTesting({ width: 59, height: 30 });
@@ -236,6 +230,27 @@ describe("signal-driven boundary (via _setDimensionsForTesting)", () => {
 // =============================================================================
 // Non-TTY path
 // =============================================================================
+
+describe("draft lifetime across terminal resizing", () => {
+  it("hides content without destroying its owner", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+    _setDimensionsForTesting({ width: 100, height: 30 });
+    let disposed = 0;
+    function Draft() { onCleanup(() => { disposed++; }); return <text>{"unsaved draft"}</text>; }
+    setup = await testRender(() => <TerminalGuard><Draft /></TerminalGuard>, { width: 100, height: 30 });
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("unsaved draft");
+    _setDimensionsForTesting({ width: 40, height: 10 });
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("Terminal too small");
+    expect(setup.captureCharFrame()).not.toContain("unsaved draft");
+    expect(disposed).toBe(0);
+    _setDimensionsForTesting({ width: 100, height: 30 });
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("unsaved draft");
+    expect(disposed).toBe(0);
+  });
+});
 
 describe("non-TTY path", () => {
   it("renders children unconditionally in non-TTY environment", async () => {

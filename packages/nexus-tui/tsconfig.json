@@ -23,16 +23,12 @@
     ],
     "customConditions": [
       "browser"
-    ],
-    "paths": {
-      "@nexus-ai-fs/api-client": [
-        "../nexus-api-client/src/index.ts"
-      ]
-    }
+    ]
   },
   "include": [
     "src/**/*.ts",
-    "src/**/*.tsx"
+    "src/**/*.tsx",
+    "scripts/**/*.ts"
   ],
   "exclude": [
     "node_modules",

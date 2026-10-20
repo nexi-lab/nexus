@@ -11,11 +11,9 @@
  */
 
 import { createSignal } from "solid-js";
-import {
-  RESIZE_DEBOUNCE_MS,
-  TERMINAL_GUARD_MIN_COLS,
-  TERMINAL_GUARD_MIN_ROWS,
-} from "./components/side-nav-utils.js";
+export const RESIZE_DEBOUNCE_MS = 150;
+export const TERMINAL_GUARD_MIN_COLS = 60;
+export const TERMINAL_GUARD_MIN_ROWS = 24;
 
 export interface TerminalDimensions {
   readonly width: number;

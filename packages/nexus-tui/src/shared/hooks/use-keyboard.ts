@@ -13,11 +13,11 @@
 
 import { useRenderer } from "@opentui/solid";
 import { onCleanup } from "solid-js";
+import { isTooSmall } from "../terminal-dimensions.js";
 import type { KeyEvent } from "@opentui/core";
 
 export type KeyHandler = () => void;
-export type KeyBindings = Readonly<Record<string, KeyHandler>>;
-export type UnhandledKeyHandler = (key: string) => void;
+export type KeyBindings = Readonly<Partial<Record<string, KeyHandler>>>;
 type MaybeAccessor<T> = T | (() => T);
 
 /**
@@ -33,17 +33,15 @@ type MaybeAccessor<T> = T | (() => T);
  * Bindings are cleaned up automatically on unmount.
  *
  * @param bindings - Map of key names to handler functions
- * @param onUnhandled - Optional handler for keys not in the bindings map.
- *   Receives the raw key name. Useful for text input mode where any
- *   printable character should be captured.
  */
 export function useKeyboard(
   bindings: MaybeAccessor<KeyBindings>,
-  onUnhandled?: MaybeAccessor<UnhandledKeyHandler | undefined>,
 ): void {
   const renderer = useRenderer();
 
   const handler = (key: KeyEvent) => {
+    if (isTooSmall()) { key.preventDefault(); return; }
+    if (key.defaultPrevented) return;
     // Build normalized key string
     let keyStr = key.name;
     if (key.ctrl) keyStr = `ctrl+${keyStr}`;
@@ -53,14 +51,8 @@ export function useKeyboard(
     const currentBindings = typeof bindings === "function" ? bindings() : bindings;
     const fn = currentBindings[keyStr];
     if (fn) {
+      key.preventDefault();
       fn();
-    } else {
-      const currentUnhandled = typeof onUnhandled === "function" && onUnhandled.length === 0
-        ? (onUnhandled as () => UnhandledKeyHandler | undefined)()
-        : onUnhandled as UnhandledKeyHandler | undefined;
-      if (currentUnhandled) {
-        currentUnhandled(key.name);
-      }
     }
   };
 

@@ -11,16 +11,11 @@ import {
   createHttpError,
   NetworkError,
   NexusApiError,
-  NotFoundError,
   RateLimitError,
   TimeoutError,
 } from "./errors.js";
 import type {
-  AspectEnvelope,
-  CatalogSchemaResponse,
-  ColumnSearchResponse,
   NexusClientOptions,
-  ReplayResponse,
   RequestOptions,
 } from "./types.js";
 import { camelToSnakeKeys, snakeToCamelKeys } from "./case-transform.js";
@@ -90,7 +85,8 @@ export class FetchClient {
    * no retries. Auth and identity headers are injected automatically.
    * Timeout is enforced (defaults to client timeout, overridable per-request).
    *
-   * Body is sent as-is (no JSON.stringify) since callers provide pre-formatted strings.
+   * Body is sent as-is. The response body is buffered before returning so
+   * cancellation and timeout cover the full transfer, including file bytes.
    *
    * Intended for the API Console and similar exploratory tools that need
    * full control over the request/response while still using real auth.
@@ -98,7 +94,7 @@ export class FetchClient {
   async rawRequest(
     method: string,
     path: string,
-    body?: string,
+    body?: string | Uint8Array,
     options?: RequestOptions,
   ): Promise<Response> {
     const url = this.resolveUrl(path, options);
@@ -119,11 +115,15 @@ export class FetchClient {
     }
 
     try {
-      return await this.fetchFn(url, {
+      const response = await this.fetchFn(url, {
         method,
         headers,
-        body: body ?? undefined,
+        body: body instanceof Uint8Array ? new Uint8Array(body) : body,
         signal: controller.signal,
+      });
+      const bytes = await response.arrayBuffer();
+      return new Response([204, 205, 304].includes(response.status) ? null : bytes, {
+        status: response.status, statusText: response.statusText, headers: response.headers,
       });
     } catch (error) {
       if (isAbortError(error)) {
@@ -379,76 +379,7 @@ export class FetchClient {
     }
   }
 
-  // ===========================================================================
-  // Knowledge platform helpers (Issue #2930)
-  // ===========================================================================
 
-  /**
-   * List all aspect names attached to an entity.
-   */
-  async getAspects(urn: string): Promise<string[]> {
-    const result = await this.get<{ aspects: string[] }>(
-      `/api/v2/aspects/${encodeURIComponent(urn)}`,
-    );
-    return result.aspects ?? [];
-  }
-
-  /**
-   * Get a specific aspect for an entity. Returns null if not found.
-   */
-  async getAspect(urn: string, name: string): Promise<AspectEnvelope | null> {
-    try {
-      return await this.get<AspectEnvelope>(
-        `/api/v2/aspects/${encodeURIComponent(urn)}/${encodeURIComponent(name)}`,
-      );
-    } catch (error) {
-      if (error instanceof NotFoundError) {
-        return null;
-      }
-      throw error;
-    }
-  }
-
-  /**
-   * Get extracted schema for a data file. Returns null if no schema.
-   */
-  async getCatalogSchema(
-    path: string,
-  ): Promise<CatalogSchemaResponse["schema"]> {
-    const encodedPath = encodeURIComponent(path.replace(/^\//, ""));
-    const result = await this.get<CatalogSchemaResponse>(
-      `/api/v2/catalog/schema/${encodedPath}`,
-    );
-    return result.schema ?? null;
-  }
-
-  /**
-   * Search for data files containing a specific column name.
-   */
-  async searchByColumn(
-    column: string,
-  ): Promise<ColumnSearchResponse["results"]> {
-    const result = await this.get<ColumnSearchResponse>(
-      `/api/v2/catalog/search?column=${encodeURIComponent(column)}`,
-    );
-    return result.results ?? [];
-  }
-
-  /**
-   * Replay metadata change log records.
-   */
-  async replayChanges(opts?: {
-    fromSequence?: number;
-    entityUrn?: string;
-    limit?: number;
-  }): Promise<ReplayResponse> {
-    const params = new URLSearchParams();
-    if (opts?.fromSequence !== undefined) params.set("from_sequence", String(opts.fromSequence));
-    if (opts?.entityUrn) params.set("entity_urn", opts.entityUrn);
-    if (opts?.limit !== undefined) params.set("limit", String(opts.limit));
-    const qs = params.toString();
-    return this.get<ReplayResponse>(`/api/v2/ops/replay${qs ? `?${qs}` : ""}`);
-  }
 }
 
 function isAbortError(error: unknown): boolean {

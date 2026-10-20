@@ -8,8 +8,8 @@ import { textStyle } from "../../shared/text-style.js";
 import { statusColor } from "../../shared/theme.js";
 import { VirtualList } from "../../shared/components/virtual-list.js";
 import { truncateText } from "../../shared/utils/format-text.js";
+import { terminalDimensions } from "../../shared/terminal-dimensions.js";
 
-const VIEWPORT_HEIGHT = 20;
 
 interface SearchResultsProps {
   readonly results: readonly SearchResult[];
@@ -59,8 +59,8 @@ export function SearchResults(props: SearchResultsProps): JSX.Element {
   };
 
   return (
-    <box height="100%" width="100%" flexDirection="column">
-      <text>
+    <box flexGrow={1} minHeight={0} width="100%" flexDirection="column">
+      <text height={1} flexShrink={0}>
         {props.loading
           ? "Searching..."
           : props.error && props.results.length === 0
@@ -71,10 +71,10 @@ export function SearchResults(props: SearchResultsProps): JSX.Element {
       </text>
 
       {/* Header */}
-      <box height={1} width="100%">
+      <box height={1} flexShrink={0} width="100%">
         <text>{"  SCORE  ZONE  PATH                           CHUNK"}</text>
       </box>
-      <box height={1} width="100%">
+      <box height={1} flexShrink={0} width="100%">
         <text>{"  -----  ----  -----------------------------  --------------------------------"}</text>
       </box>
 
@@ -82,7 +82,7 @@ export function SearchResults(props: SearchResultsProps): JSX.Element {
       <VirtualList
         items={props.results}
         renderItem={renderResult}
-        viewportHeight={VIEWPORT_HEIGHT}
+        viewportHeight={Math.max(1, terminalDimensions().height - 7)}
         selectedIndex={props.selectedIndex}
       />
     </box>

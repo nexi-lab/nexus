@@ -202,7 +202,7 @@ async def mount(
         for mp, backend, _ in backends:
             kernel.sys_setattr(mp, entry_type=DT_MOUNT, backend=backend)
 
-        # Persist mount entries so playground/fsspec/cp can auto-discover them.
+        # Persist mount entries so fsspec/cp can discover them.
         # Merges with existing entries so repeated `mount` calls accumulate.
         # Only persist URIs whose backends were successfully created.
         # Skip entirely when ephemeral=True — caller explicitly opted out.
@@ -224,7 +224,7 @@ async def mount(
             except OSError as exc:
                 logger.warning(
                     "Could not write mounts.json (%s). "
-                    "fsspec auto-discovery and playground will not find these mounts.",
+                    "fsspec auto-discovery will not find these mounts.",
                     exc,
                 )
 

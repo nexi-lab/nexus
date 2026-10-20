@@ -666,10 +666,8 @@ class TestZoneScopedRequestsSkipExternalCli:
 class TestUnifiedAuthServiceWithoutProfileStore:
     """Reproduces the production wiring: UnifiedAuthService with no profile_store.
 
-    All 4 production constructor sites (auth_cli.py, doctor.py, _tui/__init__.py,
-    _auth_cli.py) instantiate ``UnifiedAuthService(oauth_service=...)`` with no
-    profile_store arg. _gws_native_from_profile_store must still work via the
-    _external_sync_boot fallback.
+    With no profile store injected, credential discovery reads through
+    the external sync helper.
     """
 
     def test_reads_profiles_via_boot_helper_when_no_store_injected(self) -> None:

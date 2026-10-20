@@ -17,7 +17,6 @@ pip install nexus-fs[s3]        # + Amazon S3
 pip install nexus-fs[gcs]       # + Google Cloud Storage
 pip install nexus-fs[gdrive]    # + Google Drive
 pip install nexus-fs[fsspec]    # + fsspec/pandas/dask integration
-pip install nexus-fs[tui]       # + interactive TUI playground
 pip install nexus-fs[all]       # everything
 ```
 
@@ -80,12 +79,9 @@ fs = nexus.fs.mount_sync("gws://sheets", "gws://docs")
 | `mkdir(path)` | Create directory |
 | `list_mounts()` | List mount points |
 
-## TUI Playground
+## Terminal client
 
-```bash
-pip install nexus-fs[tui]
-nexus-fs playground s3://my-bucket local://./data
-```
+Use [Nexus TUI](https://github.com/nexi-lab/nexus/tree/develop/packages/nexus-tui) to browse Files, Search and Console through the authenticated native host.
 
 ## CLI
 
@@ -95,12 +91,6 @@ nexus-fs mount list
 nexus-fs mount test s3://my-bucket
 nexus-fs unmount s3://my-bucket
 ```
-
-> **Note:** The TUI uses direct backend access for low-latency browsing.
-> File operation semantics in the playground may differ from the library API
-> (e.g., metadata fields, error messages). The library API (`mount()` /
-> `mount_sync()`) is the authoritative interface. TUI/library unification
-> is planned for a future release.
 
 ## State Directory
 

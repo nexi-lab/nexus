@@ -164,5 +164,5 @@ fs = nexus.fs.mount_sync("s3://my-bucket", "local://./cache")
 
 - Set up a cloud backend: [S3](../backends/s3.md) | [GCS](../backends/gcs.md) | [Google Drive](../backends/gdrive.md)
 - Use with pandas or dask: [Data Science](../integrations/data-science.md)
-- Explore files interactively: [nexus-fs playground](../cli/playground.md)
+- Explore files interactively: [Nexus TUI](https://github.com/nexi-lab/nexus/tree/develop/packages/nexus-tui)
 - Understand how it works: [How Mounting Works](../concepts/mounting.md)

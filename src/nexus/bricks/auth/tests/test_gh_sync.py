@@ -126,7 +126,7 @@ class TestGhPaths:
     ) -> None:
         monkeypatch.delenv("GH_CONFIG_DIR", raising=False)
         config_dir = adapter._config_dir()
-        assert str(config_dir).endswith(".config/gh")
+        assert config_dir == Path.home() / ".config" / "gh"
 
     def test_gh_config_dir_override(
         self, adapter: GhCliSyncAdapter, monkeypatch: pytest.MonkeyPatch

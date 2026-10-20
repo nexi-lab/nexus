@@ -58,7 +58,6 @@ _ADD_COMMAND: dict[str, tuple[str, str]] = {
     "agent": ("agent", "agent"),
     "admin": ("admin", "admin"),
     "identity": ("identity", "identity"),
-    "auth_cli": ("auth", "auth"),
     "daemon_cli": ("daemon", "daemon"),
     "zone": ("zone", "zone"),
     "locks": ("lock", "lock"),

@@ -50,7 +50,7 @@ Add cloud backends by installing extras:
     pip install nexus-fs[all]
     ```
 
-    Installs all backends plus the interactive TUI (`textual`).
+    Installs all backend extras.
 
 ## Optional: fsspec integration
 
@@ -62,15 +62,9 @@ pip install nexus-fs[fsspec]
 
 See [fsspec integration](../integrations/fsspec.md) for usage.
 
-## Optional: interactive TUI
+## Terminal client
 
-The `playground` command requires the TUI extra:
-
-```bash
-pip install nexus-fs[tui]
-```
-
-See [nexus-fs playground](../cli/playground.md) for details.
+Use [Nexus TUI](https://github.com/nexi-lab/nexus/tree/develop/packages/nexus-tui) with a native host URL and credential.
 
 ## Verify
 

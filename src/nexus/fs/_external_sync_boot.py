@@ -6,7 +6,6 @@ use importlib.import_module() to avoid static import references that
 would violate the packaging boundary (test_boundary.py).
 
 Called by:
-  - _auth_cli._try_profile_store_list()  (nexus-fs auth list)
   - _backend_factory._try_profile_store_select()  (S3 credential routing)
 """
 

@@ -1572,23 +1572,6 @@ operations:
   perf_link: human-invoked metadata or inventory surface; not on a request hot path
   gap_issue: null
   owning_issue: 4138
-- id: auth.cli
-  module: auth
-  summary: ''
-  transports:
-    cli:
-      name: nexus auth
-      source: src/nexus/cli/commands/auth_cli.py:1
-  profiles:
-    lite: supported
-    sandbox: supported
-    full: supported
-  usage_example: null
-  correctness_test: tests/e2e/server/test_auth_security_e2e.py:1
-  perf_class: not_perf_sensitive
-  perf_link: human-invoked metadata or inventory surface; not on a request hot path
-  gap_issue: null
-  owning_issue: 4138
 - id: auth.connect
   module: auth
   summary: ''
@@ -11333,14 +11316,6 @@ parity_warnings:
   missing:
   - cli
   - grpc_typed
-  - mcp
-  - sdk
-- operation_id: auth.cli
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
   - mcp
   - sdk
 - operation_id: auth.connect

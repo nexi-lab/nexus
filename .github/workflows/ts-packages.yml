@@ -117,6 +117,8 @@ jobs:
         run: |
           uv venv --python 3.14
           uv pip install -e ".[dev,test]"
+      - name: Verify the public CLI uses the installed terminal runtime
+        run: uv run --no-sync python -m pytest tests/unit/cli/test_tui_launcher.py -n 0 -q
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable

@@ -57,7 +57,7 @@ def _exec_tui(extra_args: list[str] | None = None) -> None:
             if local_entry.exists() and api_client_dist.exists() and tui_workspace_dep.exists():
                 os.execvp(
                     bun,
-                    ["bun", "--cwd", str(local_entry.parents[1]), "run", "start", *args],
+                    ["bun", "run", "--cwd", str(local_entry.parents[1]), "start", *args],
                 )
                 # execvp does not return
 

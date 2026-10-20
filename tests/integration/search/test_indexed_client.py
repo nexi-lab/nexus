@@ -7,7 +7,7 @@ import grpc
 import pytest
 
 from nexus.bricks.search.search_service import SearchService
-from nexus.contracts.exceptions import AuthenticationError
+from nexus.contracts.exceptions import AuthenticationError, RemoteConnectionError
 from nexus.contracts.types import OperationContext
 from nexus.grpc.search.v1 import search_pb2, search_pb2_grpc
 from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
@@ -253,9 +253,12 @@ def test_configured_search_zone_does_not_replace_the_transport_identity(indexed,
     assert metadata["authorization"] == "Bearer operator-key"
 
 
-def test_transient_search_host_failures_still_retry(indexed):
+def test_search_host_failure_requires_an_explicit_new_call(indexed):
     host, _transport, search, _service = indexed
     host.failures = [grpc.StatusCode.UNAVAILABLE]
+    with pytest.raises(RemoteConnectionError, match="host temporarily unavailable"):
+        search.semantic_search(query="marigold")
+    assert len(host.calls) == 1
     assert len(search.semantic_search(query="marigold")) == 2
     assert len(host.calls) == 2
 

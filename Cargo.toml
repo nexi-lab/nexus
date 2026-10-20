@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "rust/services/accounts",
+    "rust/services/zone-control",
     # nexus-owned service modules (peer crate of nexus-vfs kernel).
     "rust/services",
     # nexus-vault — cdylib service plugin for PasswordVaultService,

@@ -16,6 +16,7 @@ on:
       - "src/nexus/server/api/v2/**zone*"
       - "src/nexus/server/api/v2/routers/sessions.py"
       - "src/nexus/server/lifespan/zone_control.py"
+      - "rust/services/zone-control/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "packages/nexus-api-client/**"
@@ -36,6 +37,7 @@ on:
       - "src/nexus/server/api/v2/**zone*"
       - "src/nexus/server/api/v2/routers/sessions.py"
       - "src/nexus/server/lifespan/zone_control.py"
+      - "rust/services/zone-control/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "packages/nexus-api-client/**"
@@ -146,6 +148,8 @@ jobs:
         with:
           components: rustfmt, clippy
       - run: cargo fmt --all --check
+      - name: Rust product contract fixtures
+        run: cargo test --locked -p nexus-zone-control
       - name: Clippy the workspace members this repo owns
         # The kernel build below covers the pinned external nexus-vfs repo;
         # this step covers THIS repository's own Rust members, which had no

@@ -200,6 +200,43 @@ async def main() -> None:
                 await file_cli(["write", path, "--input", str(source)])
             read = await vfs.Read(vfs_pb2.ReadRequest(path=path, auth_token=admin))
             assert not read.is_error and bytes(read.content) == content, safe(str(read))
+            lock_lease_ms = 300_000
+            locked = await vfs.Lock(
+                vfs_pb2.LockRequest(path=path, auth_token=admin, timeout_ms=lock_lease_ms),
+                timeout=15,
+            )
+            assert not locked.is_error and locked.acquired and locked.lock_id, safe(str(locked))
+            release = ["lock", "release", path, "--lock-id", locked.lock_id, "--json"]
+            try:
+                denied, _ = await file_cli(release, key=keys["alice"], expected=1)
+                assert json.loads(denied)["error"]["code"] == "PERMISSION_DENIED", safe(denied)
+                wrong, _ = await file_cli(
+                    ["lock", "release", path, "--lock-id", "wrong-lock-id", "--json"], expected=1
+                )
+                assert json.loads(wrong)["data"] == {"path": path, "released": False}, safe(wrong)
+                contended = await vfs.Lock(
+                    vfs_pb2.LockRequest(path=path, auth_token=admin, timeout_ms=lock_lease_ms),
+                    timeout=15,
+                )
+                assert not contended.is_error and not contended.acquired, safe(str(contended))
+                released, _ = await file_cli(release)
+                assert json.loads(released)["data"] == {"path": path, "released": True}, safe(
+                    released
+                )
+                absent, _ = await file_cli(release, expected=1)
+                assert json.loads(absent)["data"]["released"] is False, safe(absent)
+                replacement = await vfs.Lock(
+                    vfs_pb2.LockRequest(path=path, auth_token=admin, timeout_ms=lock_lease_ms),
+                    timeout=15,
+                )
+                assert not replacement.is_error and replacement.acquired, safe(str(replacement))
+                forced, _ = await file_cli(["lock", "release", path, "--force", "--json"])
+                assert json.loads(forced)["data"]["released"] is True, safe(forced)
+            finally:
+                cleanup = await vfs.Unlock(
+                    vfs_pb2.UnlockRequest(path=path, auth_token=admin, force=True), timeout=15
+                )
+                assert not cleanup.is_error, safe(str(cleanup))
             stdout, _ = await file_cli(["cat", path, "--json"])
             preview = json.loads(stdout)["data"]
             assert preview["binary"] is True and preview["content"] is None, preview

@@ -2566,7 +2566,7 @@ operations:
       source: src/nexus/core/nexus_fs_metadata.py:1485
     sdk:
       name: RemoteNexusFS.delete_batch
-      source: src/nexus/remote/client.py:186
+      source: src/nexus/remote/client.py:196
   profiles:
     lite: supported
     sandbox: supported
@@ -2882,7 +2882,7 @@ operations:
       source: src/nexus/core/nexus_fs_metadata.py:1380
     sdk:
       name: RemoteNexusFS.exists_batch
-      source: src/nexus/remote/client.py:195
+      source: src/nexus/remote/client.py:205
   profiles:
     lite: supported
     sandbox: supported
@@ -3388,7 +3388,7 @@ operations:
   transports:
     cli:
       name: nexus lock
-      source: src/nexus/cli/commands/locks.py:15
+      source: src/nexus/cli/commands/locks.py:14
   profiles:
     lite: supported
     sandbox: supported
@@ -3846,7 +3846,7 @@ operations:
   transports:
     sdk:
       name: RemoteNexusFS.access
-      source: src/nexus/remote/client.py:83
+      source: src/nexus/remote/client.py:93
   profiles:
     lite: unverified
     sandbox: unverified
@@ -3897,7 +3897,7 @@ operations:
   transports:
     sdk:
       name: RemoteNexusFS.exists
-      source: src/nexus/remote/client.py:80
+      source: src/nexus/remote/client.py:90
   profiles:
     lite: unverified
     sandbox: unverified
@@ -3931,7 +3931,7 @@ operations:
   transports:
     sdk:
       name: RemoteNexusFS.glob
-      source: src/nexus/remote/client.py:234
+      source: src/nexus/remote/client.py:244
   profiles:
     lite: unverified
     sandbox: unverified
@@ -3948,7 +3948,7 @@ operations:
   transports:
     sdk:
       name: RemoteNexusFS.grep
-      source: src/nexus/remote/client.py:250
+      source: src/nexus/remote/client.py:260
   profiles:
     lite: unverified
     sandbox: unverified
@@ -4033,7 +4033,7 @@ operations:
   transports:
     sdk:
       name: RemoteNexusFS.read
-      source: src/nexus/remote/client.py:61
+      source: src/nexus/remote/client.py:71
   profiles:
     lite: unverified
     sandbox: unverified
@@ -4118,7 +4118,7 @@ operations:
   transports:
     sdk:
       name: RemoteNexusFS.stat
-      source: src/nexus/remote/client.py:74
+      source: src/nexus/remote/client.py:84
   profiles:
     lite: unverified
     sandbox: unverified
@@ -4135,7 +4135,7 @@ operations:
   transports:
     sdk:
       name: RemoteNexusFS.stream
-      source: src/nexus/remote/client.py:206
+      source: src/nexus/remote/client.py:216
   profiles:
     lite: unverified
     sandbox: unverified
@@ -4713,7 +4713,7 @@ operations:
   transports:
     sdk:
       name: RemoteNexusFS.is_directory
-      source: src/nexus/remote/client.py:89
+      source: src/nexus/remote/client.py:99
   profiles:
     lite: supported
     sandbox: supported
@@ -5057,55 +5057,21 @@ operations:
     and covered by connector/search benchmarks when enabled.
   gap_issue: null
   owning_issue: 4136
-- id: lock.info
-  module: filesystem
-  summary: ''
-  transports:
-    cli:
-      name: nexus lock info
-      source: src/nexus/cli/commands/locks.py:92
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
-- id: lock.list
-  module: filesystem
-  summary: ''
-  transports:
-    cli:
-      name: nexus lock list
-      source: src/nexus/cli/commands/locks.py:33
-  profiles:
-    lite: unverified
-    sandbox: unverified
-    full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
-  gap_issue: null
-  owning_issue: null
 - id: lock.release
   module: filesystem
-  summary: ''
+  summary: Release a native advisory lock and report the owner's acknowledgement.
   transports:
     cli:
       name: nexus lock release
-      source: src/nexus/cli/commands/locks.py:141
+      source: src/nexus/cli/commands/locks.py:19
   profiles:
     lite: unverified
     sandbox: unverified
     full: unverified
-  usage_example: null
-  correctness_test: null
-  perf_class: null
-  perf_link: null
+  usage_example: nexus lock release /workspace/file.txt --lock-id LOCK_ID --json
+  correctness_test: scripts/test_rust_http_search_cli.py
+  perf_class: control
+  perf_link: One typed Unlock RPC on the selected authenticated connection.
   gap_issue: null
   owning_issue: null
 - id: locks.api_v2
@@ -5459,7 +5425,7 @@ operations:
       source: src/nexus/core/nexus_fs_metadata.py:1390
     sdk:
       name: RemoteNexusFS.metadata_batch
-      source: src/nexus/remote/client.py:101
+      source: src/nexus/remote/client.py:111
   profiles:
     lite: supported
     sandbox: supported
@@ -7312,7 +7278,7 @@ operations:
       source: src/nexus/core/nexus_fs_content.py:1635
     sdk:
       name: RemoteNexusFS.read_batch
-      source: src/nexus/remote/client.py:104
+      source: src/nexus/remote/client.py:114
   profiles:
     lite: supported
     sandbox: supported
@@ -7334,7 +7300,7 @@ operations:
       source: src/nexus/core/nexus_fs_content.py:242
     sdk:
       name: RemoteNexusFS.read_bulk
-      source: src/nexus/remote/client.py:119
+      source: src/nexus/remote/client.py:129
   profiles:
     lite: supported
     sandbox: supported
@@ -7371,7 +7337,7 @@ operations:
       source: src/nexus/core/nexus_fs_content.py:415
     sdk:
       name: RemoteNexusFS.read_range
-      source: src/nexus/remote/client.py:201
+      source: src/nexus/remote/client.py:211
   profiles:
     lite: supported
     sandbox: supported
@@ -7761,7 +7727,7 @@ operations:
       source: src/nexus/core/nexus_fs_metadata.py:1624
     sdk:
       name: RemoteNexusFS.rename_batch
-      source: src/nexus/remote/client.py:174
+      source: src/nexus/remote/client.py:184
   profiles:
     lite: supported
     sandbox: supported
@@ -8462,7 +8428,7 @@ operations:
       source: src/nexus/config/tool_profiles.yaml:1
     sdk:
       name: RemoteNexusFS.semantic_search
-      source: src/nexus/remote/client.py:253
+      source: src/nexus/remote/client.py:263
   profiles:
     lite: supported
     sandbox: supported
@@ -8483,7 +8449,7 @@ operations:
       source: src/nexus/bricks/search/search_service.py:274
     sdk:
       name: RemoteNexusFS.semantic_search_index
-      source: src/nexus/remote/client.py:256
+      source: src/nexus/remote/client.py:266
   profiles:
     lite: supported
     sandbox: supported
@@ -8503,7 +8469,7 @@ operations:
       source: src/nexus/bricks/search/search_service.py:297
     sdk:
       name: RemoteNexusFS.semantic_search_stats
-      source: src/nexus/remote/client.py:259
+      source: src/nexus/remote/client.py:269
   profiles:
     lite: supported
     sandbox: supported
@@ -9003,7 +8969,7 @@ operations:
       source: src/nexus/core/nexus_fs_metadata.py:1248
     sdk:
       name: RemoteNexusFS.stat_bulk
-      source: src/nexus/remote/client.py:93
+      source: src/nexus/remote/client.py:103
   profiles:
     lite: supported
     sandbox: supported
@@ -9040,7 +9006,7 @@ operations:
       source: src/nexus/core/nexus_fs_content.py:528
     sdk:
       name: RemoteNexusFS.stream_range
-      source: src/nexus/remote/client.py:219
+      source: src/nexus/remote/client.py:229
   profiles:
     lite: supported
     sandbox: supported
@@ -9176,7 +9142,7 @@ operations:
   transports:
     sdk:
       name: RemoteNexusFS.sys_copy
-      source: src/nexus/remote/client.py:144
+      source: src/nexus/remote/client.py:154
   profiles:
     lite: supported
     sandbox: supported
@@ -9295,7 +9261,7 @@ operations:
   transports:
     sdk:
       name: RemoteNexusFS.sys_setattr
-      source: src/nexus/remote/client.py:149
+      source: src/nexus/remote/client.py:159
   profiles:
     lite: supported
     sandbox: supported
@@ -9345,8 +9311,8 @@ operations:
   summary: ''
   transports:
     sdk:
-      name: KernelClient.sys_unlock
-      source: src/nexus/remote/kernel_client.py:722
+      name: RemoteNexusFS.sys_unlock
+      source: src/nexus/remote/client.py:61
   profiles:
     lite: supported
     sandbox: supported
@@ -9954,7 +9920,7 @@ operations:
       source: src/nexus/core/nexus_fs_content.py:1467
     sdk:
       name: RemoteNexusFS.write_batch
-      source: src/nexus/remote/client.py:129
+      source: src/nexus/remote/client.py:139
   profiles:
     lite: supported
     sandbox: supported
@@ -11926,22 +11892,6 @@ parity_warnings:
   - grpc_typed
   - http
   - mcp
-- operation_id: lock.info
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
-- operation_id: lock.list
-  has:
-  - cli
-  missing:
-  - grpc_typed
-  - http
-  - mcp
-  - sdk
 - operation_id: lock.release
   has:
   - cli

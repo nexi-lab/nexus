@@ -170,6 +170,16 @@ nexus agent delete <pid> --yes --json
 
 These commands use the native gRPC endpoint and the existing credential. The Python SDK exposes the same bindings through `nexus.remote.agent_client.AgentClient`, which owns and closes its channel with a `with` statement.
 
+## Release native advisory locks
+
+Release with the lock ID returned by the native owner:
+
+```sh
+nexus lock release /docs/shared.txt --lock-id <lock-id> --json
+```
+
+The result contains the native `released` acknowledgement. Exit 1 means no matching lock was released. Force release uses `--force` and requires native administration rights. The caller's credential and the Rust owner determine authority.
+
 ## Use the terminal interface
 
 The TUI has Files, Search and a native HTTP Console. It verifies native status and whoami before opening the workspace. The Console uses the same credential.

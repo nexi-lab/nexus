@@ -58,6 +58,16 @@ class RemoteNexusFS(RemoteFilesystemClient):
     def service(self, name: str) -> RemoteServiceProxy | None:
         return self._search if name == "search" else None
 
+    def sys_unlock(
+        self, path: str, lock_id: str | None = None, force: bool = False, *, context: Any = None
+    ) -> bool:
+        """Release through native Unlock and return the owner's acknowledgement."""
+        del context
+        if not force and not lock_id:
+            raise ValueError("lock_id is required for non-force release")
+        response = self._transport.unlock(path, lock_id=lock_id or "", force=force)
+        return bool(response.released)
+
     def read(
         self,
         path: str,

@@ -67,7 +67,7 @@ def shared_config(tmp_path: Path) -> Path:
 
 def test_stack_mcp_sidecar_uses_same_default_image_as_nexus() -> None:
     repo_root = Path(__file__).resolve().parents[3]
-    stack = yaml.safe_load((repo_root / "nexus-stack.yml").read_text())
+    stack = yaml.safe_load((repo_root / "nexus-stack.yml").read_text(encoding="utf-8"))
 
     assert stack["services"]["mcp-server"]["image"] == stack["services"]["nexus"]["image"]
 

@@ -11,7 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _nexus_env(compose_file: Path) -> dict[str, Any]:
-    stack = yaml.safe_load(compose_file.read_text())
+    stack = yaml.safe_load(compose_file.read_text(encoding="utf-8"))
     return stack["services"]["nexus"]["environment"]
 
 

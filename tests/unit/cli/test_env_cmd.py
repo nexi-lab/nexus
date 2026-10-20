@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -190,13 +191,16 @@ class TestEnvCommand:
 
 
 class TestRunCommand:
-    def test_run_echo(self, runner: CliRunner, project_dir: Path) -> None:
+    def test_run_process(self, runner: CliRunner, project_dir: Path) -> None:
+        output = project_dir / "child-output.txt"
+        script = "import sys; from pathlib import Path; Path(sys.argv[1]).write_text('hello', encoding='utf-8')"
         with patch(
             "nexus.cli.state.CONFIG_SEARCH_PATHS",
             (str(project_dir / "nexus.yaml"),),
         ):
-            result = runner.invoke(run, ["echo", "hello"])
+            result = runner.invoke(run, ["--", sys.executable, "-c", script, str(output)])
         assert result.exit_code == 0
+        assert output.read_text(encoding="utf-8") == "hello"
 
     def test_run_missing_command(self, runner: CliRunner, project_dir: Path) -> None:
         with patch(

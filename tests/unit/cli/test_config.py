@@ -145,11 +145,26 @@ class TestFileIO:
         save_cli_config(config, path=nested)
         assert nested.exists()
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="0600 mode bits have POSIX semantics")
     def test_save_sets_file_permissions(self, tmp_config_file: Path) -> None:
         config = make_config()
         save_cli_config(config, path=tmp_config_file)
         mode = tmp_config_file.stat().st_mode
         assert stat.S_IMODE(mode) == 0o600
+
+    def test_update_existing_human_utf8_config(self, tmp_config_file: Path) -> None:
+        tmp_config_file.write_text(
+            "current-profile: 开发\nprofiles:\n  开发:\n    url: http://127.0.0.1:2327\n",
+            encoding="utf-8",
+        )
+        config = load_cli_config(path=tmp_config_file)
+        assert config.current_profile == "开发"
+        config.profiles["验收"] = ProfileEntry(url="http://127.0.0.1:2328")
+        save_cli_config(config, path=tmp_config_file)
+        loaded = load_cli_config(path=tmp_config_file)
+        assert loaded.current_profile == "开发"
+        assert loaded.profiles["开发"].url == "http://127.0.0.1:2327"
+        assert loaded.profiles["验收"].url == "http://127.0.0.1:2328"
 
     def test_load_empty_file(self, tmp_config_file: Path) -> None:
         tmp_config_file.write_text("")

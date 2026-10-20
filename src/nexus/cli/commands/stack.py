@@ -493,51 +493,27 @@ class SandboxUpInProgressError(RuntimeError):
 
 @contextlib.contextmanager
 def _sandbox_up_data_dir_lock(effective_data_dir: str) -> Iterator[None]:
-    """Serialize ``nexus up --profile sandbox`` PER EFFECTIVE DATA DIR.
+    """Hold a nonblocking OS lock for one sandbox data directory.
 
-    Issue #4126 review r6, Finding A (layer 2): two concurrent ``nexus up
-    --profile sandbox`` for the SAME data dir can interleave their producer
-    write and rollback, so the loser's rollback can wipe the WINNER's live
-    discovery state. Hold an OS advisory file lock at
-    ``<effective_data_dir>/.nexus-up.lock`` across producer-write → launch →
-    return so the two cannot interleave.
-
-    Design choice — **non-blocking, fail-fast** (``flock`` + ``LOCK_NB``):
-    two ``nexus up`` for the SAME isolated sandbox is a genuine operator
-    race (the daemon runs blocking-foreground; there is no benign reason to
-    queue a second identical boot). Failing fast with a clear message is
-    the least-surprising behavior AND carries ZERO deadlock risk — we never
-    block waiting on the lock. The lock is keyed on the EFFECTIVE data dir,
-    so DIFFERENT data dirs use DIFFERENT lock files and per-agent
-    concurrency (distinct sandboxes) is NEVER serialized. The lock is held
-    only by ``flock`` on an open fd; if this process dies the OS releases it
-    automatically (no stale-lock-file hazard — the lock is the fd state, not
-    the file's existence). Released in ``finally``.
-
-    Mirrors the repo's existing advisory-locking convention
-    (``nexus.lib.occ`` documents ``flock(2)`` + retry; ``nexus_fs`` uses
-    POSIX ``fcntl`` byte-range locks). Best-effort: if ``fcntl`` is
-    unavailable (non-POSIX) the lock degrades to a no-op so the
-    single-daemon / distinct-data-dir paths are NEVER blocked or broken.
+    The open descriptor owns the lock. Closing it or exiting the process
+    releases ownership; the empty file stores no runtime state.
     """
-    try:
-        import fcntl
-    except ImportError:
-        # Non-POSIX: no advisory lock available. Degrade to a no-op rather
-        # than block/break single-daemon or distinct-data-dir flows. The
-        # ownership-aware rollback (layer 1) still prevents cross-clobber.
-        yield
-        return
-
     lock_dir = Path(effective_data_dir)
-    with contextlib.suppress(OSError):
-        lock_dir.mkdir(parents=True, exist_ok=True)
-    lock_path = lock_dir / ".nexus-up.lock"
-
-    fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(lock_dir / ".nexus-up.lock"), os.O_CREAT | os.O_RDWR, 0o600)
     try:
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            if sys.platform == "win32":
+                import msvcrt
+
+                # A byte-range lock can extend beyond EOF on an empty file:
+                # https://docs.python.org/3/library/msvcrt.html#msvcrt.locking
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError as exc:
             if exc.errno in (errno.EAGAIN, errno.EACCES, errno.EWOULDBLOCK):
                 raise SandboxUpInProgressError(
@@ -546,14 +522,9 @@ def _sandbox_up_data_dir_lock(effective_data_dir: str) -> Iterator[None]:
                     f"Wait for it to finish or use a different --data-dir."
                 ) from exc
             raise
-        try:
-            yield
-        finally:
-            with contextlib.suppress(OSError):
-                fcntl.flock(fd, fcntl.LOCK_UN)
+        yield
     finally:
-        with contextlib.suppress(OSError):
-            os.close(fd)
+        os.close(fd)
 
 
 def _rollback_sandbox_runtime_artifacts(

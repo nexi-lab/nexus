@@ -12,6 +12,8 @@ Verifies:
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -24,6 +26,43 @@ from nexus.cli.commands.env_cmd import env_cmd
 from nexus.cli.commands.stack import up
 from nexus.cli.exit_codes import ExitCode
 from nexus.cli.state import load_runtime_state, resolve_connection_env
+
+
+def test_sandbox_lock_owns_only_its_data_directory_and_survives_owner_exit(tmp_path: Path):
+    from nexus.cli.commands.stack import SandboxUpInProgressError, _sandbox_up_data_dir_lock
+
+    script = """
+import os
+import sys
+from nexus.cli.commands.stack import SandboxUpInProgressError, _sandbox_up_data_dir_lock
+try:
+    with _sandbox_up_data_dir_lock(sys.argv[1]):
+        if sys.argv[2] == 'abrupt':
+            os._exit(23)
+except SandboxUpInProgressError:
+    sys.exit(69)
+"""
+    root = tmp_path / "same"
+    env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[3] / "src")}
+
+    def child(path: Path, mode: str = "normal", expected: int = 0):
+        result = subprocess.run(
+            [sys.executable, "-c", script, str(path), mode],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        assert result.returncode == expected, result.stderr
+
+    with _sandbox_up_data_dir_lock(str(root)):
+        child(root, expected=69)
+        child(tmp_path / "independent")
+        with pytest.raises(SandboxUpInProgressError), _sandbox_up_data_dir_lock(str(root)):
+            pytest.fail("A second owner acquired the same data directory")
+    child(root, mode="abrupt", expected=23)
+    with _sandbox_up_data_dir_lock(str(root)):
+        assert (root / ".nexus-up.lock").stat().st_size == 0
 
 
 @pytest.fixture()
@@ -575,7 +614,11 @@ class TestDataDirSingleSourceOfTruth:
             runner.isolated_filesystem(temp_dir=tmp_path),
             patch("shutil.which", return_value=fake_nexusd),
             patch("subprocess.run", return_value=mock_proc) as mock_run,
-            patch.dict("os.environ", {"PATH": "/usr/bin", "HOME": str(fake_home)}, clear=True),
+            patch.dict(
+                "os.environ",
+                {"PATH": "/usr/bin", "HOME": str(fake_home), "USERPROFILE": str(fake_home)},
+                clear=True,
+            ),
         ):
             result = runner.invoke(up, ["--profile", "sandbox", "--workspace", ws])
             assert result.exit_code == 0, result.output
@@ -1145,7 +1188,10 @@ class TestPreExistingConfigDiscovery:
             home = tmp_path / "home"
             home.mkdir(exist_ok=True)
             result, mock_run = self._up(
-                runner, tmp_path, ["--workspace", ws], extra_env={"HOME": str(home)}
+                runner,
+                tmp_path,
+                ["--workspace", ws],
+                extra_env={"HOME": str(home), "USERPROFILE": str(home)},
             )
             assert result.exit_code == 0, result.output
 

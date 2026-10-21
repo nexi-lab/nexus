@@ -1887,6 +1887,65 @@
       "title": "ExecutionPermission",
       "type": "object"
     },
+    "ExecutionRequestRevocation": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "ExecutionRequestRevocation",
+          "default": "ExecutionRequestRevocation",
+          "title": "Kind",
+          "type": "string"
+        },
+        "zone": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Zone",
+          "type": "string"
+        },
+        "request_id": {
+          "title": "Request Id",
+          "type": "string"
+        },
+        "task_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "fenced_at": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Fenced At",
+          "type": "integer"
+        },
+        "stopped_by": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Stopped By",
+          "type": "string"
+        },
+        "grants": {
+          "items": {
+            "$ref": "#/$defs/ExecutionGrant"
+          },
+          "title": "Grants",
+          "type": "array"
+        },
+        "cleanup_pending": {
+          "title": "Cleanup Pending",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "zone",
+        "request_id",
+        "task_id",
+        "fenced_at",
+        "stopped_by",
+        "grants",
+        "cleanup_pending"
+      ],
+      "title": "ExecutionRequestRevocation",
+      "type": "object"
+    },
     "HostedArtifact": {
       "additionalProperties": false,
       "properties": {
@@ -3793,6 +3852,39 @@
       "title": "ReviewAsset",
       "type": "object"
     },
+    "RevokeExecutionRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "api_version": {
+          "const": "agent-registry.sudo.dev/v1alpha1",
+          "default": "agent-registry.sudo.dev/v1alpha1",
+          "title": "Api Version",
+          "type": "string"
+        },
+        "kind": {
+          "const": "RevokeExecutionRequest",
+          "default": "RevokeExecutionRequest",
+          "title": "Kind",
+          "type": "string"
+        },
+        "request_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "task_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Task Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "request_id",
+        "task_id"
+      ],
+      "title": "RevokeExecutionRequest",
+      "type": "object"
+    },
     "SaveAsset": {
       "additionalProperties": false,
       "properties": {
@@ -4517,6 +4609,12 @@
     },
     {
       "$ref": "#/$defs/IssueExecutionGrant"
+    },
+    {
+      "$ref": "#/$defs/RevokeExecutionRequest"
+    },
+    {
+      "$ref": "#/$defs/ExecutionRequestRevocation"
     },
     {
       "$ref": "#/$defs/ExecutionGrant"

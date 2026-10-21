@@ -8,6 +8,7 @@ from datetime import UTC
 from uuid import uuid4
 
 from sqlalchemy import (
+    BigInteger,
     Column,
     MetaData,
     String,
@@ -17,6 +18,7 @@ from sqlalchemy import (
     insert,
     inspect,
     select,
+    text,
     update,
 )
 from sqlalchemy.exc import IntegrityError
@@ -29,8 +31,10 @@ from nexus.contracts.agent_execution import (
     ExecutionGrant,
     ExecutionGrantPage,
     ExecutionGrantResult,
+    ExecutionRequestRevocation,
     ExecutionZonePolicy,
     IssueExecutionGrant,
+    RevokeExecutionRequest,
 )
 from nexus.contracts.product_agent_registry import canonical_bytes
 from nexus.services.product_agent_registry.store import RegistryActor, RegistryError, digest
@@ -47,6 +51,17 @@ grants = Table(
     Column("request_digest", String(71), nullable=False),
     Column("document", Text, nullable=False),
     UniqueConstraint("zone", "issuer", "request_id"),
+)
+
+
+request_fences = Table(
+    "product_agent_execution_request_fences",
+    metadata,
+    Column("zone", String(255), primary_key=True),
+    Column("request_id", String(128), primary_key=True),
+    Column("task_id", String(150), nullable=False),
+    Column("stopped_by", String(200), nullable=False),
+    Column("fenced_at", BigInteger, nullable=False),
 )
 
 
@@ -145,10 +160,92 @@ class AgentExecution:
         with self.engine.connect() as con:
             return self._load(con, actor, grant_id)
 
+    @staticmethod
+    def _lock_request(con, zone, request_id):
+        # Serialize absence checks too. SQLite uses BEGIN IMMEDIATE; Postgres
+        # needs a transaction advisory lock before either reserve or fence.
+        if con.dialect.name == "postgresql":
+            con.execute(
+                text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+                {"key": json.dumps(["agent-execution-request", zone, request_id])},
+            )
+
+    def revoke_request(self, actor, request: RevokeExecutionRequest):
+        self._policy(actor, "gateways")
+        with self.registry.inventory._transaction() as con:
+            self._lock_request(con, actor.zone, request.request_id)
+            rows = (
+                con.execute(
+                    select(grants).where(
+                        grants.c.zone == actor.zone, grants.c.request_id == request.request_id
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            matches = [ExecutionGrant.model_validate_json(row["document"]) for row in rows]
+            if any(grant.request.task_id != request.task_id for grant in matches):
+                raise RegistryError("EXECUTION_REQUEST_CONFLICT")
+            fence = (
+                con.execute(
+                    select(request_fences).where(
+                        request_fences.c.zone == actor.zone,
+                        request_fences.c.request_id == request.request_id,
+                    )
+                )
+                .mappings()
+                .first()
+            )
+            if fence and fence["task_id"] != request.task_id:
+                raise RegistryError("EXECUTION_REQUEST_CONFLICT")
+            if not fence:
+                fence = {
+                    "zone": actor.zone,
+                    "request_id": request.request_id,
+                    "task_id": request.task_id,
+                    "stopped_by": actor.subject,
+                    "fenced_at": self.registry.clock(),
+                }
+                con.execute(insert(request_fences).values(**fence))
+            for grant in matches:
+                self._save(
+                    con,
+                    grant.model_copy(
+                        update={
+                            "status": "revoked",
+                            "cleanup_pending": True,
+                            "reason": "request_revoked",
+                            "stopped_by": grant.stopped_by or actor.subject,
+                            "stopped_at": grant.stopped_at or fence["fenced_at"],
+                        }
+                    ),
+                )
+        # No issuer can reserve a late request after the fence commit. Existing
+        # grants retain independent IAM cleanup evidence, including in-flight issuance.
+        cleaned = [self._cleanup(actor, grant.id) for grant in matches]
+        return ExecutionRequestRevocation(
+            zone=actor.zone,
+            request_id=request.request_id,
+            task_id=request.task_id,
+            stopped_by=fence["stopped_by"],
+            fenced_at=fence["fenced_at"],
+            grants=cleaned,
+            cleanup_pending=any(grant.cleanup_pending for grant in cleaned),
+        )
+
     def _reserve(self, actor, request):
         asset, _ = self._admit(actor, request)
         fingerprint = digest(canonical_bytes(request.model_dump()))
         with self.registry.inventory._transaction() as con:
+            self._lock_request(con, actor.zone, request.request_id)
+            fence = con.execute(
+                select(request_fences.c.task_id).where(
+                    request_fences.c.zone == actor.zone,
+                    request_fences.c.request_id == request.request_id,
+                )
+            ).first()
+            if fence:
+                raise RegistryError("EXECUTION_REQUEST_REVOKED", 409)
             existing = (
                 con.execute(
                     select(grants).where(

@@ -106,3 +106,21 @@ class ExecutionZonePolicy(WireModel):
     evaluation_permissions: Annotated[list[ExecutionPermission], Field(max_length=128)] = Field(
         default_factory=list
     )
+
+
+class RevokeExecutionRequest(WireModel):
+    api_version: Literal[API] = API
+    kind: Literal["RevokeExecutionRequest"] = "RevokeExecutionRequest"
+    request_id: Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$")]
+    task_id: Identifier
+
+
+class ExecutionRequestRevocation(WireModel):
+    kind: Literal["ExecutionRequestRevocation"] = "ExecutionRequestRevocation"
+    zone: Identifier
+    request_id: str
+    task_id: Identifier
+    fenced_at: Stamp
+    stopped_by: Label
+    grants: list[ExecutionGrant]
+    cleanup_pending: bool

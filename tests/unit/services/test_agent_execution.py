@@ -1,12 +1,13 @@
 """Real Registry + IAM + ReBAC + database auth; failures injected only at fault boundaries."""
 
 import asyncio
+import os
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from sqlalchemy import select, update
+from sqlalchemy import create_engine, select, update
 
 from nexus.bricks.delegation.service import DelegationService
 from nexus.bricks.rebac.entity_registry import EntityRegistry
@@ -47,9 +48,19 @@ def execution(tmp_path):
     registration = AgentRegistrationService(store, entities, rebac_manager=rebac)
     asyncio.run(registration.register("coordinator", "Coordinator", "it", "zone-a", ipc=False))
     delegation = DelegationService(store, rebac, entities)
-    initialize_schema(store.engine)
+    registry_engine = store.engine
+    bootstrap = None
+    schema = "execution_test_" + uuid4().hex
+    if postgres := os.environ.get("NEXUS_REGISTRY_TEST_DATABASE_URL"):
+        bootstrap = create_engine(postgres)
+        with bootstrap.begin() as con:
+            con.exec_driver_sql(f'CREATE SCHEMA "{schema}"')
+        registry_engine = create_engine(
+            postgres, connect_args={"options": f"-csearch_path={schema}"}
+        )
+    initialize_schema(registry_engine)
     registry = ProductAgentRegistry(
-        store.engine,
+        registry_engine,
         Ed25519PrivateKey.generate(),
         {"agents.example": "zone-a", "other.example": "zone-b"},
     )
@@ -75,8 +86,15 @@ def execution(tmp_path):
         ADMIN,
         cmd("ReviewAsset", asset.revision, decision="approve", reason="Synthetic evaluation only"),
     )
-    yield service
-    store.engine.dispose()
+    try:
+        yield service
+    finally:
+        registry_engine.dispose()
+        store.engine.dispose()
+        if bootstrap:
+            with bootstrap.begin() as con:
+                con.exec_driver_sql(f'DROP SCHEMA "{schema}" CASCADE')
+            bootstrap.dispose()
 
 
 def request(execution, **patch):
@@ -429,3 +447,86 @@ async def test_model_call_limit_cannot_exceed_current_zone_policy(execution):
     )
     with pytest.raises(RegistryError, match="CALL_LIMIT_DENIED"):
         await execution.authorize(ADMIN, check(result))
+
+
+@pytest.mark.asyncio
+async def test_revoke_absent_request_fences_late_and_rotated_issuers(execution):
+    from nexus.contracts.agent_execution import RevokeExecutionRequest
+
+    req = request(execution)
+    command = RevokeExecutionRequest(request_id=req.request_id, task_id=req.task_id)
+    stopped = execution.revoke_request(ADMIN, command)
+    assert not stopped.cleanup_pending and stopped.grants == []
+    assert execution.revoke_request(ADMIN, command).fenced_at == stopped.fenced_at
+    with pytest.raises(RegistryError, match="EXECUTION_REQUEST_REVOKED"):
+        await execution.issue(ADMIN, req)
+    rotated = RegistryActor("user:rotated", ADMIN.zone, True)
+    policy = execution.policies[ADMIN.zone]
+    execution.policies[ADMIN.zone] = policy.model_copy(
+        update={"evaluators": [*policy.evaluators, rotated.subject]}
+    )
+    with pytest.raises(RegistryError, match="EXECUTION_REQUEST_REVOKED"):
+        await execution.issue(rotated, req)
+    assert execution.list(ADMIN).items == []
+    with pytest.raises(RegistryError, match="EXECUTION_REQUEST_CONFLICT"):
+        execution.revoke_request(ADMIN, command.model_copy(update={"task_id": "other-task"}))
+
+
+@pytest.mark.asyncio
+async def test_request_fence_revokes_real_iam_grants_and_retains_issuance_uncertainty(execution):
+    from nexus.contracts.agent_execution import RevokeExecutionRequest
+
+    req = request(execution)
+    issued = await execution.issue(ADMIN, req)
+    stopped = execution.revoke_request(
+        ADMIN, RevokeExecutionRequest(request_id=req.request_id, task_id=req.task_id)
+    )
+    assert not stopped.cleanup_pending
+    assert stopped.grants[0].id == issued.grant.id and stopped.grants[0].status == "revoked"
+    assert not (await execution.auth.authenticate(issued.api_key)).authenticated
+    with pytest.raises(RegistryError, match="EXECUTION_INACTIVE"):
+        await execution.authorize(ADMIN, check(issued))
+    pending = request(execution)
+    grant, _ = execution._reserve(ADMIN, pending)
+    command = RevokeExecutionRequest(request_id=pending.request_id, task_id=pending.task_id)
+    assert execution.revoke_request(ADMIN, command).cleanup_pending
+    execution.registry.clock = lambda: grant.expires_at + 1
+    assert not execution.revoke_request(ADMIN, command).cleanup_pending
+    with pytest.raises(RegistryError, match="EXECUTION_REQUEST_REVOKED"):
+        await execution.issue(ADMIN, pending)
+
+
+@pytest.mark.asyncio
+async def test_reserve_and_request_fence_serialize_even_when_no_grant_exists(execution):
+    from threading import Barrier
+
+    from nexus.contracts.agent_execution import RevokeExecutionRequest
+
+    for _ in range(4):
+        req = request(execution)
+        command = RevokeExecutionRequest(request_id=req.request_id, task_id=req.task_id)
+        barrier = Barrier(2)
+
+        def reserve(req=req, barrier=barrier):
+            barrier.wait(timeout=5)
+            try:
+                return execution._reserve(ADMIN, req)
+            except RegistryError as error:
+                assert error.code == "EXECUTION_REQUEST_REVOKED"
+                return None
+
+        def stop(command=command, barrier=barrier):
+            barrier.wait(timeout=5)
+            return execution.revoke_request(ADMIN, command)
+
+        reserved, stopped = await asyncio.gather(
+            asyncio.to_thread(reserve), asyncio.to_thread(stop)
+        )
+        if reserved:
+            grant, _ = reserved
+            assert execution.get(ADMIN, grant.id).status == "revoked"
+            assert stopped.cleanup_pending
+        else:
+            assert stopped.grants == [] and not stopped.cleanup_pending
+        with pytest.raises(RegistryError, match="EXECUTION_REQUEST_REVOKED"):
+            await execution.issue(ADMIN, req)

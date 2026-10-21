@@ -13,7 +13,9 @@ from nexus.contracts.agent_execution import (
     ExecutionGrant,
     ExecutionGrantPage,
     ExecutionGrantResult,
+    ExecutionRequestRevocation,
     IssueExecutionGrant,
+    RevokeExecutionRequest,
 )
 from nexus.contracts.product_agent_registry import MAX_BODY_BYTES
 from nexus.server.dependencies import require_auth
@@ -122,3 +124,15 @@ async def revoke(
 ):
     response.headers["Cache-Control"] = "no-store"
     return await invoke(run_in_threadpool(execution.revoke, identity, grant_id))
+
+
+@router.post("/requests/revoke", response_model=ExecutionRequestRevocation)
+async def revoke_request(
+    request: Request,
+    response: Response,
+    identity: RegistryActor = Depends(actor),
+    execution: AgentExecution = Depends(service),
+):
+    response.headers["Cache-Control"] = "no-store"
+    command = await body(request, RevokeExecutionRequest)
+    return await invoke(run_in_threadpool(execution.revoke_request, identity, command))

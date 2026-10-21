@@ -36,7 +36,9 @@ from nexus.contracts.agent_execution import (
     ExecutionGrant,
     ExecutionGrantPage,
     ExecutionGrantResult,
+    ExecutionRequestRevocation,
     IssueExecutionGrant,
+    RevokeExecutionRequest,
 )
 from nexus.contracts.agent_hosted import (
     DifyTextPlan,
@@ -82,6 +84,8 @@ def artifacts() -> dict[str, str]:
         | AssetHistory
         | PlatformDiscoveryPage
         | IssueExecutionGrant
+        | RevokeExecutionRequest
+        | ExecutionRequestRevocation
         | ExecutionGrant
         | ExecutionGrantResult
         | ExecutionGrantPage
@@ -189,6 +193,8 @@ def artifacts() -> dict[str, str]:
         + ts(
             TypeAdapter(
                 IssueExecutionGrant
+                | RevokeExecutionRequest
+                | ExecutionRequestRevocation
                 | ExecutionGrant
                 | ExecutionGrantResult
                 | ExecutionGrantPage

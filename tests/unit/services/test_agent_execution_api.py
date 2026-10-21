@@ -124,3 +124,38 @@ def test_binding_get_has_no_implicit_issuance_or_migration(api, execution):
     finally:
         event.remove(execution.engine, "before_cursor_execute", product_only)
     assert not {"INSERT", "UPDATE", "DELETE", "ALTER", "CREATE"} & set(statements)
+
+
+def test_revoke_request_http_has_no_credential_or_identity_override(api, execution):
+    client, credentials = api
+    req = request(execution)
+    command = {
+        "kind": "RevokeExecutionRequest",
+        "request_id": req.request_id,
+        "task_id": req.task_id,
+    }
+    for who in ["member", "foreign"]:
+        assert (
+            client.post(
+                BASE + "/requests/revoke", headers=credentials[who], json=command
+            ).status_code
+            == 403
+        )
+    response = client.post(BASE + "/requests/revoke", headers=credentials["operator"], json=command)
+    assert response.status_code == 200, response.text
+    assert response.headers["Cache-Control"] == "no-store"
+    assert response.json()["grants"] == [] and not response.json()["cleanup_pending"]
+    assert (
+        client.post(
+            BASE + "/grants", headers=credentials["operator"], json=req.model_dump()
+        ).status_code
+        == 409
+    )
+    assert (
+        client.post(
+            BASE + "/requests/revoke",
+            headers=credentials["operator"],
+            json={**command, "zone": "other"},
+        ).status_code
+        == 400
+    )

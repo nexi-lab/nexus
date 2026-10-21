@@ -70,6 +70,40 @@ def initialize_execution_schema(engine):
     metadata.create_all(engine)
 
 
+def suspend_asset_grants(con, actor, asset_id, stopped_at):
+    """Called inside the locked inventory suspension transaction; no IAM I/O."""
+    # Inventory-only installations may not have enabled execution. Schema enablement
+    # is an explicit maintenance operation, never concurrent with old writers.
+    if not inspect(con).has_table(grants.name):
+        return
+    rows = (
+        con.execute(
+            select(grants.c.document)
+            .where(grants.c.zone == actor.zone, grants.c.asset_id == asset_id)
+            .order_by(grants.c.id)
+            .with_for_update()
+        )
+        .scalars()
+        .all()
+    )
+    for raw in rows:
+        grant = ExecutionGrant.model_validate_json(raw)
+        if grant.status not in ("issuing", "active"):
+            continue
+        revoked = grant.model_copy(
+            update={
+                "status": "revoked",
+                "cleanup_pending": True,
+                "reason": "asset_suspended",
+                "stopped_by": actor.subject,
+                "stopped_at": stopped_at,
+            }
+        )
+        con.execute(
+            update(grants).where(grants.c.id == grant.id).values(document=revoked.model_dump_json())
+        )
+
+
 def permissions(values):
     return {(p.operation, p.resource) for p in values}
 
@@ -237,6 +271,12 @@ class AgentExecution:
         asset, _ = self._admit(actor, request)
         fingerprint = digest(canonical_bytes(request.model_dump()))
         with self.registry.inventory._transaction() as con:
+            # Serialize reserve with SuspendAsset. A stale preflight decision must
+            # not insert a grant after suspension has already swept existing grants.
+            current = self.registry.inventory._get(con, actor.zone, request.asset_id, lock=True)
+            if current.status != "approved" or current.metadata_digest != request.metadata_digest:
+                raise RegistryError("EXECUTION_ASSET_NOT_ADMITTED")
+            asset = current
             self._lock_request(con, actor.zone, request.request_id)
             fence = con.execute(
                 select(request_fences.c.task_id).where(

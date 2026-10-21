@@ -192,7 +192,8 @@ async def test_asset_suspend_policy_removal_and_metadata_change_invalidate_live_
         ADMIN, cmd("SuspendAsset", asset.revision, reason="IT stopped this agent")
     )
     assert (await execution.auth.authenticate(result.api_key)).authenticated
-    with pytest.raises(RegistryError, match="ASSET_NOT_ADMITTED"):
+    assert execution.get(ADMIN, result.grant.id).status == "revoked"
+    with pytest.raises(RegistryError, match="EXECUTION_INACTIVE"):
         await execution.authorize(ADMIN, check(result))
 
 
@@ -530,3 +531,70 @@ async def test_reserve_and_request_fence_serialize_even_when_no_grant_exists(exe
             assert stopped.grants == [] and not stopped.cleanup_pending
         with pytest.raises(RegistryError, match="EXECUTION_REQUEST_REVOKED"):
             await execution.issue(ADMIN, req)
+
+
+@pytest.mark.asyncio
+async def test_suspension_revokes_identity_atomically_and_reapproval_does_not_restore_it(execution):
+    issued = await execution.issue(ADMIN, request(execution))
+    inv = execution.registry.inventory
+    asset = inv.get(ADMIN, "asset-a")
+    suspended = inv.command(
+        ADMIN, cmd("SuspendAsset", asset.revision, reason="Revoke controlled paths")
+    )
+    revoked = execution.get(ADMIN, issued.grant.id)
+    assert revoked.status == "revoked" and revoked.cleanup_pending
+    with pytest.raises(RegistryError, match="EXECUTION_INACTIVE"):
+        await execution.authorize(ADMIN, check(issued))
+    submitted = inv.command(ADMIN, cmd("SubmitAsset", suspended.revision))
+    inv.command(
+        ADMIN,
+        cmd("ReviewAsset", submitted.revision, decision="approve", reason="Explicit new review"),
+    )
+    with pytest.raises(RegistryError, match="EXECUTION_INACTIVE"):
+        await execution.authorize(ADMIN, check(issued))
+    assert not execution.revoke(ADMIN, issued.grant.id).cleanup_pending
+    assert not (await execution.auth.authenticate(issued.api_key)).authenticated
+    fresh = await execution.issue(ADMIN, request(execution))
+    assert fresh.grant.status == "active"
+
+
+def test_suspension_between_preflight_and_reservation_denies_late_grant(execution, monkeypatch):
+    original = execution._admit
+    req = request(execution)
+
+    def race(actor, command):
+        admitted = original(actor, command)
+        inv = execution.registry.inventory
+        inv.command(
+            ADMIN, cmd("SuspendAsset", admitted[0].revision, reason="Stop during preflight")
+        )
+        return admitted
+
+    monkeypatch.setattr(execution, "_admit", race)
+    with pytest.raises(RegistryError, match="EXECUTION_ASSET_NOT_ADMITTED"):
+        execution._reserve(ADMIN, req)
+    assert execution.list(ADMIN).items == []
+
+
+@pytest.mark.asyncio
+async def test_suspension_during_iam_creation_denies_activation_and_cleans_key(
+    execution, monkeypatch
+):
+    original = execution.delegation._create_worker_api_key
+
+    def race(**kwargs):
+        inv = execution.registry.inventory
+        asset = inv.get(ADMIN, "asset-a")
+        inv.command(ADMIN, cmd("SuspendAsset", asset.revision, reason="Stop during IAM creation"))
+        return original(**kwargs)
+
+    monkeypatch.setattr(execution.delegation, "_create_worker_api_key", race)
+    with pytest.raises(RegistryError, match="ISSUANCE_FAILED"):
+        await execution.issue(ADMIN, request(execution))
+    grant = execution.list(ADMIN).items[0]
+    assert grant.status == "revoked" and not grant.cleanup_pending
+    with execution.auth.session_factory() as session:
+        keys = session.scalars(
+            select(APIKeyModel).where(APIKeyModel.subject_id == grant.worker_id)
+        ).all()
+        assert keys and all(k.revoked for k in keys)

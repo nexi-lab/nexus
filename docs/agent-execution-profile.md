@@ -47,3 +47,21 @@ Existing grants for the request are marked revoked and their IAM cleanup is atte
 Prepare the additive `product_agent_execution_request_fences` table with the existing explicit `--initialize-schema` operator command before starting this version. Startup does not migrate or delete old data. Stop old issuer instances and finish rolling out the fence-aware runtime before relying on this guarantee: an older writer does not understand request fences. Keep fences for the request's entire idempotency lifetime; do not garbage-collect them while old requests may be replayed. Back up the database before a deployment, as with the other Registry tables.
 
 Conformance covers no-grant cancellation, real IAM key revocation, pending issuance, task/zone/role isolation, rotated issuer identity and simultaneous reserve/revoke on both SQLite and PostgreSQL. The PostgreSQL execution tests use isolated temporary schemas and a separate real SQLite IAM store; this is not a full multi-node IAM/Registry HA certification.
+
+### Asset suspension ordering
+
+`SuspendAsset` and execution-grant reservation serialize on the same inventory asset row.
+The suspension transaction marks every existing `issuing`/`active` grant as revoked before
+committing the suspended asset state. Reservation rechecks approved status and metadata
+under that lock, so a stale preflight cannot insert a new grant after the suspension sweep.
+A later explicit inventory reapproval does not reactivate any of those grants.
+
+This transaction closes Registry authorization, not the independent IAM key store. The
+management coordinator must enumerate/revoke the asset's grants and retain pending IAM
+cleanup until confirmed; a delayed IAM issuance is denied activation and cleaned by the
+issuer or subsequent reconciliation. Never treat an inventory status change as proof that
+Router tokens, containers or source-platform tasks have been cancelled.
+
+Deploy this change with all execution issuers upgraded; old issuers do not acquire this
+asset lock. The wire schema is unchanged. Existing request-fence schema preparation still
+requires the explicit maintenance process described above.

@@ -413,6 +413,9 @@ class AgentInventory:
                             .values(approved=1)
                         )
                 elif isinstance(command, SuspendAsset):
+                    from nexus.services.product_agent_registry.execution import suspend_asset_grants
+
+                    suspend_asset_grants(con, actor, record.id, self.registry.clock())
                     record.status = "suspended"
                     record.review_reason = command.reason
                 elif isinstance(command, LinkAsset):

@@ -141,6 +141,11 @@ def initialize_schema(engine: Engine) -> None:
     )
 
     initialize_evaluation_schema(engine)
+    from nexus.services.product_agent_registry.hosted_evaluations import (
+        initialize_hosted_evaluations_schema,
+    )
+
+    initialize_hosted_evaluations_schema(engine)
 
 
 class ProductAgentRegistry:

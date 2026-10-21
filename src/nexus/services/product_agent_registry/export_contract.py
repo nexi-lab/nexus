@@ -13,9 +13,17 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from pydantic import TypeAdapter
 
 from nexus.contracts.agent_evaluation import (
+    CompleteHostedEvaluationCase,
+    EvaluationCaseLease,
     EvaluationDataset,
     EvaluationDatasetPage,
+    HostedEvaluationCase,
+    HostedEvaluationCasePage,
+    HostedEvaluationClaim,
+    HostedEvaluationPage,
+    HostedEvaluationRun,
     RegisterEvaluationDataset,
+    StartHostedEvaluation,
 )
 from nexus.contracts.agent_execution import (
     CheckExecutionGrant,
@@ -82,6 +90,14 @@ def artifacts() -> dict[str, str]:
         | EvaluationDataset
         | EvaluationDatasetPage
         | RegisterEvaluationDataset
+        | EvaluationCaseLease
+        | CompleteHostedEvaluationCase
+        | HostedEvaluationRun
+        | HostedEvaluationCase
+        | HostedEvaluationPage
+        | HostedEvaluationCasePage
+        | HostedEvaluationClaim
+        | StartHostedEvaluation
     )
     schema = wire.json_schema()
 

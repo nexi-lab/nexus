@@ -900,6 +900,86 @@
       "title": "CommandResult",
       "type": "object"
     },
+    "CompleteHostedEvaluationCase": {
+      "additionalProperties": false,
+      "properties": {
+        "case_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Case Id",
+          "type": "string"
+        },
+        "lease_token": {
+          "maxLength": 128,
+          "minLength": 32,
+          "title": "Lease Token",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "succeeded",
+            "failed",
+            "unknown"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "answer": {
+          "anyOf": [
+            {
+              "maxLength": 128000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Answer"
+        },
+        "error_code": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Z][A-Z0-9_]{0,99}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error Code"
+        },
+        "model_call_ids": {
+          "items": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "Model Call Ids",
+          "type": "array"
+        },
+        "trace": {
+          "items": {
+            "$ref": "#/$defs/EvaluationTrace"
+          },
+          "maxItems": 256,
+          "title": "Trace",
+          "type": "array"
+        },
+        "cleanup_confirmed": {
+          "default": false,
+          "title": "Cleanup Confirmed",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "case_id",
+        "lease_token",
+        "status"
+      ],
+      "title": "CompleteHostedEvaluationCase",
+      "type": "object"
+    },
     "DataConnection": {
       "additionalProperties": false,
       "properties": {
@@ -1262,6 +1342,28 @@
       "title": "EvaluationCase",
       "type": "object"
     },
+    "EvaluationCaseLease": {
+      "additionalProperties": false,
+      "properties": {
+        "case_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Case Id",
+          "type": "string"
+        },
+        "lease_token": {
+          "maxLength": 128,
+          "minLength": 32,
+          "title": "Lease Token",
+          "type": "string"
+        }
+      },
+      "required": [
+        "case_id",
+        "lease_token"
+      ],
+      "title": "EvaluationCaseLease",
+      "type": "object"
+    },
     "EvaluationDataset": {
       "additionalProperties": false,
       "properties": {
@@ -1421,6 +1523,37 @@
         "next_cursor"
       ],
       "title": "EvaluationDatasetPage",
+      "type": "object"
+    },
+    "EvaluationTrace": {
+      "additionalProperties": false,
+      "properties": {
+        "node": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Node",
+          "type": "string"
+        },
+        "phase": {
+          "enum": [
+            "started",
+            "completed"
+          ],
+          "title": "Phase",
+          "type": "string"
+        },
+        "origin": {
+          "const": "worker_reported",
+          "default": "worker_reported",
+          "title": "Origin",
+          "type": "string"
+        }
+      },
+      "required": [
+        "node",
+        "phase"
+      ],
+      "title": "EvaluationTrace",
       "type": "object"
     },
     "ExecutionAuthorization": {
@@ -1846,6 +1979,447 @@
         "next_cursor"
       ],
       "title": "HostedArtifactPage",
+      "type": "object"
+    },
+    "HostedEvaluationCase": {
+      "additionalProperties": false,
+      "properties": {
+        "api_version": {
+          "const": "agent-registry.sudo.dev/v1alpha1",
+          "default": "agent-registry.sudo.dev/v1alpha1",
+          "title": "Api Version",
+          "type": "string"
+        },
+        "kind": {
+          "const": "HostedEvaluationCase",
+          "default": "HostedEvaluationCase",
+          "title": "Kind",
+          "type": "string"
+        },
+        "id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "run_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "sample_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Sample Id",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "queued",
+            "running",
+            "succeeded",
+            "failed",
+            "unknown"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "started_at": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Started At"
+        },
+        "deadline_at": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Deadline At"
+        },
+        "completed_at": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Completed At"
+        },
+        "answer": {
+          "anyOf": [
+            {
+              "maxLength": 128000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Answer"
+        },
+        "error_code": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Z][A-Z0-9_]{0,99}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error Code"
+        },
+        "passed": {
+          "default": false,
+          "title": "Passed",
+          "type": "boolean"
+        },
+        "model_call_ids": {
+          "items": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "Model Call Ids",
+          "type": "array"
+        },
+        "grant_id": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Grant Id"
+        },
+        "trace": {
+          "items": {
+            "$ref": "#/$defs/EvaluationTrace"
+          },
+          "maxItems": 256,
+          "title": "Trace",
+          "type": "array"
+        },
+        "trace_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[a-f0-9]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace Digest"
+        },
+        "cleanup_confirmed": {
+          "default": false,
+          "title": "Cleanup Confirmed",
+          "type": "boolean"
+        },
+        "iam_cleanup_confirmed": {
+          "default": false,
+          "title": "Iam Cleanup Confirmed",
+          "type": "boolean"
+        },
+        "model_evidence": {
+          "const": "evaluator_reported",
+          "default": "evaluator_reported",
+          "title": "Model Evidence",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "run_id",
+        "sample_id",
+        "status"
+      ],
+      "title": "HostedEvaluationCase",
+      "type": "object"
+    },
+    "HostedEvaluationCasePage": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "HostedEvaluationCasePage",
+          "default": "HostedEvaluationCasePage",
+          "title": "Kind",
+          "type": "string"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/HostedEvaluationCase"
+          },
+          "title": "Items",
+          "type": "array"
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Next Cursor"
+        }
+      },
+      "required": [
+        "items",
+        "next_cursor"
+      ],
+      "title": "HostedEvaluationCasePage",
+      "type": "object"
+    },
+    "HostedEvaluationClaim": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "HostedEvaluationClaim",
+          "default": "HostedEvaluationClaim",
+          "title": "Kind",
+          "type": "string"
+        },
+        "case": {
+          "$ref": "#/$defs/HostedEvaluationCase"
+        },
+        "lease_token": {
+          "maxLength": 128,
+          "minLength": 32,
+          "title": "Lease Token",
+          "type": "string"
+        }
+      },
+      "required": [
+        "case",
+        "lease_token"
+      ],
+      "title": "HostedEvaluationClaim",
+      "type": "object"
+    },
+    "HostedEvaluationPage": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "HostedEvaluationPage",
+          "default": "HostedEvaluationPage",
+          "title": "Kind",
+          "type": "string"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/HostedEvaluationRun"
+          },
+          "title": "Items",
+          "type": "array"
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Next Cursor"
+        }
+      },
+      "required": [
+        "items",
+        "next_cursor"
+      ],
+      "title": "HostedEvaluationPage",
+      "type": "object"
+    },
+    "HostedEvaluationRun": {
+      "additionalProperties": false,
+      "properties": {
+        "api_version": {
+          "const": "agent-registry.sudo.dev/v1alpha1",
+          "default": "agent-registry.sudo.dev/v1alpha1",
+          "title": "Api Version",
+          "type": "string"
+        },
+        "kind": {
+          "const": "HostedEvaluationRun",
+          "default": "HostedEvaluationRun",
+          "title": "Kind",
+          "type": "string"
+        },
+        "id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "zone": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Zone",
+          "type": "string"
+        },
+        "asset_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "metadata_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Metadata Digest",
+          "type": "string"
+        },
+        "artifact_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "spec_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Spec Digest",
+          "type": "string"
+        },
+        "dataset_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Dataset Id",
+          "type": "string"
+        },
+        "dataset_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Dataset Digest",
+          "type": "string"
+        },
+        "rubric_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Rubric Digest",
+          "type": "string"
+        },
+        "initiated_by": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Initiated By",
+          "type": "string"
+        },
+        "created_by": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Created By",
+          "type": "string"
+        },
+        "created_at": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Created At",
+          "type": "integer"
+        },
+        "timeout_seconds": {
+          "maximum": 240,
+          "minimum": 1,
+          "title": "Timeout Seconds",
+          "type": "integer"
+        },
+        "max_model_calls": {
+          "maximum": 32,
+          "minimum": 1,
+          "title": "Max Model Calls",
+          "type": "integer"
+        },
+        "total_cases": {
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Total Cases",
+          "type": "integer"
+        },
+        "queued_cases": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Queued Cases",
+          "type": "integer"
+        },
+        "running_cases": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Running Cases",
+          "type": "integer"
+        },
+        "finished_cases": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Finished Cases",
+          "type": "integer"
+        },
+        "passed_cases": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Passed Cases",
+          "type": "integer"
+        },
+        "status": {
+          "enum": [
+            "queued",
+            "running",
+            "finished"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "evidence": {
+          "const": "evaluation_only",
+          "default": "evaluation_only",
+          "title": "Evidence",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "zone",
+        "asset_id",
+        "metadata_digest",
+        "artifact_id",
+        "spec_digest",
+        "dataset_id",
+        "dataset_digest",
+        "rubric_digest",
+        "initiated_by",
+        "created_by",
+        "created_at",
+        "timeout_seconds",
+        "max_model_calls",
+        "total_cases",
+        "queued_cases",
+        "running_cases",
+        "finished_cases",
+        "passed_cases",
+        "status"
+      ],
+      "title": "HostedEvaluationRun",
       "type": "object"
     },
     "HostedImage": {
@@ -2962,6 +3536,77 @@
       "title": "SignedVersion",
       "type": "object"
     },
+    "StartHostedEvaluation": {
+      "additionalProperties": false,
+      "properties": {
+        "api_version": {
+          "const": "agent-registry.sudo.dev/v1alpha1",
+          "default": "agent-registry.sudo.dev/v1alpha1",
+          "title": "Api Version",
+          "type": "string"
+        },
+        "kind": {
+          "const": "StartHostedEvaluation",
+          "default": "StartHostedEvaluation",
+          "title": "Kind",
+          "type": "string"
+        },
+        "request_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "asset_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "metadata_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Metadata Digest",
+          "type": "string"
+        },
+        "artifact_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "dataset_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Dataset Id",
+          "type": "string"
+        },
+        "initiated_by": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Initiated By",
+          "type": "string"
+        },
+        "timeout_seconds": {
+          "default": 120,
+          "maximum": 240,
+          "minimum": 1,
+          "title": "Timeout Seconds",
+          "type": "integer"
+        },
+        "max_model_calls": {
+          "default": 1,
+          "maximum": 32,
+          "minimum": 1,
+          "title": "Max Model Calls",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "request_id",
+        "asset_id",
+        "metadata_digest",
+        "artifact_id",
+        "dataset_id",
+        "initiated_by"
+      ],
+      "title": "StartHostedEvaluation",
+      "type": "object"
+    },
     "SubmitAsset": {
       "additionalProperties": false,
       "properties": {
@@ -3346,6 +3991,30 @@
     },
     {
       "$ref": "#/$defs/RegisterEvaluationDataset"
+    },
+    {
+      "$ref": "#/$defs/EvaluationCaseLease"
+    },
+    {
+      "$ref": "#/$defs/CompleteHostedEvaluationCase"
+    },
+    {
+      "$ref": "#/$defs/HostedEvaluationRun"
+    },
+    {
+      "$ref": "#/$defs/HostedEvaluationCase"
+    },
+    {
+      "$ref": "#/$defs/HostedEvaluationPage"
+    },
+    {
+      "$ref": "#/$defs/HostedEvaluationCasePage"
+    },
+    {
+      "$ref": "#/$defs/HostedEvaluationClaim"
+    },
+    {
+      "$ref": "#/$defs/StartHostedEvaluation"
     }
   ],
   "$schema": "https://json-schema.org/draft/2020-12/schema",

@@ -196,3 +196,96 @@ async def test_unreviewed_image_never_runs():
     runner._command = inspect
     with pytest.raises(HostedRuntimeError, match="HOSTED_IMAGE_MISMATCH"):
         await runner.inspect(artifact())
+
+
+class DurableDocker(HostedDockerRunner):
+    """Controlled daemon races; real daemon recovery is tested in the isolated lab."""
+
+    def __init__(self):
+        super().__init__()
+        self.container = None
+        self.removed = []
+        self.late_create = False
+        self.unavailable = False
+
+    async def inspect(self, artifact):
+        pass
+
+    def record(self, execution_id, *, closed=False, image=None):
+        return {
+            "Id": ("c" if closed else "b") * 64,
+            "Name": "/" + self.execution_name(execution_id),
+            "Image": image or artifact().image_id,
+            "State": {"Running": not closed, "Status": "created" if closed else "running"},
+            "Config": {
+                "Labels": {
+                    "dev.sudo.agent.worker": "hosted-v1",
+                    "dev.sudo.agent.execution": execution_id,
+                    "dev.sudo.agent.closed": "true" if closed else "false",
+                }
+            },
+        }
+
+    async def _command(self, *args):
+        if self.unavailable:
+            raise HostedRuntimeError("HOSTED_RUNTIME_UNAVAILABLE")
+        if args[0] == "ps":
+            return self.container["Id"].encode() if self.container else b""
+        if args[:2] == ("container", "inspect"):
+            return json.dumps(self.container).encode()
+        if args[0] == "rm":
+            assert args[-1] == self.container["Id"]
+            self.removed.append(args[-1])
+            self.container = None
+            return b""
+        if args[0] == "create":
+            execution_id = args[args.index("--name") + 1].removeprefix("sudo-hosted-task-")
+            if self.late_create:
+                self.late_create = False
+                self.container = self.record(execution_id)
+                raise HostedRuntimeError("HOSTED_RUNTIME_UNAVAILABLE")
+            assert "--rm" not in args and args[args.index("--entrypoint") + 1] == "/bin/false"
+            self.container = self.record(execution_id, closed=True)
+            return self.container["Id"].encode()
+        raise AssertionError(args)
+
+
+@pytest.mark.asyncio
+async def test_durable_cleanup_closes_survivor_and_fences_delayed_create():
+    execution_id = "e" * 32
+    for present, late in [(False, False), (True, False), (False, True)]:
+        runner = DurableDocker()
+        if present:
+            runner.container = runner.record(execution_id)
+        runner.late_create = late
+        await runner.reconcile(artifact(), execution_id)
+        assert runner.container["State"]["Status"] == "created"
+        assert runner.container["Config"]["Labels"]["dev.sudo.agent.closed"] == "true"
+        assert len(runner.removed) == int(present or late)
+        # A second cleanup neither removes nor recreates the closed marker.
+        marker = runner.container
+        await runner.reconcile(artifact(), execution_id)
+        assert runner.container is marker
+
+
+@pytest.mark.asyncio
+async def test_durable_cleanup_refuses_foreign_identity_and_daemon_uncertainty():
+    runner = DurableDocker()
+    execution_id = "e" * 32
+    runner.container = runner.record(execution_id, image="sha256:" + "d" * 64)
+    with pytest.raises(HostedRuntimeError):
+        await runner.reconcile(artifact(), execution_id)
+    assert runner.removed == []
+    runner.unavailable = True
+    with pytest.raises(HostedRuntimeError):
+        await runner.reconcile(artifact(), execution_id)
+    with pytest.raises(HostedRuntimeError):
+        runner.create_command(artifact(), "../../foreign")
+
+
+def test_durable_create_retains_strict_isolation_and_has_no_auto_remove():
+    command = HostedDockerRunner().create_command(artifact(), "e" * 32)
+    assert command[1] == "create" and "--rm" not in command
+    assert command[command.index("--network") + 1] == "none"
+    assert "--read-only" in command and "--pull" in command
+    assert command[-1] == artifact().image_id

@@ -111,3 +111,54 @@ def test_duplicate_keys_nonfinite_and_oversized_frames_are_rejected():
     ]:
         with pytest.raises(HostedRuntimeError):
             decode(raw)
+
+
+@pytest.mark.asyncio
+async def test_cleanup_uses_exact_execution_without_running_worker():
+    frames = []
+
+    class CleanupRunner:
+        async def identity(self):
+            return "sha256:" + "a" * 64
+
+        async def reconcile(self, artifact, execution_id):
+            assert execution_id == "e" * 32
+            assert artifact.profile == "langgraph-stdio-v1"
+
+    async def emit(frame):
+        frames.append(frame)
+
+    await supervise(
+        reader(
+            {
+                "protocol": PROTOCOL,
+                "kind": "reconcile",
+                "artifact": request()["artifact"],
+                "execution_id": "e" * 32,
+                "runtime_authority_id": "sha256:" + "a" * 64,
+            }
+        ),
+        emit,
+        CleanupRunner(),
+    )
+    assert frames == [
+        {
+            "kind": "cleanup_confirmed",
+            "execution_id": "e" * 32,
+            "runtime_authority_id": "sha256:" + "a" * 64,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_execution_cannot_move_to_a_different_docker_authority():
+    class MovedRunner:
+        async def identity(self):
+            return "sha256:" + "b" * 64
+
+    with pytest.raises(HostedRuntimeError, match="HOSTED_RUNTIME_AUTHORITY_MISMATCH"):
+        await supervise(
+            reader(request(execution_id="e" * 32, runtime_authority_id="sha256:" + "a" * 64)),
+            None,
+            MovedRunner(),
+        )

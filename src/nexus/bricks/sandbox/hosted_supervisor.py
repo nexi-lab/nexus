@@ -25,10 +25,19 @@ PROTOCOL = "agent-hosted-supervisor/v1"
 class SupervisorInput(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     artifact: HostedImage
+    execution_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
+    runtime_authority_id: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
     query: str = Field(min_length=1, max_length=16000)
     timeout_seconds: int = Field(ge=1, le=240)
     max_model_calls: int = Field(ge=1, le=32)
     max_output_tokens: int = Field(ge=1, le=4096)
+
+
+class CleanupInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    artifact: HostedImage
+    execution_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    runtime_authority_id: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
 
 
 def decode(data: bytes) -> dict:
@@ -57,12 +66,38 @@ def decode(data: bytes) -> dict:
 async def supervise(reader, emit, runner):
     try:
         frame = decode(await reader.readline())
-        if frame.pop("kind", None) != "execute":
+        kind = frame.pop("kind", None)
+        if kind == "identity":
+            if set(frame) != {"protocol"}:
+                raise HostedRuntimeError("HOSTED_PARENT_FRAME_INVALID")
+            await emit(
+                {"kind": "runtime_identity", "runtime_authority_id": await runner.identity()}
+            )
+            return
+        if kind == "reconcile":
+            frame.pop("protocol")
+            cleanup = CleanupInput.model_validate(frame)
+            if await runner.identity() != cleanup.runtime_authority_id:
+                raise HostedRuntimeError("HOSTED_RUNTIME_AUTHORITY_MISMATCH")
+            await runner.reconcile(cleanup.artifact, cleanup.execution_id)
+            if await runner.identity() != cleanup.runtime_authority_id:
+                raise HostedRuntimeError("HOSTED_RUNTIME_AUTHORITY_MISMATCH")
+            await emit(
+                {
+                    "kind": "cleanup_confirmed",
+                    "execution_id": cleanup.execution_id,
+                    "runtime_authority_id": cleanup.runtime_authority_id,
+                }
+            )
+            return
+        if kind != "execute":
             raise HostedRuntimeError("HOSTED_PARENT_FRAME_INVALID")
         frame.pop("protocol")
         request = SupervisorInput.model_validate(frame)
     except (ValidationError, ValueError):
         raise HostedRuntimeError("HOSTED_PARENT_FRAME_INVALID") from None
+    if request.execution_id is not None and request.runtime_authority_id != await runner.identity():
+        raise HostedRuntimeError("HOSTED_RUNTIME_AUTHORITY_MISMATCH")
     sequence = 0
 
     async def model(body):
@@ -92,6 +127,7 @@ async def supervise(reader, emit, runner):
         timeout_seconds=request.timeout_seconds,
         max_model_calls=request.max_model_calls,
         max_output_tokens=request.max_output_tokens,
+        **({"execution_id": request.execution_id} if request.execution_id is not None else {}),
     )
     await emit({"kind": "completed", **result})
 

@@ -8,7 +8,9 @@ must already exist on this worker and match a reviewed content-addressed descrip
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import re
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from uuid import uuid4
@@ -185,6 +187,12 @@ class HostedDockerRunner:
                     proc.kill()
                 await proc.wait()
 
+    async def identity(self) -> str:
+        value = (await self._command("info", "--format", "{{.ID}}")).strip()
+        if not value or len(value) > 256 or any(byte < 33 or byte > 126 for byte in value):
+            raise HostedRuntimeError("HOSTED_RUNTIME_UNAVAILABLE")
+        return "sha256:" + hashlib.sha256(value).hexdigest()
+
     async def inspect(self, artifact: HostedImage):
         output = await self._command(
             "image", "inspect", artifact.image_id, "--format", "{{json .Config}}"
@@ -243,6 +251,88 @@ class HostedDockerRunner:
             artifact.image_id,
         ]
 
+    @staticmethod
+    def execution_name(execution_id: str) -> str:
+        if not isinstance(execution_id, str) or not re.fullmatch(r"[0-9a-f]{32}", execution_id):
+            raise HostedRuntimeError("HOSTED_EXECUTION_ID_INVALID")
+        return "sudo-hosted-task-" + execution_id
+
+    def create_command(self, artifact: HostedImage, execution_id: str, *, closed=False):
+        command = self.command(artifact, self.execution_name(execution_id))
+        command[1] = "create"
+        command.remove("--rm")
+        # Closed markers never run. They fence a delayed create from an old controller.
+        if closed:
+            command.remove("-i")
+        command[-1:-1] = [
+            "--label",
+            "dev.sudo.agent.execution=" + execution_id,
+            "--label",
+            "dev.sudo.agent.closed=" + ("true" if closed else "false"),
+            *(["--entrypoint", "/bin/false"] if closed else []),
+        ]
+        return command
+
+    async def execution_container(self, artifact: HostedImage, execution_id: str):
+        name = self.execution_name(execution_id)
+        found = (
+            (await self._command("ps", "-aq", "--no-trunc", "--filter", f"name=^/{name}$"))
+            .decode()
+            .strip()
+        )
+        if not found:
+            return None
+        if not re.fullmatch(r"[0-9a-f]{64}", found):
+            raise HostedRuntimeError("HOSTED_CLEANUP_UNCONFIRMED")
+        try:
+            info = json.loads(
+                await self._command("container", "inspect", found, "--format", "{{json .}}")
+            )
+            labels = info["Config"]["Labels"]
+            if (
+                info["Id"] != found
+                or info["Name"] != "/" + name
+                or info["Image"] != artifact.image_id
+                or labels.get("dev.sudo.agent.worker") != "hosted-v1"
+                or labels.get("dev.sudo.agent.execution") != execution_id
+                or labels.get("dev.sudo.agent.closed") not in ("true", "false")
+            ):
+                raise ValueError
+            return info
+        except (ValueError, TypeError, KeyError, AttributeError):
+            raise HostedRuntimeError("HOSTED_CLEANUP_UNCONFIRMED") from None
+
+    async def reconcile(self, artifact: HostedImage, execution_id: str):
+        """Delete only the exact worker and reserve its name with an inert closed marker.
+
+        Absence alone cannot prove cleanup: a timed-out create may arrive later.
+        A marker prevents that create; start always uses the deleted worker ID,
+        never the name, so a late start cannot start the marker. Markers must be
+        retained while any controller/transport can still hold a command.
+        """
+        self.execution_name(execution_id)
+        await self.inspect(artifact)
+        for _ in range(3):
+            current = await self.execution_container(artifact, execution_id)
+            if current:
+                if current["Config"]["Labels"]["dev.sudo.agent.closed"] == "true":
+                    if current["State"]["Status"] != "created" or current["State"]["Running"]:
+                        raise HostedRuntimeError("HOSTED_CLEANUP_UNCONFIRMED")
+                    return
+                await self._command("rm", "-f", current["Id"])
+            # A concurrent cleanup or delayed create may have won the name.
+            # Re-inspect the identity; do not delete an unrelated container.
+            with suppress(HostedRuntimeError):
+                await self._command(*self.create_command(artifact, execution_id, closed=True)[1:])
+        current = await self.execution_container(artifact, execution_id)
+        if (
+            not current
+            or current["Config"]["Labels"]["dev.sudo.agent.closed"] != "true"
+            or current["State"]["Status"] != "created"
+            or current["State"]["Running"]
+        ):
+            raise HostedRuntimeError("HOSTED_CLEANUP_UNCONFIRMED")
+
     async def run(
         self,
         artifact: HostedImage,
@@ -253,7 +343,10 @@ class HostedDockerRunner:
         timeout_seconds=120,
         max_model_calls=8,
         max_output_tokens=4096,
+        execution_id: str | None = None,
     ):
+        if execution_id is not None:
+            self.execution_name(execution_id)
         if not isinstance(query, str) or not 1 <= len(query) <= 16000:
             raise HostedRuntimeError("HOSTED_INPUT_INVALID")
         if (
@@ -267,14 +360,27 @@ class HostedDockerRunner:
             raise HostedRuntimeError("HOSTED_LIMIT_INVALID")
         await self.inspect(artifact)
         name = "sudo-hosted-" + uuid4().hex
-        proc = await asyncio.create_subprocess_exec(
-            *self.command(artifact, name),
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-            limit=FRAME_LIMIT,
-        )
+        proc = None
         try:
+            if execution_id is not None:
+                # Reserve once and start by immutable ID. Never reuse an existing name.
+                container_id = (
+                    (await self._command(*self.create_command(artifact, execution_id)[1:]))
+                    .decode()
+                    .strip()
+                )
+                if not re.fullmatch(r"[0-9a-f]{64}", container_id):
+                    raise HostedRuntimeError("HOSTED_RUNTIME_UNAVAILABLE")
+                command = [self.docker, "start", "-ai", container_id]
+            else:
+                command = self.command(artifact, name)
+            proc = await asyncio.create_subprocess_exec(
+                *command,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+                limit=FRAME_LIMIT,
+            )
             async with asyncio.timeout(timeout_seconds):
                 return await exchange(
                     proc,
@@ -287,21 +393,17 @@ class HostedDockerRunner:
         except TimeoutError:
             raise HostedRuntimeError("HOSTED_RESULT_UNCONFIRMED") from None
         finally:
-            # Killing only the Docker CLI does not reliably stop the container.
-            # Always remove this exact generated name; never sweep other workers.
-            cleanup_failed = False
-            try:
-                await self._command("rm", "-f", name)
-            except HostedRuntimeError:
-                # --rm may already have removed it. Verify absence explicitly.
-                try:
-                    remaining = await self._command("ps", "-aq", "--filter", f"name=^/{name}$")
-                    cleanup_failed = bool(remaining.strip())
-                except HostedRuntimeError:
-                    cleanup_failed = True
-            if proc.returncode is None:
+            # Kill the CLI before proving cleanup; killing it alone is insufficient.
+            if proc is not None and proc.returncode is None:
                 with suppress(ProcessLookupError):
                     proc.kill()
                 await proc.wait()
-            if cleanup_failed:
-                raise HostedRuntimeError("HOSTED_CLEANUP_UNCONFIRMED")
+            if execution_id is not None:
+                await self.reconcile(artifact, execution_id)
+            else:
+                try:
+                    await self._command("rm", "-f", name)
+                except HostedRuntimeError:
+                    remaining = await self._command("ps", "-aq", "--filter", f"name=^/{name}$")
+                    if remaining.strip():
+                        raise HostedRuntimeError("HOSTED_CLEANUP_UNCONFIRMED") from None

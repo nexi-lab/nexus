@@ -2189,6 +2189,17 @@
           "title": "Iam Cleanup Confirmed",
           "type": "boolean"
         },
+        "source_execution": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SourceEvaluationExecution"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "model_evidence": {
           "const": "evaluator_reported",
           "default": "evaluator_reported",
@@ -3234,6 +3245,32 @@
       "title": "ObserveAsset",
       "type": "object"
     },
+    "ObserveSourceEvaluation": {
+      "additionalProperties": false,
+      "properties": {
+        "case_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Case Id",
+          "type": "string"
+        },
+        "lease_token": {
+          "maxLength": 128,
+          "minLength": 32,
+          "title": "Lease Token",
+          "type": "string"
+        },
+        "source_execution": {
+          "$ref": "#/$defs/SourceEvaluationExecution"
+        }
+      },
+      "required": [
+        "case_id",
+        "lease_token",
+        "source_execution"
+      ],
+      "title": "ObserveSourceEvaluation",
+      "type": "object"
+    },
     "PlatformDiscoveryItem": {
       "additionalProperties": false,
       "description": "Metadata-only discovery profile, not a runtime or identity assertion.",
@@ -3902,6 +3939,89 @@
       "title": "SignedVersion",
       "type": "object"
     },
+    "SourceEvaluationExecution": {
+      "additionalProperties": false,
+      "description": "Source-reported correlation only; never a trusted model bill or version pin.",
+      "properties": {
+        "profile": {
+          "enum": [
+            "dify-service-api-v1",
+            "langgraph-source-v1"
+          ],
+          "title": "Profile",
+          "type": "string"
+        },
+        "request_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "task_id": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Task Id"
+        },
+        "workflow_run_id": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Workflow Run Id"
+        },
+        "conversation_id": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Conversation Id"
+        },
+        "message_id": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Message Id"
+        },
+        "origin": {
+          "const": "source_reported",
+          "default": "source_reported",
+          "title": "Origin",
+          "type": "string"
+        }
+      },
+      "required": [
+        "profile",
+        "request_id"
+      ],
+      "title": "SourceEvaluationExecution",
+      "type": "object"
+    },
     "SourceEvaluationRuntime": {
       "additionalProperties": false,
       "properties": {
@@ -4439,6 +4559,9 @@
     },
     {
       "$ref": "#/$defs/EvaluationCaseLease"
+    },
+    {
+      "$ref": "#/$defs/ObserveSourceEvaluation"
     },
     {
       "$ref": "#/$defs/CompleteHostedEvaluationCase"

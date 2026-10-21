@@ -13,6 +13,7 @@ from nexus.contracts.agent_evaluation import (
     CreateMigrationPolicy,
     EvaluationCaseLease,
     EvaluationDatasetInput,
+    ObserveSourceEvaluation,
     RegisterEvaluationDataset,
     SourceEvaluationRuntime,
     StartHostedEvaluation,
@@ -295,7 +296,22 @@ def complete_run(service, run, answers):
     for answer in answers:
         claim = service.claim(ADMIN, run.id)
         asyncio.run(service.issue_grant(ADMIN, run.id, lease(claim)))
+        if run.role == "source_baseline":
+            service.observe_source(ADMIN, run.id, source_observation(claim))
         service.complete(ADMIN, run.id, result(claim, answer=answer))
+
+
+def source_observation(claim, **patch):
+    return ObserveSourceEvaluation(
+        **lease(claim).model_dump(),
+        source_execution={
+            "profile": "dify-service-api-v1",
+            "request_id": claim.case.id,
+            "workflow_run_id": "workflow-run",
+            "message_id": "message",
+            **patch,
+        },
+    )
 
 
 def policy_request(baseline, **patch):
@@ -445,3 +461,37 @@ def test_legacy_hosted_start_fingerprint_is_preserved(execution):
         actual = con.execute(select(runs.c.request_digest).where(runs.c.id == run.id)).scalar_one()
     assert actual == expected
     assert service.start(ADMIN, request).id == run.id
+
+
+def test_source_references_survive_failure_and_reject_overwrite(execution):
+    service, request = setup(execution)
+    run = service.start(ADMIN, source_request(service, request))
+    claim = service.claim(ADMIN, run.id)
+    asyncio.run(service.issue_grant(ADMIN, run.id, lease(claim)))
+    with pytest.raises(RegistryError, match="SOURCE_EVIDENCE_REQUIRED"):
+        service.complete(ADMIN, run.id, result(claim))
+    command = source_observation(claim)
+    observed = service.observe_source(ADMIN, run.id, command)
+    assert service.observe_source(ADMIN, run.id, command) == observed
+    with pytest.raises(RegistryError, match="REFERENCE_CHANGED"):
+        service.observe_source(ADMIN, run.id, source_observation(claim, message_id="another"))
+    with pytest.raises(RegistryError, match="SOURCE_MISMATCH"):
+        service.observe_source(ADMIN, run.id, source_observation(claim, request_id="another"))
+    with pytest.raises(RegistryError):
+        service.observe_source(MEMBER, run.id, command)
+    completed = service.complete(
+        ADMIN,
+        run.id,
+        result(
+            claim,
+            status="unknown",
+            answer=None,
+            error_code="SOURCE_CHANGED",
+            cleanup_confirmed=False,
+        ),
+    )
+    assert completed.source_execution == observed.source_execution
+    restarted = HostedEvaluations(service.registry, execution)
+    assert restarted.list_cases(ADMIN, run.id).items[0].source_execution is not None
+    with pytest.raises(RegistryError, match="EXPIRED"):
+        service.observe_source(ADMIN, run.id, command)

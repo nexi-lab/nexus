@@ -186,6 +186,18 @@ class EvaluationTrace(WireModel):
     origin: Literal["worker_reported"] = "worker_reported"
 
 
+class SourceEvaluationExecution(WireModel):
+    """Source-reported correlation only; never a trusted model bill or version pin."""
+
+    profile: Literal["dify-service-api-v1", "langgraph-source-v1"]
+    request_id: Identifier
+    task_id: Identifier | None = None
+    workflow_run_id: Identifier | None = None
+    conversation_id: Identifier | None = None
+    message_id: Identifier | None = None
+    origin: Literal["source_reported"] = "source_reported"
+
+
 class HostedEvaluationCase(WireModel):
     api_version: Literal[API] = API
     kind: Literal["HostedEvaluationCase"] = "HostedEvaluationCase"
@@ -205,6 +217,7 @@ class HostedEvaluationCase(WireModel):
     trace_digest: Digest | None = None
     cleanup_confirmed: bool = False
     iam_cleanup_confirmed: bool = False
+    source_execution: SourceEvaluationExecution | None = None
     model_evidence: Literal["evaluator_reported"] = "evaluator_reported"
 
 
@@ -230,6 +243,10 @@ class HostedEvaluationClaim(WireModel):
 class EvaluationCaseLease(WireModel):
     case_id: Identifier
     lease_token: Annotated[str, Field(min_length=32, max_length=128, repr=False)]
+
+
+class ObserveSourceEvaluation(EvaluationCaseLease):
+    source_execution: SourceEvaluationExecution
 
 
 class CompleteHostedEvaluationCase(WireModel):

@@ -38,6 +38,7 @@ from nexus.contracts.agent_evaluation import (
     MigrationComparison,
     MigrationPolicy,
     MigrationPolicyPage,
+    ObserveSourceEvaluation,
     StartHostedEvaluation,
 )
 from nexus.contracts.agent_execution import ExecutionGrant, IssueExecutionGrant
@@ -515,6 +516,35 @@ class HostedEvaluations:
         self._grant(actor, run, current, grant.id)
         return self.execution.revoke(actor, grant.id)
 
+    def observe_source(self, actor, run_id, command: ObserveSourceEvaluation):
+        self._authorize(actor)
+        with self.registry.inventory._transaction() as con:
+            run = self._load(con, actor, run_id)
+            self.registry.inventory._get(con, actor.zone, run.asset_id, lock=True)
+            _, current = self._case(con, actor, run_id, command.case_id, command.lease_token)
+            observed = command.source_execution
+            if (
+                run.role != "source_baseline"
+                or run.source_runtime is None
+                or observed.profile != run.source_runtime.profile
+                or observed.request_id != current.id
+            ):
+                raise RegistryError("EVALUATION_SOURCE_MISMATCH", 400)
+            if current.status != "running" or current.deadline_at <= self.registry.clock():
+                raise RegistryError("EVALUATION_CASE_EXPIRED")
+            if current.source_execution:
+                prior = current.source_execution.model_dump(exclude_none=True)
+                incoming = observed.model_dump(exclude_none=True)
+                if any(incoming.get(key) != value for key, value in prior.items()):
+                    raise RegistryError("EVALUATION_SOURCE_REFERENCE_CHANGED")
+            current = current.model_copy(update={"source_execution": observed})
+            con.execute(
+                update(cases)
+                .where(cases.c.zone == actor.zone, cases.c.id == current.id)
+                .values(document=current.model_dump_json())
+            )
+            return current
+
     def complete(self, actor, run_id, command: CompleteHostedEvaluationCase):
         self._authorize(actor)
         fingerprint = digest(
@@ -548,6 +578,13 @@ class HostedEvaluations:
                 raise RegistryError("EVALUATION_CASE_EXPIRED")
             if (command.status == "succeeded" or command.model_call_ids) and not grant:
                 raise RegistryError("EVALUATION_GRANT_REQUIRED", 400)
+            if command.status == "succeeded" and run.role == "source_baseline":
+                source = current.source_execution
+                if source is None or (
+                    source.profile == "dify-service-api-v1"
+                    and not (source.workflow_run_id and source.message_id)
+                ):
+                    raise RegistryError("EVALUATION_SOURCE_EVIDENCE_REQUIRED", 400)
             if len(command.model_call_ids) > run.max_model_calls:
                 raise RegistryError("EVALUATION_RESULT_INVALID", 400)
             sample = next(

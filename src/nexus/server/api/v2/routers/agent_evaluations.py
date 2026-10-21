@@ -15,6 +15,7 @@ from nexus.contracts.agent_evaluation import (
     MigrationComparison,
     MigrationPolicy,
     MigrationPolicyPage,
+    ObserveSourceEvaluation,
     StartHostedEvaluation,
 )
 from nexus.contracts.agent_execution import ExecutionGrantResult
@@ -75,6 +76,15 @@ async def grant(
     await invoke(run_in_threadpool(evaluations._authorize, identity))
     command = await body(request, EvaluationCaseLease)
     return await invoke(evaluations.issue_grant(identity, run_id, command))
+
+
+@router.post("/{run_id}/source", response_model=HostedEvaluationCase)
+async def observe_source(
+    run_id: str, request: Request, identity=Depends(actor), evaluations=Depends(service)
+):
+    await invoke(run_in_threadpool(evaluations._authorize, identity))
+    command = await body(request, ObserveSourceEvaluation)
+    return await invoke(run_in_threadpool(evaluations.observe_source, identity, run_id, command))
 
 
 @router.post("/{run_id}/complete", response_model=HostedEvaluationCase)

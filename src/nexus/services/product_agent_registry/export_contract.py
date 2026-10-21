@@ -26,6 +26,7 @@ from nexus.contracts.agent_evaluation import (
     MigrationComparison,
     MigrationPolicy,
     MigrationPolicyPage,
+    ObserveSourceEvaluation,
     RegisterEvaluationDataset,
     StartHostedEvaluation,
 )
@@ -95,6 +96,7 @@ def artifacts() -> dict[str, str]:
         | EvaluationDatasetPage
         | RegisterEvaluationDataset
         | EvaluationCaseLease
+        | ObserveSourceEvaluation
         | CompleteHostedEvaluationCase
         | HostedEvaluationRun
         | HostedEvaluationCase

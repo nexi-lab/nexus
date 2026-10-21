@@ -12,6 +12,14 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from pydantic import TypeAdapter
 
+from nexus.contracts.agent_execution import (
+    CheckExecutionGrant,
+    ExecutionAuthorization,
+    ExecutionGrant,
+    ExecutionGrantPage,
+    ExecutionGrantResult,
+    IssueExecutionGrant,
+)
 from nexus.contracts.agent_inventory import (
     AssetCommand,
     AssetHistory,
@@ -48,6 +56,12 @@ def artifacts() -> dict[str, str]:
         | AssetPage
         | AssetHistory
         | PlatformDiscoveryPage
+        | IssueExecutionGrant
+        | ExecutionGrant
+        | ExecutionGrantResult
+        | ExecutionGrantPage
+        | CheckExecutionGrant
+        | ExecutionAuthorization
     )
     schema = wire.json_schema()
 
@@ -123,6 +137,19 @@ def artifacts() -> dict[str, str]:
     types.append(
         "export type InventoryWire = "
         + ts(TypeAdapter(AssetCommand | AssetRecord | AssetPage | AssetHistory).json_schema())
+    )
+    types.append(
+        "export type ExecutionWire = "
+        + ts(
+            TypeAdapter(
+                IssueExecutionGrant
+                | ExecutionGrant
+                | ExecutionGrantResult
+                | ExecutionGrantPage
+                | CheckExecutionGrant
+                | ExecutionAuthorization
+            ).json_schema()
+        )
     )
 
     # Public deterministic conformance key. Never use this fixture key in a deployment.

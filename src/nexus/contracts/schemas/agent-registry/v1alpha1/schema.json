@@ -727,6 +727,56 @@
       "title": "Channel",
       "type": "object"
     },
+    "CheckExecutionGrant": {
+      "additionalProperties": false,
+      "properties": {
+        "api_version": {
+          "const": "agent-registry.sudo.dev/v1alpha1",
+          "default": "agent-registry.sudo.dev/v1alpha1",
+          "title": "Api Version",
+          "type": "string"
+        },
+        "kind": {
+          "const": "CheckExecutionGrant",
+          "default": "CheckExecutionGrant",
+          "title": "Kind",
+          "type": "string"
+        },
+        "grant_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Grant Id",
+          "type": "string"
+        },
+        "task_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "spec_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Spec Digest",
+          "type": "string"
+        },
+        "permission": {
+          "$ref": "#/$defs/ExecutionPermission"
+        },
+        "token": {
+          "format": "password",
+          "title": "Token",
+          "type": "string",
+          "writeOnly": true
+        }
+      },
+      "required": [
+        "grant_id",
+        "task_id",
+        "spec_digest",
+        "permission",
+        "token"
+      ],
+      "title": "CheckExecutionGrant",
+      "type": "object"
+    },
     "ClaimAsset": {
       "additionalProperties": false,
       "properties": {
@@ -1077,6 +1127,405 @@
         "observed_at"
       ],
       "title": "DiscoveryEvidence",
+      "type": "object"
+    },
+    "ExecutionAuthorization": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "ExecutionAuthorization",
+          "default": "ExecutionAuthorization",
+          "title": "Kind",
+          "type": "string"
+        },
+        "grant": {
+          "$ref": "#/$defs/ExecutionGrant"
+        },
+        "authorized_at": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Authorized At",
+          "type": "integer"
+        },
+        "cacheable": {
+          "const": false,
+          "default": false,
+          "title": "Cacheable",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "grant",
+        "authorized_at"
+      ],
+      "title": "ExecutionAuthorization",
+      "type": "object"
+    },
+    "ExecutionGrant": {
+      "additionalProperties": false,
+      "properties": {
+        "api_version": {
+          "const": "agent-registry.sudo.dev/v1alpha1",
+          "default": "agent-registry.sudo.dev/v1alpha1",
+          "title": "Api Version",
+          "type": "string"
+        },
+        "kind": {
+          "const": "AgentExecutionGrant",
+          "default": "AgentExecutionGrant",
+          "title": "Kind",
+          "type": "string"
+        },
+        "id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "zone": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Zone",
+          "type": "string"
+        },
+        "issuer": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Issuer",
+          "type": "string"
+        },
+        "request": {
+          "$ref": "#/$defs/IssueExecutionGrant"
+        },
+        "worker_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Worker Id",
+          "type": "string"
+        },
+        "delegation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Delegation Id"
+        },
+        "key_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Key Id"
+        },
+        "owner_user_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Owner User Id",
+          "type": "string"
+        },
+        "department_id": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Department Id"
+        },
+        "status": {
+          "enum": [
+            "issuing",
+            "active",
+            "revoked",
+            "failed"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "cleanup_pending": {
+          "title": "Cleanup Pending",
+          "type": "boolean"
+        },
+        "created_at": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Created At",
+          "type": "integer"
+        },
+        "expires_at": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Expires At",
+          "type": "integer"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "stopped_by": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stopped By"
+        },
+        "stopped_at": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stopped At"
+        }
+      },
+      "required": [
+        "id",
+        "zone",
+        "issuer",
+        "request",
+        "worker_id",
+        "owner_user_id",
+        "department_id",
+        "status",
+        "cleanup_pending",
+        "created_at",
+        "expires_at"
+      ],
+      "title": "ExecutionGrant",
+      "type": "object"
+    },
+    "ExecutionGrantPage": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "ExecutionGrantPage",
+          "default": "ExecutionGrantPage",
+          "title": "Kind",
+          "type": "string"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/ExecutionGrant"
+          },
+          "title": "Items",
+          "type": "array"
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Next Cursor"
+        }
+      },
+      "required": [
+        "items",
+        "next_cursor"
+      ],
+      "title": "ExecutionGrantPage",
+      "type": "object"
+    },
+    "ExecutionGrantResult": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "ExecutionGrantResult",
+          "default": "ExecutionGrantResult",
+          "title": "Kind",
+          "type": "string"
+        },
+        "grant": {
+          "$ref": "#/$defs/ExecutionGrant"
+        },
+        "api_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Api Key"
+        }
+      },
+      "required": [
+        "grant"
+      ],
+      "title": "ExecutionGrantResult",
+      "type": "object"
+    },
+    "ExecutionPermission": {
+      "additionalProperties": false,
+      "properties": {
+        "resource": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/@-]{0,499}$",
+          "title": "Resource",
+          "type": "string"
+        },
+        "operation": {
+          "enum": [
+            "model.invoke",
+            "tool.invoke",
+            "data.read",
+            "data.write",
+            "data.delete",
+            "data.export"
+          ],
+          "title": "Operation",
+          "type": "string"
+        }
+      },
+      "required": [
+        "resource",
+        "operation"
+      ],
+      "title": "ExecutionPermission",
+      "type": "object"
+    },
+    "IssueExecutionGrant": {
+      "additionalProperties": false,
+      "properties": {
+        "api_version": {
+          "const": "agent-registry.sudo.dev/v1alpha1",
+          "default": "agent-registry.sudo.dev/v1alpha1",
+          "title": "Api Version",
+          "type": "string"
+        },
+        "kind": {
+          "const": "IssueExecutionGrant",
+          "default": "IssueExecutionGrant",
+          "title": "Kind",
+          "type": "string"
+        },
+        "request_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "asset_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "metadata_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Metadata Digest",
+          "type": "string"
+        },
+        "spec_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Spec Digest",
+          "type": "string"
+        },
+        "task_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "initiated_by": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Initiated By",
+          "type": "string"
+        },
+        "mode": {
+          "enum": [
+            "run",
+            "evaluation"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version"
+        },
+        "dataset_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[a-f0-9]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dataset Digest"
+        },
+        "permissions": {
+          "items": {
+            "$ref": "#/$defs/ExecutionPermission"
+          },
+          "maxItems": 64,
+          "minItems": 1,
+          "title": "Permissions",
+          "type": "array"
+        },
+        "ttl_seconds": {
+          "default": 120,
+          "maximum": 300,
+          "minimum": 1,
+          "title": "Ttl Seconds",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "request_id",
+        "asset_id",
+        "metadata_digest",
+        "spec_digest",
+        "task_id",
+        "initiated_by",
+        "mode",
+        "permissions"
+      ],
+      "title": "IssueExecutionGrant",
       "type": "object"
     },
     "LinkAsset": {
@@ -2207,6 +2656,24 @@
     },
     {
       "$ref": "#/$defs/PlatformDiscoveryPage"
+    },
+    {
+      "$ref": "#/$defs/IssueExecutionGrant"
+    },
+    {
+      "$ref": "#/$defs/ExecutionGrant"
+    },
+    {
+      "$ref": "#/$defs/ExecutionGrantResult"
+    },
+    {
+      "$ref": "#/$defs/ExecutionGrantPage"
+    },
+    {
+      "$ref": "#/$defs/CheckExecutionGrant"
+    },
+    {
+      "$ref": "#/$defs/ExecutionAuthorization"
     }
   ],
   "$schema": "https://json-schema.org/draft/2020-12/schema",

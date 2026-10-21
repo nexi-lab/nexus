@@ -287,13 +287,27 @@ class DelegationService:
         if record is None:
             raise DelegationNotFoundError(f"Delegation {delegation_id} not found")
 
-        if record.status != DelegationStatus.ACTIVE:
+        if record.status not in (DelegationStatus.ACTIVE, DelegationStatus.REVOKED):
             raise DelegationError(
                 f"Delegation {delegation_id} is not active (status={record.status.value})"
             )
 
         # Step 0: Soft-delete -- mark as REVOKED immediately
-        self._update_delegation_status(delegation_id, DelegationStatus.REVOKED)
+        if record.status == DelegationStatus.ACTIVE:
+            self._update_delegation_status(delegation_id, DelegationStatus.REVOKED)
+
+        # A previous attempt may have persisted REVOKED then failed during
+        # cleanup. Repeating revoke must finish that cleanup, not strand a key.
+
+        return self.cleanup_delegation(delegation_id)
+
+    def cleanup_delegation(self, delegation_id: str) -> bool:
+        """Retry cleanup for terminal delegations, preserving their outcome."""
+        record = self._load_delegation_record(delegation_id)
+        if record is None:
+            raise DelegationNotFoundError(f"Delegation {delegation_id} not found")
+        if record.status == DelegationStatus.ACTIVE:
+            raise DelegationError("Active delegation must be stopped before cleanup")
 
         # Step 1: Delete ReBAC tuples -- fail-loud (Issue 7A)
         self._delete_worker_tuples(record.agent_id, record.zone_id)

@@ -51,3 +51,26 @@ def configure(app, record_store) -> None:
             json.loads(os.environ.get("NEXUS_AGENT_INVENTORY_ENFORCED_ZONES", "[]"))
         ),
     )
+
+
+def configure_execution(app, record_store, entity_registry, rebac_manager) -> None:
+    """Optional binding profile, composed from the existing IAM brick after startup."""
+    policy_file = os.environ.get("NEXUS_AGENT_EXECUTION_POLICY_FILE")
+    if not policy_file:
+        return
+    from nexus.bricks.delegation.service import DelegationService
+    from nexus.services.product_agent_registry.execution import AgentExecution
+
+    registry = getattr(app.state, "product_agent_registry", None)
+    if registry is None or rebac_manager is None or entity_registry is None or record_store is None:
+        raise RuntimeError("Agent execution requires Registry and real IAM delegation services")
+    # An IAM task worker is not a runtime process. Use the same IAM owner and
+    # primary stores without registering phantom processes in the runtime table.
+    delegation = DelegationService(record_store, rebac_manager, entity_registry)
+    app.state.product_agent_execution = AgentExecution(
+        registry,
+        record_store,
+        delegation,
+        entity_registry,
+        json.loads(Path(policy_file).read_text()),
+    )

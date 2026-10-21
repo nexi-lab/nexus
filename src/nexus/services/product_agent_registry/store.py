@@ -130,6 +130,9 @@ def initialize_schema(engine: Engine) -> None:
     from nexus.services.product_agent_registry.inventory import initialize_inventory_schema
 
     initialize_inventory_schema(engine)
+    from nexus.services.product_agent_registry.execution import initialize_execution_schema
+
+    initialize_execution_schema(engine)
 
 
 class ProductAgentRegistry:

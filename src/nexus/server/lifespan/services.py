@@ -39,6 +39,9 @@ async def startup_services(app: "FastAPI", svc: "LifespanServices") -> list[asyn
     _startup_credential_service(app, svc)
     _startup_task_manager(app, svc)
     _startup_delegation_from_bricks(app, svc)
+    from nexus.services.product_agent_registry.configuration import configure_execution
+
+    configure_execution(app, svc.record_store, svc.entity_registry, svc.rebac_manager)
     _startup_governance(app, svc)
     _startup_sandbox_auth(app, svc)
     _startup_transactional_snapshot(app, svc)

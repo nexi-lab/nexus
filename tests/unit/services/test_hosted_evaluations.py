@@ -10,13 +10,15 @@ from sqlalchemy import event, select
 
 from nexus.contracts.agent_evaluation import (
     CompleteHostedEvaluationCase,
+    CreateMigrationPolicy,
     EvaluationCaseLease,
     EvaluationDatasetInput,
     RegisterEvaluationDataset,
+    SourceEvaluationRuntime,
     StartHostedEvaluation,
 )
 from nexus.contracts.agent_hosted import HostedImage, RegisterHostedArtifact
-from nexus.services.product_agent_registry.hosted_evaluations import HostedEvaluations, cases
+from nexus.services.product_agent_registry.hosted_evaluations import HostedEvaluations, cases, runs
 from nexus.services.product_agent_registry.store import RegistryActor, RegistryError
 from tests.unit.services.test_agent_execution import MODEL
 from tests.unit.services.test_agent_execution import execution as execution
@@ -271,3 +273,175 @@ def test_stop_revokes_running_and_closes_queued_without_replaying(execution):
     with pytest.raises(RegistryError, match="CONFLICT"):
         service.complete(ADMIN, run.id, result(claim))
     assert service.stop(ADMIN, run.id) == stopped
+
+
+def source_request(service, request):
+    artifact = service.registry.hosted.get(ADMIN, request.artifact_id)
+    return request.model_copy(
+        update={
+            "role": "source_baseline",
+            "source_runtime": SourceEvaluationRuntime(
+                profile="dify-service-api-v1",
+                source_digest=artifact.image.source_digest,
+                runtime_digest="sha256:" + "c" * 64,
+                model_name=artifact.image.model_name,
+                revision_strength="observed_source_snapshot",
+            ),
+        }
+    )
+
+
+def complete_run(service, run, answers):
+    for answer in answers:
+        claim = service.claim(ADMIN, run.id)
+        asyncio.run(service.issue_grant(ADMIN, run.id, lease(claim)))
+        service.complete(ADMIN, run.id, result(claim, answer=answer))
+
+
+def policy_request(baseline, **patch):
+    return CreateMigrationPolicy(
+        **{
+            "request_id": uuid4().hex,
+            "baseline_run_id": baseline.id,
+            "minimum_pass_bps": 10000,
+            "maximum_drop_bps": 0,
+            "initiated_by": "alice",
+            **patch,
+        }
+    )
+
+
+def test_source_baseline_policy_and_owner_comparison_survive_restart(execution):
+    service, request = setup(execution)
+    baseline = service.start(ADMIN, source_request(service, request))
+    with pytest.raises(RegistryError, match="NOT_SETTLED"):
+        service.create_policy(ADMIN, policy_request(baseline))
+    complete_run(service, baseline, ["42", "42"])
+    command = policy_request(baseline)
+    policy = service.create_policy(ADMIN, command)
+    assert service.create_policy(ADMIN, command) == policy
+    with pytest.raises(RegistryError, match="IDEMPOTENCY_CONFLICT"):
+        service.create_policy(ADMIN, command.model_copy(update={"maximum_drop_bps": 10000}))
+    candidate = service.start(
+        ADMIN,
+        request.model_copy(
+            update={
+                "request_id": uuid4().hex,
+                "comparison_policy_id": policy.id,
+            }
+        ),
+    )
+    complete_run(service, candidate, ["42", "wrong"])
+    comparison = service.compare(ADMIN, candidate.id)
+    assert (comparison.total_cases, comparison.baseline_passed, comparison.candidate_passed) == (
+        2,
+        2,
+        1,
+    )
+    assert not comparison.passed
+    assert service.compare(ADMIN, candidate.id) == comparison
+    restarted = HostedEvaluations(service.registry, execution)
+    assert restarted.get_policy(ADMIN, policy.id) == policy
+    assert restarted.get_comparison(ADMIN, comparison.id) == comparison
+    assert restarted.list_policies(ADMIN, request.asset_id).items == [policy]
+    assert service.registry.inventory.get(ADMIN, request.asset_id).actual_level == "L0"
+
+
+def test_comparison_cannot_use_hosted_as_source_or_attach_later_policy(execution):
+    service, request = setup(execution)
+    old_hosted = service.start(ADMIN, request)
+    complete_run(service, old_hosted, ["42", "42"])
+    with pytest.raises(RegistryError, match="SOURCE_BASELINE_REQUIRED"):
+        service.create_policy(ADMIN, policy_request(old_hosted))
+    with pytest.raises(RegistryError, match="POLICY_REQUIRED"):
+        service.compare(ADMIN, old_hosted.id)
+    source = source_request(service, request.model_copy(update={"request_id": uuid4().hex}))
+    invalid = source.model_copy(
+        update={
+            "source_runtime": source.source_runtime.model_copy(update={"model_name": "other-model"})
+        }
+    )
+    with pytest.raises(RegistryError, match="SOURCE_MISMATCH"):
+        service.start(ADMIN, invalid)
+    baseline = service.start(ADMIN, source)
+    claim = service.claim(ADMIN, baseline.id)
+    service.complete(
+        ADMIN,
+        baseline.id,
+        result(
+            claim,
+            status="unknown",
+            answer=None,
+            error_code="UNKNOWN",
+            cleanup_confirmed=False,
+            model_call_ids=[],
+        ),
+    )
+    service.stop(ADMIN, baseline.id)
+    with pytest.raises(RegistryError, match="NOT_SETTLED"):
+        service.create_policy(ADMIN, policy_request(baseline))
+    with pytest.raises(RegistryError):
+        service.get_policy(MEMBER, "not-found")
+
+
+def test_policy_comparison_uses_integer_all_case_thresholds(api, execution):
+    service, request = setup(execution, count=3)
+    baseline = service.start(ADMIN, source_request(service, request))
+    complete_run(service, baseline, ["42", "42", "42"])
+    client, credentials = api
+    headers = credentials["operator"]
+    base = "/api/v2/product-agents/hosted/migration"
+    command = policy_request(baseline, minimum_pass_bps=6667, maximum_drop_bps=3334)
+    response = client.post(base + "/policies", headers=headers, json=command.model_dump())
+    assert response.status_code == 200
+    policy = response.json()
+    assert response.headers["cache-control"] == "no-store"
+    assert client.get(base + "/policies/" + policy["id"], headers=headers).json() == policy
+    assert client.get(
+        base + "/policies", headers=headers, params={"asset_id": request.asset_id}
+    ).json()["items"] == [policy]
+    assert (
+        client.post(
+            base + "/policies", headers=headers, json={**command.model_dump(), "before_score": 1}
+        ).status_code
+        == 400
+    )
+    for answers, passed in [(["42", "42", "no"], False), (["42", "42", "42"], True)]:
+        candidate = service.start(
+            ADMIN,
+            request.model_copy(
+                update={
+                    "request_id": uuid4().hex,
+                    "comparison_policy_id": policy["id"],
+                }
+            ),
+        )
+        complete_run(service, candidate, answers)
+        result = client.post(
+            "/api/v2/product-agents/hosted/evaluations/" + candidate.id + "/compare",
+            headers=headers,
+        )
+        assert result.status_code == 200
+        assert result.json()["passed"] == passed
+        assert (
+            client.get(base + "/comparisons/" + result.json()["id"], headers=headers).json()
+            == result.json()
+        )
+    assert (
+        client.get(base + "/policies/" + policy["id"], headers=credentials["member"]).status_code
+        == 403
+    )
+
+
+def test_legacy_hosted_start_fingerprint_is_preserved(execution):
+    from nexus.contracts.product_agent_registry import canonical_bytes
+    from nexus.services.product_agent_registry.store import digest
+
+    service, request = setup(execution)
+    run = service.start(ADMIN, request)
+    legacy_command = request.model_dump(exclude={"role", "source_runtime", "comparison_policy_id"})
+    expected = digest(canonical_bytes({"actor": ADMIN.subject, "command": legacy_command}))
+    with service.engine.connect() as con:
+        actual = con.execute(select(runs.c.request_digest).where(runs.c.id == run.id)).scalar_one()
+    assert actual == expected
+    assert service.start(ADMIN, request).id == run.id

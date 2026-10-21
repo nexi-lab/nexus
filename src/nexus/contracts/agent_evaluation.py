@@ -59,6 +59,15 @@ class EvaluationDatasetPage(WireModel):
     next_cursor: Identifier | None
 
 
+class SourceEvaluationRuntime(WireModel):
+    profile: Literal["dify-service-api-v1", "langgraph-source-v1"]
+    source_digest: Digest
+    runtime_digest: Digest
+    model_name: Annotated[str, Field(min_length=1, max_length=200)]
+    # A Dify export is an observation of the source, not a remote immutable version.
+    revision_strength: Literal["observed_source_snapshot", "local_source_digest"]
+
+
 class StartHostedEvaluation(WireModel):
     api_version: Literal[API] = API
     kind: Literal["StartHostedEvaluation"] = "StartHostedEvaluation"
@@ -70,6 +79,17 @@ class StartHostedEvaluation(WireModel):
     initiated_by: Identifier
     timeout_seconds: Annotated[int, Field(ge=1, le=240)] = 120
     max_model_calls: Annotated[int, Field(ge=1, le=32)] = 1
+    role: Literal["hosted", "source_baseline"] = "hosted"
+    source_runtime: SourceEvaluationRuntime | None = None
+    comparison_policy_id: Identifier | None = None
+
+    @model_validator(mode="after")
+    def execution_role(self):
+        if (self.role == "source_baseline") != (self.source_runtime is not None):
+            raise ValueError("EVALUATION_SOURCE_RUNTIME_REQUIRED")
+        if self.role == "source_baseline" and self.comparison_policy_id is not None:
+            raise ValueError("EVALUATION_POLICY_MISMATCH")
+        return self
 
 
 class HostedEvaluationRun(WireModel):
@@ -97,6 +117,67 @@ class HostedEvaluationRun(WireModel):
     # Counts are authoritative; callers must not grade only successful responses.
     status: Literal["queued", "running", "finished"]
     evidence: Literal["evaluation_only"] = "evaluation_only"
+    role: Literal["hosted", "source_baseline"] = "hosted"
+    source_runtime: SourceEvaluationRuntime | None = None
+    comparison_policy_id: Identifier | None = None
+
+
+class CreateMigrationPolicy(WireModel):
+    request_id: Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$")]
+    baseline_run_id: Identifier
+    minimum_pass_bps: Annotated[int, Field(ge=0, le=10000)]
+    maximum_drop_bps: Annotated[int, Field(ge=0, le=10000)]
+    initiated_by: Identifier
+
+
+class MigrationPolicy(WireModel):
+    kind: Literal["MigrationPolicy"] = "MigrationPolicy"
+    id: Identifier
+    zone: Identifier
+    asset_id: Identifier
+    metadata_digest: Digest
+    artifact_id: Identifier
+    spec_digest: Digest
+    dataset_id: Identifier
+    dataset_digest: Digest
+    rubric_digest: Digest
+    baseline_run_id: Identifier
+    baseline_passed: Annotated[int, Field(ge=0, le=100)]
+    total_cases: Annotated[int, Field(ge=1, le=100)]
+    minimum_pass_bps: Annotated[int, Field(ge=0, le=10000)]
+    maximum_drop_bps: Annotated[int, Field(ge=0, le=10000)]
+    source_runtime: SourceEvaluationRuntime
+    initiated_by: Identifier
+    created_by: Label
+    created_at: Stamp
+
+
+class MigrationPolicyPage(WireModel):
+    kind: Literal["MigrationPolicyPage"] = "MigrationPolicyPage"
+    items: list[MigrationPolicy]
+    next_cursor: Identifier | None
+
+
+class MigrationComparison(WireModel):
+    kind: Literal["MigrationComparison"] = "MigrationComparison"
+    id: Identifier
+    zone: Identifier
+    asset_id: Identifier
+    policy_id: Identifier
+    baseline_run_id: Identifier
+    candidate_run_id: Identifier
+    metadata_digest: Digest
+    spec_digest: Digest
+    dataset_digest: Digest
+    rubric_digest: Digest
+    total_cases: Annotated[int, Field(ge=1, le=100)]
+    baseline_passed: Annotated[int, Field(ge=0, le=100)]
+    candidate_passed: Annotated[int, Field(ge=0, le=100)]
+    minimum_pass_bps: Annotated[int, Field(ge=0, le=10000)]
+    maximum_drop_bps: Annotated[int, Field(ge=0, le=10000)]
+    passed: bool
+    created_by: Label
+    created_at: Stamp
 
 
 class EvaluationTrace(WireModel):

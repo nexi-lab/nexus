@@ -5,12 +5,16 @@ from starlette.concurrency import run_in_threadpool
 
 from nexus.contracts.agent_evaluation import (
     CompleteHostedEvaluationCase,
+    CreateMigrationPolicy,
     EvaluationCaseLease,
     HostedEvaluationCase,
     HostedEvaluationCasePage,
     HostedEvaluationClaim,
     HostedEvaluationPage,
     HostedEvaluationRun,
+    MigrationComparison,
+    MigrationPolicy,
+    MigrationPolicyPage,
     StartHostedEvaluation,
 )
 from nexus.contracts.agent_execution import ExecutionGrantResult
@@ -19,6 +23,7 @@ from nexus.server.api.v2.routers.agent_execution import service as execution_ser
 from nexus.services.product_agent_registry.hosted_evaluations import HostedEvaluations
 
 router = APIRouter(prefix="/hosted/evaluations", tags=["product-agent-evaluations"])
+migration_router = APIRouter(prefix="/hosted/migration", tags=["product-agent-evaluations"])
 
 
 def service(response: Response, execution=Depends(execution_service)):
@@ -89,3 +94,35 @@ async def reconcile(run_id: str, identity=Depends(actor), evaluations=Depends(se
 @router.post("/{run_id}/stop", response_model=HostedEvaluationRun)
 async def stop(run_id: str, identity=Depends(actor), evaluations=Depends(service)):
     return await invoke(run_in_threadpool(evaluations.stop, identity, run_id))
+
+
+@migration_router.post("/policies", response_model=MigrationPolicy)
+async def create_policy(request: Request, identity=Depends(actor), evaluations=Depends(service)):
+    await invoke(run_in_threadpool(evaluations._authorize, identity))
+    command = await body(request, CreateMigrationPolicy)
+    return await invoke(run_in_threadpool(evaluations.create_policy, identity, command))
+
+
+@migration_router.get("/policies", response_model=MigrationPolicyPage)
+async def list_policies(
+    asset_id: str = Query(..., max_length=150),
+    after: str = Query("", max_length=150),
+    identity=Depends(actor),
+    evaluations=Depends(service),
+):
+    return await invoke(run_in_threadpool(evaluations.list_policies, identity, asset_id, after))
+
+
+@migration_router.get("/policies/{policy_id}", response_model=MigrationPolicy)
+async def get_policy(policy_id: str, identity=Depends(actor), evaluations=Depends(service)):
+    return await invoke(run_in_threadpool(evaluations.get_policy, identity, policy_id))
+
+
+@router.post("/{run_id}/compare", response_model=MigrationComparison)
+async def compare(run_id: str, identity=Depends(actor), evaluations=Depends(service)):
+    return await invoke(run_in_threadpool(evaluations.compare, identity, run_id))
+
+
+@migration_router.get("/comparisons/{comparison_id}", response_model=MigrationComparison)
+async def get_comparison(comparison_id: str, identity=Depends(actor), evaluations=Depends(service)):
+    return await invoke(run_in_threadpool(evaluations.get_comparison, identity, comparison_id))

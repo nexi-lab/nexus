@@ -28,12 +28,16 @@ from sqlalchemy.exc import IntegrityError
 
 from nexus.contracts.agent_evaluation import (
     CompleteHostedEvaluationCase,
+    CreateMigrationPolicy,
     EvaluationCaseLease,
     HostedEvaluationCase,
     HostedEvaluationCasePage,
     HostedEvaluationClaim,
     HostedEvaluationPage,
     HostedEvaluationRun,
+    MigrationComparison,
+    MigrationPolicy,
+    MigrationPolicyPage,
     StartHostedEvaluation,
 )
 from nexus.contracts.agent_execution import ExecutionGrant, IssueExecutionGrant
@@ -66,6 +70,26 @@ cases = Table(
     Column("claimed_by", String(255)),
     Column("completion_digest", String(71)),
     UniqueConstraint("zone", "run_id", "ordinal"),
+)
+policies = Table(
+    "product_agent_migration_policies",
+    metadata,
+    Column("zone", String(255), primary_key=True),
+    Column("id", String(150), primary_key=True),
+    Column("asset_id", String(150), nullable=False),
+    Column("request_id", String(128), nullable=False),
+    Column("request_digest", String(71), nullable=False),
+    Column("document", Text, nullable=False),
+    UniqueConstraint("zone", "request_id"),
+)
+comparisons = Table(
+    "product_agent_migration_comparisons",
+    metadata,
+    Column("zone", String(255), primary_key=True),
+    Column("id", String(150), primary_key=True),
+    Column("candidate_run_id", String(150), nullable=False),
+    Column("document", Text, nullable=False),
+    UniqueConstraint("zone", "candidate_run_id"),
 )
 
 
@@ -112,15 +136,30 @@ class HostedEvaluations:
             or dataset.metadata_digest != command.metadata_digest
         ):
             raise RegistryError("EVALUATION_INPUT_MISMATCH", 400)
+        source = command.source_runtime
+        if source and (
+            source.source_digest != artifact.image.source_digest
+            or source.model_name != artifact.image.model_name
+            or (source.profile, source.revision_strength)
+            != (
+                ("dify-service-api-v1", "observed_source_snapshot")
+                if artifact.image.profile.startswith("dify-")
+                else ("langgraph-source-v1", "local_source_digest")
+            )
+        ):
+            raise RegistryError("EVALUATION_SOURCE_MISMATCH", 400)
         policy = self.execution._policy(actor, "evaluators")
         if command.max_model_calls > policy.max_model_calls or not any(
             p.operation == "model.invoke" and p.resource == artifact.image.model_resource
             for p in policy.evaluation_permissions
         ):
             raise RegistryError("EXECUTION_SCOPE_DENIED", 403)
-        fingerprint = digest(
-            canonical_bytes({"actor": actor.subject, "command": command.model_dump()})
-        )
+        payload = command.model_dump()
+        if command.role == "hosted" and source is None and command.comparison_policy_id is None:
+            # Preserve pre-profile request fingerprints across additive upgrades.
+            for field in ("role", "source_runtime", "comparison_policy_id"):
+                payload.pop(field)
+        fingerprint = digest(canonical_bytes({"actor": actor.subject, "command": payload}))
 
         def previous(con):
             return (
@@ -166,8 +205,27 @@ class HostedEvaluations:
                         finished_cases=0,
                         passed_cases=0,
                         status="queued",
+                        role=command.role,
+                        source_runtime=source,
+                        comparison_policy_id=command.comparison_policy_id,
                     )
                     self._admit(con, actor, record)
+                    if command.comparison_policy_id:
+                        policy = self._policy_record(con, actor, command.comparison_policy_id)
+                        if record.role != "hosted" or any(
+                            getattr(record, key) != getattr(policy, key)
+                            for key in (
+                                "asset_id",
+                                "metadata_digest",
+                                "artifact_id",
+                                "spec_digest",
+                                "dataset_id",
+                                "dataset_digest",
+                                "rubric_digest",
+                                "total_cases",
+                            )
+                        ):
+                            raise RegistryError("EVALUATION_POLICY_MISMATCH")
                     # Asset lock makes the bounded admission atomic across coordinators.
                     active = con.execute(
                         select(func.count())
@@ -623,3 +681,212 @@ class HostedEvaluations:
                     .values(status=current.status, document=current.model_dump_json())
                 )
         return self.reconcile(actor, run_id)
+
+    def _policy_record(self, con, actor, policy_id):
+        document = con.execute(
+            select(policies.c.document).where(
+                policies.c.zone == actor.zone,
+                policies.c.id == policy_id,
+            )
+        ).scalar_one_or_none()
+        if document is None:
+            raise RegistryError("EVALUATION_POLICY_NOT_FOUND", 404)
+        return MigrationPolicy.model_validate_json(document)
+
+    def get_policy(self, actor, policy_id):
+        self._authorize(actor)
+        with self.engine.connect() as con:
+            return self._policy_record(con, actor, policy_id)
+
+    def list_policies(self, actor, asset_id, after=""):
+        self._authorize(actor)
+        self.registry.inventory.get(actor, asset_id)
+        with self.engine.connect() as con:
+            documents = (
+                con.execute(
+                    select(policies.c.document)
+                    .where(
+                        policies.c.zone == actor.zone,
+                        policies.c.asset_id == asset_id,
+                        policies.c.id > after,
+                    )
+                    .order_by(policies.c.id)
+                    .limit(21)
+                )
+                .scalars()
+                .all()
+            )
+        records = [MigrationPolicy.model_validate_json(doc) for doc in documents]
+        return MigrationPolicyPage(
+            items=records[:20], next_cursor=records[19].id if len(records) > 20 else None
+        )
+
+    def _settled(self, con, actor, run):
+        documents = (
+            con.execute(
+                select(cases.c.document).where(
+                    cases.c.zone == actor.zone,
+                    cases.c.run_id == run.id,
+                )
+            )
+            .scalars()
+            .all()
+        )
+        values = [HostedEvaluationCase.model_validate_json(doc) for doc in documents]
+        if len(values) != run.total_cases or any(
+            row.status not in ("succeeded", "failed")
+            or not row.cleanup_confirmed
+            or not row.iam_cleanup_confirmed
+            for row in values
+        ):
+            raise RegistryError("EVALUATION_NOT_SETTLED")
+        # Never trust cached counters or evaluator-supplied aggregate scores.
+        return sum(row.passed for row in values)
+
+    def create_policy(self, actor, command: CreateMigrationPolicy):
+        self._authorize(actor)
+        fingerprint = digest(
+            canonical_bytes({"actor": actor.subject, "command": command.model_dump()})
+        )
+        with self.registry.inventory._transaction() as con:
+            baseline = self._load(con, actor, command.baseline_run_id)
+            self._admit(con, actor, baseline)  # locks the asset before idempotency and facts
+            previous = (
+                con.execute(
+                    select(policies).where(
+                        policies.c.zone == actor.zone,
+                        policies.c.request_id == command.request_id,
+                    )
+                )
+                .mappings()
+                .first()
+            )
+            if previous:
+                if previous["request_digest"] != fingerprint:
+                    raise RegistryError("EVALUATION_IDEMPOTENCY_CONFLICT")
+                return MigrationPolicy.model_validate_json(previous["document"])
+            if baseline.role != "source_baseline" or baseline.source_runtime is None:
+                raise RegistryError("EVALUATION_SOURCE_BASELINE_REQUIRED")
+            passed = self._settled(con, actor, baseline)
+            policy = MigrationPolicy(
+                id=str(uuid4()),
+                zone=actor.zone,
+                **{
+                    key: getattr(baseline, key)
+                    for key in (
+                        "asset_id",
+                        "metadata_digest",
+                        "artifact_id",
+                        "spec_digest",
+                        "dataset_id",
+                        "dataset_digest",
+                        "rubric_digest",
+                        "total_cases",
+                        "source_runtime",
+                    )
+                },
+                baseline_run_id=baseline.id,
+                baseline_passed=passed,
+                minimum_pass_bps=command.minimum_pass_bps,
+                maximum_drop_bps=command.maximum_drop_bps,
+                initiated_by=command.initiated_by,
+                created_by=actor.subject,
+                created_at=self.registry.clock(),
+            )
+            con.execute(
+                insert(policies).values(
+                    zone=actor.zone,
+                    id=policy.id,
+                    asset_id=policy.asset_id,
+                    request_id=command.request_id,
+                    request_digest=fingerprint,
+                    document=policy.model_dump_json(),
+                )
+            )
+            return policy
+
+    def compare(self, actor, candidate_run_id):
+        self._authorize(actor)
+        with self.registry.inventory._transaction() as con:
+            candidate = self._load(con, actor, candidate_run_id)
+            self._admit(con, actor, candidate)
+            previous = con.execute(
+                select(comparisons.c.document).where(
+                    comparisons.c.zone == actor.zone,
+                    comparisons.c.candidate_run_id == candidate_run_id,
+                )
+            ).scalar_one_or_none()
+            if previous:
+                return MigrationComparison.model_validate_json(previous)
+            if candidate.role != "hosted" or candidate.comparison_policy_id is None:
+                raise RegistryError("EVALUATION_POLICY_REQUIRED")
+            policy = self._policy_record(con, actor, candidate.comparison_policy_id)
+            if candidate.created_at < policy.created_at or any(
+                getattr(candidate, key) != getattr(policy, key)
+                for key in (
+                    "asset_id",
+                    "metadata_digest",
+                    "artifact_id",
+                    "spec_digest",
+                    "dataset_id",
+                    "dataset_digest",
+                    "rubric_digest",
+                    "total_cases",
+                )
+            ):
+                raise RegistryError("EVALUATION_POLICY_MISMATCH")
+            before = self._settled(con, actor, self._load(con, actor, policy.baseline_run_id))
+            after = self._settled(con, actor, candidate)
+            if before != policy.baseline_passed:
+                raise RegistryError("EVALUATION_POLICY_MISMATCH")
+            total = candidate.total_cases
+            comparison = MigrationComparison(
+                id=str(uuid4()),
+                zone=actor.zone,
+                policy_id=policy.id,
+                baseline_run_id=policy.baseline_run_id,
+                candidate_run_id=candidate.id,
+                **{
+                    key: getattr(candidate, key)
+                    for key in (
+                        "asset_id",
+                        "metadata_digest",
+                        "spec_digest",
+                        "dataset_digest",
+                        "rubric_digest",
+                    )
+                },
+                total_cases=total,
+                baseline_passed=before,
+                candidate_passed=after,
+                minimum_pass_bps=policy.minimum_pass_bps,
+                maximum_drop_bps=policy.maximum_drop_bps,
+                passed=(
+                    after * 10000 >= policy.minimum_pass_bps * total
+                    and (before - after) * 10000 <= policy.maximum_drop_bps * total
+                ),
+                created_by=actor.subject,
+                created_at=self.registry.clock(),
+            )
+            con.execute(
+                insert(comparisons).values(
+                    zone=actor.zone,
+                    id=comparison.id,
+                    candidate_run_id=candidate.id,
+                    document=comparison.model_dump_json(),
+                )
+            )
+            return comparison
+
+    def get_comparison(self, actor, comparison_id):
+        self._authorize(actor)
+        with self.engine.connect() as con:
+            document = con.execute(
+                select(comparisons.c.document).where(
+                    comparisons.c.zone == actor.zone,
+                    comparisons.c.id == comparison_id,
+                )
+            ).scalar_one_or_none()
+        if document is None:
+            raise RegistryError("EVALUATION_COMPARISON_NOT_FOUND", 404)
+        return MigrationComparison.model_validate_json(document)

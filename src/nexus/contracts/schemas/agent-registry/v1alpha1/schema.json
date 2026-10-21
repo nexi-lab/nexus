@@ -980,6 +980,47 @@
       "title": "CompleteHostedEvaluationCase",
       "type": "object"
     },
+    "CreateMigrationPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "request_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "baseline_run_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Baseline Run Id",
+          "type": "string"
+        },
+        "minimum_pass_bps": {
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "Minimum Pass Bps",
+          "type": "integer"
+        },
+        "maximum_drop_bps": {
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "Maximum Drop Bps",
+          "type": "integer"
+        },
+        "initiated_by": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Initiated By",
+          "type": "string"
+        }
+      },
+      "required": [
+        "request_id",
+        "baseline_run_id",
+        "minimum_pass_bps",
+        "maximum_drop_bps",
+        "initiated_by"
+      ],
+      "title": "CreateMigrationPolicy",
+      "type": "object"
+    },
     "DataConnection": {
       "additionalProperties": false,
       "properties": {
@@ -2395,6 +2436,39 @@
           "default": "evaluation_only",
           "title": "Evidence",
           "type": "string"
+        },
+        "role": {
+          "default": "hosted",
+          "enum": [
+            "hosted",
+            "source_baseline"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "source_runtime": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SourceEvaluationRuntime"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "comparison_policy_id": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Comparison Policy Id"
         }
       },
       "required": [
@@ -2752,6 +2826,298 @@
         "reason"
       ],
       "title": "MergeAsset",
+      "type": "object"
+    },
+    "MigrationComparison": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "MigrationComparison",
+          "default": "MigrationComparison",
+          "title": "Kind",
+          "type": "string"
+        },
+        "id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "zone": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Zone",
+          "type": "string"
+        },
+        "asset_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "policy_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Policy Id",
+          "type": "string"
+        },
+        "baseline_run_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Baseline Run Id",
+          "type": "string"
+        },
+        "candidate_run_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Candidate Run Id",
+          "type": "string"
+        },
+        "metadata_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Metadata Digest",
+          "type": "string"
+        },
+        "spec_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Spec Digest",
+          "type": "string"
+        },
+        "dataset_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Dataset Digest",
+          "type": "string"
+        },
+        "rubric_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Rubric Digest",
+          "type": "string"
+        },
+        "total_cases": {
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Total Cases",
+          "type": "integer"
+        },
+        "baseline_passed": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Baseline Passed",
+          "type": "integer"
+        },
+        "candidate_passed": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Candidate Passed",
+          "type": "integer"
+        },
+        "minimum_pass_bps": {
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "Minimum Pass Bps",
+          "type": "integer"
+        },
+        "maximum_drop_bps": {
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "Maximum Drop Bps",
+          "type": "integer"
+        },
+        "passed": {
+          "title": "Passed",
+          "type": "boolean"
+        },
+        "created_by": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Created By",
+          "type": "string"
+        },
+        "created_at": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Created At",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "zone",
+        "asset_id",
+        "policy_id",
+        "baseline_run_id",
+        "candidate_run_id",
+        "metadata_digest",
+        "spec_digest",
+        "dataset_digest",
+        "rubric_digest",
+        "total_cases",
+        "baseline_passed",
+        "candidate_passed",
+        "minimum_pass_bps",
+        "maximum_drop_bps",
+        "passed",
+        "created_by",
+        "created_at"
+      ],
+      "title": "MigrationComparison",
+      "type": "object"
+    },
+    "MigrationPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "MigrationPolicy",
+          "default": "MigrationPolicy",
+          "title": "Kind",
+          "type": "string"
+        },
+        "id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "zone": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Zone",
+          "type": "string"
+        },
+        "asset_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "metadata_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Metadata Digest",
+          "type": "string"
+        },
+        "artifact_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "spec_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Spec Digest",
+          "type": "string"
+        },
+        "dataset_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Dataset Id",
+          "type": "string"
+        },
+        "dataset_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Dataset Digest",
+          "type": "string"
+        },
+        "rubric_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Rubric Digest",
+          "type": "string"
+        },
+        "baseline_run_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Baseline Run Id",
+          "type": "string"
+        },
+        "baseline_passed": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Baseline Passed",
+          "type": "integer"
+        },
+        "total_cases": {
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Total Cases",
+          "type": "integer"
+        },
+        "minimum_pass_bps": {
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "Minimum Pass Bps",
+          "type": "integer"
+        },
+        "maximum_drop_bps": {
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "Maximum Drop Bps",
+          "type": "integer"
+        },
+        "source_runtime": {
+          "$ref": "#/$defs/SourceEvaluationRuntime"
+        },
+        "initiated_by": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Initiated By",
+          "type": "string"
+        },
+        "created_by": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Created By",
+          "type": "string"
+        },
+        "created_at": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Created At",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "zone",
+        "asset_id",
+        "metadata_digest",
+        "artifact_id",
+        "spec_digest",
+        "dataset_id",
+        "dataset_digest",
+        "rubric_digest",
+        "baseline_run_id",
+        "baseline_passed",
+        "total_cases",
+        "minimum_pass_bps",
+        "maximum_drop_bps",
+        "source_runtime",
+        "initiated_by",
+        "created_by",
+        "created_at"
+      ],
+      "title": "MigrationPolicy",
+      "type": "object"
+    },
+    "MigrationPolicyPage": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "MigrationPolicyPage",
+          "default": "MigrationPolicyPage",
+          "title": "Kind",
+          "type": "string"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/MigrationPolicy"
+          },
+          "title": "Items",
+          "type": "array"
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Next Cursor"
+        }
+      },
+      "required": [
+        "items",
+        "next_cursor"
+      ],
+      "title": "MigrationPolicyPage",
       "type": "object"
     },
     "MoveChannel": {
@@ -3536,6 +3902,52 @@
       "title": "SignedVersion",
       "type": "object"
     },
+    "SourceEvaluationRuntime": {
+      "additionalProperties": false,
+      "properties": {
+        "profile": {
+          "enum": [
+            "dify-service-api-v1",
+            "langgraph-source-v1"
+          ],
+          "title": "Profile",
+          "type": "string"
+        },
+        "source_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Source Digest",
+          "type": "string"
+        },
+        "runtime_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Runtime Digest",
+          "type": "string"
+        },
+        "model_name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Model Name",
+          "type": "string"
+        },
+        "revision_strength": {
+          "enum": [
+            "observed_source_snapshot",
+            "local_source_digest"
+          ],
+          "title": "Revision Strength",
+          "type": "string"
+        }
+      },
+      "required": [
+        "profile",
+        "source_digest",
+        "runtime_digest",
+        "model_name",
+        "revision_strength"
+      ],
+      "title": "SourceEvaluationRuntime",
+      "type": "object"
+    },
     "StartHostedEvaluation": {
       "additionalProperties": false,
       "properties": {
@@ -3594,6 +4006,39 @@
           "minimum": 1,
           "title": "Max Model Calls",
           "type": "integer"
+        },
+        "role": {
+          "default": "hosted",
+          "enum": [
+            "hosted",
+            "source_baseline"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "source_runtime": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SourceEvaluationRuntime"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "comparison_policy_id": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Comparison Policy Id"
         }
       },
       "required": [
@@ -4015,6 +4460,18 @@
     },
     {
       "$ref": "#/$defs/StartHostedEvaluation"
+    },
+    {
+      "$ref": "#/$defs/CreateMigrationPolicy"
+    },
+    {
+      "$ref": "#/$defs/MigrationPolicy"
+    },
+    {
+      "$ref": "#/$defs/MigrationPolicyPage"
+    },
+    {
+      "$ref": "#/$defs/MigrationComparison"
     }
   ],
   "$schema": "https://json-schema.org/draft/2020-12/schema",

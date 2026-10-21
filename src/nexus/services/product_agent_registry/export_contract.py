@@ -14,6 +14,7 @@ from pydantic import TypeAdapter
 
 from nexus.contracts.agent_evaluation import (
     CompleteHostedEvaluationCase,
+    CreateMigrationPolicy,
     EvaluationCaseLease,
     EvaluationDataset,
     EvaluationDatasetPage,
@@ -22,6 +23,9 @@ from nexus.contracts.agent_evaluation import (
     HostedEvaluationClaim,
     HostedEvaluationPage,
     HostedEvaluationRun,
+    MigrationComparison,
+    MigrationPolicy,
+    MigrationPolicyPage,
     RegisterEvaluationDataset,
     StartHostedEvaluation,
 )
@@ -98,6 +102,10 @@ def artifacts() -> dict[str, str]:
         | HostedEvaluationCasePage
         | HostedEvaluationClaim
         | StartHostedEvaluation
+        | CreateMigrationPolicy
+        | MigrationPolicy
+        | MigrationPolicyPage
+        | MigrationComparison
     )
     schema = wire.json_schema()
 

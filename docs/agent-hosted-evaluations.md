@@ -37,3 +37,32 @@ Validation includes real file-backed Registry/IAM, concurrent claims, immutable
 request replay, key omission on replay, cross-zone/role denials, read-only queries,
 all-case scoring, stopping, timeout and IAM revocation. This does not constitute
 HA, migration comparison, L2 publication or full Agent Management 1.1 acceptance.
+
+## Source baselines and immutable comparison policy
+
+The same durable case lifecycle distinguishes `source_baseline` from `hosted`.
+A baseline records a deployment-selected source runtime snapshot. Its source digest,
+platform profile and model must match the imported artifact. A Dify export is labelled
+an observed snapshot; it is never described as a remote immutable execution version.
+The evaluator must actually invoke the original platform/runtime for that role.
+
+After all baseline cases settle with confirmed cleanup, an evaluator can create an
+immutable policy specifying minimum score and maximum drop in integer basis points.
+The candidate run must reference that existing policy at creation. A completed run
+cannot be retrospectively attached to a new threshold. The owner calculates both
+scores from stored cases with the full dataset denominator, checks exact metadata,
+artifact, dataset and rubric bindings, and persists an idempotent comparison. Unknown
+outcomes or pending cleanup block comparison. A policy's existence does not grant L2.
+
+API additions: `/hosted/migration/policies`, `/hosted/migration/policies/{id}`,
+`/hosted/migration/comparisons/{id}` and
+`POST /hosted/evaluations/{candidate_run_id}/compare`, under the existing product
+registry API prefix. These are evaluator-only and no-store. Policy and comparison
+tables are additive and require the same explicit initialization maintenance step.
+Existing default hosted start-request fingerprints are preserved across this upgrade.
+
+The owner lifecycle/threshold math is implemented and tested. Actual source-runner
+product orchestration, manager policy UI and L2 evidence admission are separate work;
+consumers without a source adapter must reject that role instead of executing the
+imported image. The independent laboratory source report alone is not imported as
+a trusted policy or acceptance record.

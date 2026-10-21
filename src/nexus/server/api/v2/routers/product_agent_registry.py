@@ -25,6 +25,7 @@ from nexus.contracts.product_agent_registry import (
     VersionsPage,
     parse_command,
 )
+from nexus.server.api.v2.routers.agent_evaluations import migration_router
 from nexus.server.api.v2.routers.agent_evaluations import router as evaluations_router
 from nexus.server.api.v2.routers.agent_execution import router as execution_router
 from nexus.server.api.v2.routers.agent_hosted import router as hosted_router
@@ -41,6 +42,7 @@ router.include_router(execution_router)
 router.include_router(hosted_router)
 
 router.include_router(evaluations_router)
+router.include_router(migration_router)
 
 
 def actor(auth: dict[str, Any] = Depends(require_auth)) -> RegistryActor:

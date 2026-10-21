@@ -417,3 +417,15 @@ async def test_iam_zone_junction_and_delegation_status_are_authoritative(executi
         session.commit()
     with pytest.raises(RegistryError, match="TOKEN_INVALID"):
         await execution.authorize(ADMIN, check(second))
+
+
+@pytest.mark.asyncio
+async def test_model_call_limit_cannot_exceed_current_zone_policy(execution):
+    with pytest.raises(RegistryError, match="CALL_LIMIT_DENIED"):
+        await execution.issue(ADMIN, request(execution, max_model_calls=9))
+    result = await execution.issue(ADMIN, request(execution, max_model_calls=2))
+    execution.policies["zone-a"] = execution.policies["zone-a"].model_copy(
+        update={"max_model_calls": 1}
+    )
+    with pytest.raises(RegistryError, match="CALL_LIMIT_DENIED"):
+        await execution.authorize(ADMIN, check(result))

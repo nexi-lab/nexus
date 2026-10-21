@@ -92,6 +92,8 @@ class AgentExecution:
 
     def _admit(self, actor, request):
         policy = self._policy(actor, "evaluators" if request.mode == "evaluation" else "issuers")
+        if request.max_model_calls > policy.max_model_calls:
+            raise RegistryError("EXECUTION_CALL_LIMIT_DENIED", 403)
         asset = self.registry.inventory.get(actor, request.asset_id)
         if (
             asset.status != "approved"

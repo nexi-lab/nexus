@@ -1513,6 +1513,13 @@
           "minimum": 1,
           "title": "Ttl Seconds",
           "type": "integer"
+        },
+        "max_model_calls": {
+          "default": 8,
+          "maximum": 32,
+          "minimum": 1,
+          "title": "Max Model Calls",
+          "type": "integer"
         }
       },
       "required": [

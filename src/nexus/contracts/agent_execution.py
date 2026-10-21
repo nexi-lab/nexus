@@ -30,6 +30,7 @@ class IssueExecutionGrant(WireModel):
     dataset_digest: Digest | None = None
     permissions: Annotated[list[ExecutionPermission], Field(min_length=1, max_length=64)]
     ttl_seconds: Annotated[int, Field(ge=1, le=300)] = 120
+    max_model_calls: Annotated[int, Field(ge=1, le=32)] = 8
 
     @model_validator(mode="after")
     def selectors(self):
@@ -95,6 +96,7 @@ class ExecutionAuthorization(WireModel):
 
 
 class ExecutionZonePolicy(WireModel):
+    max_model_calls: Annotated[int, Field(ge=1, le=32)] = 8
     coordinator_id: Identifier
     coordinator_owner_id: Identifier
     issuers: Annotated[list[Label], Field(min_length=1, max_length=32)]

@@ -6,9 +6,10 @@ native SudoCode engine with tools and automatic memory disabled, accepting
 literal text. Unsupported source roles, nodes, tools, memory, and files are
 rejected; they are never silently flattened into a prompt.
 
-This is build preparation, **not L3 qualification or publication**. The Registry
-continues to reject L3 until native artifacts, six-contract execution evidence,
-independent evaluation, and explicit approval are implemented and verified.
+The builder produces a candidate, **not L3 qualification or publication**.
+Registry admission requires the exact native profile, runtime and source binding,
+a successful stored migration comparison, execution verification, independent
+attestation and a separate IT review. Registration alone never grants L3.
 
 ## Prepare
 
@@ -108,6 +109,42 @@ The source image, native conversion, dataset, target metadata, runtime kind and
 policy cannot be substituted across phases. Existing hosted records omit the
 new discriminator when serialized, preserving prior evidence digests.
 
-This is evaluation infrastructure. The management UI, deployed coordinator,
-six-family Task execution, independent native acceptance and Work publication
-must still be composed and verified before L3 is enabled.
+## Native execution profile and admission
+
+`GET /native/conversions/{id}/profile` returns the immutable binding used by
+Moss Task resolution and native output verification. The current profile is
+`native-independent-text-v1alpha1`:
+
+| Family | Enforced behavior |
+| --- | --- |
+| Task | Existing `task.sudo.dev/v1alpha1` Task/Attempt, fixed version and independent turns |
+| Tool | SudoCode `--no-tools`, deny-all delegation and no tool permission in the task grant |
+| Context | Literal synthetic text, no attachments, path expansion or workspace access |
+| Memory | SudoCode `--no-memory`; no cross-turn or automatic memory loading |
+| Verify | Deterministic output text/one model call/two native trace frames/cleanup checks |
+| Event | Canonical Task events and durable native runtime trace |
+
+These are explicit bindings to existing experimental owners and native runtime
+controls. They do not activate or claim all stable v1 contract families. A
+Verify pass establishes execution shape and cleanup, not business correctness;
+the separate same-dataset rubric supplies the bounded comparison result.
+
+An L3 `AcceptanceReport` must contain `native_binding.conversion_id` and the
+canonical `profile_digest`, plus the runtime executable/runner/spec digests in
+`evidence_refs`. Admission reads the stored comparison and every candidate
+case, recomputes verification and rejects incomplete or substituted evidence.
+Older completed cases can be verified from immutable facts without rewriting
+or rerunning them. The target stays L0 until a separate administrator approves.
+
+The reviewed L2 source, issuer, metadata and acceptance must still be valid;
+target acceptance cannot outlive its source. Source suspension, metadata change,
+issuer removal or expiry blocks subsequent native admission. Read endpoints do
+not publish, promote, migrate or repair records. Moss publishes the original
+native spec bytes through the existing Registry and Work uses the shared hosted
+Task conversation, with `resolved_runtime: native_sudocode` and visible Verify
+evidence. Unknown execution outcomes are never automatically replayed.
+
+Release and deployment qualification remain environment-specific. A fixed
+Linux SudoCode binary, verified container capabilities, model/resource mapping,
+all current controllers and explicit schema initialization are prerequisites.
+An online Router model does not establish offline inference support.

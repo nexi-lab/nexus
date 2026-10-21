@@ -182,6 +182,7 @@ class AssetRecord(WireModel):
     recommendation_reasons: list[str]
     risk: Literal["low", "medium", "high", "external"]
     external_domain: bool
+    effective_domain: Literal["office", "core"] = "office"
     principal: PrincipalRef | None = None
     merged_into: Identifier | None = None
     observations: list[DiscoveryEvidence]

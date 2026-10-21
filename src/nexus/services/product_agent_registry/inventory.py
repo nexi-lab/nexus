@@ -222,6 +222,12 @@ class AgentInventory:
     def _projection(self, record):
         """Fresh evidence/risk presentation without changing the stored audit record."""
         record = record.model_copy(deep=True)
+        record.effective_domain = (
+            "core"
+            if self.zone_domains.get(record.owner_zone) == "core"
+            or record.metadata.domain == "core"
+            else "office"
+        )
         record.recommended_level, record.recommendation_reasons, record.risk = self._recommend(
             record.owner_zone, record.metadata
         )

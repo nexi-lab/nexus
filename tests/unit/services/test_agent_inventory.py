@@ -439,6 +439,7 @@ def test_new_core_zone_policy_applies_to_existing_assets_without_rewrite(registr
         registry, zone_domains={"zone-a": "core"}, attestors={EVALUATOR.subject}
     )
     assert registry.inventory.get(ADMIN, asset.id).recommended_level == "L2"
+    assert registry.inventory.get(ADMIN, asset.id).effective_domain == "core"
     with pytest.raises(RegistryError, match="CORE_REQUIRES_L2"):
         registry.inventory.admission(MEMBER, REF, SPEC)
 

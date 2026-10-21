@@ -543,6 +543,15 @@
           "title": "External Domain",
           "type": "boolean"
         },
+        "effective_domain": {
+          "default": "office",
+          "enum": [
+            "office",
+            "core"
+          ],
+          "title": "Effective Domain",
+          "type": "string"
+        },
         "principal": {
           "anyOf": [
             {

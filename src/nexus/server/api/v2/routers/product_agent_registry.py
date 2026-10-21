@@ -10,6 +10,12 @@ from pydantic import ValidationError
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.concurrency import run_in_threadpool
 
+from nexus.contracts.agent_inventory import (
+    AssetHistory,
+    AssetPage,
+    AssetRecord,
+    parse_asset_command,
+)
 from nexus.contracts.product_agent_registry import (
     MAX_BODY_BYTES,
     CommandResult,
@@ -77,6 +83,55 @@ async def execute(
     except (ValueError, RecursionError):
         raise HTTPException(400, detail={"code": "INVALID_REGISTRY_COMMAND"}) from None
     return await invoke(lambda: registry.command(identity, command))
+
+
+@router.post("/inventory/commands", response_model=AssetRecord)
+async def inventory_command(
+    request: Request,
+    identity: RegistryActor = Depends(actor),
+    registry: ProductAgentRegistry = Depends(service),
+):
+    if not identity.is_admin:
+        raise HTTPException(403, detail={"code": "REGISTRY_INVENTORY_FORBIDDEN"})
+    data = bytearray()
+    async for chunk in request.stream():
+        if len(data) + len(chunk) > MAX_BODY_BYTES:
+            raise HTTPException(413, detail={"code": "REGISTRY_BODY_LIMIT"})
+        data.extend(chunk)
+    try:
+        command = parse_asset_command(bytes(data))
+    except (ValueError, RecursionError):
+        raise HTTPException(400, detail={"code": "INVALID_INVENTORY_COMMAND"}) from None
+    return await invoke(lambda: registry.inventory.command(identity, command))
+
+
+@router.get("/inventory/assets", response_model=AssetPage)
+async def inventory_list(
+    after: str = Query("", max_length=150),
+    owner: str | None = Query(None, max_length=150),
+    identity: RegistryActor = Depends(actor),
+    registry: ProductAgentRegistry = Depends(service),
+):
+    return await invoke(lambda: registry.inventory.list(identity, after, owner))
+
+
+@router.get("/inventory/assets/{asset_id}", response_model=AssetRecord)
+async def inventory_get(
+    asset_id: str,
+    identity: RegistryActor = Depends(actor),
+    registry: ProductAgentRegistry = Depends(service),
+):
+    return await invoke(lambda: registry.inventory.get(identity, asset_id))
+
+
+@router.get("/inventory/assets/{asset_id}/history", response_model=AssetHistory)
+async def inventory_history(
+    asset_id: str,
+    after: int = Query(0, ge=0),
+    identity: RegistryActor = Depends(actor),
+    registry: ProductAgentRegistry = Depends(service),
+):
+    return await invoke(lambda: registry.inventory.history(identity, asset_id, after))
 
 
 def principal(domain: str, name: str) -> PrincipalRef:

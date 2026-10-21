@@ -12,6 +12,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from pydantic import TypeAdapter
 
+from nexus.contracts.agent_inventory import AssetCommand, AssetHistory, AssetPage, AssetRecord
 from nexus.contracts.product_agent_registry import (
     API,
     CommandResult,
@@ -30,7 +31,17 @@ ROOT = Path(__file__).resolve().parents[2] / "contracts" / "schemas" / "agent-re
 
 
 def artifacts() -> dict[str, str]:
-    wire = TypeAdapter(RegistryCommand | CommandResult | Resolution | VersionsPage | VersionItem)
+    wire = TypeAdapter(
+        RegistryCommand
+        | CommandResult
+        | Resolution
+        | VersionsPage
+        | VersionItem
+        | AssetCommand
+        | AssetRecord
+        | AssetPage
+        | AssetHistory
+    )
     schema = wire.json_schema()
 
     def resource_refs(node):
@@ -94,7 +105,18 @@ def artifacts() -> dict[str, str]:
     types.extend(
         f"export type {name} = {ts(value)}" for name, value in sorted(schema["$defs"].items())
     )
-    types.append("export type RegistryWire = " + ts({"anyOf": schema["anyOf"]}))
+    types.append(
+        "export type RegistryWire = "
+        + ts(
+            TypeAdapter(
+                RegistryCommand | CommandResult | Resolution | VersionsPage | VersionItem
+            ).json_schema()
+        )
+    )
+    types.append(
+        "export type InventoryWire = "
+        + ts(TypeAdapter(AssetCommand | AssetRecord | AssetPage | AssetHistory).json_schema())
+    )
 
     # Public deterministic conformance key. Never use this fixture key in a deployment.
     key = Ed25519PrivateKey.from_private_bytes(bytes(range(32)))

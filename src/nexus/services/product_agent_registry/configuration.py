@@ -37,5 +37,17 @@ def configure(app, record_store) -> None:
                 raise ValueError("REGISTRY_TRUST_CONFIGURATION_INVALID")
             trusted[key_id(public)] = public
     app.state.product_agent_registry = ProductAgentRegistry(
-        record_store.engine, key, domain_zones, trusted_keys=trusted
+        record_store.engine,
+        key,
+        domain_zones,
+        trusted_keys=trusted,
+        inventory_zone_domains=json.loads(
+            os.environ.get("NEXUS_AGENT_INVENTORY_ZONE_DOMAINS", "{}")
+        ),
+        inventory_attestors=set(
+            json.loads(os.environ.get("NEXUS_AGENT_INVENTORY_ATTESTORS", "[]"))
+        ),
+        inventory_enforced_zones=set(
+            json.loads(os.environ.get("NEXUS_AGENT_INVENTORY_ENFORCED_ZONES", "[]"))
+        ),
     )

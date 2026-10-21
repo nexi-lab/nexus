@@ -127,6 +127,9 @@ class RegistryActor:
 def initialize_schema(engine: Engine) -> None:
     """Explicit operator operation. Creates only new Registry tables; never touches legacy data."""
     metadata.create_all(engine)
+    from nexus.services.product_agent_registry.inventory import initialize_inventory_schema
+
+    initialize_inventory_schema(engine)
 
 
 class ProductAgentRegistry:
@@ -137,6 +140,9 @@ class ProductAgentRegistry:
         domain_zones: dict[str, str],
         clock=None,
         trusted_keys: dict[str, Ed25519PublicKey] | None = None,
+        inventory_zone_domains: dict[str, str] | None = None,
+        inventory_attestors: set[str] | None = None,
+        inventory_enforced_zones: set[str] | None = None,
     ):
         if (
             not isinstance(domain_zones, dict)
@@ -169,6 +175,12 @@ class ProductAgentRegistry:
             for name, value in self.trusted_keys.items()
         ):
             raise ValueError("REGISTRY_TRUST_CONFIGURATION_INVALID")
+
+        from nexus.services.product_agent_registry.inventory import AgentInventory
+
+        self.inventory = AgentInventory(
+            self, inventory_zone_domains, inventory_attestors, inventory_enforced_zones
+        )
 
     def _authorize(self, actor: RegistryActor, ref: PrincipalRef, write=False) -> None:
         if not actor.subject or not actor.zone:
@@ -306,6 +318,7 @@ class ProductAgentRegistry:
                 self._active(row)
             sequence = row["revision"] + 1
             if isinstance(command, PublishVersion):
+                self.inventory.admission(actor, ref, command.spec_digest, con)
                 response.version = self._publish(con, key, actor, command)
             elif isinstance(command, DecideVersion):
                 self._version(con, ref, command.version)
@@ -313,6 +326,12 @@ class ProductAgentRegistry:
                 if previous and previous.decision == "revoked":
                     raise RegistryError("AGENT_VERSION_REVOKED")
                 if command.decision == "approved":
+                    self.inventory.admission(
+                        actor,
+                        ref,
+                        self._version(con, ref, command.version).manifest.spec_digest,
+                        con,
+                    )
                     if (
                         command.expires_at is None
                         or not self.clock() < command.expires_at <= self.clock() + 7 * 86400000
@@ -344,6 +363,7 @@ class ProductAgentRegistry:
             elif isinstance(command, MoveChannel):
                 signed = self._version(con, ref, command.version)
                 self._approved(con, ref, command.version)
+                self.inventory.admission(actor, ref, signed.manifest.spec_digest, con)
                 prior_channel = self._channel(con, ref, command.channel)
                 if command.expected_revision != (prior_channel.revision if prior_channel else 0):
                     raise RegistryError("CHANNEL_REVISION_CONFLICT")
@@ -515,6 +535,7 @@ class ProductAgentRegistry:
                 version = selected.version
             signed = self._version(con, ref, version)
             approval = self._approved(con, ref, version)
+            self.inventory.admission(actor, ref, signed.manifest.spec_digest, con)
             return Resolution(
                 principal=self._view(row),
                 version=signed,

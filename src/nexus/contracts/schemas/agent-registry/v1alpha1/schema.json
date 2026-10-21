@@ -1,5 +1,667 @@
 {
   "$defs": {
+    "AcceptanceReport": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "AgentAcceptanceReport",
+          "default": "AgentAcceptanceReport",
+          "title": "Kind",
+          "type": "string"
+        },
+        "asset_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "metadata_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Metadata Digest",
+          "type": "string"
+        },
+        "spec_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Spec Digest",
+          "type": "string"
+        },
+        "level": {
+          "enum": [
+            "L1",
+            "L2",
+            "L3"
+          ],
+          "title": "Level",
+          "type": "string"
+        },
+        "expires_at": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Expires At",
+          "type": "integer"
+        },
+        "execution_revision": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[a-f0-9]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Execution Revision"
+        },
+        "evidence_refs": {
+          "items": {
+            "pattern": "^sha256:[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "maxItems": 32,
+          "minItems": 1,
+          "title": "Evidence Refs",
+          "type": "array"
+        },
+        "checks": {
+          "items": {
+            "enum": [
+              "entry",
+              "identity",
+              "router",
+              "revoke",
+              "tool",
+              "isolation",
+              "evaluation",
+              "trace",
+              "native"
+            ],
+            "type": "string"
+          },
+          "maxItems": 9,
+          "minItems": 1,
+          "title": "Checks",
+          "type": "array"
+        },
+        "evaluation_id": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evaluation Id"
+        },
+        "dataset_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[a-f0-9]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dataset Digest"
+        },
+        "rubric_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[a-f0-9]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rubric Digest"
+        },
+        "before_score": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Before Score"
+        },
+        "after_score": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Score"
+        },
+        "allowed_drop": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Allowed Drop"
+        }
+      },
+      "required": [
+        "asset_id",
+        "metadata_digest",
+        "spec_digest",
+        "level",
+        "expires_at",
+        "evidence_refs",
+        "checks"
+      ],
+      "title": "AcceptanceReport",
+      "type": "object"
+    },
+    "AssetEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "operation": {
+          "title": "Operation",
+          "type": "string"
+        },
+        "actor": {
+          "title": "Actor",
+          "type": "string"
+        },
+        "initiated_by": {
+          "title": "Initiated By",
+          "type": "string"
+        },
+        "created_at": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Created At",
+          "type": "integer"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Reason"
+        }
+      },
+      "required": [
+        "revision",
+        "operation",
+        "actor",
+        "initiated_by",
+        "created_at",
+        "reason"
+      ],
+      "title": "AssetEvent",
+      "type": "object"
+    },
+    "AssetHistory": {
+      "additionalProperties": false,
+      "properties": {
+        "api_version": {
+          "const": "agent-registry.sudo.dev/v1alpha1",
+          "default": "agent-registry.sudo.dev/v1alpha1",
+          "title": "Api Version",
+          "type": "string"
+        },
+        "kind": {
+          "const": "AgentAssetHistory",
+          "default": "AgentAssetHistory",
+          "title": "Kind",
+          "type": "string"
+        },
+        "asset_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "events": {
+          "items": {
+            "$ref": "#/$defs/AssetEvent"
+          },
+          "title": "Events",
+          "type": "array"
+        },
+        "next_revision": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Next Revision"
+        }
+      },
+      "required": [
+        "asset_id",
+        "events",
+        "next_revision"
+      ],
+      "title": "AssetHistory",
+      "type": "object"
+    },
+    "AssetMetadata": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "source_platform": {
+          "enum": [
+            "dify",
+            "langgraph",
+            "openai",
+            "mcp",
+            "a2a",
+            "http",
+            "native",
+            "saas",
+            "other"
+          ],
+          "title": "Source Platform",
+          "type": "string"
+        },
+        "source_instance": {
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Source Instance",
+          "type": "string"
+        },
+        "source_agent_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Source Agent Id",
+          "type": "string"
+        },
+        "owner_user_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Owner User Id",
+          "type": "string"
+        },
+        "department_id": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Department Id"
+        },
+        "purpose": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Purpose",
+          "type": "string"
+        },
+        "domain": {
+          "enum": [
+            "office",
+            "core"
+          ],
+          "title": "Domain",
+          "type": "string"
+        },
+        "hosting": {
+          "enum": [
+            "external_hosted",
+            "internal_hosted",
+            "public_saas"
+          ],
+          "title": "Hosting",
+          "type": "string"
+        },
+        "requested_level": {
+          "enum": [
+            "L0",
+            "L1",
+            "L2",
+            "L3"
+          ],
+          "title": "Requested Level",
+          "type": "string"
+        },
+        "data_connections": {
+          "items": {
+            "$ref": "#/$defs/DataConnection"
+          },
+          "maxItems": 64,
+          "title": "Data Connections",
+          "type": "array"
+        },
+        "tool_refs": {
+          "items": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 64,
+          "title": "Tool Refs",
+          "type": "array"
+        },
+        "model_paths": {
+          "items": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "Model Paths",
+          "type": "array"
+        },
+        "risk_note": {
+          "default": "",
+          "maxLength": 2000,
+          "title": "Risk Note",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "source_platform",
+        "source_instance",
+        "source_agent_id",
+        "owner_user_id",
+        "purpose",
+        "domain",
+        "hosting",
+        "requested_level"
+      ],
+      "title": "AssetMetadata",
+      "type": "object"
+    },
+    "AssetPage": {
+      "additionalProperties": false,
+      "properties": {
+        "api_version": {
+          "const": "agent-registry.sudo.dev/v1alpha1",
+          "default": "agent-registry.sudo.dev/v1alpha1",
+          "title": "Api Version",
+          "type": "string"
+        },
+        "kind": {
+          "const": "AgentAssetPage",
+          "default": "AgentAssetPage",
+          "title": "Kind",
+          "type": "string"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/AssetRecord"
+          },
+          "title": "Items",
+          "type": "array"
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Next Cursor"
+        }
+      },
+      "required": [
+        "items",
+        "next_cursor"
+      ],
+      "title": "AssetPage",
+      "type": "object"
+    },
+    "AssetRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "api_version": {
+          "const": "agent-registry.sudo.dev/v1alpha1",
+          "default": "agent-registry.sudo.dev/v1alpha1",
+          "title": "Api Version",
+          "type": "string"
+        },
+        "kind": {
+          "const": "AgentAsset",
+          "default": "AgentAsset",
+          "title": "Kind",
+          "type": "string"
+        },
+        "id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "owner_zone": {
+          "title": "Owner Zone",
+          "type": "string"
+        },
+        "metadata": {
+          "$ref": "#/$defs/AssetMetadata"
+        },
+        "metadata_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Metadata Digest",
+          "type": "string"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "status": {
+          "enum": [
+            "discovered",
+            "draft",
+            "submitted",
+            "returned",
+            "approved",
+            "suspended",
+            "merged"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "actual_level": {
+          "enum": [
+            "L0",
+            "L1",
+            "L2",
+            "L3"
+          ],
+          "title": "Actual Level",
+          "type": "string"
+        },
+        "recommended_level": {
+          "enum": [
+            "L0",
+            "L1",
+            "L2",
+            "L3"
+          ],
+          "title": "Recommended Level",
+          "type": "string"
+        },
+        "recommendation_reasons": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Recommendation Reasons",
+          "type": "array"
+        },
+        "risk": {
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "external"
+          ],
+          "title": "Risk",
+          "type": "string"
+        },
+        "external_domain": {
+          "title": "External Domain",
+          "type": "boolean"
+        },
+        "principal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PrincipalRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "merged_into": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Merged Into"
+        },
+        "observations": {
+          "items": {
+            "$ref": "#/$defs/DiscoveryEvidence"
+          },
+          "title": "Observations",
+          "type": "array"
+        },
+        "review_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Review Reason"
+        },
+        "acceptance": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AcceptanceReport"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "acceptance_issuer": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Acceptance Issuer"
+        },
+        "evidence_status": {
+          "default": "none",
+          "enum": [
+            "none",
+            "current",
+            "expired",
+            "untrusted",
+            "blocked"
+          ],
+          "title": "Evidence Status",
+          "type": "string"
+        },
+        "created_at": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Created At",
+          "type": "integer"
+        },
+        "updated_at": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Updated At",
+          "type": "integer"
+        },
+        "cost_status": {
+          "default": "unavailable",
+          "enum": [
+            "unavailable",
+            "router_verified"
+          ],
+          "title": "Cost Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "owner_zone",
+        "metadata",
+        "metadata_digest",
+        "revision",
+        "status",
+        "actual_level",
+        "recommended_level",
+        "recommendation_reasons",
+        "risk",
+        "external_domain",
+        "observations",
+        "created_at",
+        "updated_at"
+      ],
+      "title": "AssetRecord",
+      "type": "object"
+    },
     "Channel": {
       "additionalProperties": false,
       "properties": {
@@ -105,6 +767,49 @@
         "principal"
       ],
       "title": "CommandResult",
+      "type": "object"
+    },
+    "DataConnection": {
+      "additionalProperties": false,
+      "properties": {
+        "reference": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Reference",
+          "type": "string"
+        },
+        "classification": {
+          "enum": [
+            "public",
+            "internal",
+            "confidential",
+            "core"
+          ],
+          "title": "Classification",
+          "type": "string"
+        },
+        "actions": {
+          "items": {
+            "enum": [
+              "read",
+              "write",
+              "delete",
+              "export"
+            ],
+            "type": "string"
+          },
+          "maxItems": 4,
+          "minItems": 1,
+          "title": "Actions",
+          "type": "array"
+        }
+      },
+      "required": [
+        "reference",
+        "classification",
+        "actions"
+      ],
+      "title": "DataConnection",
       "type": "object"
     },
     "DecideVersion": {
@@ -243,6 +948,172 @@
       "title": "Decision",
       "type": "object"
     },
+    "DiscoveryEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "enum": [
+            "router",
+            "im",
+            "platform",
+            "catalog"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "source_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Source Id",
+          "type": "string"
+        },
+        "record_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Record Id",
+          "type": "string"
+        },
+        "snapshot_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Snapshot Digest",
+          "type": "string"
+        },
+        "observed_at": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Observed At",
+          "type": "integer"
+        },
+        "external_domain": {
+          "default": false,
+          "title": "External Domain",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "source",
+        "source_id",
+        "record_id",
+        "snapshot_digest",
+        "observed_at"
+      ],
+      "title": "DiscoveryEvidence",
+      "type": "object"
+    },
+    "LinkAsset": {
+      "additionalProperties": false,
+      "properties": {
+        "api_version": {
+          "const": "agent-registry.sudo.dev/v1alpha1",
+          "title": "Api Version",
+          "type": "string"
+        },
+        "request_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "asset_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "expected_revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Expected Revision",
+          "type": "integer"
+        },
+        "initiated_by": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Initiated By",
+          "type": "string"
+        },
+        "kind": {
+          "const": "LinkAsset",
+          "title": "Kind",
+          "type": "string"
+        },
+        "principal": {
+          "$ref": "#/$defs/PrincipalRef"
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "asset_id",
+        "expected_revision",
+        "initiated_by",
+        "kind",
+        "principal"
+      ],
+      "title": "LinkAsset",
+      "type": "object"
+    },
+    "MergeAsset": {
+      "additionalProperties": false,
+      "properties": {
+        "api_version": {
+          "const": "agent-registry.sudo.dev/v1alpha1",
+          "title": "Api Version",
+          "type": "string"
+        },
+        "request_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "asset_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "expected_revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Expected Revision",
+          "type": "integer"
+        },
+        "initiated_by": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Initiated By",
+          "type": "string"
+        },
+        "kind": {
+          "const": "MergeAsset",
+          "title": "Kind",
+          "type": "string"
+        },
+        "target_asset_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Target Asset Id",
+          "type": "string"
+        },
+        "target_revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Target Revision",
+          "type": "integer"
+        },
+        "reason": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "asset_id",
+        "expected_revision",
+        "initiated_by",
+        "kind",
+        "target_asset_id",
+        "target_revision",
+        "reason"
+      ],
+      "title": "MergeAsset",
+      "type": "object"
+    },
     "MoveChannel": {
       "additionalProperties": false,
       "properties": {
@@ -301,6 +1172,60 @@
         "reason"
       ],
       "title": "MoveChannel",
+      "type": "object"
+    },
+    "ObserveAsset": {
+      "additionalProperties": false,
+      "properties": {
+        "api_version": {
+          "const": "agent-registry.sudo.dev/v1alpha1",
+          "title": "Api Version",
+          "type": "string"
+        },
+        "request_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "asset_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "expected_revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Expected Revision",
+          "type": "integer"
+        },
+        "initiated_by": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Initiated By",
+          "type": "string"
+        },
+        "kind": {
+          "const": "ObserveAsset",
+          "title": "Kind",
+          "type": "string"
+        },
+        "metadata": {
+          "$ref": "#/$defs/AssetMetadata"
+        },
+        "observation": {
+          "$ref": "#/$defs/DiscoveryEvidence"
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "asset_id",
+        "expected_revision",
+        "initiated_by",
+        "kind",
+        "metadata",
+        "observation"
+      ],
+      "title": "ObserveAsset",
       "type": "object"
     },
     "Principal": {
@@ -427,6 +1352,56 @@
       "title": "PublishVersion",
       "type": "object"
     },
+    "RecordAcceptance": {
+      "additionalProperties": false,
+      "properties": {
+        "api_version": {
+          "const": "agent-registry.sudo.dev/v1alpha1",
+          "title": "Api Version",
+          "type": "string"
+        },
+        "request_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "asset_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "expected_revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Expected Revision",
+          "type": "integer"
+        },
+        "initiated_by": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Initiated By",
+          "type": "string"
+        },
+        "kind": {
+          "const": "RecordAcceptance",
+          "title": "Kind",
+          "type": "string"
+        },
+        "report": {
+          "$ref": "#/$defs/AcceptanceReport"
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "asset_id",
+        "expected_revision",
+        "initiated_by",
+        "kind",
+        "report"
+      ],
+      "title": "RecordAcceptance",
+      "type": "object"
+    },
     "RegisterPrincipal": {
       "additionalProperties": false,
       "properties": {
@@ -514,6 +1489,118 @@
         "evaluated_at"
       ],
       "title": "Resolution",
+      "type": "object"
+    },
+    "ReviewAsset": {
+      "additionalProperties": false,
+      "properties": {
+        "api_version": {
+          "const": "agent-registry.sudo.dev/v1alpha1",
+          "title": "Api Version",
+          "type": "string"
+        },
+        "request_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "asset_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "expected_revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Expected Revision",
+          "type": "integer"
+        },
+        "initiated_by": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Initiated By",
+          "type": "string"
+        },
+        "kind": {
+          "const": "ReviewAsset",
+          "title": "Kind",
+          "type": "string"
+        },
+        "decision": {
+          "enum": [
+            "approve",
+            "return"
+          ],
+          "title": "Decision",
+          "type": "string"
+        },
+        "reason": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "asset_id",
+        "expected_revision",
+        "initiated_by",
+        "kind",
+        "decision",
+        "reason"
+      ],
+      "title": "ReviewAsset",
+      "type": "object"
+    },
+    "SaveAsset": {
+      "additionalProperties": false,
+      "properties": {
+        "api_version": {
+          "const": "agent-registry.sudo.dev/v1alpha1",
+          "title": "Api Version",
+          "type": "string"
+        },
+        "request_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "asset_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "expected_revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Expected Revision",
+          "type": "integer"
+        },
+        "initiated_by": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Initiated By",
+          "type": "string"
+        },
+        "kind": {
+          "const": "SaveAsset",
+          "title": "Kind",
+          "type": "string"
+        },
+        "metadata": {
+          "$ref": "#/$defs/AssetMetadata"
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "asset_id",
+        "expected_revision",
+        "initiated_by",
+        "kind",
+        "metadata"
+      ],
+      "title": "SaveAsset",
       "type": "object"
     },
     "SetPrincipalStatus": {
@@ -610,6 +1697,105 @@
         "signature_base64"
       ],
       "title": "SignedVersion",
+      "type": "object"
+    },
+    "SubmitAsset": {
+      "additionalProperties": false,
+      "properties": {
+        "api_version": {
+          "const": "agent-registry.sudo.dev/v1alpha1",
+          "title": "Api Version",
+          "type": "string"
+        },
+        "request_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "asset_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "expected_revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Expected Revision",
+          "type": "integer"
+        },
+        "initiated_by": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Initiated By",
+          "type": "string"
+        },
+        "kind": {
+          "const": "SubmitAsset",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "asset_id",
+        "expected_revision",
+        "initiated_by",
+        "kind"
+      ],
+      "title": "SubmitAsset",
+      "type": "object"
+    },
+    "SuspendAsset": {
+      "additionalProperties": false,
+      "properties": {
+        "api_version": {
+          "const": "agent-registry.sudo.dev/v1alpha1",
+          "title": "Api Version",
+          "type": "string"
+        },
+        "request_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "asset_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "expected_revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Expected Revision",
+          "type": "integer"
+        },
+        "initiated_by": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Initiated By",
+          "type": "string"
+        },
+        "kind": {
+          "const": "SuspendAsset",
+          "title": "Kind",
+          "type": "string"
+        },
+        "reason": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "asset_id",
+        "expected_revision",
+        "initiated_by",
+        "kind",
+        "reason"
+      ],
+      "title": "SuspendAsset",
       "type": "object"
     },
     "VersionItem": {
@@ -798,6 +1984,56 @@
     },
     {
       "$ref": "#/$defs/VersionItem"
+    },
+    {
+      "discriminator": {
+        "mapping": {
+          "LinkAsset": "#/$defs/LinkAsset",
+          "MergeAsset": "#/$defs/MergeAsset",
+          "ObserveAsset": "#/$defs/ObserveAsset",
+          "RecordAcceptance": "#/$defs/RecordAcceptance",
+          "ReviewAsset": "#/$defs/ReviewAsset",
+          "SaveAsset": "#/$defs/SaveAsset",
+          "SubmitAsset": "#/$defs/SubmitAsset",
+          "SuspendAsset": "#/$defs/SuspendAsset"
+        },
+        "propertyName": "kind"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/SaveAsset"
+        },
+        {
+          "$ref": "#/$defs/ObserveAsset"
+        },
+        {
+          "$ref": "#/$defs/SubmitAsset"
+        },
+        {
+          "$ref": "#/$defs/ReviewAsset"
+        },
+        {
+          "$ref": "#/$defs/SuspendAsset"
+        },
+        {
+          "$ref": "#/$defs/LinkAsset"
+        },
+        {
+          "$ref": "#/$defs/MergeAsset"
+        },
+        {
+          "$ref": "#/$defs/RecordAcceptance"
+        }
+      ]
+    },
+    {
+      "$ref": "#/$defs/AssetRecord"
+    },
+    {
+      "$ref": "#/$defs/AssetPage"
+    },
+    {
+      "$ref": "#/$defs/AssetHistory"
     }
   ],
   "$schema": "https://json-schema.org/draft/2020-12/schema",

@@ -211,6 +211,16 @@ class HostedDockerRunner:
         except (ValueError, TypeError, AttributeError):
             raise HostedRuntimeError("HOSTED_IMAGE_MISMATCH") from None
 
+    async def require_resource_limits(self):
+        # Some daemons silently turn --memory-swap=<memory> into unlimited swap.
+        # Check actual kernel support, not just that Docker accepted our flags.
+        # Cleanup deliberately does not require these capabilities.
+        output = await self._command(
+            "info", "--format", "{{json .MemoryLimit}} {{json .SwapLimit}} {{json .PidsLimit}}"
+        )
+        if output.strip() != b"true true true":
+            raise HostedRuntimeError("HOSTED_RESOURCE_LIMITS_UNAVAILABLE")
+
     def command(self, artifact: HostedImage, name: str) -> list[str]:
         profile = SandboxSecurityProfile.strict()
         return [
@@ -359,6 +369,7 @@ class HostedDockerRunner:
         ):
             raise HostedRuntimeError("HOSTED_LIMIT_INVALID")
         await self.inspect(artifact)
+        await self.require_resource_limits()
         name = "sudo-hosted-" + uuid4().hex
         proc = None
         try:
@@ -393,17 +404,29 @@ class HostedDockerRunner:
         except TimeoutError:
             raise HostedRuntimeError("HOSTED_RESULT_UNCONFIRMED") from None
         finally:
-            # Kill the CLI before proving cleanup; killing it alone is insufficient.
-            if proc is not None and proc.returncode is None:
-                with suppress(ProcessLookupError):
-                    proc.kill()
-                await proc.wait()
-            if execution_id is not None:
-                await self.reconcile(artifact, execution_id)
-            else:
-                try:
-                    await self._command("rm", "-f", name)
-                except HostedRuntimeError:
-                    remaining = await self._command("ps", "-aq", "--filter", f"name=^/{name}$")
-                    if remaining.strip():
-                        raise HostedRuntimeError("HOSTED_CLEANUP_UNCONFIRMED") from None
+            # Close stdin before waiting: Docker attach may otherwise leave an
+            # asyncio pipe open after the CLI has exited. A wedged CLI must not
+            # prevent the independent container cleanup from being attempted.
+            try:
+                if proc is not None:
+                    if proc.stdin is not None:
+                        proc.stdin.close()
+                    if proc.returncode is None:
+                        with suppress(ProcessLookupError):
+                            proc.kill()
+                    try:
+                        async with asyncio.timeout(2):
+                            await proc.wait()
+                    except TimeoutError:
+                        if proc.returncode is None:
+                            raise HostedRuntimeError("HOSTED_CLEANUP_UNCONFIRMED") from None
+            finally:
+                if execution_id is not None:
+                    await self.reconcile(artifact, execution_id)
+                else:
+                    try:
+                        await self._command("rm", "-f", name)
+                    except HostedRuntimeError:
+                        remaining = await self._command("ps", "-aq", "--filter", f"name=^/{name}$")
+                        if remaining.strip():
+                            raise HostedRuntimeError("HOSTED_CLEANUP_UNCONFIRMED") from None

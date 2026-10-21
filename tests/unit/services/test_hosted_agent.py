@@ -198,6 +198,91 @@ async def test_unreviewed_image_never_runs():
         await runner.inspect(artifact())
 
 
+@pytest.mark.parametrize(
+    "response", [b"true false true", b"true true false", b"false true true", b"true true", b"1 1 1"]
+)
+@pytest.mark.asyncio
+async def test_missing_kernel_limits_refuse_before_creating_worker(response):
+    runner = HostedDockerRunner()
+    commands = []
+
+    async def inspect(_artifact):
+        pass
+
+    async def command(*args):
+        commands.append(args)
+        assert args[0] == "info"
+        return response
+
+    runner.inspect = inspect
+    runner._command = command
+    with pytest.raises(HostedRuntimeError, match="HOSTED_RESOURCE_LIMITS_UNAVAILABLE"):
+        await runner.run(artifact(), "6 * 7", None, None, execution_id="e" * 32)
+    assert len(commands) == 1
+
+
+@pytest.mark.asyncio
+async def test_kernel_limit_support_is_checked_anew():
+    runner = HostedDockerRunner()
+    replies = iter([b"true true true\n", b"true false true\n"])
+
+    async def command(*_args):
+        return next(replies)
+
+    runner._command = command
+    await runner.require_resource_limits()
+    with pytest.raises(HostedRuntimeError, match="HOSTED_RESOURCE_LIMITS_UNAVAILABLE"):
+        await runner.require_resource_limits()
+
+
+@pytest.mark.asyncio
+async def test_unjoinable_cli_does_not_skip_container_cleanup(monkeypatch):
+    from nexus.bricks.sandbox import hosted_agent
+
+    actions = []
+
+    class Input:
+        def close(self):
+            actions.append("stdin_closed")
+
+    class Process:
+        stdin = Input()
+        returncode = None
+
+        def kill(self):
+            actions.append("kill")
+
+        async def wait(self):
+            raise TimeoutError
+
+    class Runner(HostedDockerRunner):
+        async def inspect(self, _artifact):
+            pass
+
+        async def require_resource_limits(self):
+            pass
+
+        async def _command(self, *args):
+            assert args[0] == "create"
+            return b"a" * 64
+
+        async def reconcile(self, _artifact, execution_id):
+            assert execution_id == "e" * 32
+            actions.append("cleanup")
+
+    async def spawn(*args, **kwargs):
+        return Process()
+
+    async def exchange(*args, **kwargs):
+        raise HostedRuntimeError("HOSTED_MODEL_REFUSED")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+    monkeypatch.setattr(hosted_agent, "exchange", exchange)
+    with pytest.raises(HostedRuntimeError, match="HOSTED_CLEANUP_UNCONFIRMED"):
+        await Runner().run(artifact(), "6 * 7", None, None, execution_id="e" * 32)
+    assert actions == ["stdin_closed", "kill", "cleanup"]
+
+
 class DurableDocker(HostedDockerRunner):
     """Controlled daemon races; real daemon recovery is tested in the isolated lab."""
 

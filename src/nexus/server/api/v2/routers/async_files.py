@@ -288,7 +288,8 @@ class WriteResponse(BaseModel):
     content_id: str
     version: int
     size: int
-    modified_at: str
+    # Typed VFS Write returns content/generation but may not include a timestamp.
+    modified_at: str | None = None
     # Present when `index` was requested: indexed | skipped | error (#4736).
     index: WriteIndexResult | None = None
     revision: str | None = Field(
@@ -908,7 +909,7 @@ def create_async_files_router(
                 if isinstance(response_gen, int) and response_gen > response_version:
                     response_version = response_gen
 
-                modified = result["modified_at"]
+                modified = result.get("modified_at")
                 if hasattr(modified, "isoformat"):
                     modified = modified.isoformat()
                 index_result: WriteIndexResult | None = None
@@ -927,7 +928,7 @@ def create_async_files_router(
                     content_id=result["content_id"],
                     version=response_version,
                     size=result["size"],
-                    modified_at=str(modified),
+                    modified_at=str(modified) if modified is not None else None,
                     index=index_result,
                     revision=result.get("revision"),
                     projection_seq=result.get("projection_seq"),

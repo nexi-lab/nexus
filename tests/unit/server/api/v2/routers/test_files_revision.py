@@ -107,6 +107,24 @@ def test_write_without_revision_reports_null(client: TestClient, mock_fs: MagicM
     assert REVISION_HEADER not in resp.headers
 
 
+def test_typed_write_without_timestamp_does_not_report_failure_after_commit(
+    client: TestClient,
+    mock_fs: MagicMock,
+) -> None:
+    mock_fs.write.return_value = {
+        "content_id": "abc",
+        "gen": 3,
+        "size": 5,
+        "revision": "/a.txt@3",
+    }
+    response = client.post("/write", json={"path": "/a.txt", "content": "hello"})
+    assert response.status_code == 200
+    assert response.json()["modified_at"] is None
+    assert response.json()["version"] == 3
+    assert response.json()["revision"] == "/a.txt@3"
+    mock_fs.write.assert_called_once()
+
+
 def test_batch_write_returns_per_item_revision(client: TestClient) -> None:
     resp = client.post(
         "/batch/write",

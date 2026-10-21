@@ -5,6 +5,7 @@ from typing import Annotated, Literal
 from pydantic import Field, model_serializer, model_validator
 
 from nexus.contracts.agent_inventory import Identifier, Label
+from nexus.contracts.agent_native import NativeOutputVerification
 from nexus.contracts.product_agent_registry import API, Digest, Stamp, WireModel
 
 
@@ -239,6 +240,14 @@ class HostedEvaluationCase(WireModel):
     iam_cleanup_confirmed: bool = False
     source_execution: SourceEvaluationExecution | None = None
     model_evidence: Literal["evaluator_reported"] = "evaluator_reported"
+    native_verification: NativeOutputVerification | None = None
+
+    @model_serializer(mode="wrap")
+    def preserve_previous_evidence(self, handler):
+        value = handler(self)
+        if self.native_verification is None:
+            value.pop("native_verification", None)
+        return value
 
 
 class HostedEvaluationPage(WireModel):

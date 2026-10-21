@@ -162,6 +162,17 @@
           ],
           "default": null,
           "title": "Allowed Drop"
+        },
+        "native_binding": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NativeAcceptanceBinding"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -2264,6 +2275,17 @@
           "default": "evaluator_reported",
           "title": "Model Evidence",
           "type": "string"
+        },
+        "native_verification": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NativeOutputVerification"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -3277,6 +3299,27 @@
       "title": "MoveChannel",
       "type": "object"
     },
+    "NativeAcceptanceBinding": {
+      "additionalProperties": false,
+      "properties": {
+        "conversion_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Conversion Id",
+          "type": "string"
+        },
+        "profile_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Profile Digest",
+          "type": "string"
+        }
+      },
+      "required": [
+        "conversion_id",
+        "profile_digest"
+      ],
+      "title": "NativeAcceptanceBinding",
+      "type": "object"
+    },
     "NativeConversion": {
       "additionalProperties": false,
       "properties": {
@@ -3519,6 +3562,98 @@
       "title": "NativeDefinition",
       "type": "object"
     },
+    "NativeExecutionProfile": {
+      "additionalProperties": false,
+      "description": "Bindings to the current experimental owners, not activation of stable v1 families.",
+      "properties": {
+        "kind": {
+          "const": "NativeExecutionProfile",
+          "default": "NativeExecutionProfile",
+          "title": "Kind",
+          "type": "string"
+        },
+        "profile": {
+          "const": "native-independent-text-v1alpha1",
+          "default": "native-independent-text-v1alpha1",
+          "title": "Profile",
+          "type": "string"
+        },
+        "conversion_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Conversion Id",
+          "type": "string"
+        },
+        "spec_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Spec Digest",
+          "type": "string"
+        },
+        "definition_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Definition Digest",
+          "type": "string"
+        },
+        "image_id": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Image Id",
+          "type": "string"
+        },
+        "runtime": {
+          "$ref": "#/$defs/NativeRuntime"
+        },
+        "task_contract_version": {
+          "const": "task.sudo.dev/v1alpha1",
+          "default": "task.sudo.dev/v1alpha1",
+          "title": "Task Contract Version",
+          "type": "string"
+        },
+        "task_policy": {
+          "const": "independent_turns",
+          "default": "independent_turns",
+          "title": "Task Policy",
+          "type": "string"
+        },
+        "tool_policy": {
+          "const": "deny_all",
+          "default": "deny_all",
+          "title": "Tool Policy",
+          "type": "string"
+        },
+        "context_policy": {
+          "const": "literal_synthetic_text",
+          "default": "literal_synthetic_text",
+          "title": "Context Policy",
+          "type": "string"
+        },
+        "memory_policy": {
+          "const": "disabled",
+          "default": "disabled",
+          "title": "Memory Policy",
+          "type": "string"
+        },
+        "verify_policy": {
+          "const": "native-text-completion-v1",
+          "default": "native-text-completion-v1",
+          "title": "Verify Policy",
+          "type": "string"
+        },
+        "event_contract_version": {
+          "const": "task.sudo.dev/v1alpha1",
+          "default": "task.sudo.dev/v1alpha1",
+          "title": "Event Contract Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "conversion_id",
+        "spec_digest",
+        "definition_digest",
+        "image_id",
+        "runtime"
+      ],
+      "title": "NativeExecutionProfile",
+      "type": "object"
+    },
     "NativeImage": {
       "additionalProperties": false,
       "description": "A fixed native runtime candidate, not a renamed hosted artifact.",
@@ -3599,6 +3734,63 @@
         "runtime"
       ],
       "title": "NativeImage",
+      "type": "object"
+    },
+    "NativeOutputVerification": {
+      "additionalProperties": false,
+      "description": "Deterministic execution-shape checks, not independent business correctness.",
+      "properties": {
+        "kind": {
+          "const": "NativeOutputVerification",
+          "default": "NativeOutputVerification",
+          "title": "Kind",
+          "type": "string"
+        },
+        "policy": {
+          "const": "native-text-completion-v1",
+          "default": "native-text-completion-v1",
+          "title": "Policy",
+          "type": "string"
+        },
+        "profile_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Profile Digest",
+          "type": "string"
+        },
+        "output_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Output Digest",
+          "type": "string"
+        },
+        "verdict": {
+          "enum": [
+            "passed",
+            "rejected"
+          ],
+          "title": "Verdict",
+          "type": "string"
+        },
+        "failures": {
+          "items": {
+            "enum": [
+              "output_text",
+              "model_call_count",
+              "native_trace",
+              "execution_cleanup"
+            ],
+            "type": "string"
+          },
+          "title": "Failures",
+          "type": "array"
+        }
+      },
+      "required": [
+        "profile_digest",
+        "output_digest",
+        "verdict",
+        "failures"
+      ],
+      "title": "NativeOutputVerification",
       "type": "object"
     },
     "NativeRuntime": {
@@ -5115,6 +5307,12 @@
     },
     {
       "$ref": "#/$defs/NativeConversionPage"
+    },
+    {
+      "$ref": "#/$defs/NativeExecutionProfile"
+    },
+    {
+      "$ref": "#/$defs/NativeOutputVerification"
     },
     {
       "$ref": "#/$defs/EvaluationDataset"

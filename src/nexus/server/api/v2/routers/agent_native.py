@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from nexus.contracts.agent_native import (
     NativeConversion,
     NativeConversionPage,
+    NativeExecutionProfile,
     RegisterNativeConversion,
 )
 from nexus.server.api.v2.routers.agent_execution import actor, body
@@ -39,3 +40,8 @@ async def list_conversions(
 @router.get("/conversions/{conversion_id}", response_model=NativeConversion)
 async def get_conversion(conversion_id: str, identity=Depends(actor), native=Depends(service)):
     return await invoke(lambda: native.get(identity, conversion_id))
+
+
+@router.get("/conversions/{conversion_id}/profile", response_model=NativeExecutionProfile)
+async def get_profile(conversion_id: str, identity=Depends(actor), native=Depends(service)):
+    return await invoke(lambda: native.profile(identity, conversion_id))

@@ -252,6 +252,11 @@ class NativeConversions:
             raise RegistryError("NATIVE_CONVERSION_NOT_FOUND", 404)
         return self._decode(doc)
 
+    def profile(self, actor, conversion_id):
+        from nexus.services.product_agent_registry.native_execution import execution_profile
+
+        return execution_profile(self.get(actor, conversion_id))
+
     def list(self, actor, asset_id, after=""):
         self._authorize(actor)
         self.registry.inventory.get(actor, asset_id)

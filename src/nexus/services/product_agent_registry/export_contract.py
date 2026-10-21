@@ -57,7 +57,9 @@ from nexus.contracts.agent_inventory import (
 from nexus.contracts.agent_native import (
     NativeConversion,
     NativeConversionPage,
+    NativeExecutionProfile,
     NativeImage,
+    NativeOutputVerification,
     RegisterNativeConversion,
 )
 from nexus.contracts.product_agent_registry import (
@@ -106,6 +108,8 @@ def artifacts() -> dict[str, str]:
         | RegisterNativeConversion
         | NativeConversion
         | NativeConversionPage
+        | NativeExecutionProfile
+        | NativeOutputVerification
         | EvaluationDataset
         | EvaluationDatasetPage
         | RegisterEvaluationDataset

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 
 from sqlalchemy import (
     BigInteger,
@@ -220,7 +220,7 @@ class AgentInventory:
             )
         )
 
-    def _projection(self, record):
+    def _projection(self, record, con=None):
         """Fresh evidence/risk presentation without changing the stored audit record."""
         record = record.model_copy(deep=True)
         record.effective_domain = (
@@ -241,12 +241,18 @@ class AgentInventory:
                 record.evidence_status = "untrusted"
             elif record.acceptance.expires_at <= self.registry.clock():
                 record.evidence_status = "expired"
-            elif (
-                record.status != "approved"
-                or record.external_domain
-                or record.acceptance.level == "L3"
-            ):
+            elif record.status != "approved" or record.external_domain:
                 record.evidence_status = "blocked"
+            elif record.acceptance.level == "L3":
+                try:
+                    with (
+                        nullcontext(con) if con is not None else self.engine.connect() as connection
+                    ):
+                        self._validate_acceptance(
+                            record, record.acceptance, con=connection, zone=record.owner_zone
+                        )
+                except RegistryError:
+                    record.evidence_status = "blocked"
         if record.evidence_status != "current":
             record.actual_level = "L0"
         return record
@@ -279,7 +285,9 @@ class AgentInventory:
                 if previous:
                     if previous["digest"] != fingerprint:
                         raise RegistryError("REGISTRY_IDEMPOTENCY_CONFLICT")
-                    return self._projection(AssetRecord.model_validate_json(previous["result"]))
+                    return self._projection(
+                        AssetRecord.model_validate_json(previous["result"]), con
+                    )
                 if (
                     isinstance(command, (SaveAsset, ObserveAsset))
                     and command.expected_revision == 0
@@ -319,7 +327,9 @@ class AgentInventory:
                 if previous:
                     if previous["digest"] != fingerprint:
                         raise RegistryError("REGISTRY_IDEMPOTENCY_CONFLICT")
-                    return self._projection(AssetRecord.model_validate_json(previous["result"]))
+                    return self._projection(
+                        AssetRecord.model_validate_json(previous["result"]), con
+                    )
                 if record.revision != command.expected_revision:
                     raise RegistryError("AGENT_ASSET_REVISION_CONFLICT")
                 if record.status == "merged":
@@ -505,7 +515,7 @@ class AgentInventory:
                         result=record.model_dump_json(),
                     )
                 )
-                return self._projection(record)
+                return self._projection(record, con)
         except IntegrityError:
             # A concurrent identical create may have won; never hide a changed request.
             with self.engine.connect() as con:
@@ -526,11 +536,13 @@ class AgentInventory:
     def _validate_acceptance(self, record, report, *, con, zone):
         if not record.metadata.owner_user_id:
             raise RegistryError("AGENT_ASSET_OWNER_REQUIRED")
-        # L3 needs a native conversion artifact and six-contract runtime proof.
-        # Neither an attestor's label nor an L2 migration comparison provides it.
-        # Keep requests representable for planning, but fail closed at review,
-        # publication and every resolution, including previously persisted reports.
         if report.level == "L3":
+            from nexus.services.product_agent_registry.native_acceptance import (
+                require_native_acceptance,
+            )
+
+            require_native_acceptance(self, con, zone, record, report)
+        elif report.native_binding is not None or record.metadata.source_platform == "native":
             raise RegistryError("AGENT_NATIVE_CONVERSION_REQUIRED")
         required = {"entry", "identity", "router", "revoke"}
         if record.metadata.tool_refs:
@@ -575,7 +587,7 @@ class AgentInventory:
     def get(self, actor, asset_id):
         self._authorize(actor)
         with self.engine.connect() as con:
-            return self._projection(self._get(con, actor.zone, asset_id))
+            return self._projection(self._get(con, actor.zone, asset_id), con)
 
     def list(self, actor, after="", owner=None):
         self._authorize(actor)

@@ -75,7 +75,19 @@ def complete(service, run, answer):
     grant = asyncio.run(service.issue_grant(ADMIN, run.id, lease(claim)))
     assert grant.grant.request.asset_id == run.asset_id
     assert grant.grant.request.spec_digest == run.spec_digest
-    return service.complete(ADMIN, run.id, result(claim, answer=answer))
+    command = result(claim, answer=answer)
+    if run.execution_kind == "native" and run.role == "hosted":
+        from nexus.contracts.agent_evaluation import EvaluationTrace
+
+        command = command.model_copy(
+            update={
+                "trace": [
+                    EvaluationTrace(node="native-sudocode", phase="started"),
+                    EvaluationTrace(node="native-sudocode", phase="completed"),
+                ]
+            }
+        )
+    return service.complete(ADMIN, run.id, command)
 
 
 def test_native_source_candidate_policy_and_comparison_are_explicit(execution):
@@ -99,7 +111,9 @@ def test_native_source_candidate_policy_and_comparison_are_explicit(execution):
             }
         ),
     )
-    complete(service, candidate, "wrong")
+    completed = complete(service, candidate, "wrong")
+    assert completed.native_verification.verdict == "passed"
+    assert not completed.passed  # Runtime verification does not replace dataset grading.
     comparison = service.compare(ADMIN, candidate.id)
     assert comparison.execution_kind == "native"
     assert (

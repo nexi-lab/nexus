@@ -123,15 +123,32 @@ def require_migration_comparison(con, zone, record, report):
     if policy_document is None:
         raise RegistryError("AGENT_MIGRATION_COMPARISON_REQUIRED")
     policy = MigrationPolicy.model_validate_json(policy_document)
+    if comparison.execution_kind != policy.execution_kind or (
+        comparison.execution_kind == "native"
+    ) != (report.level == "L3"):
+        raise RegistryError("AGENT_MIGRATION_COMPARISON_MISMATCH")
+    if comparison.execution_kind == "native":
+        from nexus.services.product_agent_registry.native_conversions import (
+            NativeConversions,
+            conversions,
+        )
+
+        artifact_table = conversions
+    else:
+        artifact_table = artifacts
     artifact_document = con.execute(
-        select(artifacts.c.document).where(
-            artifacts.c.zone == zone,
-            artifacts.c.id == policy.artifact_id,
+        select(artifact_table.c.document).where(
+            artifact_table.c.zone == zone,
+            artifact_table.c.id == policy.artifact_id,
         )
     ).scalar_one_or_none()
     if artifact_document is None:
         raise RegistryError("AGENT_MIGRATION_COMPARISON_REQUIRED")
-    artifact = HostedArtifact.model_validate_json(artifact_document)
+    artifact = (
+        NativeConversions._decode(artifact_document)
+        if comparison.execution_kind == "native"
+        else HostedArtifact.model_validate_json(artifact_document)
+    )
     if (
         not comparison.passed
         or comparison.asset_id != record.id
@@ -639,6 +656,28 @@ class HostedEvaluations:
         iam_clean = grant is None or not grant.cleanup_pending
         if command.status == "succeeded" and not iam_clean:
             raise RegistryError("EVALUATION_IAM_CLEANUP_PENDING", 503)
+        native_verification = None
+        if (
+            run.execution_kind == "native"
+            and run.role == "hosted"
+            and command.status == "succeeded"
+        ):
+            from nexus.services.product_agent_registry.native_execution import (
+                execution_profile,
+                verify_output,
+            )
+
+            conversion = self.registry.native.get(actor, run.artifact_id)
+            native_verification = verify_output(
+                execution_profile(conversion),
+                command.answer,
+                command.model_call_ids,
+                [frame.model_dump() for frame in command.trace],
+                execution_succeeded=True,
+                cleanup_confirmed=command.cleanup_confirmed,
+            )
+            if native_verification.verdict != "passed":
+                raise RegistryError("NATIVE_OUTPUT_VERIFICATION_FAILED", 400)
         with self.registry.inventory._transaction() as con:
             # Serialize completion/reconciliation with claim, without requiring a
             # still-enabled asset to record an already-performed operation.
@@ -687,6 +726,7 @@ class HostedEvaluations:
                         canonical_bytes([frame.model_dump() for frame in command.trace])
                     ),
                     "passed": passed,
+                    "native_verification": native_verification,
                     "completed_at": self.registry.clock(),
                 }
             )

@@ -102,3 +102,33 @@ class NativeConversionPage(WireModel):
     kind: Literal["NativeConversionPage"] = "NativeConversionPage"
     items: list[NativeConversion]
     next_cursor: Identifier | None
+
+
+class NativeExecutionProfile(WireModel):
+    """Bindings to the current experimental owners, not activation of stable v1 families."""
+
+    kind: Literal["NativeExecutionProfile"] = "NativeExecutionProfile"
+    profile: Literal["native-independent-text-v1alpha1"] = "native-independent-text-v1alpha1"
+    conversion_id: Identifier
+    spec_digest: Digest
+    definition_digest: Digest
+    image_id: Digest
+    runtime: NativeRuntime
+    task_contract_version: Literal["task.sudo.dev/v1alpha1"] = "task.sudo.dev/v1alpha1"
+    task_policy: Literal["independent_turns"] = "independent_turns"
+    tool_policy: Literal["deny_all"] = "deny_all"
+    context_policy: Literal["literal_synthetic_text"] = "literal_synthetic_text"
+    memory_policy: Literal["disabled"] = "disabled"
+    verify_policy: Literal["native-text-completion-v1"] = "native-text-completion-v1"
+    event_contract_version: Literal["task.sudo.dev/v1alpha1"] = "task.sudo.dev/v1alpha1"
+
+
+class NativeOutputVerification(WireModel):
+    """Deterministic execution-shape checks, not independent business correctness."""
+
+    kind: Literal["NativeOutputVerification"] = "NativeOutputVerification"
+    policy: Literal["native-text-completion-v1"] = "native-text-completion-v1"
+    profile_digest: Digest
+    output_digest: Digest
+    verdict: Literal["passed", "rejected"]
+    failures: list[Literal["output_text", "model_call_count", "native_trace", "execution_cleanup"]]

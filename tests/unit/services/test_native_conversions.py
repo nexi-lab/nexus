@@ -261,6 +261,7 @@ def test_native_reads_are_pure_scoped_and_concurrent_registration_is_idempotent(
     try:
         assert registry.native.get(ADMIN, result.id) == result
         assert registry.native.list(ADMIN, target.id).items == [result]
+        assert registry.native.profile(ADMIN, result.id).conversion_id == result.id
     finally:
         event.remove(registry.engine, "before_cursor_execute", capture)
     assert not set(sql) & {"INSERT", "UPDATE", "DELETE", "CREATE", "ALTER"}
@@ -287,6 +288,12 @@ def test_native_api_requires_admin_and_rejects_unreviewed_source(api, execution)
     value = response.json()
     assert value["kind"] == "NativeConversion" and value["evidence"] == "registered_only"
     assert client.get(path + "/" + value["id"], headers=credentials["operator"]).json() == value
+    profile_url = path + "/" + value["id"] + "/profile"
+    profile = client.get(profile_url, headers=credentials["operator"])
+    assert profile.status_code == 200
+    assert profile.json()["tool_policy"] == "deny_all"
+    assert client.get(profile_url, headers=credentials["member"]).status_code == 403
+    assert client.get(profile_url, headers=credentials["foreign"]).status_code == 404
     assert client.get(path, params={"asset_id": target.id}, headers=credentials["operator"]).json()[
         "items"
     ] == [value]

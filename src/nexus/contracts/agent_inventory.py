@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Annotated, Literal
 
-from pydantic import Field, TypeAdapter, model_validator
+from pydantic import Field, TypeAdapter, model_serializer, model_validator
 
 from nexus.contracts.product_agent_registry import (
     API,
@@ -143,6 +143,11 @@ class MergeAsset(InventoryCommand):
     reason: Text
 
 
+class NativeAcceptanceBinding(WireModel):
+    conversion_id: Identifier
+    profile_digest: Digest
+
+
 class AcceptanceReport(WireModel):
     kind: Literal["AgentAcceptanceReport"] = "AgentAcceptanceReport"
     asset_id: Identifier
@@ -174,6 +179,14 @@ class AcceptanceReport(WireModel):
     before_score: Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)] | None = None
     after_score: Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)] | None = None
     allowed_drop: Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)] | None = None
+    native_binding: NativeAcceptanceBinding | None = None
+
+    @model_serializer(mode="wrap")
+    def preserve_previous_evidence(self, handler):
+        value = handler(self)
+        if self.native_binding is None:
+            value.pop("native_binding", None)
+        return value
 
 
 class RecordAcceptance(InventoryCommand):

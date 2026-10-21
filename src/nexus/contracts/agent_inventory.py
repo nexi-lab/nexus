@@ -68,6 +68,22 @@ class DiscoveryEvidence(WireModel):
     external_domain: bool = False
 
 
+class PlatformDiscoveryItem(WireModel):
+    """Metadata-only discovery profile, not a runtime or identity assertion."""
+
+    id: Identifier
+    name: Label
+    platform: Literal["langgraph", "http", "openai", "mcp", "a2a", "saas", "other"]
+    external_domain: bool
+
+
+class PlatformDiscoveryPage(WireModel):
+    api_version: Literal["agent-inventory.sudo.dev/v1alpha1"]
+    scope: Identifier
+    items: Annotated[list[PlatformDiscoveryItem], Field(max_length=100)]
+    next_cursor: Identifier | None
+
+
 class InventoryCommand(WireModel):
     api_version: Literal[API]
     request_id: Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$")]

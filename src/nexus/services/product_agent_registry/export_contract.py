@@ -12,7 +12,13 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from pydantic import TypeAdapter
 
-from nexus.contracts.agent_inventory import AssetCommand, AssetHistory, AssetPage, AssetRecord
+from nexus.contracts.agent_inventory import (
+    AssetCommand,
+    AssetHistory,
+    AssetPage,
+    AssetRecord,
+    PlatformDiscoveryPage,
+)
 from nexus.contracts.product_agent_registry import (
     API,
     CommandResult,
@@ -41,6 +47,7 @@ def artifacts() -> dict[str, str]:
         | AssetRecord
         | AssetPage
         | AssetHistory
+        | PlatformDiscoveryPage
     )
     schema = wire.json_schema()
 

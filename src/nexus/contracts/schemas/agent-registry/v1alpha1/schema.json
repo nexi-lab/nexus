@@ -1309,6 +1309,91 @@
       "title": "ObserveAsset",
       "type": "object"
     },
+    "PlatformDiscoveryItem": {
+      "additionalProperties": false,
+      "description": "Metadata-only discovery profile, not a runtime or identity assertion.",
+      "properties": {
+        "id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "platform": {
+          "enum": [
+            "langgraph",
+            "http",
+            "openai",
+            "mcp",
+            "a2a",
+            "saas",
+            "other"
+          ],
+          "title": "Platform",
+          "type": "string"
+        },
+        "external_domain": {
+          "title": "External Domain",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "platform",
+        "external_domain"
+      ],
+      "title": "PlatformDiscoveryItem",
+      "type": "object"
+    },
+    "PlatformDiscoveryPage": {
+      "additionalProperties": false,
+      "properties": {
+        "api_version": {
+          "const": "agent-inventory.sudo.dev/v1alpha1",
+          "title": "Api Version",
+          "type": "string"
+        },
+        "scope": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Scope",
+          "type": "string"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/PlatformDiscoveryItem"
+          },
+          "maxItems": 100,
+          "title": "Items",
+          "type": "array"
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Next Cursor"
+        }
+      },
+      "required": [
+        "api_version",
+        "scope",
+        "items",
+        "next_cursor"
+      ],
+      "title": "PlatformDiscoveryPage",
+      "type": "object"
+    },
     "Principal": {
       "additionalProperties": false,
       "properties": {
@@ -2119,6 +2204,9 @@
     },
     {
       "$ref": "#/$defs/AssetHistory"
+    },
+    {
+      "$ref": "#/$defs/PlatformDiscoveryPage"
     }
   ],
   "$schema": "https://json-schema.org/draft/2020-12/schema",

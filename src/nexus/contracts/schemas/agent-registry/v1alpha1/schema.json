@@ -2376,6 +2376,15 @@
     "HostedEvaluationRun": {
       "additionalProperties": false,
       "properties": {
+        "execution_kind": {
+          "default": "hosted",
+          "enum": [
+            "hosted",
+            "native"
+          ],
+          "title": "Execution Kind",
+          "type": "string"
+        },
         "api_version": {
           "const": "agent-registry.sudo.dev/v1alpha1",
           "default": "agent-registry.sudo.dev/v1alpha1",
@@ -2901,6 +2910,15 @@
     "MigrationComparison": {
       "additionalProperties": false,
       "properties": {
+        "execution_kind": {
+          "default": "hosted",
+          "enum": [
+            "hosted",
+            "native"
+          ],
+          "title": "Execution Kind",
+          "type": "string"
+        },
         "kind": {
           "const": "MigrationComparison",
           "default": "MigrationComparison",
@@ -3030,6 +3048,15 @@
     "MigrationPolicy": {
       "additionalProperties": false,
       "properties": {
+        "execution_kind": {
+          "default": "hosted",
+          "enum": [
+            "hosted",
+            "native"
+          ],
+          "title": "Execution Kind",
+          "type": "string"
+        },
         "kind": {
           "const": "MigrationPolicy",
           "default": "MigrationPolicy",
@@ -3319,11 +3346,39 @@
           "title": "Source Acceptance Digest",
           "type": "string"
         },
+        "source_acceptance_payload_base64": {
+          "anyOf": [
+            {
+              "maxLength": 64000,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Acceptance Payload Base64"
+        },
         "image": {
           "$ref": "#/$defs/NativeImage"
         },
         "definition": {
           "$ref": "#/$defs/NativeDefinition"
+        },
+        "definition_payload_base64": {
+          "anyOf": [
+            {
+              "maxLength": 500000,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Definition Payload Base64"
         },
         "spec_digest": {
           "pattern": "^sha256:[a-f0-9]{64}$",
@@ -4513,7 +4568,8 @@
         "profile": {
           "enum": [
             "dify-service-api-v1",
-            "langgraph-source-v1"
+            "langgraph-source-v1",
+            "registry-hosted-artifact-v1"
           ],
           "title": "Profile",
           "type": "string"
@@ -4556,6 +4612,15 @@
     "StartHostedEvaluation": {
       "additionalProperties": false,
       "properties": {
+        "execution_kind": {
+          "default": "hosted",
+          "enum": [
+            "hosted",
+            "native"
+          ],
+          "title": "Execution Kind",
+          "type": "string"
+        },
         "api_version": {
           "const": "agent-registry.sudo.dev/v1alpha1",
           "default": "agent-registry.sudo.dev/v1alpha1",

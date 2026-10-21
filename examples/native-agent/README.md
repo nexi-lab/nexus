@@ -88,3 +88,26 @@ returns the immutable result; it never executes the candidate again.
 accepts this record and probes the actual native entrypoint under the same
 strict sandbox. Its `NativeIsolationEvidence` covers isolation only. It stops
 before model dispatch and does not assign L3.
+
+## Native migration evaluation
+
+The existing durable evaluation API accepts `execution_kind: "native"`, with
+`artifact_id` identifying the immutable conversion. Both runs use a dataset
+registered against the native target's exact metadata and the target's own
+single-call IAM grant. For `role: "source_baseline"`, the source runtime profile
+is `registry-hosted-artifact-v1` and its `runtime_digest` must equal the
+conversion's `source_spec_digest`; this baseline runs the original reviewed L2
+image. The candidate runs the native image. Source calls do not inherit old
+source credentials or grant the target L3.
+
+As with hosted migration, the baseline must finish before creating a threshold
+policy; the candidate binds that policy when it starts. The owner computes the
+comparison from all durable cases, preserves unknown outcomes and requires
+cleanup. Native success additionally requires exactly one recorded model call.
+The source image, native conversion, dataset, target metadata, runtime kind and
+policy cannot be substituted across phases. Existing hosted records omit the
+new discriminator when serialized, preserving prior evidence digests.
+
+This is evaluation infrastructure. The management UI, deployed coordinator,
+six-family Task execution, independent native acceptance and Work publication
+must still be composed and verified before L3 is enabled.

@@ -1,8 +1,10 @@
 import json
 
 import pytest
+from pydantic import ValidationError
 
 from nexus.bricks.sandbox.hosted_agent import HostedDockerRunner, HostedRuntimeError
+from nexus.bricks.sandbox.hosted_supervisor import CleanupInput, SupervisorInput
 from nexus.contracts.agent_native import NativeImage, NativeRuntime
 
 
@@ -80,3 +82,25 @@ def test_native_uses_same_strict_runtime_and_no_task_selected_command():
         assert command[index + 1] == pair[1]
     assert "--read-only" in command
     assert not any("key" in value.lower() for value in command)
+
+
+def test_supervisor_accepts_native_material_without_increasing_call_budget():
+    image = native_image()
+    request = {
+        "artifact": image.model_dump(),
+        "query": "6*7",
+        "timeout_seconds": 60,
+        "max_model_calls": 1,
+        "max_output_tokens": 128,
+    }
+    assert isinstance(SupervisorInput.model_validate(request).artifact, NativeImage)
+    with pytest.raises(ValidationError):
+        SupervisorInput.model_validate({**request, "max_model_calls": 2})
+    cleanup = CleanupInput.model_validate(
+        {
+            "artifact": image.model_dump(),
+            "execution_id": "a" * 32,
+            "runtime_authority_id": "sha256:" + "b" * 64,
+        }
+    )
+    assert isinstance(cleanup.artifact, NativeImage)

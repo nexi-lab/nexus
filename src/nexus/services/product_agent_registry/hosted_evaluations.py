@@ -179,9 +179,16 @@ class HostedEvaluations:
         ):
             raise RegistryError("EVALUATION_ASSET_NOT_ADMITTED")
 
+    def _artifact(self, actor, request):
+        return (
+            self.registry.native.get(actor, request.artifact_id)
+            if request.execution_kind == "native"
+            else self.registry.hosted.get(actor, request.artifact_id)
+        )
+
     def start(self, actor, command: StartHostedEvaluation):
         self._authorize(actor)
-        artifact = self.registry.hosted.get(actor, command.artifact_id)
+        artifact = self._artifact(actor, command)
         dataset = self.registry.evaluation.get(actor, command.dataset_id)
         if (
             artifact.asset_id != command.asset_id
@@ -191,7 +198,18 @@ class HostedEvaluations:
         ):
             raise RegistryError("EVALUATION_INPUT_MISMATCH", 400)
         source = command.source_runtime
-        if source and (
+        if source and command.execution_kind == "native":
+            # The source is the exact reviewed L2 artifact recorded by the owner,
+            # evaluated under the target's own permissions, not inherited grants.
+            if (
+                source.profile != "registry-hosted-artifact-v1"
+                or source.source_digest != artifact.image.source_digest
+                or source.model_name != artifact.image.model_name
+                or source.runtime_digest != artifact.source_spec_digest
+                or source.revision_strength != "local_source_digest"
+            ):
+                raise RegistryError("EVALUATION_SOURCE_MISMATCH", 400)
+        elif source and (
             source.source_digest != artifact.image.source_digest
             or source.model_name != artifact.image.model_name
             or (source.profile, source.revision_strength)
@@ -260,6 +278,7 @@ class HostedEvaluations:
                         passed_cases=0,
                         status="queued",
                         role=command.role,
+                        execution_kind=command.execution_kind,
                         source_runtime=source,
                         comparison_policy_id=command.comparison_policy_id,
                     )
@@ -277,6 +296,7 @@ class HostedEvaluations:
                                 "dataset_digest",
                                 "rubric_digest",
                                 "total_cases",
+                                "execution_kind",
                             )
                         ):
                             raise RegistryError("EVALUATION_POLICY_MISMATCH")
@@ -527,7 +547,7 @@ class HostedEvaluations:
             _, case = self._case(con, actor, run_id, command.case_id, command.lease_token)
         if case.status != "running" or case.deadline_at <= self.registry.clock():
             raise RegistryError("EVALUATION_CASE_EXPIRED")
-        artifact = self.registry.hosted.get(actor, run.artifact_id)
+        artifact = self._artifact(actor, run)
         # Deterministic request recovers an IAM grant even if the response/binding
         # was lost. IAM never returns its key twice; a lost key cannot replay work.
         request = IssueExecutionGrant(
@@ -578,6 +598,7 @@ class HostedEvaluations:
             observed = command.source_execution
             if (
                 run.role != "source_baseline"
+                or run.execution_kind == "native"
                 or run.source_runtime is None
                 or observed.profile != run.source_runtime.profile
                 or observed.request_id != current.id
@@ -631,7 +652,17 @@ class HostedEvaluations:
                 raise RegistryError("EVALUATION_CASE_EXPIRED")
             if (command.status == "succeeded" or command.model_call_ids) and not grant:
                 raise RegistryError("EVALUATION_GRANT_REQUIRED", 400)
-            if command.status == "succeeded" and run.role == "source_baseline":
+            if (
+                command.status == "succeeded"
+                and run.execution_kind == "native"
+                and len(command.model_call_ids) != 1
+            ):
+                raise RegistryError("NATIVE_MODEL_EVIDENCE_REQUIRED", 400)
+            if (
+                command.status == "succeeded"
+                and run.role == "source_baseline"
+                and run.execution_kind == "hosted"
+            ):
                 source = current.source_execution
                 if source is None or (
                     source.profile == "dify-service-api-v1"
@@ -873,6 +904,7 @@ class HostedEvaluations:
                         "rubric_digest",
                         "total_cases",
                         "source_runtime",
+                        "execution_kind",
                     )
                 },
                 baseline_run_id=baseline.id,
@@ -922,6 +954,7 @@ class HostedEvaluations:
                     "dataset_digest",
                     "rubric_digest",
                     "total_cases",
+                    "execution_kind",
                 )
             ):
                 raise RegistryError("EVALUATION_POLICY_MISMATCH")
@@ -944,6 +977,7 @@ class HostedEvaluations:
                         "spec_digest",
                         "dataset_digest",
                         "rubric_digest",
+                        "execution_kind",
                     )
                 },
                 total_cases=total,

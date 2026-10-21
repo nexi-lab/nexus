@@ -2,7 +2,7 @@
 
 from typing import Annotated, Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, model_serializer, model_validator
 
 from nexus.contracts.agent_inventory import Identifier, Label
 from nexus.contracts.product_agent_registry import API, Digest, Stamp, WireModel
@@ -60,7 +60,7 @@ class EvaluationDatasetPage(WireModel):
 
 
 class SourceEvaluationRuntime(WireModel):
-    profile: Literal["dify-service-api-v1", "langgraph-source-v1"]
+    profile: Literal["dify-service-api-v1", "langgraph-source-v1", "registry-hosted-artifact-v1"]
     source_digest: Digest
     runtime_digest: Digest
     model_name: Annotated[str, Field(min_length=1, max_length=200)]
@@ -68,7 +68,20 @@ class SourceEvaluationRuntime(WireModel):
     revision_strength: Literal["observed_source_snapshot", "local_source_digest"]
 
 
-class StartHostedEvaluation(WireModel):
+class EvaluationExecution(WireModel):
+    execution_kind: Literal["hosted", "native"] = "hosted"
+
+    @model_serializer(mode="wrap")
+    def preserve_hosted_wire(self, handler):
+        # Existing evidence hashes and request fingerprints must remain valid.
+        # This discriminator is emitted only for the new native execution path.
+        value = handler(self)
+        if self.execution_kind == "hosted":
+            value.pop("execution_kind", None)
+        return value
+
+
+class StartHostedEvaluation(EvaluationExecution):
     api_version: Literal[API] = API
     kind: Literal["StartHostedEvaluation"] = "StartHostedEvaluation"
     request_id: Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$")]
@@ -89,10 +102,17 @@ class StartHostedEvaluation(WireModel):
             raise ValueError("EVALUATION_SOURCE_RUNTIME_REQUIRED")
         if self.role == "source_baseline" and self.comparison_policy_id is not None:
             raise ValueError("EVALUATION_POLICY_MISMATCH")
+        if self.source_runtime is not None and (
+            (self.source_runtime.profile == "registry-hosted-artifact-v1")
+            != (self.execution_kind == "native")
+        ):
+            raise ValueError("EVALUATION_SOURCE_RUNTIME_MISMATCH")
+        if self.execution_kind == "native" and self.max_model_calls != 1:
+            raise ValueError("NATIVE_SINGLE_MODEL_CALL_REQUIRED")
         return self
 
 
-class HostedEvaluationRun(WireModel):
+class HostedEvaluationRun(EvaluationExecution):
     api_version: Literal[API] = API
     kind: Literal["HostedEvaluationRun"] = "HostedEvaluationRun"
     id: Identifier
@@ -130,7 +150,7 @@ class CreateMigrationPolicy(WireModel):
     initiated_by: Identifier
 
 
-class MigrationPolicy(WireModel):
+class MigrationPolicy(EvaluationExecution):
     kind: Literal["MigrationPolicy"] = "MigrationPolicy"
     id: Identifier
     zone: Identifier
@@ -158,7 +178,7 @@ class MigrationPolicyPage(WireModel):
     next_cursor: Identifier | None
 
 
-class MigrationComparison(WireModel):
+class MigrationComparison(EvaluationExecution):
     kind: Literal["MigrationComparison"] = "MigrationComparison"
     id: Identifier
     zone: Identifier

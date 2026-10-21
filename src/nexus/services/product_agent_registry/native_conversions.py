@@ -61,6 +61,29 @@ class NativeConversions:
         if not set(metadata.tables).issubset(inspect(self.engine).get_table_names()):
             raise RegistryError("NATIVE_SCHEMA_REQUIRED", 503)
 
+    @staticmethod
+    def _decode(document):
+        record = NativeConversion.model_validate_json(document)
+        additions = {}
+        for field, value, expected in (
+            (
+                "source_acceptance_payload_base64",
+                record.source_acceptance,
+                record.source_acceptance_digest,
+            ),
+            ("definition_payload_base64", record.definition, record.image.definition_digest),
+        ):
+            raw = canonical_bytes(value.model_dump())
+            if digest(raw) != expected:
+                raise RegistryError("NATIVE_STORED_MATERIAL_MISMATCH", 503)
+            encoded = base64.b64encode(raw).decode()
+            if getattr(record, field) not in (None, encoded):
+                raise RegistryError("NATIVE_STORED_MATERIAL_MISMATCH", 503)
+            additions[field] = encoded
+        # Older records already bind both hashes. This is a read-only transport
+        # projection of those exact bytes, never an implicit migration/write.
+        return record.model_copy(update=additions)
+
     def register(self, actor, command: RegisterNativeConversion):
         self._authorize(actor)
         source = self.registry.hosted.get(actor, command.source_artifact_id)
@@ -101,7 +124,7 @@ class NativeConversions:
         def replay(row):
             if row["request_digest"] != fingerprint:
                 raise RegistryError("NATIVE_IDEMPOTENCY_CONFLICT")
-            return NativeConversion.model_validate_json(row["document"])
+            return self._decode(row["document"])
 
         try:
             with self.registry.inventory._transaction() as con:
@@ -184,8 +207,14 @@ class NativeConversions:
                     **provenance,
                     source_acceptance=report,
                     source_acceptance_issuer=accepted["issuer"],
+                    source_acceptance_payload_base64=base64.b64encode(
+                        canonical_bytes(report.model_dump())
+                    ).decode(),
                     image=image,
                     definition=definition,
+                    definition_payload_base64=base64.b64encode(
+                        canonical_bytes(definition.model_dump())
+                    ).decode(),
                     spec_digest=digest(payload),
                     spec_payload_base64=base64.b64encode(payload).decode(),
                     created_by=actor.subject,
@@ -221,7 +250,7 @@ class NativeConversions:
             ).scalar_one_or_none()
         if doc is None:
             raise RegistryError("NATIVE_CONVERSION_NOT_FOUND", 404)
-        return NativeConversion.model_validate_json(doc)
+        return self._decode(doc)
 
     def list(self, actor, asset_id, after=""):
         self._authorize(actor)
@@ -241,7 +270,7 @@ class NativeConversions:
                 .scalars()
                 .all()
             )
-        items = [NativeConversion.model_validate_json(doc) for doc in rows]
+        items = [self._decode(doc) for doc in rows]
         return NativeConversionPage(
             items=items[:5], next_cursor=items[4].id if len(items) > 5 else None
         )

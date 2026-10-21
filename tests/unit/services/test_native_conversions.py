@@ -4,12 +4,13 @@ Model answers and image IDs are fixtures here, never native qualification proof.
 """
 
 import base64
+import json
 from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
-from sqlalchemy import event
+from sqlalchemy import event, select, update
 
 from nexus.contracts.agent_hosted import RegisterHostedArtifact
 from nexus.contracts.agent_native import (
@@ -20,6 +21,7 @@ from nexus.contracts.agent_native import (
 )
 from nexus.contracts.product_agent_registry import canonical_bytes
 from nexus.services.product_agent_registry.hosted_build import BASE
+from nexus.services.product_agent_registry.native_conversions import conversions
 from nexus.services.product_agent_registry.store import RegistryActor, RegistryError, digest
 from tests.unit.services.test_agent_execution import execution as execution
 from tests.unit.services.test_agent_execution_api import api as api
@@ -148,6 +150,13 @@ def test_native_mapping_preserves_source_and_never_grants_target_L3(execution):
     assert result.evidence == "registered_only"
     assert result.source_acceptance.level == "L2"
     assert digest(base64.b64decode(result.spec_payload_base64)) == result.spec_digest
+    assert (
+        digest(base64.b64decode(result.source_acceptance_payload_base64))
+        == result.source_acceptance_digest
+    )
+    assert (
+        digest(base64.b64decode(result.definition_payload_base64)) == result.image.definition_digest
+    )
     assert registry.inventory.get(ADMIN, source.id) == source
     assert registry.inventory.get(ADMIN, target.id) == target
     assert registry.native.register(ADMIN, command) == result
@@ -296,3 +305,33 @@ def test_native_api_requires_admin_and_rejects_unreviewed_source(api, execution)
         ).status_code
         == 400
     )
+
+
+def test_old_native_material_proofs_are_derived_without_rewriting_record(execution):
+    registry, command, _, _ = prepare(execution)
+    record = registry.native.register(ADMIN, command)
+    legacy = record.model_dump(
+        exclude={"definition_payload_base64", "source_acceptance_payload_base64"}
+    )
+    encoded = json.dumps(legacy)
+    with registry.engine.begin() as con:
+        con.execute(
+            update(conversions).where(conversions.c.id == record.id).values(document=encoded)
+        )
+    assert registry.native.get(ADMIN, record.id) == record
+    with registry.engine.connect() as con:
+        assert (
+            con.execute(
+                select(conversions.c.document).where(conversions.c.id == record.id)
+            ).scalar_one()
+            == encoded
+        )
+    legacy["definition"]["plan"]["temperature"] = 0.5
+    with registry.engine.begin() as con:
+        con.execute(
+            update(conversions)
+            .where(conversions.c.id == record.id)
+            .values(document=json.dumps(legacy))
+        )
+    with pytest.raises(RegistryError, match="NATIVE_STORED_MATERIAL_MISMATCH"):
+        registry.native.get(ADMIN, record.id)

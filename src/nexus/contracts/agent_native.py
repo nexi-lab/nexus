@@ -84,8 +84,12 @@ class NativeConversion(WireModel):
     source_acceptance: AcceptanceReport
     source_acceptance_issuer: Label
     source_acceptance_digest: Digest
+    source_acceptance_payload_base64: (
+        Annotated[str, Field(min_length=1, max_length=64000)] | None
+    ) = None
     image: NativeImage
     definition: NativeDefinition
+    definition_payload_base64: Annotated[str, Field(min_length=1, max_length=500000)] | None = None
     spec_digest: Digest
     spec_payload_base64: Annotated[str, Field(min_length=1, max_length=750000)]
     created_by: Label

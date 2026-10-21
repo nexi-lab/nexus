@@ -14,17 +14,18 @@ import signal
 import sys
 from contextlib import suppress
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from nexus.bricks.sandbox.hosted_agent import FRAME_LIMIT, HostedDockerRunner, HostedRuntimeError
 from nexus.contracts.agent_hosted import HostedImage
+from nexus.contracts.agent_native import NativeImage
 
 PROTOCOL = "agent-hosted-supervisor/v1"
 
 
 class SupervisorInput(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    artifact: HostedImage
+    artifact: HostedImage | NativeImage
     execution_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
     runtime_authority_id: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
     query: str = Field(min_length=1, max_length=16000)
@@ -32,10 +33,16 @@ class SupervisorInput(BaseModel):
     max_model_calls: int = Field(ge=1, le=32)
     max_output_tokens: int = Field(ge=1, le=4096)
 
+    @model_validator(mode="after")
+    def native_limit(self):
+        if isinstance(self.artifact, NativeImage) and self.max_model_calls != 1:
+            raise ValueError("NATIVE_SINGLE_MODEL_CALL_REQUIRED")
+        return self
+
 
 class CleanupInput(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    artifact: HostedImage
+    artifact: HostedImage | NativeImage
     execution_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     runtime_authority_id: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
 

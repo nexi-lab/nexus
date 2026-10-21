@@ -407,6 +407,84 @@ def test_expired_evidence_and_new_source_version_fail_closed(registry):
         registry.inventory.admission(MEMBER, REF, SPEC)
 
 
+def test_native_label_cannot_qualify_l3_or_mutate_the_asset(registry):
+    asset = bind(registry, save(registry, hosting="internal_hosted", requested_level="L3"))
+    registry.inventory.attestors.add(EVALUATOR.subject)
+    evidence = {
+        **report(asset),
+        "level": "L3",
+        "execution_revision": SPEC,
+        "checks": [
+            "entry",
+            "identity",
+            "router",
+            "revoke",
+            "isolation",
+            "evaluation",
+            "trace",
+            "native",
+        ],
+        "evaluation_id": "claimed-native-comparison",
+        "dataset_digest": SPEC,
+        "rubric_digest": SPEC,
+        "before_score": 1.0,
+        "after_score": 1.0,
+        "allowed_drop": 0.0,
+    }
+    history = registry.inventory.history(ADMIN, asset.id)
+    with pytest.raises(RegistryError, match="AGENT_NATIVE_CONVERSION_REQUIRED"):
+        registry.inventory.command(
+            EVALUATOR, cmd("RecordAcceptance", asset.revision, report=evidence)
+        )
+    assert registry.inventory.get(ADMIN, asset.id) == asset
+    assert registry.inventory.history(ADMIN, asset.id) == history
+
+
+def test_preexisting_l3_is_read_only_blocked_and_cannot_publish_or_resolve(registry):
+    from sqlalchemy import select, update
+
+    from nexus.services.product_agent_registry.inventory import acceptances, assets
+
+    asset = accept(registry, bind(registry, save(registry)))
+    registry.command(ADMIN, publish())
+    registry.command(
+        ADMIN,
+        command(
+            "DecideVersion", version="v1", decision="approved", reason="Reviewed", expires_at=2000
+        ),
+    )
+    # Simulate a report stored by an older release. No startup migration or
+    # destructive downgrade is needed to deny it under the new admission rule.
+    with registry.engine.begin() as con:
+        legacy = asset.model_copy(deep=True)
+        legacy.actual_level = "L3"
+        legacy.acceptance.level = "L3"
+        legacy.acceptance.checks.append("native")
+        con.execute(update(assets).values(document=legacy.model_dump_json()))
+        con.execute(update(acceptances).values(document=legacy.acceptance.model_dump_json()))
+    statements = []
+
+    def capture(_con, _cursor, sql, *_args):
+        statements.append(sql.strip().split()[0].upper())
+
+    event.listen(registry.engine, "before_cursor_execute", capture)
+    try:
+        view = registry.inventory.get(ADMIN, asset.id)
+        assert view.actual_level == "L0" and view.evidence_status == "blocked"
+        assert view.acceptance.level == "L3"
+        with pytest.raises(RegistryError, match="AGENT_NATIVE_CONVERSION_REQUIRED"):
+            registry.inventory.admission(MEMBER, REF, SPEC)
+        with pytest.raises(RegistryError, match="AGENT_NATIVE_CONVERSION_REQUIRED"):
+            registry.resolve(MEMBER, REF, version="v1")
+    finally:
+        event.remove(registry.engine, "before_cursor_execute", capture)
+    assert not set(statements) & {"INSERT", "UPDATE", "DELETE", "CREATE", "ALTER"}
+    with pytest.raises(RegistryError, match="AGENT_NATIVE_CONVERSION_REQUIRED"):
+        registry.command(ADMIN, publish(version="native-republication"))
+    with registry.engine.connect() as con:
+        assert con.execute(select(assets.c.document)).scalar_one() == legacy.model_dump_json()
+
+
 def test_new_acceptance_preserves_other_reviewed_version(registry):
     asset = accept(registry, bind(registry, save(registry)))
     new_spec = "sha256:" + "b" * 64

@@ -241,7 +241,11 @@ class AgentInventory:
                 record.evidence_status = "untrusted"
             elif record.acceptance.expires_at <= self.registry.clock():
                 record.evidence_status = "expired"
-            elif record.status != "approved" or record.external_domain:
+            elif (
+                record.status != "approved"
+                or record.external_domain
+                or record.acceptance.level == "L3"
+            ):
                 record.evidence_status = "blocked"
         if record.evidence_status != "current":
             record.actual_level = "L0"
@@ -522,6 +526,12 @@ class AgentInventory:
     def _validate_acceptance(self, record, report, *, con, zone):
         if not record.metadata.owner_user_id:
             raise RegistryError("AGENT_ASSET_OWNER_REQUIRED")
+        # L3 needs a native conversion artifact and six-contract runtime proof.
+        # Neither an attestor's label nor an L2 migration comparison provides it.
+        # Keep requests representable for planning, but fail closed at review,
+        # publication and every resolution, including previously persisted reports.
+        if report.level == "L3":
+            raise RegistryError("AGENT_NATIVE_CONVERSION_REQUIRED")
         required = {"entry", "identity", "router", "revoke"}
         if record.metadata.tool_refs:
             required.add("tool")
@@ -544,8 +554,6 @@ class AgentInventory:
                 or report.after_score + report.allowed_drop < report.before_score
             ):
                 raise RegistryError("AGENT_MIGRATION_EVALUATION_FAILED")
-        if report.level == "L3":
-            required.add("native")
         if (
             report.asset_id != record.id
             or report.metadata_digest != record.metadata_digest

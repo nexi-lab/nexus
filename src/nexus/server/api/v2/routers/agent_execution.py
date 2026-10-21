@@ -36,10 +36,10 @@ def service(request: Request) -> AgentExecution:
     return result
 
 
-async def body(request, model):
+async def body(request, model, limit=MAX_BODY_BYTES):
     data = bytearray()
     async for chunk in request.stream():
-        if len(data) + len(chunk) > MAX_BODY_BYTES:
+        if len(data) + len(chunk) > limit:
             raise HTTPException(413, detail={"code": "EXECUTION_BODY_LIMIT"})
         data.extend(chunk)
 

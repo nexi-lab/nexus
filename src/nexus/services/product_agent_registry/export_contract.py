@@ -20,6 +20,13 @@ from nexus.contracts.agent_execution import (
     ExecutionGrantResult,
     IssueExecutionGrant,
 )
+from nexus.contracts.agent_hosted import (
+    DifyTextPlan,
+    HostedArtifact,
+    HostedArtifactPage,
+    HostedImage,
+    RegisterHostedArtifact,
+)
 from nexus.contracts.agent_inventory import (
     AssetCommand,
     AssetHistory,
@@ -62,6 +69,11 @@ def artifacts() -> dict[str, str]:
         | ExecutionGrantPage
         | CheckExecutionGrant
         | ExecutionAuthorization
+        | DifyTextPlan
+        | HostedImage
+        | RegisterHostedArtifact
+        | HostedArtifact
+        | HostedArtifactPage
     )
     schema = wire.json_schema()
 

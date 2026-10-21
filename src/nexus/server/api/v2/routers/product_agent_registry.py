@@ -26,6 +26,7 @@ from nexus.contracts.product_agent_registry import (
     parse_command,
 )
 from nexus.server.api.v2.routers.agent_execution import router as execution_router
+from nexus.server.api.v2.routers.agent_hosted import router as hosted_router
 from nexus.server.dependencies import require_auth
 from nexus.services.product_agent_registry.store import (
     ProductAgentRegistry,
@@ -36,6 +37,7 @@ from nexus.services.product_agent_registry.store import (
 router = APIRouter(prefix="/api/v2/product-agents", tags=["product-agent-registry"])
 
 router.include_router(execution_router)
+router.include_router(hosted_router)
 
 
 def actor(auth: dict[str, Any] = Depends(require_auth)) -> RegistryActor:

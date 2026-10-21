@@ -133,6 +133,9 @@ def initialize_schema(engine: Engine) -> None:
     from nexus.services.product_agent_registry.execution import initialize_execution_schema
 
     initialize_execution_schema(engine)
+    from nexus.services.product_agent_registry.hosted_artifacts import initialize_hosted_schema
+
+    initialize_hosted_schema(engine)
 
 
 class ProductAgentRegistry:
@@ -184,6 +187,9 @@ class ProductAgentRegistry:
         self.inventory = AgentInventory(
             self, inventory_zone_domains, inventory_attestors, inventory_enforced_zones
         )
+        from nexus.services.product_agent_registry.hosted_artifacts import HostedArtifacts
+
+        self.hosted = HostedArtifacts(self)
 
     def _authorize(self, actor: RegistryActor, ref: PrincipalRef, write=False) -> None:
         if not actor.subject or not actor.zone:

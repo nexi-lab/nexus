@@ -136,6 +136,9 @@ def initialize_schema(engine: Engine) -> None:
     from nexus.services.product_agent_registry.hosted_artifacts import initialize_hosted_schema
 
     initialize_hosted_schema(engine)
+    from nexus.services.product_agent_registry.native_conversions import initialize_native_schema
+
+    initialize_native_schema(engine)
     from nexus.services.product_agent_registry.evaluation_datasets import (
         initialize_evaluation_schema,
     )
@@ -200,6 +203,9 @@ class ProductAgentRegistry:
         from nexus.services.product_agent_registry.hosted_artifacts import HostedArtifacts
 
         self.hosted = HostedArtifacts(self)
+        from nexus.services.product_agent_registry.native_conversions import NativeConversions
+
+        self.native = NativeConversions(self)
         from nexus.services.product_agent_registry.evaluation_datasets import EvaluationDatasets
 
         self.evaluation = EvaluationDatasets(self)

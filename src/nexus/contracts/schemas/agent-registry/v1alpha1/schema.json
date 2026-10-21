@@ -3250,6 +3250,344 @@
       "title": "MoveChannel",
       "type": "object"
     },
+    "NativeConversion": {
+      "additionalProperties": false,
+      "properties": {
+        "api_version": {
+          "const": "agent-registry.sudo.dev/v1alpha1",
+          "default": "agent-registry.sudo.dev/v1alpha1",
+          "title": "Api Version",
+          "type": "string"
+        },
+        "kind": {
+          "const": "NativeConversion",
+          "default": "NativeConversion",
+          "title": "Kind",
+          "type": "string"
+        },
+        "id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "zone": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Zone",
+          "type": "string"
+        },
+        "asset_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "metadata_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Metadata Digest",
+          "type": "string"
+        },
+        "source_asset_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Source Asset Id",
+          "type": "string"
+        },
+        "source_artifact_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Source Artifact Id",
+          "type": "string"
+        },
+        "source_metadata_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Source Metadata Digest",
+          "type": "string"
+        },
+        "source_spec_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Source Spec Digest",
+          "type": "string"
+        },
+        "source_acceptance": {
+          "$ref": "#/$defs/AcceptanceReport"
+        },
+        "source_acceptance_issuer": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Source Acceptance Issuer",
+          "type": "string"
+        },
+        "source_acceptance_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Source Acceptance Digest",
+          "type": "string"
+        },
+        "image": {
+          "$ref": "#/$defs/NativeImage"
+        },
+        "definition": {
+          "$ref": "#/$defs/NativeDefinition"
+        },
+        "spec_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Spec Digest",
+          "type": "string"
+        },
+        "spec_payload_base64": {
+          "maxLength": 750000,
+          "minLength": 1,
+          "title": "Spec Payload Base64",
+          "type": "string"
+        },
+        "created_by": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Created By",
+          "type": "string"
+        },
+        "initiated_by": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Initiated By",
+          "type": "string"
+        },
+        "created_at": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Created At",
+          "type": "integer"
+        },
+        "evidence": {
+          "const": "registered_only",
+          "default": "registered_only",
+          "title": "Evidence",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "zone",
+        "asset_id",
+        "metadata_digest",
+        "source_asset_id",
+        "source_artifact_id",
+        "source_metadata_digest",
+        "source_spec_digest",
+        "source_acceptance",
+        "source_acceptance_issuer",
+        "source_acceptance_digest",
+        "image",
+        "definition",
+        "spec_digest",
+        "spec_payload_base64",
+        "created_by",
+        "initiated_by",
+        "created_at"
+      ],
+      "title": "NativeConversion",
+      "type": "object"
+    },
+    "NativeConversionPage": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "NativeConversionPage",
+          "default": "NativeConversionPage",
+          "title": "Kind",
+          "type": "string"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/NativeConversion"
+          },
+          "title": "Items",
+          "type": "array"
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Next Cursor"
+        }
+      },
+      "required": [
+        "items",
+        "next_cursor"
+      ],
+      "title": "NativeConversionPage",
+      "type": "object"
+    },
+    "NativeDefinition": {
+      "additionalProperties": false,
+      "properties": {
+        "profile": {
+          "const": "sudocode-dify-independent-text-v1alpha1",
+          "default": "sudocode-dify-independent-text-v1alpha1",
+          "title": "Profile",
+          "type": "string"
+        },
+        "plan": {
+          "$ref": "#/$defs/DifyTextPlan"
+        },
+        "tools": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 0,
+          "title": "Tools",
+          "type": "array"
+        },
+        "memory": {
+          "const": "disabled",
+          "default": "disabled",
+          "title": "Memory",
+          "type": "string"
+        },
+        "input": {
+          "const": "literal_text",
+          "default": "literal_text",
+          "title": "Input",
+          "type": "string"
+        },
+        "max_model_calls": {
+          "const": 1,
+          "default": 1,
+          "title": "Max Model Calls",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "plan"
+      ],
+      "title": "NativeDefinition",
+      "type": "object"
+    },
+    "NativeImage": {
+      "additionalProperties": false,
+      "description": "A fixed native runtime candidate, not a renamed hosted artifact.",
+      "properties": {
+        "api_version": {
+          "const": "agent-registry.sudo.dev/v1alpha1",
+          "default": "agent-registry.sudo.dev/v1alpha1",
+          "title": "Api Version",
+          "type": "string"
+        },
+        "kind": {
+          "const": "NativeImage",
+          "default": "NativeImage",
+          "title": "Kind",
+          "type": "string"
+        },
+        "profile": {
+          "const": "sudocode-dify-independent-text-v1alpha1",
+          "default": "sudocode-dify-independent-text-v1alpha1",
+          "title": "Profile",
+          "type": "string"
+        },
+        "image_id": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Image Id",
+          "type": "string"
+        },
+        "source_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Source Digest",
+          "type": "string"
+        },
+        "dependency_lock_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Dependency Lock Digest",
+          "type": "string"
+        },
+        "protocol": {
+          "const": "agent-hosted-stdio/v1",
+          "default": "agent-hosted-stdio/v1",
+          "title": "Protocol",
+          "type": "string"
+        },
+        "model_resource": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/@-]{0,499}$",
+          "title": "Model Resource",
+          "type": "string"
+        },
+        "model_name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Model Name",
+          "type": "string"
+        },
+        "max_output_tokens": {
+          "default": 128,
+          "maximum": 4096,
+          "minimum": 1,
+          "title": "Max Output Tokens",
+          "type": "integer"
+        },
+        "definition_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Definition Digest",
+          "type": "string"
+        },
+        "runtime": {
+          "$ref": "#/$defs/NativeRuntime"
+        }
+      },
+      "required": [
+        "image_id",
+        "source_digest",
+        "dependency_lock_digest",
+        "model_resource",
+        "model_name",
+        "definition_digest",
+        "runtime"
+      ],
+      "title": "NativeImage",
+      "type": "object"
+    },
+    "NativeRuntime": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "sudocode",
+          "default": "sudocode",
+          "title": "Kind",
+          "type": "string"
+        },
+        "commit": {
+          "pattern": "^[0-9a-f]{40}$",
+          "title": "Commit",
+          "type": "string"
+        },
+        "executable_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Executable Digest",
+          "type": "string"
+        },
+        "runner_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Runner Digest",
+          "type": "string"
+        },
+        "platform": {
+          "enum": [
+            "linux/amd64",
+            "linux/arm64"
+          ],
+          "title": "Platform",
+          "type": "string"
+        }
+      },
+      "required": [
+        "commit",
+        "executable_digest",
+        "runner_digest",
+        "platform"
+      ],
+      "title": "NativeRuntime",
+      "type": "object"
+    },
     "ObserveAsset": {
       "additionalProperties": false,
       "properties": {
@@ -3699,6 +4037,61 @@
         "initiated_by"
       ],
       "title": "RegisterHostedArtifact",
+      "type": "object"
+    },
+    "RegisterNativeConversion": {
+      "additionalProperties": false,
+      "properties": {
+        "api_version": {
+          "const": "agent-registry.sudo.dev/v1alpha1",
+          "default": "agent-registry.sudo.dev/v1alpha1",
+          "title": "Api Version",
+          "type": "string"
+        },
+        "kind": {
+          "const": "RegisterNativeConversion",
+          "default": "RegisterNativeConversion",
+          "title": "Kind",
+          "type": "string"
+        },
+        "request_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "source_artifact_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Source Artifact Id",
+          "type": "string"
+        },
+        "asset_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "metadata_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Metadata Digest",
+          "type": "string"
+        },
+        "image": {
+          "$ref": "#/$defs/NativeImage"
+        },
+        "initiated_by": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Initiated By",
+          "type": "string"
+        }
+      },
+      "required": [
+        "request_id",
+        "source_artifact_id",
+        "asset_id",
+        "metadata_digest",
+        "image",
+        "initiated_by"
+      ],
+      "title": "RegisterNativeConversion",
       "type": "object"
     },
     "RegisterPrincipal": {
@@ -4645,6 +5038,18 @@
     },
     {
       "$ref": "#/$defs/HostedArtifactPage"
+    },
+    {
+      "$ref": "#/$defs/NativeImage"
+    },
+    {
+      "$ref": "#/$defs/RegisterNativeConversion"
+    },
+    {
+      "$ref": "#/$defs/NativeConversion"
+    },
+    {
+      "$ref": "#/$defs/NativeConversionPage"
     },
     {
       "$ref": "#/$defs/EvaluationDataset"

@@ -29,6 +29,7 @@ from nexus.server.api.v2.routers.agent_evaluations import migration_router
 from nexus.server.api.v2.routers.agent_evaluations import router as evaluations_router
 from nexus.server.api.v2.routers.agent_execution import router as execution_router
 from nexus.server.api.v2.routers.agent_hosted import router as hosted_router
+from nexus.server.api.v2.routers.agent_native import router as native_router
 from nexus.server.dependencies import require_auth
 from nexus.services.product_agent_registry.store import (
     ProductAgentRegistry,
@@ -40,6 +41,7 @@ router = APIRouter(prefix="/api/v2/product-agents", tags=["product-agent-registr
 
 router.include_router(execution_router)
 router.include_router(hosted_router)
+router.include_router(native_router)
 
 router.include_router(evaluations_router)
 router.include_router(migration_router)

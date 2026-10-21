@@ -13,9 +13,12 @@ import json
 from pathlib import Path
 from uuid import uuid4
 
+from pydantic import TypeAdapter
+
 from nexus.bricks.sandbox import hosted_agent
 from nexus.bricks.sandbox.hosted_agent import HostedDockerRunner, HostedRuntimeError
 from nexus.contracts.agent_hosted import HostedArtifact
+from nexus.contracts.agent_native import NativeConversion
 
 # The probe never returns file contents, environment values, or model inputs.
 PROBE = r"""
@@ -70,7 +73,9 @@ async def qualify(artifact, docker):
     runner = HostedDockerRunner(docker)
     execution_id = uuid4().hex
     report = {
-        "kind": "HostedIsolationEvidence",
+        "kind": "NativeIsolationEvidence"
+        if isinstance(artifact, NativeConversion)
+        else "HostedIsolationEvidence",
         "asset_id": artifact.asset_id,
         "artifact_id": artifact.id,
         "metadata_digest": artifact.metadata_digest,
@@ -83,7 +88,7 @@ async def qualify(artifact, docker):
         "execution_id": execution_id,
         "checks": {},
         "model_calls": 0,
-        "scope": "synthetic text; isolation only, not full L2 acceptance",
+        "scope": "synthetic text; isolation only, not full L2/L3 acceptance",
     }
 
     async def trace(_frame):
@@ -131,7 +136,9 @@ def main():
     parser.add_argument("--docker", default="/usr/bin/docker")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    artifact = HostedArtifact.model_validate_json(args.artifact.read_bytes())
+    artifact = TypeAdapter(HostedArtifact | NativeConversion).validate_json(
+        args.artifact.read_bytes()
+    )
     # Refuse accidental replacement of prior evidence before performing side effects.
     with args.output.open("x") as output:
         try:

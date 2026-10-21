@@ -17,6 +17,7 @@ from uuid import uuid4
 
 from nexus.bricks.sandbox.security_profile import SandboxSecurityProfile
 from nexus.contracts.agent_hosted import HostedImage
+from nexus.contracts.agent_native import NativeImage
 
 PROTOCOL = "agent-hosted-stdio/v1"
 FRAME_LIMIT = 256000
@@ -193,7 +194,7 @@ class HostedDockerRunner:
             raise HostedRuntimeError("HOSTED_RUNTIME_UNAVAILABLE")
         return "sha256:" + hashlib.sha256(value).hexdigest()
 
-    async def inspect(self, artifact: HostedImage):
+    async def inspect(self, artifact: HostedImage | NativeImage):
         output = await self._command(
             "image", "inspect", artifact.image_id, "--format", "{{json .Config}}"
         )
@@ -206,6 +207,17 @@ class HostedDockerRunner:
                 or labels.get("dev.sudo.agent.source") != artifact.source_digest
                 or labels.get("dev.sudo.agent.dependencies") != artifact.dependency_lock_digest
                 or labels.get("dev.sudo.agent.profile") != artifact.profile
+            ):
+                raise ValueError
+            if isinstance(artifact, NativeImage) and any(
+                labels.get(key) != value
+                for key, value in {
+                    "dev.sudo.agent.native-definition": artifact.definition_digest,
+                    "dev.sudo.agent.native-runtime": artifact.runtime.executable_digest,
+                    "dev.sudo.agent.native-runner": artifact.runtime.runner_digest,
+                    "dev.sudo.agent.native-commit": artifact.runtime.commit,
+                    "dev.sudo.agent.native-platform": artifact.runtime.platform,
+                }.items()
             ):
                 raise ValueError
         except (ValueError, TypeError, AttributeError):
@@ -221,7 +233,7 @@ class HostedDockerRunner:
         if output.strip() != b"true true true":
             raise HostedRuntimeError("HOSTED_RESOURCE_LIMITS_UNAVAILABLE")
 
-    def command(self, artifact: HostedImage, name: str) -> list[str]:
+    def command(self, artifact: HostedImage | NativeImage, name: str) -> list[str]:
         profile = SandboxSecurityProfile.strict()
         return [
             self.docker,
@@ -267,7 +279,9 @@ class HostedDockerRunner:
             raise HostedRuntimeError("HOSTED_EXECUTION_ID_INVALID")
         return "sudo-hosted-task-" + execution_id
 
-    def create_command(self, artifact: HostedImage, execution_id: str, *, closed=False):
+    def create_command(
+        self, artifact: HostedImage | NativeImage, execution_id: str, *, closed=False
+    ):
         command = self.command(artifact, self.execution_name(execution_id))
         command[1] = "create"
         command.remove("--rm")
@@ -283,7 +297,7 @@ class HostedDockerRunner:
         ]
         return command
 
-    async def execution_container(self, artifact: HostedImage, execution_id: str):
+    async def execution_container(self, artifact: HostedImage | NativeImage, execution_id: str):
         name = self.execution_name(execution_id)
         found = (
             (await self._command("ps", "-aq", "--no-trunc", "--filter", f"name=^/{name}$"))
@@ -312,7 +326,7 @@ class HostedDockerRunner:
         except (ValueError, TypeError, KeyError, AttributeError):
             raise HostedRuntimeError("HOSTED_CLEANUP_UNCONFIRMED") from None
 
-    async def reconcile(self, artifact: HostedImage, execution_id: str):
+    async def reconcile(self, artifact: HostedImage | NativeImage, execution_id: str):
         """Delete only the exact worker and reserve its name with an inert closed marker.
 
         Absence alone cannot prove cleanup: a timed-out create may arrive later.
@@ -345,7 +359,7 @@ class HostedDockerRunner:
 
     async def run(
         self,
-        artifact: HostedImage,
+        artifact: HostedImage | NativeImage,
         query: str,
         invoke_model,
         on_trace,

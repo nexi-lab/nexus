@@ -54,6 +54,12 @@ from nexus.contracts.agent_inventory import (
     AssetRecord,
     PlatformDiscoveryPage,
 )
+from nexus.contracts.agent_native import (
+    NativeConversion,
+    NativeConversionPage,
+    NativeImage,
+    RegisterNativeConversion,
+)
 from nexus.contracts.product_agent_registry import (
     API,
     CommandResult,
@@ -96,6 +102,10 @@ def artifacts() -> dict[str, str]:
         | RegisterHostedArtifact
         | HostedArtifact
         | HostedArtifactPage
+        | NativeImage
+        | RegisterNativeConversion
+        | NativeConversion
+        | NativeConversionPage
         | EvaluationDataset
         | EvaluationDatasetPage
         | RegisterEvaluationDataset

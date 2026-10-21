@@ -38,7 +38,8 @@ class AssetMetadata(WireModel):
     ]
     source_instance: Annotated[str, Field(min_length=1, max_length=300)]
     source_agent_id: Identifier
-    owner_user_id: Identifier
+    # Unknown discovery ownership is represented honestly; registration requires a member.
+    owner_user_id: Identifier | None
     department_id: Identifier | None = None
     purpose: Text
     domain: Literal["office", "core"]
@@ -80,11 +81,23 @@ class SaveAsset(InventoryCommand):
     kind: Literal["SaveAsset"]
     metadata: AssetMetadata
 
+    @model_validator(mode="after")
+    def requires_owner(self):
+        if not self.metadata.owner_user_id:
+            raise ValueError("AGENT_ASSET_OWNER_REQUIRED")
+        return self
+
 
 class ObserveAsset(InventoryCommand):
     kind: Literal["ObserveAsset"]
     metadata: AssetMetadata
     observation: DiscoveryEvidence
+
+
+class ClaimAsset(InventoryCommand):
+    kind: Literal["ClaimAsset"]
+    owner_user_id: Identifier
+    department_id: Identifier | None = None
 
 
 class SubmitAsset(InventoryCommand):
@@ -155,6 +168,7 @@ class RecordAcceptance(InventoryCommand):
 AssetCommand = Annotated[
     SaveAsset
     | ObserveAsset
+    | ClaimAsset
     | SubmitAsset
     | ReviewAsset
     | SuspendAsset

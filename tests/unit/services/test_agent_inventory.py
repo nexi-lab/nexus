@@ -497,3 +497,41 @@ def test_external_observation_blocks_previously_accepted_asset(registry):
     assert observed.actual_level == "L0" and observed.evidence_status == "blocked"
     with pytest.raises(RegistryError, match="MISMATCH"):
         registry.inventory.admission(MEMBER, REF, SPEC)
+
+
+def test_discovery_claim_is_atomic_owned_audited_and_does_not_publish(registry):
+    inventory = registry.inventory
+    discovered = inventory.command(
+        ADMIN,
+        cmd(
+            "ObserveAsset",
+            metadata={**values(), "owner_user_id": None, "department_id": None},
+            observation={
+                "source": "platform",
+                "source_id": "dify-console",
+                "record_id": "app-1",
+                "snapshot_digest": SPEC,
+                "observed_at": 1000,
+            },
+        ),
+    )
+    assert discovered.status == "discovered"
+    assert discovered.metadata.owner_user_id is None
+    assert inventory.list(ADMIN, owner="").items[0].id == discovered.id
+    with pytest.raises(RegistryError, match="AGENT_ASSET_OWNER_REQUIRED"):
+        inventory.command(ADMIN, cmd("SubmitAsset", discovered.revision))
+    with pytest.raises(ValueError, match="AGENT_ASSET_OWNER_REQUIRED"):
+        cmd("SaveAsset", discovered.revision, metadata=discovered.metadata.model_dump())
+    claim = cmd("ClaimAsset", discovered.revision, owner_user_id="alice", department_id="support")
+    claimed = inventory.command(ADMIN, claim)
+    assert claimed.status == "draft"
+    assert claimed.actual_level == "L0"
+    assert claimed.metadata.owner_user_id == "alice"
+    assert inventory.command(ADMIN, claim).revision == claimed.revision
+    assert inventory.list(ADMIN, owner="").items == []
+    assert inventory.list(ADMIN, owner="alice").items[0].id == claimed.id
+    with pytest.raises(RegistryError, match="AGENT_ASSET_REVISION_CONFLICT"):
+        inventory.command(ADMIN, cmd("ClaimAsset", discovered.revision, owner_user_id="bob"))
+    with pytest.raises(RegistryError, match="AGENT_ASSET_ALREADY_CLAIMED"):
+        inventory.command(ADMIN, cmd("ClaimAsset", claimed.revision, owner_user_id="bob"))
+    assert inventory.history(ADMIN, claimed.id).events[-1].operation == "ClaimAsset"

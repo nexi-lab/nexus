@@ -28,6 +28,7 @@ from nexus.contracts.agent_inventory import (
     AssetMetadata,
     AssetPage,
     AssetRecord,
+    ClaimAsset,
     LinkAsset,
     MergeAsset,
     ObserveAsset,
@@ -197,7 +198,7 @@ class AgentInventory:
             update(assets)
             .where(self._where(actor.zone, record.id))
             .values(
-                owner_id=record.metadata.owner_user_id,
+                owner_id=record.metadata.owner_user_id or "",
                 revision=record.revision,
                 document=record.model_dump_json(),
             )
@@ -285,7 +286,7 @@ class AgentInventory:
                             zone=actor.zone,
                             id=record.id,
                             source_key=source_key(record.metadata),
-                            owner_id=record.metadata.owner_user_id,
+                            owner_id=record.metadata.owner_user_id or "",
                             revision=0,
                             document=record.model_dump_json(),
                         )
@@ -353,7 +354,20 @@ class AgentInventory:
                     )
                     if record.external_domain:
                         record.risk = "external"
+                elif isinstance(command, ClaimAsset):
+                    if record.status != "discovered" or record.metadata.owner_user_id:
+                        raise RegistryError("AGENT_ASSET_ALREADY_CLAIMED")
+                    record.metadata = record.metadata.model_copy(
+                        update={
+                            "owner_user_id": command.owner_user_id,
+                            "department_id": command.department_id,
+                        }
+                    )
+                    record.metadata_digest = digest(record.metadata.model_dump())
+                    record.status = "draft"
                 elif isinstance(command, SubmitAsset):
+                    if not record.metadata.owner_user_id:
+                        raise RegistryError("AGENT_ASSET_OWNER_REQUIRED")
                     if record.status not in ("draft", "returned", "discovered", "suspended"):
                         raise RegistryError("AGENT_ASSET_STATE_CONFLICT")
                     record.status = "submitted"
@@ -484,6 +498,8 @@ class AgentInventory:
             raise RegistryError("AGENT_ASSET_IDENTITY_CONFLICT") from None
 
     def _validate_acceptance(self, record, report):
+        if not record.metadata.owner_user_id:
+            raise RegistryError("AGENT_ASSET_OWNER_REQUIRED")
         required = {"entry", "identity", "router", "revoke"}
         if record.metadata.tool_refs:
             required.add("tool")

@@ -311,9 +311,16 @@
           "type": "string"
         },
         "owner_user_id": {
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
-          "title": "Owner User Id",
-          "type": "string"
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Owner User Id"
         },
         "department_id": {
           "anyOf": [
@@ -718,6 +725,71 @@
         "updated_at"
       ],
       "title": "Channel",
+      "type": "object"
+    },
+    "ClaimAsset": {
+      "additionalProperties": false,
+      "properties": {
+        "api_version": {
+          "const": "agent-registry.sudo.dev/v1alpha1",
+          "title": "Api Version",
+          "type": "string"
+        },
+        "request_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "asset_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "expected_revision": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Expected Revision",
+          "type": "integer"
+        },
+        "initiated_by": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Initiated By",
+          "type": "string"
+        },
+        "kind": {
+          "const": "ClaimAsset",
+          "title": "Kind",
+          "type": "string"
+        },
+        "owner_user_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Owner User Id",
+          "type": "string"
+        },
+        "department_id": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Department Id"
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "asset_id",
+        "expected_revision",
+        "initiated_by",
+        "kind",
+        "owner_user_id"
+      ],
+      "title": "ClaimAsset",
       "type": "object"
     },
     "CommandResult": {
@@ -1997,6 +2069,7 @@
     {
       "discriminator": {
         "mapping": {
+          "ClaimAsset": "#/$defs/ClaimAsset",
           "LinkAsset": "#/$defs/LinkAsset",
           "MergeAsset": "#/$defs/MergeAsset",
           "ObserveAsset": "#/$defs/ObserveAsset",
@@ -2014,6 +2087,9 @@
         },
         {
           "$ref": "#/$defs/ObserveAsset"
+        },
+        {
+          "$ref": "#/$defs/ClaimAsset"
         },
         {
           "$ref": "#/$defs/SubmitAsset"

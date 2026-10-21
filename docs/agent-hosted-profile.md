@@ -52,7 +52,7 @@ management APIs beneath `/api/v2/product-agents` are:
 - `POST /hosted/dify/inspect`: raw DSL, at most 256,000 bytes; validation only.
 - `POST /hosted/artifacts`: `RegisterHostedArtifact`; imports an immutable descriptor
   and compiled Dify plan with organization, asset metadata and actor provenance.
-- `GET /hosted/artifacts?asset_id=...&after=...`: ten records per page.
+- `GET /hosted/artifacts?asset_id=...&after=...`: five records per page.
 - `GET /hosted/artifacts/{id}`: an immutable management record.
 
 The gateway must enforce human owner/admin authorization before using its service
@@ -60,6 +60,8 @@ credential. Owner APIs enforce actual authenticated admin/zone, current asset
 metadata, internal hosting, platform and model-resource matching. Exact retries
 return the same record; changed payloads with the same request ID conflict. Imports
 do not start containers and do not alter asset grade or publication state.
+The spec digest binds the exact returned `spec_payload_base64` bytes; consumers
+compare the decoded object to the descriptor/plan without reserializing floats.
 
 ## Runtime and trust boundaries
 

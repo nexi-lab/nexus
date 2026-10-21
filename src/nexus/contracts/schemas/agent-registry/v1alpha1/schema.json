@@ -1563,6 +1563,12 @@
           "title": "Spec Digest",
           "type": "string"
         },
+        "spec_payload_base64": {
+          "maxLength": 750000,
+          "minLength": 1,
+          "title": "Spec Payload Base64",
+          "type": "string"
+        },
         "image": {
           "$ref": "#/$defs/HostedImage"
         },
@@ -1606,6 +1612,7 @@
         "asset_id",
         "metadata_digest",
         "spec_digest",
+        "spec_payload_base64",
         "image",
         "dify_plan",
         "created_by",

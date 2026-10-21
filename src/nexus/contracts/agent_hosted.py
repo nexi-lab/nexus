@@ -71,6 +71,8 @@ class HostedArtifact(WireModel):
     asset_id: Identifier
     metadata_digest: Digest
     spec_digest: Digest
+    # Digest binds these exact bytes; consumers must not reserialize floats.
+    spec_payload_base64: Annotated[str, Field(min_length=1, max_length=750000)]
     image: HostedImage
     dify_plan: DifyTextPlan | None
     created_by: Label

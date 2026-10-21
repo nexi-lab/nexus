@@ -1,5 +1,6 @@
 """Immutable, organization-scoped hosted artifacts; imports never publish or raise grade."""
 
+import base64
 from uuid import uuid4
 
 from sqlalchemy import (
@@ -67,11 +68,12 @@ class HostedArtifacts:
             raise RegistryError("HOSTED_SOURCE_MISMATCH", 400)
         if image.image_id == "sha256:" + "0" * 64:
             raise RegistryError("HOSTED_BUILT_IMAGE_REQUIRED", 400)
-        spec = digest(
-            canonical_bytes(
-                {"image": image.model_dump(), "dify_plan": plan.model_dump() if plan else None}
-            )
+        payload = canonical_bytes(
+            {"image": image.model_dump(), "dify_plan": plan.model_dump() if plan else None}
         )
+        if len(payload) > 500000:
+            raise RegistryError("HOSTED_SPEC_LIMIT", 413)
+        spec = digest(payload)
 
         def previous(con):
             return (
@@ -112,6 +114,7 @@ class HostedArtifacts:
                     asset_id=asset.id,
                     metadata_digest=asset.metadata_digest,
                     spec_digest=spec,
+                    spec_payload_base64=base64.b64encode(payload).decode(),
                     image=image,
                     dify_plan=plan,
                     created_by=actor.subject,
@@ -162,12 +165,12 @@ class HostedArtifacts:
                         artifacts.c.id > after,
                     )
                     .order_by(artifacts.c.id)
-                    .limit(11)
+                    .limit(6)
                 )
                 .scalars()
                 .all()
             )
         items = [HostedArtifact.model_validate_json(doc) for doc in rows]
         return HostedArtifactPage(
-            items=items[:10], next_cursor=items[9].id if len(items) > 10 else None
+            items=items[:5], next_cursor=items[4].id if len(items) > 5 else None
         )

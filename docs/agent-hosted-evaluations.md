@@ -36,7 +36,7 @@ access. Browser managers use the authenticated Moss gateway.
 Validation includes real file-backed Registry/IAM, concurrent claims, immutable
 request replay, key omission on replay, cross-zone/role denials, read-only queries,
 all-case scoring, stopping, timeout and IAM revocation. This does not constitute
-HA, migration comparison, L2 publication or full Agent Management 1.1 acceptance.
+HA, L2 publication or full Agent Management 1.1 acceptance.
 
 ## Source baselines and immutable comparison policy
 
@@ -61,8 +61,34 @@ registry API prefix. These are evaluator-only and no-store. Policy and compariso
 tables are additive and require the same explicit initialization maintenance step.
 Existing default hosted start-request fingerprints are preserved across this upgrade.
 
-The owner lifecycle/threshold math is implemented and tested. Actual source-runner
-product orchestration, manager policy UI and L2 evidence admission are separate work;
-consumers without a source adapter must reject that role instead of executing the
-imported image. The independent laboratory source report alone is not imported as
-a trusted policy or acceptance record.
+Moss composes actual Dify and independently provisioned LangGraph source baselines
+with this lifecycle and manager policy UI. A consumer without a source adapter must
+reject that role instead of executing the imported image. Old independent laboratory
+reports are not imported as trusted policy or acceptance records.
+
+
+## Admission and source correlation
+
+`POST /hosted/evaluations/{run_id}/source` persists evaluator-only source correlation
+under the case lease before terminal completion. Fields can be added, not overwritten.
+Dify success requires source workflow-run and message references. Stopping, failure
+and restart preserve previously recorded references; reference fields do not grant
+model-metering or immutable-version authority.
+
+L2/L3 acceptance, fresh IT review and subsequent execution admission resolve
+`evaluation_id` against the owner's persisted successful migration comparison in the
+same zone. Asset, metadata, artifact/spec, dataset/rubric, exact image revision and
+scores/drop tolerance must agree. `evidence_refs` includes the canonical comparison
+SHA256. Attestors still supply the independent entry/identity/router/revoke/tool/
+isolation/trace evidence; a passing synthetic comparison alone never grants L2.
+Legacy unbound score reports must be replaced through this explicit workflow; startup
+does not publish or silently certify old reports.
+
+The reviewed LangGraph source wrapper is `src/nexus/bricks/sandbox/langgraph_source.py`.
+It runs a deployment-provisioned original single-file project in a separate Python
+process using official LangGraph1.0.5, and communicates only bounded model/trace/result
+frames. It validates the source/environment snapshot before executing inspected bytes.
+It is a synthetic baseline tool, not the strict hosted sandbox and not an API for
+executing user uploads in the management service. Its configured OS environment must
+be appropriate for the reviewed code. The actual hosted candidate continues to use
+the fixed-image Docker supervisor and its containment policy.

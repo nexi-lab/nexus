@@ -492,6 +492,97 @@ def test_source_references_survive_failure_and_reject_overwrite(execution):
     )
     assert completed.source_execution == observed.source_execution
     restarted = HostedEvaluations(service.registry, execution)
-    assert restarted.list_cases(ADMIN, run.id).items[0].source_execution is not None
+    assert (
+        next(
+            row for row in restarted.list_cases(ADMIN, run.id).items if row.id == claim.case.id
+        ).source_execution
+        == observed.source_execution
+    )
     with pytest.raises(RegistryError, match="EXPIRED"):
         service.observe_source(ADMIN, run.id, command)
+
+
+def test_L2_admission_binds_actual_comparison_image_scores_and_fresh_review(execution):
+    from nexus.contracts.product_agent_registry import canonical_bytes
+    from nexus.services.product_agent_registry.store import digest
+    from tests.unit.services.test_agent_inventory import EVALUATOR
+
+    service, request = setup(execution)
+    baseline = service.start(ADMIN, source_request(service, request))
+    complete_run(service, baseline, ["42", "42"])
+    policy = service.create_policy(ADMIN, policy_request(baseline))
+    candidate = service.start(
+        ADMIN,
+        request.model_copy(
+            update={
+                "request_id": uuid4().hex,
+                "comparison_policy_id": policy.id,
+            }
+        ),
+    )
+    complete_run(service, candidate, ["42", "42"])
+    comparison = service.compare(ADMIN, candidate.id)
+    registry = service.registry
+    registry.inventory.attestors.add(EVALUATOR.subject)
+    asset = registry.inventory.get(ADMIN, request.asset_id)
+    artifact = registry.hosted.get(ADMIN, request.artifact_id)
+    report = {
+        "asset_id": asset.id,
+        "metadata_digest": asset.metadata_digest,
+        "spec_digest": artifact.spec_digest,
+        "level": "L2",
+        "expires_at": registry.clock() + 60000,
+        "execution_revision": artifact.image.image_id,
+        "evidence_refs": [digest(canonical_bytes(comparison.model_dump()))],
+        "checks": [
+            "entry",
+            "identity",
+            "router",
+            "revoke",
+            "tool",
+            "isolation",
+            "evaluation",
+            "trace",
+        ],
+        "evaluation_id": comparison.id,
+        "dataset_digest": comparison.dataset_digest,
+        "rubric_digest": comparison.rubric_digest,
+        "before_score": 1.0,
+        "after_score": 1.0,
+        "allowed_drop": 0.0,
+    }
+    for patch in [
+        {"evaluation_id": "made-up"},
+        {"after_score": 0.9, "allowed_drop": 0.1},
+        {"execution_revision": "sha256:" + "d" * 64},
+        {"evidence_refs": ["sha256:" + "d" * 64]},
+        {"dataset_digest": "sha256:" + "e" * 64},
+    ]:
+        with pytest.raises(RegistryError, match="MIGRATION_COMPARISON"):
+            registry.inventory.command(
+                EVALUATOR,
+                cmd(
+                    "RecordAcceptance",
+                    asset.revision,
+                    report={**report, **patch},
+                ),
+            )
+    submitted = registry.inventory.command(
+        EVALUATOR,
+        cmd(
+            "RecordAcceptance",
+            asset.revision,
+            report=report,
+        ),
+    )
+    assert submitted.status == "submitted" and submitted.actual_level == "L0"
+    approved = registry.inventory.command(
+        ADMIN,
+        cmd(
+            "ReviewAsset",
+            submitted.revision,
+            decision="approve",
+            reason="Independent checks accepted",
+        ),
+    )
+    assert approved.actual_level == "L2" and approved.status == "approved"

@@ -98,6 +98,59 @@ def initialize_hosted_evaluations_schema(engine):
     metadata.create_all(engine)
 
 
+def require_migration_comparison(con, zone, record, report):
+    """Admission reads owner-computed evidence; attestor scores are not authority."""
+    from nexus.contracts.agent_hosted import HostedArtifact
+    from nexus.services.product_agent_registry.hosted_artifacts import artifacts
+
+    if not set(metadata.tables).issubset(inspect(con).get_table_names()):
+        raise RegistryError("EVALUATION_RUN_SCHEMA_REQUIRED", 503)
+    document = con.execute(
+        select(comparisons.c.document).where(
+            comparisons.c.zone == zone,
+            comparisons.c.id == report.evaluation_id,
+        )
+    ).scalar_one_or_none()
+    if document is None:
+        raise RegistryError("AGENT_MIGRATION_COMPARISON_REQUIRED")
+    comparison = MigrationComparison.model_validate_json(document)
+    policy_document = con.execute(
+        select(policies.c.document).where(
+            policies.c.zone == zone,
+            policies.c.id == comparison.policy_id,
+        )
+    ).scalar_one_or_none()
+    if policy_document is None:
+        raise RegistryError("AGENT_MIGRATION_COMPARISON_REQUIRED")
+    policy = MigrationPolicy.model_validate_json(policy_document)
+    artifact_document = con.execute(
+        select(artifacts.c.document).where(
+            artifacts.c.zone == zone,
+            artifacts.c.id == policy.artifact_id,
+        )
+    ).scalar_one_or_none()
+    if artifact_document is None:
+        raise RegistryError("AGENT_MIGRATION_COMPARISON_REQUIRED")
+    artifact = HostedArtifact.model_validate_json(artifact_document)
+    if (
+        not comparison.passed
+        or comparison.asset_id != record.id
+        or comparison.metadata_digest != record.metadata_digest
+        or comparison.spec_digest != report.spec_digest
+        or comparison.dataset_digest != report.dataset_digest
+        or comparison.rubric_digest != report.rubric_digest
+        or artifact.asset_id != record.id
+        or artifact.metadata_digest != record.metadata_digest
+        or artifact.spec_digest != report.spec_digest
+        or artifact.image.image_id != report.execution_revision
+        or report.before_score != comparison.baseline_passed / comparison.total_cases
+        or report.after_score != comparison.candidate_passed / comparison.total_cases
+        or report.allowed_drop != comparison.maximum_drop_bps / 10000
+        or digest(canonical_bytes(comparison.model_dump())) not in report.evidence_refs
+    ):
+        raise RegistryError("AGENT_MIGRATION_COMPARISON_MISMATCH")
+
+
 class HostedEvaluations:
     def __init__(self, registry, execution):
         self.registry, self.execution, self.engine = registry, execution, registry.engine

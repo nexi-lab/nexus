@@ -393,19 +393,9 @@ def test_L2_requires_internal_runtime_permissions_and_same_dataset_scores(regist
             registry.inventory.command(
                 EVALUATOR, cmd("RecordAcceptance", asset.revision, report={**good, **patch})
             )
-    result = registry.inventory.command(
-        EVALUATOR, cmd("RecordAcceptance", asset.revision, report=good)
-    )
-    registry.inventory.command(
-        ADMIN,
-        cmd(
-            "ReviewAsset",
-            result.revision,
-            decision="approve",
-            reason="Same dataset and permissions checked",
-        ),
-    )
-    registry.command(ADMIN, publish())
+    # A trusted attestor must still reference an actual owner-computed comparison.
+    with pytest.raises(RegistryError, match="MIGRATION_COMPARISON_REQUIRED"):
+        registry.inventory.command(EVALUATOR, cmd("RecordAcceptance", asset.revision, report=good))
 
 
 def test_expired_evidence_and_new_source_version_fail_closed(registry):

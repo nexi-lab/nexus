@@ -399,7 +399,9 @@ class AgentInventory:
                     if command.decision == "approve" and record.acceptance:
                         if record.acceptance_issuer not in self.attestors:
                             raise RegistryError("AGENT_ACCEPTANCE_ISSUER_FORBIDDEN", 403)
-                        self._validate_acceptance(record, record.acceptance)
+                        self._validate_acceptance(
+                            record, record.acceptance, con=con, zone=actor.zone
+                        )
                         record.actual_level = record.acceptance.level
                         con.execute(
                             update(acceptances)
@@ -458,7 +460,7 @@ class AgentInventory:
                     record.status, record.merged_into = "merged", target.id
                     self._persist(con, actor, target, command)
                 elif isinstance(command, RecordAcceptance):
-                    self._validate_acceptance(record, command.report)
+                    self._validate_acceptance(record, command.report, con=con, zone=actor.zone)
                     report_where = (
                         (acceptances.c.zone == actor.zone)
                         & (acceptances.c.asset_id == record.id)
@@ -514,7 +516,7 @@ class AgentInventory:
                 return self._projection(AssetRecord.model_validate_json(previous["result"]))
             raise RegistryError("AGENT_ASSET_IDENTITY_CONFLICT") from None
 
-    def _validate_acceptance(self, record, report):
+    def _validate_acceptance(self, record, report, *, con, zone):
         if not record.metadata.owner_user_id:
             raise RegistryError("AGENT_ASSET_OWNER_REQUIRED")
         required = {"entry", "identity", "router", "revoke"}
@@ -552,6 +554,12 @@ class AgentInventory:
             raise RegistryError("AGENT_ACCEPTANCE_EXPIRED")
         if int(report.level[1]) > int(record.metadata.requested_level[1]):
             raise RegistryError("AGENT_ACCEPTANCE_SCOPE_EXCEEDED")
+        if report.level in ("L2", "L3"):
+            from nexus.services.product_agent_registry.hosted_evaluations import (
+                require_migration_comparison,
+            )
+
+            require_migration_comparison(con, zone, record, report)
 
     def get(self, actor, asset_id):
         self._authorize(actor)
@@ -634,7 +642,7 @@ class AgentInventory:
             if not accepted or accepted["issuer"] not in self.attestors:
                 raise RegistryError("AGENT_ACCEPTANCE_VERSION_MISMATCH")
             report = AcceptanceReport.model_validate_json(accepted["document"])
-            self._validate_acceptance(record, report)
+            self._validate_acceptance(record, report, con=connection, zone=actor.zone)
             recommended, _, _ = self._recommend(actor.zone, record.metadata)
             if recommended == "L2" and report.level not in ("L2", "L3"):
                 raise RegistryError("AGENT_CORE_REQUIRES_L2")

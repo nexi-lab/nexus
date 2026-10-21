@@ -316,6 +316,13 @@ class AgentInventory:
                 if isinstance(command, SaveAsset):
                     if source_key(record.metadata) != source_key(command.metadata):
                         raise RegistryError("AGENT_ASSET_SOURCE_IMMUTABLE")
+                    proposed_level, _, _ = self._recommend(actor.zone, command.metadata)
+                    if (
+                        record.revision
+                        and record.recommended_level == "L2"
+                        and proposed_level != "L2"
+                    ):
+                        raise RegistryError("AGENT_RISK_REDUCTION_REQUIRES_MIGRATION")
                     record.metadata = command.metadata
                     record.metadata_digest = digest(command.metadata.model_dump())
                     record.recommended_level, record.recommendation_reasons, record.risk = (
@@ -386,6 +393,10 @@ class AgentInventory:
                     record.principal = command.principal
                 elif isinstance(command, MergeAsset):
                     target = locked[command.target_asset_id]
+                    source_level, _, _ = self._recommend(actor.zone, record.metadata)
+                    target_level, _, _ = self._recommend(actor.zone, target.metadata)
+                    if source_level == "L2" and target_level != "L2":
+                        raise RegistryError("AGENT_RISK_REDUCTION_REQUIRES_MIGRATION")
                     if (
                         target.id == record.id
                         or target.revision != command.target_revision

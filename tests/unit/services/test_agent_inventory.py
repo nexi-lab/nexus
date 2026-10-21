@@ -443,6 +443,31 @@ def test_new_core_zone_policy_applies_to_existing_assets_without_rewrite(registr
         registry.inventory.admission(MEMBER, REF, SPEC)
 
 
+def test_core_asset_cannot_hide_risk_by_editing_or_merging(registry):
+    asset = save(registry, domain="core")
+    with pytest.raises(RegistryError, match="RISK_REDUCTION"):
+        registry.inventory.command(ADMIN, cmd("SaveAsset", asset.revision, metadata=values()))
+    target = registry.inventory.command(
+        ADMIN,
+        cmd(
+            "SaveAsset",
+            asset_id="office-asset",
+            metadata={**values(), "source_agent_id": "office-agent"},
+        ),
+    )
+    with pytest.raises(RegistryError, match="RISK_REDUCTION"):
+        registry.inventory.command(
+            ADMIN,
+            cmd(
+                "MergeAsset",
+                asset.revision,
+                target_asset_id=target.id,
+                target_revision=target.revision,
+                reason="Cannot bury core data",
+            ),
+        )
+
+
 def test_expiry_and_removed_issuer_are_visible_without_mutating_history(registry):
     asset = accept(registry, save(registry))
     assert asset.evidence_status == "current"

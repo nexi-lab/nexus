@@ -99,3 +99,29 @@ the LangGraph pre-migration baseline, full artifact-to-task/UI flow, versioned
 evaluation records, production content-gated model path, acceptance attestation,
 restart/HA and offline model service qualification still need integration and
 verification. Pure protocol tests and synthetic inputs do not establish L2 by themselves.
+
+### Trusted supervisor and versioned evaluation inputs
+
+`python -m nexus.bricks.sandbox.hosted_supervisor --docker /absolute/path/to/docker`
+provides the trusted parent interface `agent-hosted-supervisor/v1`. It invokes the
+existing strict runner; it never imports Agent Python into the management process.
+The parent sends one bounded `execute` frame containing an already registered
+image descriptor, independent-turn query and limits. The supervisor emits model
+requests and worker-reported node trace. The parent replies with model answers,
+not credentials. A completed frame plus exit 0 is required. EOF, deadline or
+SIGTERM cancels the run and lets the runner verify removal of its own container.
+A supervisor crash or forced kill is not evidence of remote/container cleanup.
+
+`POST /hosted/datasets` registers immutable synthetic-text dataset versions;
+`GET /hosted/datasets?asset_id=...` and `GET /hosted/datasets/{id}` are read-only.
+Dataset name/version is unique per asset and organization. Case IDs are unique;
+input, expected outputs, rubric and source metadata are digest-bound. The current
+`exact-strip-v1` comparator strips only ASCII whitespace U+0009 through U+000D and
+U+0020 at both ends, then compares case-sensitively. Errors remain in the total
+case count. Score/drop acceptance is a separate explicit decision after recording
+a baseline. Registering a dataset never executes a task or grants an L2 grade.
+Dataset tables are added by the existing explicit schema-initialization operation,
+never by ordinary reads or service startup.
+
+These components still require the durable task/evaluation coordinator and Moss
+UI composition before they constitute the complete AM-10/11/15 user workflow.

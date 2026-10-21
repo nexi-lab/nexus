@@ -136,6 +136,11 @@ def initialize_schema(engine: Engine) -> None:
     from nexus.services.product_agent_registry.hosted_artifacts import initialize_hosted_schema
 
     initialize_hosted_schema(engine)
+    from nexus.services.product_agent_registry.evaluation_datasets import (
+        initialize_evaluation_schema,
+    )
+
+    initialize_evaluation_schema(engine)
 
 
 class ProductAgentRegistry:
@@ -190,6 +195,9 @@ class ProductAgentRegistry:
         from nexus.services.product_agent_registry.hosted_artifacts import HostedArtifacts
 
         self.hosted = HostedArtifacts(self)
+        from nexus.services.product_agent_registry.evaluation_datasets import EvaluationDatasets
+
+        self.evaluation = EvaluationDatasets(self)
 
     def _authorize(self, actor: RegistryActor, ref: PrincipalRef, write=False) -> None:
         if not actor.subject or not actor.zone:

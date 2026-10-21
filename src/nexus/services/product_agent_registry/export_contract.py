@@ -12,6 +12,11 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from pydantic import TypeAdapter
 
+from nexus.contracts.agent_evaluation import (
+    EvaluationDataset,
+    EvaluationDatasetPage,
+    RegisterEvaluationDataset,
+)
 from nexus.contracts.agent_execution import (
     CheckExecutionGrant,
     ExecutionAuthorization,
@@ -74,6 +79,9 @@ def artifacts() -> dict[str, str]:
         | RegisterHostedArtifact
         | HostedArtifact
         | HostedArtifactPage
+        | EvaluationDataset
+        | EvaluationDatasetPage
+        | RegisterEvaluationDataset
     )
     schema = wire.json_schema()
 

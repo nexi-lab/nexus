@@ -5,6 +5,11 @@ from pydantic import ValidationError
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.concurrency import run_in_threadpool
 
+from nexus.contracts.agent_evaluation import (
+    EvaluationDataset,
+    EvaluationDatasetPage,
+    RegisterEvaluationDataset,
+)
 from nexus.contracts.agent_hosted import (
     DifyTextPlan,
     HostedArtifact,
@@ -66,3 +71,26 @@ async def list_artifacts(
 @router.get("/artifacts/{artifact_id}", response_model=HostedArtifact)
 async def get_artifact(artifact_id: str, identity=Depends(actor), hosted=Depends(service)):
     return await invoke(lambda: hosted.get(identity, artifact_id))
+
+
+@router.post("/datasets", response_model=EvaluationDataset)
+async def register_dataset(request: Request, identity=Depends(actor), hosted=Depends(service)):
+    evaluation = hosted.registry.evaluation
+    await invoke(lambda: evaluation._authorize(identity))
+    command = await body(request, RegisterEvaluationDataset, limit=600000)
+    return await invoke(lambda: evaluation.register(identity, command))
+
+
+@router.get("/datasets", response_model=EvaluationDatasetPage)
+async def list_datasets(
+    asset_id: str = Query(..., max_length=150),
+    after: str = Query("", max_length=150),
+    identity=Depends(actor),
+    hosted=Depends(service),
+):
+    return await invoke(lambda: hosted.registry.evaluation.list(identity, asset_id, after))
+
+
+@router.get("/datasets/{dataset_id}", response_model=EvaluationDataset)
+async def get_dataset(dataset_id: str, identity=Depends(actor), hosted=Depends(service)):
+    return await invoke(lambda: hosted.registry.evaluation.get(identity, dataset_id))

@@ -1233,6 +1233,196 @@
       "title": "DiscoveryEvidence",
       "type": "object"
     },
+    "EvaluationCase": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "query": {
+          "maxLength": 16000,
+          "minLength": 1,
+          "title": "Query",
+          "type": "string"
+        },
+        "expected": {
+          "maxLength": 32000,
+          "minLength": 1,
+          "title": "Expected",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "query",
+        "expected"
+      ],
+      "title": "EvaluationCase",
+      "type": "object"
+    },
+    "EvaluationDataset": {
+      "additionalProperties": false,
+      "properties": {
+        "api_version": {
+          "const": "agent-registry.sudo.dev/v1alpha1",
+          "default": "agent-registry.sudo.dev/v1alpha1",
+          "title": "Api Version",
+          "type": "string"
+        },
+        "kind": {
+          "const": "EvaluationDataset",
+          "default": "EvaluationDataset",
+          "title": "Kind",
+          "type": "string"
+        },
+        "id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "zone": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Zone",
+          "type": "string"
+        },
+        "asset_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "metadata_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Metadata Digest",
+          "type": "string"
+        },
+        "dataset_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Dataset Digest",
+          "type": "string"
+        },
+        "rubric_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Rubric Digest",
+          "type": "string"
+        },
+        "dataset": {
+          "$ref": "#/$defs/EvaluationDatasetInput"
+        },
+        "created_by": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Created By",
+          "type": "string"
+        },
+        "initiated_by": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Initiated By",
+          "type": "string"
+        },
+        "created_at": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Created At",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "zone",
+        "asset_id",
+        "metadata_digest",
+        "dataset_digest",
+        "rubric_digest",
+        "dataset",
+        "created_by",
+        "initiated_by",
+        "created_at"
+      ],
+      "title": "EvaluationDataset",
+      "type": "object"
+    },
+    "EvaluationDatasetInput": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Version",
+          "type": "string"
+        },
+        "input_scope": {
+          "const": "synthetic_text",
+          "default": "synthetic_text",
+          "title": "Input Scope",
+          "type": "string"
+        },
+        "rubric": {
+          "const": "exact-strip-v1",
+          "default": "exact-strip-v1",
+          "title": "Rubric",
+          "type": "string"
+        },
+        "cases": {
+          "items": {
+            "$ref": "#/$defs/EvaluationCase"
+          },
+          "maxItems": 100,
+          "minItems": 1,
+          "title": "Cases",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "version",
+        "cases"
+      ],
+      "title": "EvaluationDatasetInput",
+      "type": "object"
+    },
+    "EvaluationDatasetPage": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "EvaluationDatasetPage",
+          "default": "EvaluationDatasetPage",
+          "title": "Kind",
+          "type": "string"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/EvaluationDataset"
+          },
+          "title": "Items",
+          "type": "array"
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Next Cursor"
+        }
+      },
+      "required": [
+        "items",
+        "next_cursor"
+      ],
+      "title": "EvaluationDatasetPage",
+      "type": "object"
+    },
     "ExecutionAuthorization": {
       "additionalProperties": false,
       "properties": {
@@ -2363,6 +2553,55 @@
       "title": "RecordAcceptance",
       "type": "object"
     },
+    "RegisterEvaluationDataset": {
+      "additionalProperties": false,
+      "properties": {
+        "api_version": {
+          "const": "agent-registry.sudo.dev/v1alpha1",
+          "default": "agent-registry.sudo.dev/v1alpha1",
+          "title": "Api Version",
+          "type": "string"
+        },
+        "kind": {
+          "const": "RegisterEvaluationDataset",
+          "default": "RegisterEvaluationDataset",
+          "title": "Kind",
+          "type": "string"
+        },
+        "request_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "asset_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "metadata_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Metadata Digest",
+          "type": "string"
+        },
+        "dataset": {
+          "$ref": "#/$defs/EvaluationDatasetInput"
+        },
+        "initiated_by": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,149}$",
+          "title": "Initiated By",
+          "type": "string"
+        }
+      },
+      "required": [
+        "request_id",
+        "asset_id",
+        "metadata_digest",
+        "dataset",
+        "initiated_by"
+      ],
+      "title": "RegisterEvaluationDataset",
+      "type": "object"
+    },
     "RegisterHostedArtifact": {
       "additionalProperties": false,
       "properties": {
@@ -3098,6 +3337,15 @@
     },
     {
       "$ref": "#/$defs/HostedArtifactPage"
+    },
+    {
+      "$ref": "#/$defs/EvaluationDataset"
+    },
+    {
+      "$ref": "#/$defs/EvaluationDatasetPage"
+    },
+    {
+      "$ref": "#/$defs/RegisterEvaluationDataset"
     }
   ],
   "$schema": "https://json-schema.org/draft/2020-12/schema",

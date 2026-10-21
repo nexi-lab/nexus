@@ -346,7 +346,24 @@ class AgentInventory:
                     if command.observation.observed_at > self.registry.clock() + 30000:
                         raise RegistryError("AGENT_DISCOVERY_TIME_INVALID", 400)
                     if command.observation not in record.observations:
-                        if len(record.observations) >= 64:
+                        previous = next(
+                            (
+                                o
+                                for o in record.observations
+                                if (o.source, o.source_id, o.record_id)
+                                == (
+                                    command.observation.source,
+                                    command.observation.source_id,
+                                    command.observation.record_id,
+                                )
+                            ),
+                            None,
+                        )
+                        if previous and previous.observed_at > command.observation.observed_at:
+                            raise RegistryError("AGENT_DISCOVERY_STALE", 409)
+                        if previous:
+                            record.observations.remove(previous)
+                        elif len(record.observations) >= 64:
                             raise RegistryError("AGENT_DISCOVERY_LIMIT", 400)
                         record.observations.append(command.observation)
                     record.external_domain = (

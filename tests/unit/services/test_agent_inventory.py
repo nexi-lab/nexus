@@ -535,3 +535,29 @@ def test_discovery_claim_is_atomic_owned_audited_and_does_not_publish(registry):
     with pytest.raises(RegistryError, match="AGENT_ASSET_ALREADY_CLAIMED"):
         inventory.command(ADMIN, cmd("ClaimAsset", claimed.revision, owner_user_id="bob"))
     assert inventory.history(ADMIN, claimed.id).events[-1].operation == "ClaimAsset"
+
+
+def test_discovery_refresh_replaces_only_same_source_and_retains_old_request_evidence(registry):
+    created = save(registry)
+    metadata = values()
+    for i in range(70):
+        created = registry.inventory.command(
+            ADMIN,
+            cmd(
+                "ObserveAsset",
+                created.revision,
+                metadata=metadata,
+                observation={
+                    "source": "platform",
+                    "source_id": "dify-console",
+                    "record_id": "app-1",
+                    "snapshot_digest": "sha256:" + format(i, "064x"),
+                    "observed_at": 1000,
+                },
+            ),
+        )
+    assert len(created.observations) == 1
+    assert created.observations[0].snapshot_digest.endswith("45")
+    assert created.metadata.owner_user_id == "alice"
+    assert created.status == "draft"
+    assert len(registry.inventory.history(ADMIN, created.id).events) == 71

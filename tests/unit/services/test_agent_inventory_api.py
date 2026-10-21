@@ -81,3 +81,38 @@ def test_inventory_body_limit_strict_fields_and_untrusted_acceptance(client):
         "RecordAcceptance", created["revision"], report=report(AssetRecord.model_validate(created))
     ).model_dump()
     assert client.post(URL + "/commands", headers=HEADERS, json=acceptance).status_code == 403
+
+
+def test_admitted_asset_lookup_is_read_only_scoped_and_never_bootstraps(client, registry):
+    from tests.unit.services.test_agent_inventory import SPEC, accept, bind, save
+    from tests.unit.services.test_product_agent_registry import ADMIN
+
+    path = BASE + "/agents.example/assistant/admitted-asset"
+    params = {"spec_digest": SPEC}
+    # A legacy domain with no asset is not sufficient to obtain task identity.
+    result = client.get(path, headers=HEADERS, params=params)
+    assert result.status_code == 409
+    asset = bind(registry, save(registry))
+    assert client.get(path, headers=HEADERS, params=params).status_code == 409
+    asset = accept(registry, asset)
+    statements = []
+
+    def capture(_con, _cursor, sql, *_args):
+        statements.append(sql.strip().split()[0].upper())
+
+    event.listen(registry.engine, "before_cursor_execute", capture)
+    try:
+        for _ in range(2):
+            result = client.get(path, headers=HEADERS, params=params)
+            assert result.status_code == 200
+            assert result.json()["id"] == asset.id
+            assert result.json()["metadata_digest"] == asset.metadata_digest
+        assert not {"INSERT", "UPDATE", "DELETE", "ALTER", "CREATE"} & set(statements)
+    finally:
+        event.remove(registry.engine, "before_cursor_execute", capture)
+    assert client.get(path, params=params).status_code == 401
+    assert client.get(path, headers={"Authorization": "Bearer sk-test-member"}, params=params).status_code == 403
+    assert client.get(path, headers={**HEADERS, "X-Nexus-Zone-ID": "zone-b"}, params=params).status_code == 403
+    assert client.get(path, headers=HEADERS, params={"spec_digest": "sha256:" + "b" * 64}).status_code == 409
+    registry.inventory.command(ADMIN, cmd("SuspendAsset", asset.revision, reason="explicit suspension"))
+    assert client.get(path, headers=HEADERS, params=params).status_code == 409

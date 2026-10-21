@@ -606,6 +606,16 @@ class AgentInventory:
             next_revision=result[-1].revision if len(rows) > 100 else None,
         )
 
+    def admitted_asset(self, actor, ref: PrincipalRef, spec_digest: str):
+        """Management-only lookup of the authoritative asset for an admitted release."""
+        self._authorize(actor)
+        result = self.admission(actor, ref, spec_digest)
+        if result is None:
+            # Legacy unenforced domains may resolve without an inventory record.
+            # They must not receive a made-up asset or task credential.
+            raise RegistryError("AGENT_ASSET_REGISTRATION_REQUIRED")
+        return result
+
     def admission(self, actor, ref: PrincipalRef, spec_digest: str, con=None):
         """Read-only at publication, channel selection and every execution resolution."""
         self.registry._authorize(actor, ref)

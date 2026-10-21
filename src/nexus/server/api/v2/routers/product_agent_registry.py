@@ -163,6 +163,18 @@ async def versions(
     return await invoke(lambda: registry.list_versions(identity, ref, after))
 
 
+@router.get("/{domain}/{name}/admitted-asset", response_model=AssetRecord)
+async def admitted_asset(
+    domain: str,
+    name: str,
+    spec_digest: str = Query(..., pattern=r"^sha256:[a-f0-9]{64}$"),
+    identity: RegistryActor = Depends(actor),
+    registry: ProductAgentRegistry = Depends(service),
+):
+    ref = principal(domain, name)
+    return await invoke(lambda: registry.inventory.admitted_asset(identity, ref, spec_digest))
+
+
 @router.get("/{domain}/{name}/resolve", response_model=Resolution)
 async def resolve(
     domain: str,

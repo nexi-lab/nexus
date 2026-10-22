@@ -41,7 +41,7 @@ Registration accepts an email, a password of at least eight characters, and opti
 
 The response is the unverified `UserProfile` (HTTP 201), without credentials. The browser separately requests an email verification link, then calls Login after verification. A failed delivery can be retried through RequestEmailVerification without registering again. Login refuses unverified accounts.
 
-Identity checks and insertion share one short transaction: SQLite uses `BEGIN IMMEDIATE`, PostgreSQL uses `SERIALIZABLE`. PostgreSQL serialization conflicts retry the whole transaction at most three times, reusing the already computed bcrypt hash. Exhaustion returns Aborted/HTTP 409; duplicate active email or username returns AlreadyExists/HTTP 409. Hashing occurs before the transaction. No identity reservation or runtime lock is persisted, and historical duplicate accounts are preserved.
+Identity checks and insertion share one short transaction: SQLite uses `BEGIN IMMEDIATE`, PostgreSQL uses `SERIALIZABLE`. PostgreSQL serialization conflicts retry the whole transaction with exponential jittered backoff, bounded to two seconds after the first conflict, reusing the already computed bcrypt hash. Failed transactions release their connections before waiting. Exhaustion returns Aborted/HTTP 409; duplicate active email or username returns AlreadyExists/HTTP 409. Hashing occurs before the transaction. No identity reservation or runtime lock is persisted, and historical duplicate accounts are preserved.
 
 Password and Google creation share this transaction contract. Deployment must route every account writer through the Rust service when retiring Python routes; mixed writers with weaker isolation cannot provide this guarantee.
 

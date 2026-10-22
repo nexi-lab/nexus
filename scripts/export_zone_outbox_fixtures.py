@@ -10,7 +10,14 @@ from sqlalchemy.schema import CreateIndex, CreateTable
 
 from nexus.storage.models import ZoneGrantProjectionOutboxModel, ZoneRuntimeOutboxModel
 
-DESTINATION = Path(__file__).resolve().parents[1] / "fixtures" / "storage"
+DESTINATION = (
+    Path(__file__).resolve().parents[1]
+    / "rust"
+    / "services"
+    / "zone-control"
+    / "tests"
+    / "fixtures"
+)
 
 
 def fixtures() -> dict[str, str]:

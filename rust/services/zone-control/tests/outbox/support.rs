@@ -92,9 +92,9 @@ impl Fixture {
         };
         fixture
             .execute(if postgres {
-                include_str!("../../../../../contracts/fixtures/storage/zone-outboxes.postgres.sql")
+                include_str!("../fixtures/zone-outboxes.postgres.sql")
             } else {
-                include_str!("../../../../../contracts/fixtures/storage/zone-outboxes.sqlite.sql")
+                include_str!("../fixtures/zone-outboxes.sqlite.sql")
             })
             .await;
         fixture

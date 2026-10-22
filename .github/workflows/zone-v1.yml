@@ -13,6 +13,8 @@ on:
       - "alembic/versions/**"
       - "tests/contracts/**"
       - "tests/migrations/test_zone_v1_storage.py"
+      - "tests/migrations/test_zone_outbox_fixtures.py"
+      - "scripts/export_zone_outbox_fixtures.py"
       - "src/nexus/services/zones/**"
       - "src/nexus/remote/kernel_client.py"
       - "src/nexus/remote/rpc_transport.py"
@@ -39,6 +41,8 @@ on:
       - "alembic/versions/**"
       - "tests/contracts/**"
       - "tests/migrations/test_zone_v1_storage.py"
+      - "tests/migrations/test_zone_outbox_fixtures.py"
+      - "scripts/export_zone_outbox_fixtures.py"
       - "src/nexus/services/zones/**"
       - "src/nexus/remote/kernel_client.py"
       - "src/nexus/remote/rpc_transport.py"
@@ -88,7 +92,7 @@ jobs:
       - name: Python contract, storage, and service tests
         env:
           NEXUS_E2E_DATABASE_URL: postgresql+psycopg2://postgres:nexus@127.0.0.1:5432/nexus_zone_test
-        run: uv run pytest -n 0 tests/contracts tests/migrations/test_zone_v1_storage.py tests/unit/services/test_zone_service.py tests/unit/server/test_zone_v2_api.py tests/unit/remote/test_zone_runtime_client.py tests/unit/e2e/test_zone_server_harness.py
+        run: uv run pytest -n 0 tests/contracts tests/migrations/test_zone_v1_storage.py tests/migrations/test_zone_outbox_fixtures.py tests/unit/services/test_zone_service.py tests/unit/server/test_zone_v2_api.py tests/unit/remote/test_zone_runtime_client.py tests/unit/e2e/test_zone_server_harness.py
       - name: Build kernel from the pinned nexus-vfs rev
         shell: bash
         run: |

@@ -9,6 +9,10 @@ on:
   pull_request:
     paths:
       - "contracts/**"
+      - "src/nexus/storage/models/**"
+      - "alembic/versions/**"
+      - "tests/contracts/**"
+      - "tests/migrations/test_zone_v1_storage.py"
       - "src/nexus/services/zones/**"
       - "src/nexus/remote/kernel_client.py"
       - "src/nexus/remote/rpc_transport.py"
@@ -31,6 +35,10 @@ on:
     branches: [develop]
     paths:
       - "contracts/**"
+      - "src/nexus/storage/models/**"
+      - "alembic/versions/**"
+      - "tests/contracts/**"
+      - "tests/migrations/test_zone_v1_storage.py"
       - "src/nexus/services/zones/**"
       - "src/nexus/remote/kernel_client.py"
       - "src/nexus/remote/rpc_transport.py"
@@ -140,13 +148,28 @@ jobs:
 
   rust-production-profile:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: nexus
+          POSTGRES_DB: nexus_zone_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d nexus_zone_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - run: cargo fmt --all --check
-      - name: Rust product contract fixtures
+      - name: Rust contracts and SQLite/PostgreSQL outbox process recovery
+        env:
+          NEXUS_ZONE_CONTROL_TEST_DATABASE_URL: postgresql://postgres:nexus@127.0.0.1:5432/nexus_zone_test
         run: cargo test --locked -p nexus-zone-control
       - name: Clippy the workspace members this repo owns
         # The kernel build below covers the pinned external nexus-vfs repo;

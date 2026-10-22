@@ -279,7 +279,7 @@ dependencies = [
 [[package]]
 name = "backends"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=dcb582f9421526f97b3c8bde0b1e3b48241db9fa#dcb582f9421526f97b3c8bde0b1e3b48241db9fa"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=566f1debbf7ff5cc612886450cce7d7e93108708#566f1debbf7ff5cc612886450cce7d7e93108708"
 dependencies = [
  "ahash",
  "base64 0.22.1",
@@ -721,7 +721,7 @@ checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 [[package]]
 name = "contracts"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=dcb582f9421526f97b3c8bde0b1e3b48241db9fa#dcb582f9421526f97b3c8bde0b1e3b48241db9fa"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=566f1debbf7ff5cc612886450cce7d7e93108708#566f1debbf7ff5cc612886450cce7d7e93108708"
 dependencies = [
  "parking_lot",
  "serde",
@@ -2153,7 +2153,7 @@ dependencies = [
 [[package]]
 name = "kernel"
 version = "0.10.1"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=dcb582f9421526f97b3c8bde0b1e3b48241db9fa#dcb582f9421526f97b3c8bde0b1e3b48241db9fa"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=566f1debbf7ff5cc612886450cce7d7e93108708#566f1debbf7ff5cc612886450cce7d7e93108708"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -2236,7 +2236,7 @@ dependencies = [
 [[package]]
 name = "lib"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=dcb582f9421526f97b3c8bde0b1e3b48241db9fa#dcb582f9421526f97b3c8bde0b1e3b48241db9fa"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=566f1debbf7ff5cc612886450cce7d7e93108708#566f1debbf7ff5cc612886450cce7d7e93108708"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -2250,6 +2250,7 @@ dependencies = [
  "memchr",
  "parking_lot",
  "pem",
+ "redb",
  "regex",
  "regex-syntax",
  "ring",
@@ -2259,6 +2260,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "string-interner",
+ "tempfile",
  "thiserror 2.0.18",
  "time",
  "tokio",
@@ -2534,7 +2536,7 @@ dependencies = [
 [[package]]
 name = "nexus-plugin-abi"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=dcb582f9421526f97b3c8bde0b1e3b48241db9fa#dcb582f9421526f97b3c8bde0b1e3b48241db9fa"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=566f1debbf7ff5cc612886450cce7d7e93108708#566f1debbf7ff5cc612886450cce7d7e93108708"
 dependencies = [
  "http",
  "tonic",
@@ -4308,7 +4310,7 @@ dependencies = [
 [[package]]
 name = "subprocess"
 version = "0.1.0"
-source = "git+https://github.com/nexi-lab/nexus-vfs?rev=dcb582f9421526f97b3c8bde0b1e3b48241db9fa#dcb582f9421526f97b3c8bde0b1e3b48241db9fa"
+source = "git+https://github.com/nexi-lab/nexus-vfs?rev=566f1debbf7ff5cc612886450cce7d7e93108708#566f1debbf7ff5cc612886450cce7d7e93108708"
 dependencies = [
  "kernel",
  "libc",

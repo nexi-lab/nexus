@@ -6,11 +6,17 @@ on:
     paths:
       - 'packages/**'
       - '.github/workflows/ts-packages.yml'
+      - 'src/nexus/cli/**'
+      - 'src/nexus/remote/**'
+      - 'tests/unit/cli/**'
   pull_request:
     branches: [main, develop]
     paths:
       - 'packages/**'
       - '.github/workflows/ts-packages.yml'
+      - 'src/nexus/cli/**'
+      - 'src/nexus/remote/**'
+      - 'tests/unit/cli/**'
 
 jobs:
   api-client:
@@ -27,26 +33,6 @@ jobs:
           node-version: "18"
 
       - run: npm ci
-      - run: npm run lint
-      - run: npm run test:coverage
-
-  nexus-pay-ts:
-    name: "@nexus-ai-fs/pay"
-    runs-on: ubuntu-latest
-    needs: api-client
-    defaults:
-      run:
-        working-directory: packages/nexus-pay-ts
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "18"
-
-      # Build api-client first (nexus-pay-ts depends on it)
-      - run: cd ../nexus-api-client && npm ci
-      - run: npm install
       - run: npm run lint
       - run: npm run test:coverage
 
@@ -120,6 +106,8 @@ jobs:
           uv pip install -e ".[dev,test]"
       - name: Verify actual Bun launch and Windows child exit status
         run: uv run --no-sync python -m pytest tests/unit/cli/test_tui_launcher.py -n 0 -q
+      - name: Verify Windows CLI and process ownership contracts
+        run: uv run --no-sync python -m pytest tests/unit/cli --ignore=tests/unit/cli/test_tui_launcher.py -n 0 -q
       - name: Verify an isolated installation of the packed terminal
         working-directory: packages/nexus-tui
         run: bun run test:package

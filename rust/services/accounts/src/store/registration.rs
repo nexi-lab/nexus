@@ -2,6 +2,8 @@
 
 use super::*;
 use crate::oauth::GoogleIdentity;
+use std::time::Duration;
+use tokio::time::{sleep, Instant};
 
 struct Registration<'a> {
     email: &'a str,
@@ -87,7 +89,9 @@ impl AccountStore {
         // Provider calls and password hashing complete before this transaction.
         // PostgreSQL retries the whole transaction on SSI/identity races. SQLite
         // acquires its writer before checking either email or provider subject.
-        for _ in 0..3 {
+        let mut retry_deadline = None;
+        let mut retry_delay_ms = 10;
+        loop {
             let result: Result<Result<User, Status>, sqlx::Error> = with_pool!(
                 self,
                 pool,
@@ -164,10 +168,27 @@ impl AccountStore {
                 Err(error)
                     if error.as_database_error().is_some_and(|error| {
                         error.code().as_deref() == Some("40001") || error.is_unique_violation()
-                    }) => {}
+                    }) =>
+                {
+                    // SSI conflicts may repeat while the winning transaction
+                    // is still committing. Yield with bounded jitter instead
+                    // of consuming a fixed retry count in a tight loop.
+                    // The failed transaction has rolled back before waiting;
+                    // neither a connection nor a row lock is held here.
+                    let deadline = *retry_deadline
+                        .get_or_insert_with(|| Instant::now() + Duration::from_secs(2));
+                    let jitter = u64::from(uuid::Uuid::new_v4().as_bytes()[0]);
+                    let delay = Duration::from_millis(
+                        retry_delay_ms / 2 + jitter % (retry_delay_ms / 2 + 1),
+                    );
+                    if Instant::now() + delay >= deadline {
+                        return Err(Status::aborted("Concurrent account change; retry sign-in"));
+                    }
+                    sleep(delay).await;
+                    retry_delay_ms = (retry_delay_ms * 2).min(100);
+                }
                 Err(error) => return Err(unavailable(error)),
             }
         }
-        Err(Status::aborted("Concurrent account change; retry sign-in"))
     }
 }

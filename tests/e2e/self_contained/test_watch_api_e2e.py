@@ -7,7 +7,8 @@ Note: Some tests require event infrastructure (Redis or same-box backend).
 Tests gracefully handle the 501 response when events are not available.
 """
 
-import asyncio
+import threading
+import time
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -134,49 +135,40 @@ class TestWatchAPIEndpoint:
 
 
 class TestWatchAPIWithEvents:
-    """Tests for watch endpoint detecting actual changes.
-
-    These tests require event infrastructure (Redis or same-box backend).
-    """
+    """Watch native file events through the HTTP adapter."""
 
     @pytest.mark.asyncio
     async def test_watch_detects_file_write(self, nexus_fs: "NexusFS") -> None:
-        """Test that watch detects file write events (requires event infrastructure)."""
+        """Require a native FileWrite receipt for the file written during the watch."""
         from nexus.server.fastapi_server import create_app
 
         nexus_fs.mkdir("/inbox")
         app = create_app(nexus_fs)
 
         with TestClient(app) as client:
-            # First check if events are available
-            check_response = client.get("/api/v2/watch", params={"path": "/inbox/", "timeout": 0.1})
-
-            if check_response.status_code == 501:
-                pytest.skip("Event infrastructure not available")
-
-            # Start watch in background thread
             import concurrent.futures
 
             with concurrent.futures.ThreadPoolExecutor() as executor:
+                finished = threading.Event()
+                deadline = time.monotonic() + 6.0
                 future = executor.submit(
                     client.get,
                     "/api/v2/watch",
-                    params={"path": "/inbox/", "timeout": 5.0},
+                    params={"path": "/inbox/**", "timeout": 5.0},
                 )
-
-                # Give watch time to start
-                await asyncio.sleep(0.2)
-
-                # Write a file to trigger the event
-                nexus_fs.write("/inbox/test.txt", b"hello world")
-
-                # Wait for watch to return
-                response = future.result(timeout=6.0)
+                future.add_done_callback(lambda _: finished.set())
+                # Keep changing the real file throughout the subscription
+                # window, so a mutation cannot race ahead of registration.
+                while not finished.is_set() and time.monotonic() < deadline:
+                    nexus_fs.write("/inbox/test.txt", b"hello world")
+                    finished.wait(0.02)
+                response = future.result(timeout=max(0.0, deadline - time.monotonic()))
 
                 assert response.status_code == 200
                 data = response.json()
-                assert "changes" in data
-                assert "timeout" in data
+                assert data["timeout"] is False
+                assert data["changes"][0]["path"] == "/inbox/test.txt"
+                assert data["changes"][0]["event_type"] == "FileWrite"
 
 
 class TestWatchAPIErrorHandling:

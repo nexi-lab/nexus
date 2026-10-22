@@ -9,7 +9,7 @@ These tests verify end-to-end pagination behavior including:
 
 import pytest
 
-from nexus.backends.storage.cas_local import CASLocalBackend
+from nexus.backends.storage.path_local import PathLocalBackend
 from nexus.core.config import PermissionConfig
 from nexus.core.pagination import PaginatedResult
 from nexus.factory import create_nexus_fs
@@ -20,7 +20,7 @@ async def nexus_fs(tmp_path_factory):
     """Create a NexusFS instance for testing via factory."""
     base = tmp_path_factory.mktemp("nexus_pagination")
     (base / "data").mkdir()
-    backend = CASLocalBackend(str(base / "data"))
+    backend = PathLocalBackend(str(base / "data"))
     metadata_store = str(base / "meta")
     nx = create_nexus_fs(
         backend=backend, metadata_store=metadata_store, permissions=PermissionConfig(enforce=False)
@@ -42,7 +42,7 @@ async def nexus_fs_large(tmp_path_factory):
     """Create NexusFS with 1000 test files for scale testing."""
     base = tmp_path_factory.mktemp("nexus_pagination_large")
     (base / "data").mkdir()
-    backend = CASLocalBackend(str(base / "data"))
+    backend = PathLocalBackend(str(base / "data"))
     metadata_store = str(base / "meta")
     nx = create_nexus_fs(
         backend=backend,

@@ -74,9 +74,8 @@ openai = ["openai>=2.36.0"]
 x = ["requests-oauthlib>=2.0.0", "sqlalchemy>=2.0.49"]
 edit = ["rapidfuzz>=3.14.5"]
 fsspec = ["fsspec>=2026.4.0"]
-tui = ["textual>=8.2.5"]
 all = [
-    "nexus-fs[s3,gcs,gdrive,gmail,gcalendar,slack,anthropic,openai,x,fsspec,tui,edit]",
+    "nexus-fs[s3,gcs,gdrive,gmail,gcalendar,slack,anthropic,openai,x,fsspec,edit]",
 ]
 dev = [
     "nexus-fs[all]",
@@ -84,7 +83,6 @@ dev = [
     "pytest-asyncio>=1.3.0",
     "pytest-cov>=7.1.0",
     "pytest-examples>=0.0.18",
-    "pytest-textual-snapshot>=1.1.0",
     "moto[s3]>=5.2.0",
     "ruff>=0.15.12",
     "mypy>=2.0.0",

@@ -77,10 +77,10 @@ async def mount(
             credentials, missing bucket, network error) are skipped with a
             warning instead of aborting the entire mount.  Useful for CLI
             commands that should not fail because of an unrelated broken mount.
-        ephemeral: If True, skip writing to mounts.json entirely.  The mount
-            is active for the lifetime of the returned ``NexusFS`` only.
-            Use this in tests and one-shot scripts to avoid accumulating stale
-            entries.  See also ``nexus.fs.testing.ephemeral_mount``.
+        ephemeral: If True, skip saving the URI in mounts.json. Use this in
+            tests and one-shot scripts to avoid accumulating discovery entries.
+            Native file metadata and backend bytes retain their usual durability.
+            See also ``nexus.fs.testing.ephemeral_mount``.
         name: Optional human label for the mount (single-URI only).  Stored
             in mounts.json as ``"name"`` and usable with ``nexus-fs mount rm``.
 
@@ -166,15 +166,11 @@ async def mount(
         # Clean up any already-created backends and the metastore
         for _, be, _ in backends:
             _close_backend(be)
-        # ``metastore`` is now a bare ``PyKernel`` (post-W3); it manages
-        # its own redb lifecycle, so there's no caller-side close.
-        pass
+        metastore.close()
         raise
 
     if not backends:
-        # ``metastore`` is now a bare ``PyKernel`` (post-W3); it manages
-        # its own redb lifecycle, so there's no caller-side close.
-        pass
+        metastore.close()
         skipped_summary = "; ".join(f"{u}: {e}" for u, e in skipped)
         raise ValueError(
             f"All mounts failed. Run 'nexus-fs doctor' to diagnose.\n{skipped_summary}"
@@ -197,12 +193,14 @@ async def mount(
             ),
         )
 
+        kernel._register_runtime_closeable(metastore)
+
         from nexus.contracts.metadata import DT_MOUNT
 
         for mp, backend, _ in backends:
             kernel.sys_setattr(mp, entry_type=DT_MOUNT, backend=backend)
 
-        # Persist mount entries so playground/fsspec/cp can auto-discover them.
+        # Persist mount entries so fsspec/cp can discover them.
         # Merges with existing entries so repeated `mount` calls accumulate.
         # Only persist URIs whose backends were successfully created.
         # Skip entirely when ephemeral=True — caller explicitly opted out.
@@ -224,22 +222,14 @@ async def mount(
             except OSError as exc:
                 logger.warning(
                     "Could not write mounts.json (%s). "
-                    "fsspec auto-discovery and playground will not find these mounts.",
+                    "fsspec auto-discovery will not find these mounts.",
                     exc,
                 )
 
-        # Mount metadata is already persisted by kernel.sys_setattr(DT_MOUNT)
-        # above — no additional metastore write needed. The previous
-        # metastore.metastore_put / metastore.sys_setattr loop was
-        # redundant and, because metastore is a singleton PyKernel shared
-        # with kernel._kernel, caused a DT_MOUNT re-mount that wiped the
-        # backend off the VFS route.
     except Exception:
         for _, be, _ in backends:
             _close_backend(be)
-        # ``metastore`` is now a bare ``PyKernel`` (post-W3); it manages
-        # its own redb lifecycle, so there's no caller-side close.
-        pass
+        metastore.close()
         raise
 
     return kernel

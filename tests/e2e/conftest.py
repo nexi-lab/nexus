@@ -40,9 +40,22 @@ except ImportError:
     collect_ignore_glob = ["self_contained/mcp/*"]
 
 # Add src directory to Python path for local development
-_src_path = Path(__file__).parent.parent.parent / "src"
-if str(_src_path) not in sys.path:
-    sys.path.insert(0, str(_src_path))
+SOURCE_ROOT = Path(__file__).resolve().parents[2] / "src"
+if str(SOURCE_ROOT) not in sys.path:
+    sys.path.insert(0, str(SOURCE_ROOT))
+
+
+def server_command(*arguments: str) -> list[str]:
+    return [
+        sys.executable,
+        "-c",
+        "import sys\nfrom pathlib import Path\nimport nexus\n"
+        "if Path(nexus.__file__).resolve().parent != Path(sys.argv[1]).resolve() / 'nexus':\n"
+        "    raise RuntimeError('server imported a different Nexus checkout')\n"
+        "from nexus.daemon.main import main\nmain(sys.argv[2:])",
+        str(SOURCE_ROOT),
+        *arguments,
+    ]
 
 
 class MembershipStub:
@@ -276,7 +289,7 @@ def nexus_server(isolated_db, tmp_path):
         env["NEXUS_DATABASE_URL"] = os.environ.get(
             "NEXUS_E2E_DATABASE_URL", f"sqlite:///{isolated_db}"
         )
-        env["PYTHONPATH"] = str(_src_path)
+        env["PYTHONPATH"] = str(SOURCE_ROOT)
 
         # Full-profile startup requires a real credential provider.  Mint one key
         # into the same Rust data directory the local KernelClient will open, then
@@ -312,10 +325,7 @@ def nexus_server(isolated_db, tmp_path):
         # --data-dir sets both storage path and database location
         # Uses FastAPI async server (default) for full API support including Graph API
         process = subprocess.Popen(
-            [
-                sys.executable,
-                "-c",
-                "from nexus.daemon.main import main; import sys; main(sys.argv[1:])",
+            server_command(
                 "--host",
                 "127.0.0.1",
                 "--port",
@@ -324,7 +334,7 @@ def nexus_server(isolated_db, tmp_path):
                 str(tmp_path),
                 "--profile",
                 "full",
-            ],
+            ),
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -422,7 +432,6 @@ def test_app(nexus_server):
         yield client
 
 
-# Keep the old fixture for backward compatibility during transition
 @pytest.fixture(scope="function")
 async def nexus_fs(isolated_db, tmp_path):
     """Create a NexusFS instance for testing (direct, no server).
@@ -432,11 +441,11 @@ async def nexus_fs(isolated_db, tmp_path):
     """
     os.environ["NEXUS_JWT_SECRET"] = "test-secret-key-for-e2e-12345"
 
-    from nexus.backends.storage.cas_local import CASLocalBackend
+    from nexus.backends.storage.path_local import PathLocalBackend
 
     storage_path = tmp_path / "storage"
     storage_path.mkdir(exist_ok=True)
-    backend = CASLocalBackend(root_path=str(storage_path))
+    backend = PathLocalBackend(root_path=str(storage_path))
 
     metadata_store = str(isolated_db).replace(".db", "")
     record_store = SQLAlchemyRecordStore()  # in-memory SQLite for tests

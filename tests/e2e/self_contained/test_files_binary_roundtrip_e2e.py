@@ -12,7 +12,7 @@ Two regressions covered:
    cannot be recovered byte-for-byte.
 
 The test wires a FastAPI TestClient to a real NexusFS (SQLite metastore +
-CASLocalBackend) — same fixture shape as the batch_write_read e2e — and
+PathLocalBackend) — same fixture shape as the batch_write_read e2e — and
 asserts a SHA-256 match end-to-end.
 """
 
@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+from collections.abc import Generator
 from pathlib import Path
 
 import pytest
@@ -48,15 +49,15 @@ _PNG_HEADER = bytes.fromhex(
 
 
 @pytest.fixture()
-def real_fs(tmp_path: Path) -> NexusFS:
-    from nexus.backends.storage.cas_local import CASLocalBackend
+def real_fs(tmp_path: Path) -> Generator[NexusFS, None, None]:
+    from nexus.backends.storage.path_local import PathLocalBackend
 
     db_path = str(tmp_path / "meta.db")
     metastore = create_kernel(db_path)
 
     data_dir = tmp_path / "data"
     data_dir.mkdir()
-    backend = CASLocalBackend(root_path=data_dir)
+    backend = PathLocalBackend(root_path=data_dir)
 
     kernel = NexusFS(
         metadata_store=metastore,
@@ -70,7 +71,11 @@ def real_fs(tmp_path: Path) -> NexusFS:
     )
     kernel.sys_setattr("/files", entry_type=DT_MOUNT, backend=backend)
 
-    return kernel
+    kernel._register_runtime_closeable(metastore)
+    try:
+        yield kernel
+    finally:
+        kernel.close()
 
 
 @pytest.fixture()

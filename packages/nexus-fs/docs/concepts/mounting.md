@@ -159,8 +159,7 @@ to keep the database compact.
 If `metadata.db` becomes corrupted (e.g., after a hard crash), delete
 it and re-mount. The database is a cache — no user data is stored in it.
 
-If `mounts.json` contains invalid JSON, `nexus-fs playground` will show
-an empty mount list and `fsspec` auto-discovery will raise a clear error
+If `mounts.json` contains invalid JSON, `fsspec` auto-discovery raises an error
 asking you to re-run `mount()`.
 
 ### Concurrent processes

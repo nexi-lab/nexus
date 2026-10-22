@@ -40,8 +40,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from nexus.bricks.mcp.auth_cache import get_auth_identity_cache, hash_api_key
-from nexus.server.token_utils import parse_sk_token
+from nexus.bricks.mcp.credentials import http_api_key
 
 
 @lru_cache(maxsize=16)
@@ -56,7 +55,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 DEFAULT_ANON: str = "60/minute"
 DEFAULT_AUTH: str = "300/minute"
-DEFAULT_PREMIUM: str = "1000/minute"
 
 
 # ---------------------------------------------------------------------------
@@ -64,57 +62,21 @@ DEFAULT_PREMIUM: str = "1000/minute"
 # ---------------------------------------------------------------------------
 
 
-def _extract_token(request: Request) -> str | None:
-    """Extract bearer token from Authorization or X-Nexus-API-Key header."""
-    auth = request.headers.get("Authorization", "")
-    if auth.startswith("Bearer "):
-        return auth[7:]
-    return request.headers.get("X-Nexus-API-Key") or None
-
-
 def _rate_limit_key(request: Request) -> str:
-    """Return a per-client rate-limit bucket key.
-
-    Priority: parsed sk-token fields → hashed bearer/api-key → agent header → IP.
-
-    Note: the parameter must be named ``request`` so SlowAPI's
-    ``__evaluate_limits`` can detect it via ``inspect.signature``.
-    """
-    token = _extract_token(request)
+    """Bucket an opaque caller credential without interpreting its identity."""
+    token = http_api_key(request.headers)
     if token:
-        parsed = parse_sk_token(token)
-        if parsed is not None:
-            return f"user:{parsed.zone or 'unknown'}:{parsed.user or 'unknown'}"
-        return f"token:{hashlib.sha256(token.encode()).hexdigest()[:16]}"
-    agent = request.headers.get("X-Agent-ID")
-    if agent:
-        return f"agent:{agent}"
-    client_host = get_remote_address(request) or "unknown"
-    return f"ip:{client_host}"
+        return f"token:{hashlib.sha256(token.encode()).hexdigest()}"
+    return f"ip:{get_remote_address(request) or 'unknown'}"
 
 
 def _tier_for_request(request: Request) -> str:
-    """Return the rate-limit tier for this request.
-
-    Consults ``AuthIdentityCache`` for cached identity.  Unknown tokens
-    default to ``"authenticated"`` to avoid a synchronous auth round-trip
-    inside ASGI middleware.
-    """
-    token = _extract_token(request)
-    if not token:
-        return "anonymous"
-    cache = get_auth_identity_cache()
-    hit = cache.get(hash_api_key(token))
-    if hit is None:
-        # Token present but not yet in cache — treat as authenticated.
-        return "authenticated"
-    return hit.tier
+    """Choose an ingress budget; native authentication remains authoritative."""
+    return "authenticated" if http_api_key(request.headers) else "anonymous"
 
 
 def _limit_for_tier(tier: str) -> str:
     """Return the rate-limit string for the given tier (reads from env)."""
-    if tier == "premium":
-        return os.environ.get("NEXUS_MCP_RATE_LIMIT_PREMIUM", DEFAULT_PREMIUM)
     if tier == "anonymous":
         return os.environ.get("NEXUS_MCP_RATE_LIMIT_ANONYMOUS", DEFAULT_ANON)
     return os.environ.get("NEXUS_MCP_RATE_LIMIT_AUTHENTICATED", DEFAULT_AUTH)
@@ -139,7 +101,7 @@ async def _write_rate_limit_hit(client: Any, key: str) -> None:
 
 
 async def _record_rate_limit_hit(tier: str) -> None:
-    """Best-effort Redis counter for `nexus hub status --detail`."""
+    """Record an expiring ingress rate-limit counter."""
     url = os.environ.get("NEXUS_REDIS_URL") or os.environ.get("DRAGONFLY_URL")
     if not url or url == "memory://":
         return
@@ -262,9 +224,7 @@ def install_rate_limit(app: Any) -> None:
     - ``NEXUS_MCP_RATE_LIMIT_ANONYMOUS`` — limit for unauthenticated
       requests (default ``60/minute``).
     - ``NEXUS_MCP_RATE_LIMIT_AUTHENTICATED`` — limit for token-bearing
-      requests whose identity is not yet cached (default ``300/minute``).
-    - ``NEXUS_MCP_RATE_LIMIT_PREMIUM`` — limit for admin/premium tokens
-      (default ``1000/minute``).
+      requests (default ``300/minute``).
     """
     enabled = os.environ.get("MCP_RATE_LIMIT_ENABLED", "false").lower() == "true"
     storage_uri = (

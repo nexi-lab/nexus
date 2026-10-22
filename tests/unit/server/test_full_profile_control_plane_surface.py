@@ -2,41 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
-
-REQUIRED_RPC_METHODS = {
-    "admin_write_permission",
-    "admin_create_key",
-    "admin_list_keys",
-    "admin_get_key",
-    "admin_revoke_key",
-    "admin_update_key",
-    "audit_list",
-    "audit_export",
-    "events_replay",
-    "governance_alerts",
-    "governance_rings",
-    "governance_status",
-    "federation_client_whoami",
-    "federation_export_zone",
-    "federation_import_zone",
-    "federation_create_zone",
-    "federation_remove_zone",
-    "federation_join",
-    "federation_mount",
-    "federation_unmount",
-    "federation_share",
-    "federation_list_zones",
-    "federation_cluster_info",
-    "pay_balance",
-    "pay_transfer",
-    "pay_history",
-}
-
 
 ADMIN_ONLY_RPC_METHODS = {
     "admin_write_permission",
@@ -70,53 +39,6 @@ PUBLIC_RPC_METHODS = {
     "pay_transfer",
     "pay_history",
 }
-
-
-def _iter_rpc_methods(surfaces: Iterable[Any]) -> set[str]:
-    return {method for surface in surfaces for method in surface.rpc_methods}
-
-
-def test_control_plane_matrix_covers_issue_4138_rpc_methods() -> None:
-    from nexus.contracts.control_plane_coverage import CONTROL_PLANE_SURFACES
-
-    covered = _iter_rpc_methods(CONTROL_PLANE_SURFACES)
-    assert covered >= REQUIRED_RPC_METHODS
-
-
-def test_control_plane_matrix_tracks_profile_gate_and_gap_status() -> None:
-    from nexus.contracts.control_plane_coverage import CONTROL_PLANE_SURFACES
-
-    for surface in CONTROL_PLANE_SURFACES:
-        assert surface.profile == "full"
-        assert surface.module_group
-        assert surface.how_to_use
-        assert surface.correctness_tests
-        assert surface.performance_classification
-        assert surface.gap_issue is None or surface.gap_issue.startswith("#")
-
-
-def test_cli_surface_contains_required_operator_commands() -> None:
-    from nexus.cli.commands.admin import admin
-    from nexus.cli.commands.audit import audit
-    from nexus.cli.commands.events_cli import events
-    from nexus.cli.commands.federation import federation
-    from nexus.cli.commands.governance_cli import governance
-    from nexus.cli.commands.pay import pay
-
-    assert {
-        "create-user",
-        "create-key",
-        "create-agent-key",
-        "list-users",
-        "get-user",
-        "revoke-key",
-        "update-key",
-    } <= set(admin.commands)
-    assert {"list", "export"} <= set(audit.commands)
-    assert {"replay"} <= set(events.commands)
-    assert {"status", "alerts", "rings"} <= set(governance.commands)
-    assert {"status", "zones", "info", "mount", "unmount"} <= set(federation.commands)
-    assert {"balance", "transfer", "history"} <= set(pay.commands)
 
 
 def test_sensitive_rpc_services_mark_admin_only() -> None:

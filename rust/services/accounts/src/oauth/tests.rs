@@ -7,6 +7,7 @@ use tonic::Request;
 
 mod account_closure;
 mod provider;
+mod registration;
 mod support;
 use provider::ProviderFixture;
 use support::*;

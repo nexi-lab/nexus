@@ -9,6 +9,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import socket
+import sys
+import tempfile
 from pathlib import Path
 from unittest.mock import patch
 from uuid import uuid4
@@ -22,7 +25,6 @@ from nexus.contracts.rpc_types import RPCErrorCode
 from nexus.grpc.search.v1 import search_pb2, search_pb2_grpc
 from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
 from nexus.lib.request_credentials import request_api_key
-from nexus.remote.rpc_transport import RPCTransport
 
 
 async def denied(call, code):
@@ -45,9 +47,9 @@ async def main() -> None:
     grants = set()
     channels = []
     agents = {}
-    transports = {}
     filesystems = {}
     mcp_servers = {}
+    client_environments = {}
 
     def dial(ca, cert, key, server_name=None):
         credentials = grpc.ssl_channel_credentials(
@@ -92,6 +94,7 @@ async def main() -> None:
                 NEXUS_TLS_CERT=str(bundle / manifest["cert"]),
                 NEXUS_TLS_KEY=str(bundle / manifest["key"]),
             )
+            client_environments[name] = client_env
             with patch.dict(os.environ, client_env, clear=True):
                 filesystem = await asyncio.to_thread(
                     nexus.connect,
@@ -108,8 +111,7 @@ async def main() -> None:
             mcp_servers[name] = await create_mcp_server(
                 nx=filesystem, remote_url=f"grpcs://{target}"
             )
-            transports[name] = filesystem._nexus_remote_call_rpc.__self__
-            assert isinstance(transports[name], RPCTransport)
+            assert not filesystem.closed
             written = await vfs.Write(
                 vfs_pb2.WriteRequest(
                     path=paths[name], content=f"{needle} {name}".encode(), auth_token=admin
@@ -213,6 +215,137 @@ async def main() -> None:
         async def mcp_read(name, path, credential=None):
             return await mcp_call(name, "read_file", {"path": path}, credential)
 
+        async def check_mcp_cli():
+            from fastmcp import Client
+            from fastmcp.client.transports import StdioTransport
+
+            with tempfile.TemporaryDirectory(prefix="native-mcp-cli-home-") as home:
+                env = {
+                    **client_environments["a"],
+                    "HOME": home,
+                    "USERPROFILE": home,
+                    "MCP_TRANSPORT": "stdio",
+                    "NEXUS_ZONE_ID": "sharedzone",
+                    "NEXUS_NO_AUTO_JSON": "1",
+                }
+                transport = StdioTransport(
+                    command=sys.executable,
+                    args=[
+                        "-m",
+                        "nexus.cli.main",
+                        "mcp",
+                        "serve",
+                        "--remote-url",
+                        f"https://{target}",
+                    ],
+                    env=env,
+                    keep_alive=False,
+                )
+                async with Client(transport, timeout=15) as client:
+                    assert len(await client.list_tools()) == 15
+                    read = await client.call_tool("nexus_read_file", {"path": paths["a"]})
+                    assert read.content[0].text == f"{needle} a"
+                    rejected = await client.call_tool("nexus_read_file", {"path": paths["b"]})
+                    assert rejected.content[0].text.startswith("Error:")
+
+        async def check_mcp_http():
+            import uvicorn
+            from fastmcp import Client
+            from fastmcp.client.transports import StreamableHttpTransport
+
+            app = mcp_servers["a"].http_app(stateless_http=True, json_response=True)
+            server = uvicorn.Server(uvicorn.Config(app, log_level="warning"))
+            listener = socket.socket()
+            listener.bind(("127.0.0.1", 0))
+            listener.setblocking(False)
+            url = f"http://127.0.0.1:{listener.getsockname()[1]}/mcp"
+            task = asyncio.create_task(server.serve(sockets=[listener]))
+
+            def http_client(**kwargs):
+                return httpx.AsyncClient(trust_env=False, **kwargs)
+
+            async def call(headers, operation, params):
+                transport = StreamableHttpTransport(
+                    url, headers=headers, httpx_client_factory=http_client
+                )
+                async with Client(transport, timeout=15) as client:
+                    result = await client.call_tool(f"nexus_{operation}", params)
+                    return result.content[0].text
+
+            operations = (
+                ("read_file", {"path": paths["a"]}),
+                ("file_info", {"path": paths["a"]}),
+                ("semantic_search", {"query": needle, "search_mode": "keyword"}),
+                ("glob", {"pattern": "*.txt", "path": "/docs", "files": list(paths.values())}),
+                ("grep", {"pattern": needle, "path": "/docs", "files": list(paths.values())}),
+            )
+            try:
+                async with asyncio.timeout(10):
+                    while not server.started:
+                        if task.done():
+                            await task
+                            raise AssertionError("MCP HTTP server exited during startup")
+                        await asyncio.sleep(0.01)
+                for operation, params in operations:
+                    for headers in (
+                        {},
+                        {"Authorization": "Bearer sk-invalid-fixture-key"},
+                        {"Authorization": "Bearer"},
+                        {"X-Nexus-API-Key": ""},
+                        {"Authorization": f"Bearer {admin}", "X-Nexus-API-Key": admin},
+                    ):
+                        rejected = await call(headers, operation, params)
+                        assert rejected.startswith("Error:"), (
+                            f"HTTP MCP {operation} borrowed the server certificate"
+                        )
+                    for header in ("Authorization", "X-Nexus-API-Key"):
+                        value = f"Bearer {admin}" if header == "Authorization" else admin
+                        accepted = await call({header: value}, operation, params)
+                        assert not accepted.startswith("Error:"), operation
+                        assert paths["a"] in accepted or accepted == f"{needle} a", operation
+                    rejected = await call({}, operation, params)
+                    assert rejected.startswith("Error:"), "HTTP bearer survived its request"
+                assert request_api_key.get() is None
+                headers = {"Authorization": f"Bearer {admin}"}
+                mcp_directory = f"{directory}-mcp"
+                original, renamed = f"{mcp_directory}/original.txt", f"{mcp_directory}/renamed.txt"
+                for operation, params in (
+                    ("mkdir", {"path": mcp_directory}),
+                    ("write_file", {"path": original, "content": "native MCP journey"}),
+                ):
+                    assert not (await call(headers, operation, params)).startswith("Error:")
+                assert await call(headers, "read_file", {"path": original}) == "native MCP journey"
+                info = json.loads(await call(headers, "file_info", {"path": original}))
+                assert info["size"] == len(b"native MCP journey")
+                listing = json.loads(await call(headers, "list_files", {"path": mcp_directory}))
+                assert [item["path"] for item in listing["items"]] == [original], listing
+                for operation, params in (
+                    ("rename_file", {"old_path": original, "new_path": renamed}),
+                    ("delete_file", {"path": renamed}),
+                    ("rmdir", {"path": mcp_directory}),
+                ):
+                    assert not (await call(headers, operation, params)).startswith("Error:")
+                servers = json.loads(await call(headers, "discovery_list_servers", {}))
+                assert servers["total_tools"] == 15, servers
+                found = json.loads(await call(headers, "discovery_search_tools", {"query": "read"}))
+                assert any(item["name"] == "nexus_read_file" for item in found["tools"]), found
+                loaded = json.loads(
+                    await call(headers, "discovery_load_tools", {"tool_names": ["nexus_read_file"]})
+                )
+                assert loaded["loaded"] == ["nexus_read_file"], loaded
+                detail = json.loads(
+                    await call(
+                        headers, "discovery_get_tool_details", {"tool_name": "nexus_read_file"}
+                    )
+                )
+                assert detail["found"] and "path" in detail["input_schema"]["properties"], detail
+            finally:
+                server.should_exit = True
+                await task
+                listener.close()
+            assert not filesystems["a"].closed, "HTTP MCP closed a borrowed filesystem"
+            assert await mcp_read("a", paths["a"]) == f"{needle} a"
+
         async def sdk(name, expected):
             filesystem = filesystems[name]
             response = await asyncio.to_thread(
@@ -239,6 +372,13 @@ async def main() -> None:
             from fastmcp import Client
 
             async with Client(mcp_servers[name]) as mcp_client:
+                registered = {tool.name: tool for tool in await mcp_client.list_tools()}
+                detail = await mcp_client.call_tool(
+                    "nexus_discovery_get_tool_details", {"tool_name": "nexus_grep"}
+                )
+                description = json.loads(detail.content[0].text)
+                assert description["input_schema"] == registered["nexus_grep"].inputSchema
+                assert description["description"] == registered["nexus_grep"].description
                 result = await mcp_client.call_tool(
                     "nexus_semantic_search",
                     {"query": needle, "path": "/docs", "search_mode": "keyword"},
@@ -270,7 +410,7 @@ async def main() -> None:
                 assert info["exists"] and not info["is_directory"]
             else:
                 assert metadata.startswith("Error:"), "MCP stat ignored revocation"
-            assert not transports[name]._closed, "MCP closed its borrowed transport"
+            assert not filesystems[name].closed, "MCP closed its borrowed filesystem"
 
         async def sdk_denied(name, method, *args, **kwargs):
             try:
@@ -388,6 +528,8 @@ async def main() -> None:
                 await sdk_denied(name, "sys_stat", paths[name])
                 await grant(name, "POST")
             await asyncio.gather(*(query(name, [paths[name]]) for name in paths for _ in range(3)))
+            await check_mcp_cli()
+            await check_mcp_http()
             for name, (_, agent_vfs, client) in agents.items():
                 read = await agent_vfs.Read(vfs_pb2.ReadRequest(path=paths[name]), timeout=15)
                 assert not read.is_error and needle.encode() in read.content, read
@@ -405,6 +547,28 @@ async def main() -> None:
                 other = "b" if name == "a" else "a"
                 content = await mcp_read(name, paths[other], admin)
                 assert content == f"{needle} {other}", "MCP did not forward the request bearer"
+                for operation, params in (
+                    (
+                        "semantic_search",
+                        {"query": needle, "path": "/docs", "search_mode": "keyword"},
+                    ),
+                    ("glob", {"pattern": "*.txt", "path": "/docs", "files": list(paths.values())}),
+                    ("grep", {"pattern": needle, "path": "/docs", "files": list(paths.values())}),
+                ):
+                    response = await mcp_call(name, operation, params, admin)
+                    body = json.loads(response)
+                    key = "path" if operation == "semantic_search" else "file"
+                    found = (
+                        body["items"]
+                        if operation == "glob"
+                        else [hit[key] for hit in body["items"]]
+                    )
+                    assert set(found) == set(paths.values()), body
+                    for invalid in ("sk-invalid-fixture-key", ""):
+                        rejected = await mcp_call(name, operation, params, invalid)
+                        assert rejected.startswith("Error:"), (
+                            "Invalid Search bearer used the certificate"
+                        )
                 content = await mcp_read(name, paths[other])
                 assert content.startswith("Error:"), "Request bearer survived its scope"
                 assert request_api_key.get() is None
@@ -631,7 +795,7 @@ async def main() -> None:
                         },
                     )
                     response.raise_for_status()
-            for path in (*paths.values(), directory):
+            for path in (*paths.values(), directory, f"{directory}-mcp"):
                 removed = await vfs.Delete(
                     vfs_pb2.DeleteRequest(path=path, recursive=True, auth_token=admin), timeout=15
                 )

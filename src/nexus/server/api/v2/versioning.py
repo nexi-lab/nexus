@@ -253,14 +253,6 @@ def build_v2_registry(
     except ImportError as e:
         logger.warning("Failed to import Catalog routes: %s", e)
 
-    # ---- Replay router (Issue #2930) ----
-    try:
-        from nexus.server.api.v2.routers.replay import router as replay_router
-
-        registry.add(RouterEntry(router=replay_router, name="replay", endpoint_count=2))
-    except ImportError as e:
-        logger.warning("Failed to import Replay routes: %s", e)
-
     # ---- Task Manager router ----
     try:
         from nexus.server.api.v2.routers.task_manager import router as task_manager_router

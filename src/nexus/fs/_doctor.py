@@ -163,8 +163,8 @@ def check_backend_credentials(scheme: str) -> DoctorCheckResult:
     if scheme == "gdrive":
         return DoctorCheckResult(
             name=f"{scheme}-creds",
-            status=DoctorStatus.PASS,
-            message="deferred to `nexus auth gdrive`",
+            status=DoctorStatus.FAIL,
+            message="Google Drive authentication is unavailable in this CLI",
         )
 
     # Check presence first

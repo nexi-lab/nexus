@@ -7,7 +7,7 @@ import sys
 from collections.abc import AsyncGenerator, Generator
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import click
 
@@ -15,7 +15,10 @@ import nexus
 from nexus.cli.exit_codes import ExitCode
 from nexus.cli.theme import console, print_error
 from nexus.contracts.exceptions import NexusError, NexusFileNotFoundError, ValidationError
-from nexus.core.nexus_fs import NexusFS
+
+if TYPE_CHECKING:
+    from nexus.core.nexus_fs import NexusFS
+    from nexus.remote.client import RemoteNexusFS
 
 _LOCAL_WORKSPACE_ENV_KEYS = (
     "NEXUS_URL",
@@ -210,6 +213,10 @@ def connect_local_workspace(data_dir: str) -> NexusFS:
                 "api_key": None,
             }
         )
+    from nexus.core.nexus_fs import NexusFS
+
+    if not isinstance(filesystem, NexusFS):
+        raise TypeError("An embedded workspace requires a local NexusFS")
     return cast(NexusFS, _LocalWorkspaceFilesystemProxy(data_dir, filesystem))
 
 
@@ -218,7 +225,7 @@ async def get_filesystem(
     remote_api_key: str | None = None,
     *,
     allow_local_default: bool = False,
-) -> NexusFS:
+) -> NexusFS | RemoteNexusFS:
     """Get a NexusFS instance.
 
     Uses resolve_connection() to determine the effective connection target
@@ -234,39 +241,16 @@ async def get_filesystem(
         NexusFS instance.
     """
     try:
-        from click.core import ParameterSource
-
         from nexus.cli.config import resolve_connection
-
-        explicit_local_data_dir = os.environ.get("NEXUS_DATA_DIR")
-        remote_url_source = None
 
         # Get profile name from Click context if available
         profile_name = None
         try:
             ctx = click.get_current_context(silent=True)
-            if ctx:
-                if ctx.obj:
-                    profile_name = ctx.obj.get("profile")
-                remote_url_source = ctx.get_parameter_source("remote_url")
+            if ctx and ctx.obj:
+                profile_name = ctx.obj.get("profile")
         except RuntimeError:
             pass
-
-        # Source-checkout quickstart: if a local data dir is explicitly set and
-        # the user did not explicitly request REMOTE mode, prefer the local
-        # workspace over ambient config. This preserves the documented local
-        # quickstart while still honoring containerized workflows that set
-        # NEXUS_PROFILE=remote and pass NEXUS_URL via environment.
-        remote_profile_requested = (
-            os.environ.get("NEXUS_PROFILE") or ""
-        ).strip().lower() == "remote" or profile_name == "remote"
-        if (
-            allow_local_default
-            and explicit_local_data_dir
-            and not remote_profile_requested
-            and remote_url_source is not ParameterSource.COMMANDLINE
-        ):
-            return connect_local_workspace(explicit_local_data_dir)
 
         resolved = resolve_connection(
             remote_url=remote_url,
@@ -280,7 +264,7 @@ async def get_filesystem(
                     "NEXUS_DATA_DIR",
                     str(Path(nexus.NEXUS_STATE_DIR) / "data"),
                 )
-                return nexus.connect(config={"profile": "embedded", "data_dir": data_dir})
+                return connect_local_workspace(data_dir)
 
             console.print("[nexus.error]Error:[/nexus.error] NEXUS_URL or --remote-url is required")
             console.print(
@@ -297,7 +281,7 @@ async def get_filesystem(
         sys.exit(ExitCode.UNAVAILABLE)
 
 
-async def get_default_filesystem() -> NexusFS:
+async def get_default_filesystem() -> NexusFS | RemoteNexusFS:
     """Get a remote NexusFS using environment variables.
 
     Used by commands that don't accept backend options (e.g., memory commands).
@@ -594,7 +578,7 @@ async def open_filesystem(
     remote_url: str | None = None,
     remote_api_key: str | None = None,
     **kwargs: Any,
-) -> AsyncGenerator[NexusFS, None]:
+) -> AsyncGenerator[NexusFS | RemoteNexusFS, None]:
     """Async context manager that opens and auto-closes a NexusFS.
 
     Usage::

@@ -1,6 +1,6 @@
 """Integration tests for MCP server with real NexusFS instances.
 
-These tests use actual NexusFS instances with CASLocalBackend to test
+These tests use actual NexusFS instances with PathLocalBackend to test
 end-to-end workflows and real component interactions.
 """
 
@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from nexus.backends.storage.cas_local import CASLocalBackend
+from nexus.backends.storage.path_local import PathLocalBackend
 from nexus.bricks.mcp.server import create_mcp_server
 from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs
@@ -79,10 +79,10 @@ def extract_items(result: str | list | dict) -> list:
 
 @pytest.fixture(scope="module")
 async def nexus_fs(tmp_path_factory):
-    """Create a real NexusFS instance with CASLocalBackend for testing."""
+    """Create a real NexusFS instance with PathLocalBackend for testing."""
     base = tmp_path_factory.mktemp("nexus_mcp_integration")
     (base / "storage").mkdir()
-    backend = CASLocalBackend(root_path=str(base / "storage"))
+    backend = PathLocalBackend(root_path=str(base / "storage"))
     nx = create_nexus_fs(
         backend=backend,
         metadata_store=str(base / "meta"),
@@ -276,196 +276,14 @@ class TestErrorHandlingIntegration:
         assert "Error" in result
         assert "not found" in result.lower() or "deleted" in result.lower()
 
-    @pytest.mark.asyncio
-    async def test_invalid_json_in_workflow_execute(self, mcp_server):
-        """Test workflow execution with invalid JSON input."""
-        # Get workflow tool (it may not be available without workflow system)
-        if await tool_exists(mcp_server, "nexus_execute_workflow"):
-            exec_tool = await get_tool(mcp_server, "nexus_execute_workflow")
-            result = exec_tool.fn(name="test", inputs="{invalid json")
-
-            # Should contain an error message (either from JSON parsing or workflow not available)
-            assert "Error" in result or "not available" in result
-
-
-class TestMemoryIntegration:
-    """Integration tests for memory system."""
-
-    @pytest.mark.asyncio
-    async def test_store_and_query_memory(self, mcp_server):
-        """Test storing and querying memories."""
-        # Check if memory tools are available
-        if not await tool_exists(mcp_server, "nexus_store_memory"):
-            pytest.skip("Memory system not available")
-
-        store_tool = await get_tool(mcp_server, "nexus_store_memory")
-        query_tool = await get_tool(mcp_server, "nexus_query_memory")
-
-        # Store a memory
-        store_result = store_tool.fn(
-            content="Integration test memory from curl tests",
-            memory_type="test",
-            importance=0.8,
-        )
-
-        # Should either succeed or indicate memory system not available
-        assert "Successfully stored" in store_result or "not available" in store_result
-
-        if "Successfully stored" in store_result:
-            # Query memories
-            query_result = query_tool.fn(query="test", memory_type="test", limit=5)
-
-            # Should return JSON or indicate not available
-            if "not available" not in query_result:
-                # Parse result - should be JSON
-                try:
-                    memories = json.loads(query_result)
-                    assert isinstance(memories, list)
-                except json.JSONDecodeError:
-                    # If parsing fails, that's okay - memory may not be fully configured
-                    pass
-
-    @pytest.mark.asyncio
-    async def test_memory_not_available_graceful(self, mcp_server):
-        """Test that memory tools gracefully handle unavailable memory system."""
-        # Even if memory system isn't available, tools should return helpful message
-        if await tool_exists(mcp_server, "nexus_store_memory"):
-            store_tool = await get_tool(mcp_server, "nexus_store_memory")
-            result = store_tool.fn(content="Test content", memory_type="test", importance=0.5)
-
-            # Should either succeed or provide clear error message
-            assert "Successfully" in result or "not available" in result or "Error" in result
-
-
-class TestWorkflowIntegration:
-    """Integration tests for workflow system."""
-
-    @pytest.mark.asyncio
-    async def test_list_workflows(self, mcp_server):
-        """Test listing available workflows."""
-        if not await tool_exists(mcp_server, "nexus_list_workflows"):
-            pytest.skip("Workflow system not available")
-
-        list_tool = await get_tool(mcp_server, "nexus_list_workflows")
-        result = list_tool.fn()
-
-        # Should return JSON list or indicate not available
-        assert "not available" in result or result.startswith("[") or result.startswith("{")
-
-    @pytest.mark.asyncio
-    async def test_execute_workflow(self, mcp_server):
-        """Test executing a workflow."""
-        if not await tool_exists(mcp_server, "nexus_execute_workflow"):
-            pytest.skip("Workflow system not available")
-
-        exec_tool = await get_tool(mcp_server, "nexus_execute_workflow")
-        result = exec_tool.fn(name="test_workflow", inputs=None)
-
-        # Should return result or indicate workflow not found/not available
-        assert (
-            "not available" in result
-            or "not found" in result
-            or "Error" in result
-            or result.startswith("{")
-        )
-
-
-class TestSemanticSearchIntegration:
-    """Integration tests for semantic search."""
-
-    @pytest.mark.asyncio
-    async def test_semantic_search_availability(self, mcp_server):
-        """Test semantic search tool availability and behavior."""
-        if not await tool_exists(mcp_server, "nexus_semantic_search"):
-            pytest.skip("Semantic search tool not registered")
-
-        search_tool = await get_tool(mcp_server, "nexus_semantic_search")
-        result = await search_tool.fn(query="test files", limit=5)
-
-        # Should return JSON results or indicate not available
-        assert "not available" in result or result.startswith("[") or result.startswith("{")
-
-
-class TestSandboxIntegration:
-    """Integration tests for sandbox execution (requires Docker or E2B)."""
-
-    @pytest.mark.skipif(
-        True,  # Skip by default - requires Docker/E2B setup
-        reason="Requires sandbox providers (Docker or E2B) to be configured",
-    )
-    @pytest.mark.asyncio
-    async def test_sandbox_lifecycle(self, mcp_server):
-        """Test complete sandbox lifecycle: create, execute, stop."""
-        # Check if sandbox tools are available
-        if not await tool_exists(mcp_server, "nexus_sandbox_create"):
-            pytest.skip("Sandbox tools not available")
-
-        create_tool = await get_tool(mcp_server, "nexus_sandbox_create")
-        python_tool = await get_tool(mcp_server, "nexus_python")
-        list_tool = await get_tool(mcp_server, "nexus_sandbox_list")
-        stop_tool = await get_tool(mcp_server, "nexus_sandbox_stop")
-
-        # Create sandbox
-        create_result = create_tool.fn(name="integration-test", ttl_minutes=5)
-        sandbox_info = json.loads(create_result)
-        sandbox_id = sandbox_info["sandbox_id"]
-
-        # Execute Python code
-        exec_result = python_tool.fn(
-            code='print("Integration test successful")', sandbox_id=sandbox_id
-        )
-        assert "Integration test successful" in exec_result
-        assert "Exit code: 0" in exec_result
-
-        # List sandboxes
-        list_result = list_tool.fn()
-        sandboxes = json.loads(list_result)
-        assert any(s["sandbox_id"] == sandbox_id for s in sandboxes)
-
-        # Stop sandbox
-        stop_result = stop_tool.fn(sandbox_id=sandbox_id)
-        assert "Successfully stopped" in stop_result
-
-    @pytest.mark.skipif(
-        True,  # Skip by default
-        reason="Requires sandbox providers to be configured",
-    )
-    @pytest.mark.asyncio
-    async def test_sandbox_bash_execution(self, mcp_server):
-        """Test bash command execution in sandbox."""
-        if not await tool_exists(mcp_server, "nexus_sandbox_create"):
-            pytest.skip("Sandbox tools not available")
-
-        create_tool = await get_tool(mcp_server, "nexus_sandbox_create")
-        bash_tool = await get_tool(mcp_server, "nexus_bash")
-        stop_tool = await get_tool(mcp_server, "nexus_sandbox_stop")
-
-        # Create sandbox
-        create_result = create_tool.fn(name="bash-test")
-        sandbox_info = json.loads(create_result)
-        sandbox_id = sandbox_info["sandbox_id"]
-
-        try:
-            # Execute bash commands
-            result = bash_tool.fn(command="echo 'Hello from bash'", sandbox_id=sandbox_id)
-            assert "Hello from bash" in result
-
-            # Execute command that generates files
-            bash_tool.fn(command="touch /tmp/testfile", sandbox_id=sandbox_id)
-            result = bash_tool.fn(command="ls /tmp/testfile", sandbox_id=sandbox_id)
-            assert "testfile" in result
-        finally:
-            # Cleanup
-            stop_tool.fn(sandbox_id=sandbox_id)
-
 
 class TestServerConfiguration:
     """Integration tests for server configuration and setup."""
 
     @pytest.mark.asyncio
     async def test_server_with_local_backend(self, isolated_db, tmp_path):
-        """Test server creation with CASLocalBackend."""
-        backend = CASLocalBackend(root_path=str(tmp_path / "storage"))
+        """Test server creation with PathLocalBackend."""
+        backend = PathLocalBackend(root_path=str(tmp_path / "storage"))
         nx = create_nexus_fs(
             backend=backend,
             metadata_store=str(isolated_db).replace(".db", "-raft"),

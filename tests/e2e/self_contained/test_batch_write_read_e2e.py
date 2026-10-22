@@ -1,6 +1,6 @@
 """E2E tests for POST /batch/write and POST /batch/read with a real NexusFS kernel.
 
-Uses FastAPI TestClient wired to a real NexusFS (SQLite + CASLocalBackend) — no mocks.
+Uses FastAPI TestClient wired to a real NexusFS (native kernel + local path storage) — no mocks.
 Validates that the full HTTP → router → NexusFS → Rust storage stack works end-to-end.
 
 Issue #3700: Expose write_batch + read_batch via HTTP.
@@ -9,6 +9,7 @@ Issue #3700: Expose write_batch + read_batch via HTTP.
 from __future__ import annotations
 
 import base64
+from collections.abc import Generator
 from pathlib import Path
 
 import pytest
@@ -39,16 +40,16 @@ def _b64(data: bytes) -> str:
 
 
 @pytest.fixture()
-def real_fs(tmp_path: Path) -> NexusFS:
-    """Real NexusFS kernel: SQLite metastore + CASLocalBackend, permissions off."""
-    from nexus.backends.storage.cas_local import CASLocalBackend
+def real_fs(tmp_path: Path) -> Generator[NexusFS, None, None]:
+    """Real NexusFS kernel: native metastore + local path storage, permissions off."""
+    from nexus.backends.storage.path_local import PathLocalBackend
 
     db_path = str(tmp_path / "meta.db")
     metastore = create_kernel(db_path)
 
     data_dir = tmp_path / "data"
     data_dir.mkdir()
-    backend = CASLocalBackend(root_path=data_dir)
+    backend = PathLocalBackend(root_path=data_dir)
 
     kernel = NexusFS(
         metadata_store=metastore,
@@ -62,7 +63,11 @@ def real_fs(tmp_path: Path) -> NexusFS:
     )
     kernel.sys_setattr("/files", entry_type=DT_MOUNT, backend=backend)
 
-    return kernel
+    kernel._register_runtime_closeable(metastore)
+    try:
+        yield kernel
+    finally:
+        kernel.close()
 
 
 @pytest.fixture()
@@ -87,7 +92,7 @@ def client(real_fs: NexusFS) -> TestClient:
 
 
 class TestBatchWriteRealStorage:
-    """write_batch hits real SQLite + CASLocalBackend."""
+    """write_batch hits real native kernel + local path storage."""
 
     def test_write_single_file_returns_200(self, client: TestClient) -> None:
         resp = client.post(
@@ -146,7 +151,7 @@ class TestBatchWriteRealStorage:
 
 
 class TestBatchReadRealStorage:
-    """read_batch hits real SQLite + CASLocalBackend after writing data."""
+    """read_batch hits real native kernel + local path storage after writing data."""
 
     def test_read_existing_file_returns_correct_content(self, client: TestClient) -> None:
         content = b"read-back content"

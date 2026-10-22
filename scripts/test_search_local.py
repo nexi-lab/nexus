@@ -281,6 +281,21 @@ def main() -> int:
                             "test_search_agent_credentials_plugin.py",
                         ):
                             script(name)
+                        run(
+                            "native-local-sdk",
+                            [
+                                sys.executable,
+                                "-m",
+                                "pytest",
+                                str(REPO / "tests/e2e/self_contained/test_native_local_sdk.py"),
+                                "-n",
+                                "0",
+                                "-o",
+                                "addopts=",
+                                "-q",
+                            ],
+                            {"NEXUS_KERNEL_BINARY": str(args.kernel_binary)},
+                        )
                     for name, path in (("keyword", "/docs"), ("hybrid", "/workspace")):
                         if name == "hybrid" and args.keyword_only:
                             continue

@@ -157,10 +157,26 @@ jobs:
         run: |
           uv run --no-sync pytest tests/integration/search/test_indexed_client.py -q -o "addopts="
 
+      - name: Verify MCP tools and caller credential isolation
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        run: |
+          uv run --no-sync pytest tests/unit/bricks/mcp tests/unit/cli/test_mcp_transport.py -q -o "addopts="
+
       - name: Verify benchmark collection
         if: needs.detect-changes.outputs.code_changed == 'true' && matrix.os == 'ubuntu-latest'
         run: |
           uv run --no-sync pytest tests/benchmarks/ --collect-only -q -o "addopts="
+
+      - name: Verify authentication client isolation
+        if: needs.detect-changes.outputs.code_changed == 'true'
+        run: |
+          uv run --no-sync pytest \
+            src/nexus/bricks/auth/tests/test_brick_isolation.py \
+            src/nexus/bricks/auth/tests/test_envelope.py \
+            src/nexus/bricks/auth/tests/test_credential_pool.py \
+            src/nexus/bricks/auth/tests/test_gh_sync.py \
+            src/nexus/bricks/auth/tests/test_rfc9700_regression.py \
+            -q -o "addopts="
 
   e2e-self-contained:
     name: E2E Tests (Self-Contained)
@@ -383,7 +399,6 @@ jobs:
             src/nexus/bricks/auth/tests/test_envelope.py \
             src/nexus/bricks/auth/tests/test_envelope_contract.py \
             src/nexus/bricks/auth/tests/test_postgres_envelope_integration.py \
-            src/nexus/bricks/auth/tests/test_rotate_kek_cli.py \
             -v --timeout=60 -o "addopts="
         timeout-minutes: 10
 
@@ -911,7 +926,7 @@ jobs:
           test -x "$NEXUS_KERNEL_BINARY" || { echo "::error::nexusd-cluster missing at $NEXUS_KERNEL_BINARY"; exit 1; }
           uv run --no-sync python -m pytest tests/integration/test_kernel_restart_survival.py -v -o "addopts="
 
-      - name: SDK kernel and transport ownership E2E
+      - name: SDK ownership and local CLI persistence E2E
         if: needs.detect-changes.outputs.code_changed == 'true'
         timeout-minutes: 5
         run: |
@@ -920,6 +935,7 @@ jobs:
           uv run --no-sync python -m pytest \
             tests/integration/core/test_kernel_client_ownership.py \
             tests/integration/core/test_remote_connect_ownership.py \
+            tests/integration/cli/test_cli_quickstart.py \
             -v -o "addopts=" -W error::pytest.PytestUnhandledThreadExceptionWarning
 
       - name: Managed-agent session mailbox E2E

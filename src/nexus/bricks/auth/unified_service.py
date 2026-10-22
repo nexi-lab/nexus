@@ -44,16 +44,14 @@ _SECRET_SERVICE_SPECS: dict[str, dict[str, Any]] = {
         "required_fields": ("access_key_id", "secret_access_key"),
         "optional_fields": ("session_token", "region_name", "credentials_path"),
         "supports_native": True,
-        "action_hint": "Run `nexus auth connect s3 secret` or configure `aws configure`.",
+        "action_hint": "Configure AWS credentials with `aws configure`.",
     },
     "gcs": {
         "backend_types": {"path_gcs"},
         "required_fields": (),
         "optional_fields": ("credentials_path", "access_token", "project_id"),
         "supports_native": True,
-        "action_hint": (
-            "Run `nexus auth connect gcs secret` or `gcloud auth application-default login`."
-        ),
+        "action_hint": ("Run `gcloud auth application-default login`."),
     },
 }
 
@@ -518,7 +516,7 @@ class UnifiedAuthService:
                             kind=CredentialKind.OAUTH,
                             status=AuthStatus.NO_AUTH,
                             source="missing",
-                            message=f"Run `nexus auth connect {service} oauth`.",
+                            message=f"No OAuth credentials configured for {service}.",
                         )
                     )
 
@@ -629,7 +627,7 @@ class UnifiedAuthService:
                 "success": False,
                 "service": service,
                 "source": "oauth",
-                "message": f"Run `nexus auth connect {service} oauth`.",
+                "message": f"No OAuth credentials configured for {service}.",
             }
 
         candidate = matches[0]
@@ -752,10 +750,7 @@ class UnifiedAuthService:
 
         Reads from ``self._profile_store`` when wired (tests pass one in);
         otherwise falls back to ``_external_sync_boot.list_profiles`` which
-        opens the production SQLite store, reads, and closes.  This keeps
-        every production constructor — cli/commands/auth_cli.py,
-        cli/commands/doctor.py, fs/_tui/__init__.py, fs/_auth_cli.py —
-        working without plumbing a long-lived store reference.
+        opens the SQLite store, reads, and closes it.
         """
         return self._gws_native_for_email(user_email=None)
 
@@ -1006,11 +1001,7 @@ class UnifiedAuthService:
                     "message": (
                         f"{target} target is ready via stored OAuth."
                         if target not in missing_scope_targets
-                        else (
-                            f"{target} requires additional Google OAuth scopes. Re-run "
-                            f"`nexus-fs auth connect gws oauth --user-email {user_email}` "
-                            "and approve the requested access."
-                        )
+                        else (f"{target} requires additional Google OAuth scopes for {user_email}.")
                     ),
                     "reason": None if target not in missing_scope_targets else "missing_scopes",
                 }

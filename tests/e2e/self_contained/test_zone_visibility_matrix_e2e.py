@@ -21,7 +21,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from starlette.testclient import TestClient
 
-from nexus.backends.storage.cas_local import CASLocalBackend
+from nexus.backends.storage.path_local import PathLocalBackend
 from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
 from nexus.bricks.auth.providers.static_key import StaticAPIKeyAuth
 from nexus.contracts.constants import ROOT_ZONE_ID
@@ -78,7 +78,7 @@ def stack(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Stack]:
     record_store = SQLAlchemyRecordStore(db_url=f"sqlite:///{tmp / 'records.db'}")
     try:
         nx = create_nexus_fs(
-            backend=CASLocalBackend(root_path=storage),
+            backend=PathLocalBackend(root_path=storage),
             metadata_store=str(tmp / "meta"),
             record_store=record_store,
             permissions=PermissionConfig(enforce=False),

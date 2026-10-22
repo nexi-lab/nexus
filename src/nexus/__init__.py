@@ -76,6 +76,7 @@ if TYPE_CHECKING:
         NexusPermissionError,
     )
     from nexus.core.nexus_fs import NexusFS
+    from nexus.remote.client import RemoteNexusFS
 
 # =============================================================================
 # Lightweight imports (always loaded) - these are fast
@@ -206,7 +207,7 @@ _open_local_metastore = _open_local_kernel
 
 def connect(
     config: "str | Path | dict | NexusConfig | None" = None,
-) -> "NexusFS":
+) -> "NexusFS | RemoteNexusFS":
     """
     Connect to Nexus filesystem.
 
@@ -225,8 +226,8 @@ def connect(
             - NexusConfig: Already loaded config
 
     Returns:
-        NexusFS instance. All profiles implement the NexusFS
-        interface, ensuring consistent API.
+        A local NexusFS for embedded profiles, or a RemoteNexusFS owning one
+        authenticated native connection for the remote profile.
 
     Raises:
         ValueError: If configuration is invalid
@@ -285,97 +286,34 @@ def connect(
             trust_local_project=False,
         )
 
-        with ExitStack() as startup_resources:
-            transport = RPCTransport(
-                server_address=grpc_address,
-                auth_token=api_key,
-                timeout=float(timeout),
-                connect_timeout=float(connect_timeout),
-                tls_config=_tls_config,
-            )
+        from nexus.remote.client import RemoteNexusFS
 
-            startup_resources.callback(transport.close)
-
-            # Rust-native remote wiring (Issue #1134 Phase 4, a803a9d63):
-            # the root mount carries backend_type="remote" + connection params,
-            # and PyKernel::sys_setattr constructs both the Rust RemoteBackend
-            # and the Rust RemoteMetastore from those params — no Python shim.
-            # The metastore handle is a bare ``PyKernel``: the kernel routes
-            # per-mount reads/writes to the remote backend it built.
-            from nexus.contracts.metadata import DT_MOUNT
-            from nexus.contracts.types import OperationContext as _RemoteOC
-            from nexus.core.config import PermissionConfig as _PermissionConfig
-            from nexus.core.nexus_fs import NexusFS as _RemoteNexusFS
-
-            remote_kernel = _open_local_kernel(":memory:")
-            startup_resources.callback(remote_kernel.close)
-            nfs = _RemoteNexusFS(
-                metadata_store=remote_kernel,
-                permissions=_PermissionConfig(enforce=False),
-                init_cred=_RemoteOC(
-                    user_id="remote",
-                    zone_id=cfg.zone_id,
-                    groups=[],
-                    is_admin=False,
-                ),
-            )
-            nfs._register_runtime_closeable(remote_kernel)
-            nfs._register_runtime_closeable(transport)
-            startup_resources.pop_all()
-            startup_resources.callback(nfs.close)
-
-            nfs.sys_setattr(
-                "/",
-                entry_type=DT_MOUNT,
-                backend_type="remote",
-                backend_name="remote",
-                server_address=grpc_address,
-                remote_auth_token=api_key,
-                remote_ca_pem=(_tls_config.ca_pem.decode() if _tls_config else None),
-                remote_cert_pem=(_tls_config.node_cert_pem.decode() if _tls_config else None),
-                remote_key_pem=(_tls_config.node_key_pem.decode() if _tls_config else None),
-                remote_timeout=float(timeout),
-            )
-
-            # Issue #4055: expose HTTP URL + API key so NexusFUSEOperations(use_rust=True)
-            # can spawn the Rust nexus-fuse daemon (it talks to /api/nfs/* HTTP
-            # endpoints, not gRPC).
-            #
-            # The original cross-tenant cache-sharing concern that motivated an
-            # opt-in env gate was addressed in cache.rs by namespacing the foyer
-            # directory with `principal_hash(server_url, api_key)` — different
-            # API keys never share a cache directory, so exposing the credentials
-            # here is safe for unscoped remote mounts. Scoped/agent mounts are
-            # blocked from constructing the Rust daemon entirely in
-            # NexusFUSEOperations (see operations.py: `context is not None`).
-            nfs._base_url = server_url  # noqa: SLF001
-            nfs._api_key = api_key  # noqa: SLF001
-
-            # Wire service proxies for REMOTE profile (Issue #1171).
-            # Fills all 25+ service slots with RemoteServiceProxy — forwards
-            # method calls to the server via gRPC.
-            from nexus.factory._remote import (
-                _boot_remote_services,
-                wire_remote_filesystem,
-            )
-
-            _boot_remote_services(nfs, call_rpc=transport.call_rpc)
-            wire_remote_filesystem(nfs, transport)
-            cast(Any, nfs)._nexus_remote_call_rpc = transport.call_rpc
-            nfs._remote_base_url = server_url
-            nfs._remote_api_key = api_key or ""
-
-            startup_resources.pop_all()
-            return nfs
+        transport = RPCTransport(
+            server_address=grpc_address,
+            auth_token=api_key,
+            timeout=float(timeout),
+            connect_timeout=float(connect_timeout),
+            tls_config=_tls_config,
+        )
+        try:
+            return RemoteNexusFS(transport, zone_id=cfg.zone_id)
+        except BaseException:
+            transport.close()
+            raise
 
     # ── Local node (single-node or federated, auto-detected) ────────
     # Heavy imports for local profiles
     from nexus.backends.base.backend import Backend
-    from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.core.nexus_fs import NexusFS
 
+    if cfg.backend not in ("local", "path_local", "gcs"):
+        raise ValueError(
+            f"Unsupported workspace root backend: {cfg.backend!r}; "
+            "use nexus.fs.mount() for explicit backend mounts"
+        )
+
     # Create backend based on configuration
-    backend: Backend
+    backend: Backend | None
     if cfg.backend == "gcs":
         from nexus.backends.storage.cas_gcs import CASGCSBackend
 
@@ -403,33 +341,10 @@ def connect(
         # (~/.nexus/data), the parent (~/.nexus) is still used as nexus_root
         # for backward compatibility.
         nexus_root = data_dir if cfg.data_dir is not None else str(Path(data_dir).parent)
-        if cfg.backend == "path_local":
-            from nexus.backends.storage.path_local import PathLocalBackend
-
-            backend = PathLocalBackend(root_path=Path(data_dir).resolve())
-        else:
-            # Parse tiering config from YAML if present (Issue #3406)
-            tiering_cfg = None
-            if cfg.tiering and cfg.tiering.get("enabled"):
-                from nexus.core.config import TieringConfig
-
-                t = cfg.tiering
-                tiering_cfg = TieringConfig(
-                    enabled=True,
-                    quiet_period_seconds=float(t.get("quiet_period", 3600)),
-                    min_volume_size_bytes=int(t.get("min_volume_size", 100 * 1024 * 1024)),
-                    cloud_backend=str(t.get("cloud_backend", "gcs")),
-                    cloud_bucket=str(t.get("cloud_bucket", "")),
-                    upload_rate_limit_bytes=int(t.get("upload_rate_limit", 25 * 1024 * 1024)),
-                    sweep_interval_seconds=float(t.get("sweep_interval", 60)),
-                    local_cache_size_bytes=int(t.get("local_cache_size", 10 * 1024 * 1024 * 1024)),
-                    burst_read_threshold=int(t.get("burst_read_threshold", 5)),
-                    burst_read_window_seconds=float(t.get("burst_read_window", 60)),
-                )
-            backend = CASLocalBackend(
-                root_path=Path(data_dir).resolve(),
-                tiering_config=tiering_cfg,
-            )
+        if cfg.tiering and cfg.tiering.get("enabled"):
+            raise ValueError("Local tiering is unavailable in the native workspace profile")
+        # The native process opens its durable root using metadata_path.
+        backend = None
 
     # Resolve paths — new fields take precedence, db_path is a legacy fallback
     # only when it is a filesystem path. Docker/demo configs use db_path for a

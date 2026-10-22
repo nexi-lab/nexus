@@ -26,6 +26,7 @@ on:
       - 'scripts/test_*plugin.py'
       - 'scripts/test_rust_http_search_cli.py'
       - 'scripts/test_published_search_quality.py'
+      - 'scripts/fixtures/herb.json'
       - 'scripts/prepare_published_fixture.sh'
       - 'scripts/ts_search_fixture.py'
       - 'packages/nexus-api-client/**'

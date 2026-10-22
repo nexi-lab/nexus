@@ -43,7 +43,7 @@ class ProjectionWaitResponse(ApiModel):
     once the operation_log row with that sequence is committed in the
     caller's zone (the endpoint answers 412 instead when the timeout
     passes first).  ``latest_seq`` is the highest committed sequence in
-    that zone, usable as a ``/api/v2/ops/replay`` cursor.
+    that zone.
     """
 
     seq: int

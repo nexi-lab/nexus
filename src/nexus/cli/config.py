@@ -152,7 +152,7 @@ def load_cli_config(path: Path | None = None) -> NexusCliConfig:
     if not config_path.exists():
         return NexusCliConfig()
     _check_file_permissions(config_path)
-    with open(config_path) as f:
+    with open(config_path, encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
     if not isinstance(data, dict):
         return NexusCliConfig()
@@ -160,15 +160,15 @@ def load_cli_config(path: Path | None = None) -> NexusCliConfig:
 
 
 def save_cli_config(config: NexusCliConfig, path: Path | None = None) -> None:
-    """Save CLI config to disk with 0600 permissions."""
+    """Replace the CLI config atomically, with 0600 permissions on POSIX."""
     config_path = path or CONFIG_FILE
     _ensure_config_dir(config_path.parent)
     data = config.to_dict()
     tmp_path = config_path.with_suffix(".yaml.tmp")
-    with open(tmp_path, "w") as f:
+    with open(tmp_path, "w", encoding="utf-8") as f:
         yaml.dump(data, f, default_flow_style=False, sort_keys=False)
     os.chmod(tmp_path, _FILE_PERMISSIONS)
-    tmp_path.rename(config_path)
+    tmp_path.replace(config_path)
 
 
 def _ensure_config_dir(dir_path: Path) -> None:
@@ -181,7 +181,9 @@ def _ensure_config_dir(dir_path: Path) -> None:
 
 
 def _check_file_permissions(path: Path) -> None:
-    """Warn if config file has overly permissive permissions."""
+    """Check POSIX file permissions where mode bits express access control."""
+    if os.name == "nt":
+        return
     try:
         file_stat = path.stat()
         mode = file_stat.st_mode

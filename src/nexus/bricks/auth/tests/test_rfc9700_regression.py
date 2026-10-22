@@ -14,16 +14,14 @@ that returns rotated refresh tokens (simulating Google's behavior).
 
 from __future__ import annotations
 
-import gc
 import hashlib
-import platform
-import tempfile
-import time
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from cryptography.fernet import Fernet
 
 from nexus.bricks.auth.credential_backend import NexusTokenManagerBackend
 from nexus.bricks.auth.oauth.token_manager import TokenManager
@@ -32,22 +30,16 @@ from nexus.cache.inmemory import InMemoryCacheStore
 
 
 @pytest.fixture
-def temp_db():
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-        db_path = f.name
-    yield db_path
-    gc.collect()
-    if platform.system() == "Windows":
-        time.sleep(0.2)
-    Path(db_path).unlink(missing_ok=True)
-
-
-@pytest.fixture
-def manager(temp_db):
-    mgr = TokenManager(db_path=temp_db, cache_store=InMemoryCacheStore())
-    yield mgr
-    mgr.close()
-    gc.collect()
+def manager(tmp_path: Path) -> Iterator[TokenManager]:
+    mgr = TokenManager(
+        db_path=tmp_path / "rotation.db",
+        encryption_key=Fernet.generate_key().decode(),
+        cache_store=InMemoryCacheStore(),
+    )
+    try:
+        yield mgr
+    finally:
+        mgr.close()
 
 
 # ---------------------------------------------------------------------------

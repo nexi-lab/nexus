@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 import yaml
@@ -27,6 +27,27 @@ from nexus.cli.commands.init_cmd import (
 @pytest.fixture()
 def runner() -> CliRunner:
     return CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def local_initializer(monkeypatch: pytest.MonkeyPatch) -> Mock:
+    """Configuration tests use a filesystem boundary; integration/cli owns the real E2E."""
+    filesystem = Mock(spec_set=("mkdir", "close"))
+    monkeypatch.setattr(
+        "nexus.cli.commands.init_cmd.connect_local_workspace", lambda _data_dir: filesystem
+    )
+    return filesystem
+
+
+def test_local_initialization_failure_closes_the_filesystem_and_fails(
+    runner: CliRunner, tmp_path: Path, local_initializer: Mock
+) -> None:
+    local_initializer.mkdir.side_effect = RuntimeError("native storage unavailable")
+    result = runner.invoke(init, [str(tmp_path / "failed")])
+    assert result.exit_code != 0
+    assert "native storage unavailable" in result.output
+    assert "Initialized Nexus" not in result.output
+    local_initializer.close.assert_called_once()
 
 
 @pytest.fixture()
@@ -67,13 +88,6 @@ class TestPresetConfig:
         assert PRESETS["local"].services == ()
         assert PRESETS["local"].compose_profiles == ()
         assert PRESETS["local"].port_keys == ()
-
-    def test_shared_and_demo_have_same_services(self) -> None:
-        assert PRESETS["shared"].services == PRESETS["demo"].services
-
-    def test_shared_and_demo_differ_in_auth(self) -> None:
-        assert PRESETS["shared"].auth == "static"
-        assert PRESETS["demo"].auth == "database"
 
     def test_default_channel_and_accelerator(self) -> None:
         for preset in VALID_PRESETS:
@@ -176,7 +190,7 @@ class TestBundledComposeFile:
         """The bundled compose file should define services."""
         bundled = _bundled_compose_file()
         assert bundled is not None
-        content = bundled.read_text()
+        content = bundled.read_text(encoding="utf-8")
         assert "services:" in content
         assert "postgres:" in content
 
@@ -184,7 +198,7 @@ class TestBundledComposeFile:
         """The bundled compose file should use NEXUS_IMAGE_REF, not NEXUS_IMAGE_TAG."""
         bundled = _bundled_compose_file()
         assert bundled is not None
-        content = bundled.read_text()
+        content = bundled.read_text(encoding="utf-8")
         assert "NEXUS_IMAGE_REF" in content
         assert "NEXUS_IMAGE_TAG" not in content
 
@@ -229,15 +243,6 @@ class TestBuildConfig:
         assert cfg["image_ref"].startswith("ghcr.io/nexi-lab/nexus:")
         assert cfg["image_channel"] == "edge"
         assert cfg["image_accelerator"] == "cpu"
-
-    def test_demo_preset(self) -> None:
-        from nexus.cli.port_utils import DEFAULT_PORTS
-
-        cfg = _build_config("demo", "./nexus-data", False, dict(DEFAULT_PORTS), ())
-        assert cfg["preset"] == "demo"
-        assert cfg["auth"] == "database"
-        assert "nexus" in cfg["services"]
-        assert "postgres" in cfg["services"]
 
 
 class TestInitWorkspaceArg:
@@ -440,32 +445,6 @@ class TestInitCliCommand:
             cfg = yaml.safe_load(f)
         assert cfg["image_ref"] == "ghcr.io/nexi-lab/nexus:0.9.2"
 
-    def test_demo_preset(self, runner: CliRunner, tmp_project: Path, _compose_file: Path) -> None:
-        config_path = tmp_project / "nexus.yaml"
-        data_dir = tmp_project / "nexus-data"
-        result = runner.invoke(
-            init,
-            [
-                "--preset",
-                "demo",
-                "--config-path",
-                str(config_path),
-                "--data-dir",
-                str(data_dir),
-                "--compose-file",
-                str(_compose_file),
-            ],
-            catch_exceptions=False,
-        )
-        assert result.exit_code == 0
-        assert "demo" in result.output
-        assert "nexus demo init" in result.output
-
-        with open(config_path) as f:
-            cfg = yaml.safe_load(f)
-        assert cfg["preset"] == "demo"
-        assert cfg["auth"] == "database"
-
     def test_tls_flag(self, runner: CliRunner, tmp_project: Path, _compose_file: Path) -> None:
         config_path = tmp_project / "nexus.yaml"
         data_dir = tmp_project / "data"
@@ -495,7 +474,7 @@ class TestInitCliCommand:
         assert (data_dir / "tls").is_dir()
 
     def test_shared_copies_bundled_compose_file(self, runner: CliRunner, tmp_project: Path) -> None:
-        """shared/demo preset copies bundled compose file when not found locally."""
+        """shared preset copies bundled compose file when not found locally."""
         config_path = tmp_project / "nexus.yaml"
         data_dir = tmp_project / "nexus-data"
 
@@ -527,7 +506,7 @@ class TestInitCliCommand:
         assert Path(compose_file).exists()
 
     def test_shared_fails_without_compose_file(self, runner: CliRunner, tmp_project: Path) -> None:
-        """shared/demo preset should fail init when compose file is missing and no bundle."""
+        """shared preset should fail init when compose file is missing and no bundle."""
         config_path = tmp_project / "nexus.yaml"
         data_dir = tmp_project / "nexus-data"
         # Pass a non-existent compose file explicitly (bypasses bundled fallback)

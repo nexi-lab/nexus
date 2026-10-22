@@ -11,8 +11,13 @@ import urllib.request
 from pathlib import Path
 from types import SimpleNamespace
 
-from nexus.cli.commands.demo_data import HERB_CORPUS, HERB_QA_SET
 from nexus.remote.rpc_transport import RPCTransport
+
+_HERB_FIXTURE = json.loads(
+    (Path(__file__).parent / "fixtures/herb.json").read_text(encoding="utf-8")
+)
+HERB_CORPUS = _HERB_FIXTURE["corpus"]
+HERB_QA_SET = _HERB_FIXTURE["qa"]
 
 
 def http(base_url: str, api_key: str, route: str, body: dict | None = None) -> dict:

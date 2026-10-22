@@ -187,7 +187,7 @@ def test_cat_no_range_unchanged(patched_fs, cli_runner: CliRunner):
 
 
 # ---------------------------------------------------------------------------
-# Task 9: cat --stream / write --stream
+# Task 9: cat --stream
 # ---------------------------------------------------------------------------
 
 
@@ -200,40 +200,6 @@ def test_cat_stream_matches_full(patched_fs, cli_runner: CliRunner):
     res = cli_runner.invoke(cat, ["/strm.bin", "--stream", "--chunk-size", "65536"])
     assert res.exit_code == 0, res.output
     assert res.stdout_bytes == body
-
-
-def test_write_stream_from_stdin(patched_fs, cli_runner: CliRunner):
-    from nexus.cli.commands.file_ops import write
-
-    nx = patched_fs
-    res = cli_runner.invoke(write, ["/ws.txt", "--stream"], input="streamed-bytes")
-    assert res.exit_code == 0, res.output
-    assert nx.read("/ws.txt") == b"streamed-bytes"
-
-
-# ---------------------------------------------------------------------------
-# Task 10: nexus admin fs (backfill-index / flush-write-observer)
-# ---------------------------------------------------------------------------
-
-
-def test_admin_fs_flush_and_backfill(inproc_nexus, cli_runner: CliRunner, monkeypatch):
-    """admin fs * runs the admin-only RPCs against the in-process FS."""
-    import contextlib
-
-    @contextlib.asynccontextmanager
-    async def _open(*a, **k):
-        yield inproc_nexus
-
-    monkeypatch.setattr("nexus.cli.utils.open_filesystem", _open, raising=False)
-    from nexus.cli.commands.admin import admin
-
-    r1 = cli_runner.invoke(admin, ["fs", "flush-write-observer", "--json"])
-    assert r1.exit_code == 0, r1.output
-    assert "flushed" in json.loads(r1.output)["data"]
-
-    r2 = cli_runner.invoke(admin, ["fs", "backfill-index", "/", "--json"])
-    assert r2.exit_code == 0, r2.output
-    assert "entries_created" in json.loads(r2.output)["data"]
 
 
 # ---------------------------------------------------------------------------
@@ -327,7 +293,7 @@ def test_cat_stream_survives_broken_pipe(patched_fs):
     import tempfile
 
     with tempfile.TemporaryDirectory() as tmp:
-        env = dict(os.environ, TMPDIR_FX=tmp, PYTHONPATH=":".join(sys.path))
+        env = dict(os.environ, TMPDIR_FX=tmp, PYTHONPATH=os.pathsep.join(sys.path))
         p1 = subprocess.Popen(
             [sys.executable, "-c", driver],
             stdout=subprocess.PIPE,
@@ -338,10 +304,12 @@ def test_cat_stream_survives_broken_pipe(patched_fs):
         assert p1.stdout is not None
         first = p1.stdout.read(1024)
         p1.stdout.close()
+        p1.stdout = None
         try:
             _, stderr = p1.communicate(timeout=15)
         except subprocess.TimeoutExpired as exc:
             p1.kill()
+            p1.communicate()
             raise AssertionError("cat --stream hung after pipe close") from exc
 
     # Must not propagate raw Python traceback to stderr.
@@ -456,6 +424,7 @@ def test_cat_auto_stream_branch_fires(patched_fs, monkeypatch):
     from nexus.cli.commands.file_ops import cat as _cat
 
     nx = patched_fs
+    monkeypatch.setenv("NEXUS_NO_AUTO_JSON", "1")
     body = b"S" * (11 * 1024 * 1024)
     nx.write("/big/auto.bin", body)
 
@@ -488,6 +457,18 @@ def test_cat_auto_stream_branch_fires(patched_fs, monkeypatch):
     assert b"Streaming" in (res.stderr_bytes or b""), (
         f"expected 'Streaming...' status line on stderr; stderr={res.stderr_bytes[:200]!r}"
     )
+
+
+def test_large_cat_json_keeps_the_structured_contract(patched_fs, cli_runner: CliRunner):
+    from nexus.cli.commands.file_ops import cat
+
+    content = b"S" * (11 * 1024 * 1024)
+    patched_fs.write("/large-json.txt", content)
+    result = cli_runner.invoke(cat, ["/large-json.txt", "--json"])
+    assert result.exit_code == 0, result.output[:500]
+    data = json.loads(result.output)["data"]
+    assert data["size"] == len(content)
+    assert data["content"].encode() == content
 
 
 def test_worktree_cli_resolves_to_src_with_pythonpath():

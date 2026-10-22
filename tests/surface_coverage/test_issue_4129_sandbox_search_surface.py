@@ -44,18 +44,15 @@ def test_sandbox_search_mcp_tools_link_to_search_rows() -> None:
     assert by_id["semantic.search"].transports["mcp"].name == "nexus_semantic_search"
 
 
-def test_user_guide_describes_plugin_query_contract() -> None:
+def test_user_guide_describes_native_query_contract() -> None:
     text = _USER_GUIDE.read_text(encoding="utf-8")
 
     for needle in [
-        "Sandbox search workflow",
-        "NEXUS_SEARCH_PLUGIN_TARGET",
-        'nexus search query "auth flow" --mode hybrid --json',
-        'nx.service("search").semantic_search(',
-        "nexus_semantic_search",
-        "Missing plugins and failed",
-        "scripts/test_search_service_plugin.py",
-        "docs/benchmarks/2026-04-18-sandbox-vs-gbrain.md",
-        "Search surfaces",
+        "Search and discovery",
+        'nexus search query "find the project plan" --mode hybrid --json',
+        "nx.semantic_search(",
+        "native caller credential",
+        "Indexing and statistics require native administration rights",
+        "scripts/test_search_local.py",
     ]:
         assert needle in text

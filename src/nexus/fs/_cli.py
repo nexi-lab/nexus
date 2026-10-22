@@ -26,8 +26,6 @@ exclusively on ``mounts.json``.
 - nexus-fs grep        — search file contents for a regex pattern
 - nexus-fs glob        — find files matching a glob pattern
 - nexus-fs doctor      — diagnostic checks (environment, backends, mounts)
-- nexus-fs playground  — interactive TUI file browser
-- nexus-fs auth        — credential management
 
 This module is referenced by pyproject.toml [project.scripts].
 It stays thin: imports are deferred to keep startup fast and to avoid
@@ -45,7 +43,6 @@ from typing import Any
 
 import click
 
-from nexus.fs._auth_cli import auth as auth_group
 from nexus.fs._output import OutputOptions, add_output_options, render_output
 
 
@@ -760,43 +757,6 @@ def doctor(mount_uris: tuple[str, ...], output_opts: OutputOptions) -> None:
 
 
 @main.command()
-@click.argument("uris", nargs=-1)
-def playground(uris: tuple[str, ...]) -> None:
-    """Interactive TUI file browser.
-
-    Browse files across mounted backends with keyboard navigation,
-    file preview, and search.
-
-    Pass backend URIs as arguments, or run without arguments to
-    auto-discover existing mounts from the state directory.
-
-    \b
-    Keyboard shortcuts:
-      arrows  Navigate          Enter  Open/preview
-      b       Go back           /      Search
-      c       Copy path         p      Preview file
-      m       Toggle mounts     q      Quit
-
-    Examples:
-
-    \b
-      nexus-fs playground s3://my-bucket local://./data
-      nexus-fs playground                              # auto-discover
-    """
-    try:
-        from nexus.fs._tui import PlaygroundApp
-    except ImportError:
-        click.echo(
-            "TUI requires the textual package.\nInstall with: pip install nexus-fs[tui]",
-            err=True,
-        )
-        sys.exit(1)
-
-    app = PlaygroundApp(uris=uris)
-    app.run()
-
-
-@main.command()
 @click.argument("source", type=str)
 @click.argument("dest", type=str)
 @click.argument("mount_uris", nargs=-1)
@@ -1369,9 +1329,6 @@ def glob_cmd(
         click.echo(f"\n{d['count']} file(s) matched.")
 
     render_output(data=data, output_opts=output_opts, human_formatter=_human_display)
-
-
-main.add_command(auth_group)
 
 
 if __name__ == "__main__":

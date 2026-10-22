@@ -171,7 +171,12 @@ class TestConnectLocalWorkspace:
 
         seen: dict[str, dict[str, str | None]] = {}
 
-        class DummyFilesystem:
+        from nexus.core.nexus_fs import NexusFS
+
+        class DummyFilesystem(NexusFS):
+            def __init__(self) -> None:
+                pass
+
             def sys_read(self, path: str) -> bytes:
                 seen["sys_read"] = {
                     "path": path,
@@ -222,11 +227,13 @@ class TestConnectLocalWorkspace:
         assert os.environ["NEXUS_DATABASE_URL"] == ambient_database_url
         assert os.environ["NEXUS_URL"] == "http://127.0.0.1:65535"
 
+    @pytest.mark.parametrize("profile", ["remote", ""])
     @pytest.mark.asyncio
     async def test_remote_profile_skips_local_workspace_override(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: pytest.TempPathFactory,
+        profile: str,
     ) -> None:
         ambient_data_dir = str(tmp_path / "ambient-data")
         seen: dict[str, object] = {}
@@ -243,7 +250,7 @@ class TestConnectLocalWorkspace:
             raise AssertionError(f"local workspace override should not run: {data_dir}")
 
         monkeypatch.setenv("NEXUS_DATA_DIR", ambient_data_dir)
-        monkeypatch.setenv("NEXUS_PROFILE", "remote")
+        monkeypatch.setenv("NEXUS_PROFILE", profile)
         monkeypatch.setattr("nexus.connect", _mock_connect)
         monkeypatch.setattr("nexus.cli.utils.connect_local_workspace", _unexpected_local_connect)
 

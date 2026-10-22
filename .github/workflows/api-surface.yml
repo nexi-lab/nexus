@@ -243,9 +243,5 @@ jobs:
         run: |
           uv run --no-sync python scripts/validate_api_surface_coverage.py --coverage docs/surface-coverage/api-rpc-surface-coverage.yaml
           uv run --no-sync python -m pytest \
-            tests/surface_coverage/test_inventory.py \
-            tests/surface_coverage/test_validate.py \
-            tests/surface_coverage/test_runtime_discovery.py \
-            tests/surface_coverage/test_gap_backlog.py \
-            tests/surface_coverage/test_merge.py \
+            tests/surface_coverage \
             -v

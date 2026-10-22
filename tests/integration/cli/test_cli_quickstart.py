@@ -19,23 +19,13 @@ def test_local_cli_quickstart_persists_across_invocations(tmp_path: Path) -> Non
     home_dir = tmp_path / "home"
     config_dir = home_dir / ".nexus"
     config_dir.mkdir(parents=True)
-    (config_dir / "config.yaml").write_text(
-        "\n".join(
-            [
-                "current-profile: ci-remote",
-                "profiles:",
-                "  ci-remote:",
-                "    url: http://127.0.0.1:65535",
-                "    api-key: test-key",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
     env = {
         "HOME": str(home_dir),
+        "USERPROFILE": str(home_dir),
         "NEXUS_DATA_DIR": str(workspace / "nexus-data"),
-        "NEXUS_URL": "http://127.0.0.1:65535",
+        "NEXUS_URL": "",
+        "NEXUS_API_KEY": "",
+        "NEXUS_PROFILE": "",
         "NEXUS_DATABASE_URL": "sqlite:///" + str(tmp_path / "ambient.db"),
         "NEXUS_METASTORE_PATH": str(tmp_path / "ambient-metastore"),
         "NEXUS_RECORD_STORE_PATH": str(tmp_path / "ambient-record-store.db"),
@@ -58,6 +48,8 @@ def test_local_cli_quickstart_persists_across_invocations(tmp_path: Path) -> Non
     ls_result = runner.invoke(main, ["ls", "/workspace", "--json"], env=env)
     assert ls_result.exit_code == 0, ls_result.output
     assert "/workspace/hello.txt" in ls_result.output
+    for path in ("ambient.db", "ambient-metastore", "ambient-record-store.db"):
+        assert not (tmp_path / path).exists(), path
 
 
 def test_cli_help_registers_local_quickstart_commands() -> None:
@@ -93,9 +85,9 @@ def test_lazy_registration_defers_command_module_import(monkeypatch) -> None:
     assert "nexus.cli.commands.oauth" not in imported
 
 
-def test_lazy_registration_supports_hyphenated_add_command_groups() -> None:
+def test_lazy_registration_supports_hyphenated_command_names() -> None:
     """Lazy top-level registration should preserve hyphenated Click command names."""
-    command = main.get_command(click.Context(main), "secrets-audit")
+    command = main.get_command(click.Context(main), "path-context")
 
     assert command is not None
-    assert command.name == "secrets-audit"
+    assert command.name == "path-context"

@@ -316,6 +316,7 @@ class NexusFS(  # type: ignore[misc]
         self._close_callbacks: list[
             Callable[[], None]
         ] = []  # Issue #1793: factory-registered service close
+        self._owns_kernel = _provided_kernel is None
         self._runtime_closeables: list[Any] = []
         if _provided_kernel is None and self._kernel is not None:
             self._runtime_closeables.append(self._kernel)
@@ -924,7 +925,7 @@ class NexusFS(  # type: ignore[misc]
         # Services drain before IPC and the kernel transport are closed.
         callbacks: list[Callable[[], Any]] = list(self._close_callbacks)
         self._close_callbacks.clear()
-        if self._kernel is not None:
+        if self._kernel is not None and self._owns_kernel:
             callbacks.extend(
                 (
                     self._kernel.service_close_all,

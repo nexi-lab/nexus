@@ -9,6 +9,7 @@ import click
 from rich.syntax import Syntax
 
 from nexus.cli.dry_run import add_dry_run_option, dry_run_preview, render_dry_run
+from nexus.cli.io import write_stdout
 from nexus.cli.output import OutputOptions, add_output_options, render_error, render_output
 from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import (
@@ -20,6 +21,7 @@ from nexus.cli.utils import (
     open_filesystem,
     resolve_content,
 )
+from nexus.lib.context_utils import parse_context
 
 
 def register_commands(cli: click.Group) -> None:
@@ -32,74 +34,25 @@ def register_commands(cli: click.Group) -> None:
     cli.add_command(rename_batch_cmd)
     cli.add_command(rm_batch_cmd)
     cli.add_command(write)
-    cli.add_command(append)
     cli.add_command(write_batch)
     cli.add_command(cp)
     cli.add_command(copy_cmd)
     cli.add_command(move_cmd)
     cli.add_command(sync_cmd)
     cli.add_command(rm)
-    cli.add_command(edit)
 
 
 @click.command()
 @click.argument("path", type=str)
-@click.option(
-    "--metadata",
-    is_flag=True,
-    help="Show file metadata (content_id, version) for optimistic concurrency control",
-)
-@click.option(
-    "--at-operation",
-    type=str,
-    help="Read file content at a historical operation point (time-travel debugging)",
-)
-@click.option(
-    "--section",
-    type=str,
-    default=None,
-    help="(Markdown) Read a specific section by heading text (case-insensitive)",
-)
-@click.option(
-    "--block-type",
-    type=click.Choice(["code", "table"]),
-    default=None,
-    help="(Markdown) Filter by block type within --section",
-)
-@click.option(
-    "--offset",
-    type=int,
-    default=None,
-    help="Start byte offset for a range read (read_range)",
-)
-@click.option(
-    "--length",
-    type=int,
-    default=None,
-    help="Number of bytes from --offset (requires --offset)",
-)
-@click.option(
-    "--stream",
-    "stream_mode",
-    is_flag=True,
-    help="Stream content in chunks (stream / stream_range)",
-)
-@click.option(
-    "--chunk-size",
-    type=int,
-    default=65536,
-    show_default=True,
-    help="Chunk size for --stream",
-)
+@click.option("--offset", type=click.IntRange(min=0), default=None, help="Start byte offset.")
+@click.option("--length", type=click.IntRange(min=0), default=None, help="Maximum bytes to read.")
+@click.option("--stream", "stream_mode", is_flag=True, help="Write raw bytes in bounded chunks.")
+@click.option("--chunk-size", type=click.IntRange(min=1), default=65536, show_default=True)
 @add_output_options
 @add_backend_options
 @add_context_options
 def cat(
     path: str,
-    metadata: bool,
-    at_operation: str | None,
-    section: str | None,
-    block_type: str | None,
     offset: int | None,
     length: int | None,
     stream_mode: bool,
@@ -109,270 +62,98 @@ def cat(
     remote_api_key: str | None,
     operation_context: dict[str, Any],
 ) -> None:
-    """Display file contents.
+    """Read file contents or an explicit byte range.
 
-    Examples:
-        nexus cat /workspace/data.txt
-        nexus cat /workspace/code.py
-        nexus cat /workspace/data.txt --metadata
-        nexus cat /workspace/data.txt --json
-        nexus cat /workspace/data.txt --at-operation op_abc123
-        nexus cat /workspace/docs/arch.md --section Authentication
-        nexus cat /workspace/docs/arch.md --section Auth --block-type code
-        nexus cat /workspace/docs/arch.md#authentication
+    Use --stream for byte-exact output, including binary files.
     """
-    # Support fragment syntax: /path/file.md#section → path=/path/file.md, section=section
-    if "#" in path and section is None:
-        path, section = path.rsplit("#", 1)
 
     async def _impl() -> None:
         timing = CommandTiming()
-
         try:
-            async with open_filesystem(
-                remote_url,
-                remote_api_key,
-                allow_local_default=True,
-            ) as nx:
-                with timing.phase("connect"):
-                    pass  # connection already established by async with
-
-                if at_operation:
-                    _cat_time_travel(nx, path, at_operation, metadata, output_opts, timing)
-                    return
-
+            context = parse_context(operation_context)
+            async with open_filesystem(remote_url, remote_api_key, allow_local_default=True) as nx:
                 with timing.phase("server"):
-                    if offset is not None:
-                        if offset < 0 or (length is not None and length < 0):
-                            render_error(error=ValueError("--offset/--length must be non-negative"))
-                            sys.exit(2)
-                        end = offset + length if length is not None else nx.stat(path)["size"]
+                    if offset is not None or length is not None:
+                        start = offset or 0
                         if stream_mode:
-                            for ch in nx.stream_range(
-                                path,
-                                offset,
-                                end,
-                                chunk_size=chunk_size,
-                                context=cast(Any, operation_context),
-                            ):
-                                sys.stdout.buffer.write(ch)
-                        else:
-                            chunk = nx.read_range(
-                                path, offset, end, context=cast(Any, operation_context)
+                            end = (
+                                start + length
+                                if length is not None
+                                else max(start, nx.stat(path)["size"])
                             )
-                            sys.stdout.buffer.write(chunk)
+                            write_stdout(
+                                nx.stream_range(
+                                    path,
+                                    start,
+                                    end,
+                                    chunk_size=chunk_size,
+                                    context=context,
+                                )
+                            )
+                        else:
+                            chunk = nx.sys_read(path, count=length, offset=start, context=context)
+                            if not isinstance(chunk, bytes):
+                                raise TypeError("A file read must return bytes")
+                            write_stdout((chunk,))
                         return
                     if stream_mode:
-                        for ch in nx.stream(
-                            path,
-                            chunk_size=chunk_size,
-                            context=cast(Any, operation_context),
-                        ):
-                            sys.stdout.buffer.write(ch)
+                        write_stdout(
+                            nx.stream(
+                                path,
+                                chunk_size=chunk_size,
+                                context=context,
+                            )
+                        )
                         return
-                    if metadata:
-                        read_result = nx.read(
-                            path, context=cast(Any, operation_context), return_metadata=True
+
+                    metadata = nx.sys_stat(path, context=context)
+                    file_size = metadata.get("size", 0) if metadata else 0
+                    if file_size > 10 * 1024 * 1024 and not output_opts.json_output:
+                        sys.stderr.write(f"Streaming large file ({file_size:,} bytes)...\n")
+                        sys.stderr.flush()
+                        write_stdout(
+                            nx.stream(
+                                path,
+                                chunk_size=65536,
+                                context=context,
+                            )
                         )
-                        assert isinstance(read_result, dict), (
-                            "Expected dict when return_metadata=True"
-                        )
-                        content = read_result["content"]
-                        meta_data = {
-                            "path": path,
-                            "content_id": read_result["content_id"],
-                            "version": read_result["version"],
-                            "size": read_result["size"],
-                            "modified_at": str(read_result["modified_at"]),
-                        }
-                    else:
-                        # Check file size to decide between read() and stream().
-                        # Two correctness invariants:
-                        #   (a) Use the public ``nx.sys_stat`` with the
-                        #       caller's operation_context — calling
-                        #       ``nx._kernel.sys_stat(path, ROOT_ZONE_ID)``
-                        #       directly leaks size/existence to denied
-                        #       callers and bypasses zone scoping.
-                        #   (b) NEVER write status text to stdout for ``cat``;
-                        #       it must remain byte-identical to the file.
-                        #       The "Streaming large file..." line goes to
-                        #       stderr so ``nexus cat /big > copy`` produces
-                        #       a faithful copy.
-                        STREAM_THRESHOLD = 10 * 1024 * 1024  # 10MB
-                        file_size = 0
-                        try:
-                            from nexus.lib.context_utils import parse_context
+                        return
+                    content = nx.sys_read(path, context=context)
+                    if not isinstance(content, bytes):
+                        raise TypeError("A file read must return bytes")
 
-                            _ctx = parse_context(cast(Any, operation_context))
-                            _stat = nx.sys_stat(path, context=_ctx)
-                            if _stat:
-                                file_size = (
-                                    _stat.get("size", 0)
-                                    if isinstance(_stat, dict)
-                                    else getattr(_stat, "size", 0)
-                                )
-                        except Exception:
-                            # Permission denial / unknown path — fall through
-                            # to the regular read path which surfaces the
-                            # error with the right context (no size leak).
-                            file_size = 0
-
-                        if file_size > STREAM_THRESHOLD and not section:
-                            sys.stderr.write(f"Streaming large file ({file_size:,} bytes)...\n")
-                            sys.stderr.flush()
-                            for chunk in nx.stream(
-                                path, chunk_size=65536, context=cast(Any, operation_context)
-                            ):
-                                sys.stdout.buffer.write(chunk)
-                            sys.stdout.buffer.flush()
-                            return
-
-                        content = nx.sys_read(path, context=cast(Any, operation_context))
-                        meta_data = None
-
-                # --- Markdown partial read (Issue #3718) ---
-                if section and path.endswith(".md"):
-                    content_bytes = (
-                        content if isinstance(content, bytes) else content.encode("utf-8")
-                    )
-                    partial = _cat_md_section(nx, path, content_bytes, section, block_type)
-                    if partial is not None:
-                        content = partial.encode("utf-8")
-
-            # JSON mode: return structured data
             if output_opts.json_output:
                 try:
                     text = content.decode("utf-8")
                 except UnicodeDecodeError:
                     text = None
-
-                data: dict[str, Any] = {
-                    "path": path,
-                    "size": len(content),
-                    "content": text,
-                    "binary": text is None,
-                }
-                if meta_data:
-                    data["metadata"] = meta_data
-
-                render_output(data=data, output_opts=output_opts, timing=timing)
+                render_output(
+                    data={
+                        "path": path,
+                        "size": len(content),
+                        "content": text,
+                        "binary": text is None,
+                    },
+                    output_opts=output_opts,
+                    timing=timing,
+                )
                 return
-
-            # Human mode
-            if metadata and meta_data:
-                console.print("[bold]Metadata:[/bold]")
-                console.print(f"[nexus.muted]Path:[/nexus.muted]     {meta_data['path']}")
-                console.print(f"[nexus.muted]Content-ID:[/nexus.muted] {meta_data['content_id']}")
-                console.print(f"[nexus.muted]Version:[/nexus.muted]  {meta_data['version']}")
-                console.print(f"[nexus.muted]Size:[/nexus.muted]     {meta_data['size']} bytes")
-                console.print(f"[nexus.muted]Modified:[/nexus.muted] {meta_data['modified_at']}")
-                console.print()
-                console.print("[bold]Content:[/bold]")
-
             _print_content(path, content)
-
-        except Exception as e:
+        except Exception as exc:
             if output_opts.json_output:
                 from nexus.cli.exit_codes import ExitCode
 
                 render_error(
-                    error=e,
+                    error=exc,
                     output_opts=output_opts,
                     exit_code=ExitCode.GENERAL_ERROR,
                     timing=timing,
                 )
             else:
-                handle_error(e)
+                handle_error(exc)
 
     asyncio.run(_impl())
-
-
-def _cat_time_travel(
-    nx: Any,
-    path: str,
-    at_operation: str,
-    metadata: bool,
-    output_opts: OutputOptions,
-    timing: CommandTiming,
-) -> None:
-    """Handle time-travel cat (--at-operation)."""
-    time_travel = getattr(nx, "time_travel_service", None)
-    if time_travel is None:
-        console.print(
-            "[nexus.error]Error:[/nexus.error] Time-travel is only supported with local NexusFS"
-        )
-        return
-
-    with timing.phase("server"):
-        state = time_travel.get_file_at_operation(path, at_operation)
-
-    content = state["content"]
-
-    if output_opts.json_output:
-        try:
-            text = content.decode("utf-8")
-        except UnicodeDecodeError:
-            text = None
-
-        data: dict[str, Any] = {
-            "path": path,
-            "operation_id": state["operation_id"],
-            "operation_time": str(state["operation_time"]),
-            "content": text,
-            "binary": text is None,
-            "metadata": state.get("metadata"),
-        }
-        render_output(data=data, output_opts=output_opts, timing=timing)
-        return
-
-    console.print("[bold nexus.value]Time-Travel Mode[/bold nexus.value]")
-    console.print(f"[nexus.muted]Operation ID:[/nexus.muted]  {state['operation_id']}")
-    console.print(f"[nexus.muted]Operation Time:[/nexus.muted] {state['operation_time']}")
-    console.print()
-
-    if metadata:
-        console.print("[bold]Metadata:[/bold]")
-        console.print(f"[nexus.muted]Path:[/nexus.muted]     {path}")
-        console.print(
-            f"[nexus.muted]Size:[/nexus.muted]     {state['metadata'].get('size', 0)} bytes"
-        )
-        console.print(f"[nexus.muted]Owner:[/nexus.muted]    {state['metadata'].get('owner', '-')}")
-        console.print(f"[nexus.muted]Group:[/nexus.muted]    {state['metadata'].get('group', '-')}")
-        console.print(f"[nexus.muted]Mode:[/nexus.muted]     {state['metadata'].get('mode', '-')}")
-        console.print(
-            f"[nexus.muted]Modified:[/nexus.muted] {state['metadata'].get('modified_at', '-')}"
-        )
-        console.print()
-        console.print("[bold]Content:[/bold]")
-
-    _print_content(path, content)
-
-
-def _cat_md_section(
-    nx: Any,
-    path: str,
-    content: bytes,
-    section: str,
-    block_type: str | None,
-) -> str | None:
-    """Attempt a partial markdown read using the structural index (Issue #3718)."""
-    try:
-        hook = nx.service("md_structure") if hasattr(nx, "service") else None
-        if hook is None or not hasattr(hook, "read_section"):
-            return None
-        content_id = ""
-        meta = getattr(nx, "metadata", None)
-        if meta is not None:
-            try:
-                file_meta = meta.get(path)
-                if file_meta and file_meta.content_id:
-                    content_id = file_meta.content_id
-            except Exception:
-                pass
-        result: str | None = hook.read_section(path, content, content_id, section, block_type)
-        return result
-    except Exception:
-        return None
 
 
 def _print_content(path: str, content: bytes) -> None:
@@ -692,33 +473,10 @@ def rm_batch_cmd(
 @click.command()
 @click.argument("path", type=str)
 @click.argument("content", type=str, required=False)
-@click.option("-i", "--input", "input_file", type=click.File("rb"), help="Read from file or stdin")
 @click.option(
-    "--if-match",
-    type=str,
-    help="Only write if current ETag matches (optimistic concurrency control)",
+    "-i", "--input", "input_file", type=click.File("rb"), help="Read bytes from a file or stdin."
 )
-@click.option(
-    "--if-none-match",
-    is_flag=True,
-    help="Only write if file doesn't exist (create-only mode)",
-)
-@click.option(
-    "--force",
-    is_flag=True,
-    help="Force overwrite without version check (dangerous - can cause data loss!)",
-)
-@click.option(
-    "--show-metadata",
-    is_flag=True,
-    help="Show metadata (content_id, version) after writing",
-)
-@click.option(
-    "--stream",
-    "stream_mode",
-    is_flag=True,
-    help="Read content from stdin in chunks and write via write_stream",
-)
+@click.option("--show-metadata", is_flag=True, help="Show the native write receipt.")
 @add_dry_run_option
 @add_backend_options
 @add_context_options
@@ -726,198 +484,28 @@ def write(
     path: str,
     content: str | None,
     input_file: Any,
-    if_match: str | None,
-    if_none_match: bool,
-    force: bool,
     show_metadata: bool,
-    stream_mode: bool,
     dry_run: bool,
     remote_url: str | None,
     remote_api_key: str | None,
     operation_context: dict[str, Any],
 ) -> None:
-    """Write content to a file with optional optimistic concurrency control.
-
-    Examples:
-        # Simple write
-        nexus write /workspace/data.txt "Hello World"
-
-        # Write from stdin
-        echo "Hello World" | nexus write /workspace/data.txt --input -
-
-        # Write from file
-        nexus write /workspace/data.txt --input local_file.txt
-
-        # Optimistic concurrency control (prevent overwriting concurrent changes)
-        nexus write /doc.txt "Updated content" --if-match abc123...
-
-        # Create-only mode (fail if file exists)
-        nexus write /new.txt "Initial content" --if-none-match
-
-        # Show metadata after writing
-        nexus write /doc.txt "Content" --show-metadata
-
-        # Dry run (preview without writing)
-        nexus write /workspace/data.txt "Hello" --dry-run
-    """
+    """Create or replace a complete file through the native Write RPC."""
 
     async def _impl() -> None:
         try:
-            if stream_mode:
-                # Read stdin in chunks and write via write_stream. OCC
-                # flags do NOT compose with streaming — the OCC helper
-                # requires the full payload in memory for the
-                # compare-and-write critical section. Refuse the combo
-                # explicitly instead of silently overwriting (data-loss
-                # path the advertised contract forbids).
-                if (if_match or if_none_match) and not force:
-                    render_error(
-                        error=ValueError(
-                            "--stream is incompatible with --if-match / "
-                            "--if-none-match (OCC requires the full payload "
-                            "in one compare-and-write critical section). "
-                            "Drop --stream for a conditional write, or pass "
-                            "--force to bypass OCC."
-                        )
-                    )
-                    sys.exit(2)
-                raw = sys.stdin.buffer.read()
-                if dry_run:
-                    preview = dry_run_preview("write-stream", path=path, details={"size": len(raw)})
-                    render_dry_run(preview)
-                    return
-                cs = 65536
-                chunks = (raw[i : i + cs] for i in range(0, len(raw), cs))
-                async with open_filesystem(
-                    remote_url, remote_api_key, allow_local_default=True
-                ) as nx:
-                    result = nx.write_stream(path, chunks)
-                if show_metadata:
-                    console.print(result)
-                else:
-                    console.print(
-                        f"[nexus.success]✓[/nexus.success] {len(raw)} bytes -> [nexus.path]{path}[/nexus.path]"
-                    )
-                return
-
-            file_content = resolve_content(content, input_file)
-
+            payload = resolve_content(content, input_file)
             if dry_run:
-                preview = dry_run_preview("write", path=path, details={"size": len(file_content)})
-                render_dry_run(preview)
+                render_dry_run(dry_run_preview("write", path=path, details={"size": len(payload)}))
                 return
-
-            async with open_filesystem(
-                remote_url,
-                remote_api_key,
-                allow_local_default=True,
-            ) as nx:
-                # OCC: use lib/occ helper if CAS params present (Issue #1323).
-                ctx = cast(Any, operation_context)
-                if (if_match or if_none_match) and not force:
-                    from nexus.lib.occ import occ_write
-
-                    result = await occ_write(
-                        nx,
-                        path,
-                        file_content,
-                        context=ctx,
-                        if_match=if_match,
-                        if_none_match=if_none_match,
-                    )
-                else:
-                    result = nx.write(path, file_content, context=ctx)
-
-            console.print(
-                f"[nexus.success]✓[/nexus.success] Wrote {len(file_content)} bytes to [nexus.path]{path}[/nexus.path]"
-            )
-
+            async with open_filesystem(remote_url, remote_api_key, allow_local_default=True) as nx:
+                receipt = nx.write(path, payload, context=cast(Any, operation_context))
             if show_metadata:
-                console.print(f"[nexus.muted]Content-ID:[/nexus.muted] {result['content_id']}")
-                console.print(f"[nexus.muted]Version:[/nexus.muted]  {result['version']}")
-                console.print(f"[nexus.muted]Size:[/nexus.muted]     {result['size']} bytes")
-                console.print(f"[nexus.muted]Modified:[/nexus.muted] {result['modified_at']}")
-        except Exception as e:
-            handle_error(e)
-
-    asyncio.run(_impl())
-
-
-@click.command()
-@click.argument("path", type=str)
-@click.argument("content", type=str, required=False)
-@click.option("-i", "--input", "input_file", type=click.File("rb"), help="Read from file or stdin")
-@click.option(
-    "--if-match",
-    type=str,
-    help="Only append if current ETag matches (optimistic concurrency control)",
-)
-@click.option(
-    "--force",
-    is_flag=True,
-    help="Force append without version check (dangerous - can cause data loss!)",
-)
-@click.option(
-    "--show-metadata",
-    is_flag=True,
-    help="Show metadata (content_id, version) after appending",
-)
-@add_backend_options
-@add_context_options
-def append(
-    path: str,
-    content: str | None,
-    input_file: Any,
-    if_match: str | None,
-    force: bool,
-    show_metadata: bool,
-    remote_url: str | None,
-    remote_api_key: str | None,
-    operation_context: dict[str, Any],
-) -> None:
-    """Append content to a file (creates file if it doesn't exist).
-
-    This is useful for building log files, JSONL files, and other
-    append-only data structures without reading the entire file first.
-
-    Examples:
-        nexus append /workspace/app.log "New log entry\\n"
-        echo "New line" | nexus append /workspace/data.txt --input -
-        nexus append /workspace/output.txt --input input.txt
-        nexus append /doc.txt "New content" --if-match abc123...
-        nexus append /log.txt "Entry\\n" --show-metadata
-    """
-
-    async def _impl() -> None:
-        try:
-            file_content = resolve_content(content, input_file)
-
-            async with open_filesystem(
-                remote_url,
-                remote_api_key,
-                allow_local_default=True,
-            ) as nx:
-                # Append with OCC parameters and context.
-                # CAS params (if_match, force) are NexusFS-specific (transitional, see #1323).
-                result = cast(Any, nx).append(
-                    path,
-                    file_content,
-                    context=operation_context,
-                    if_match=if_match,
-                    force=force,
-                )
-
-            console.print(
-                f"[nexus.success]✓[/nexus.success] Appended {len(file_content)} bytes to [nexus.path]{path}[/nexus.path]"
-            )
-
-            if show_metadata:
-                console.print(f"[nexus.muted]Content-ID:[/nexus.muted] {result['content_id']}")
-                console.print(f"[nexus.muted]Version:[/nexus.muted]  {result['version']}")
-                console.print(f"[nexus.muted]Size:[/nexus.muted]     {result['size']} bytes")
-                console.print(f"[nexus.muted]Modified:[/nexus.muted] {result['modified_at']}")
-        except Exception as e:
-            handle_error(e)
+                console.print(receipt)
+            else:
+                console.print(f"Wrote {len(payload)} bytes to {path}")
+        except Exception as exc:
+            handle_error(exc)
 
     asyncio.run(_impl())
 
@@ -1251,7 +839,7 @@ def copy_cmd(
 @click.command(name="move")
 @click.argument("source", type=str)
 @click.argument("dest", type=str)
-@click.option("-f", "--force", is_flag=True, help="Don't ask for confirmation")
+@click.option("-f", "--force", is_flag=True, help="Don't ask for confirmation.")
 @add_dry_run_option
 @add_backend_options
 def move_cmd(
@@ -1262,51 +850,20 @@ def move_cmd(
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
-    """Move files or directories.
-
-    Move files from source to destination. This is an efficient rename
-    when possible, otherwise copy + delete.
-
-    Examples:
-        nexus move /workspace/old.txt /workspace/new.txt
-        nexus move /workspace/old_dir/ /workspace/new_dir/ --force
-        nexus move /workspace/old.txt /workspace/new.txt --dry-run
-    """
+    """Rename a path through the owning native filesystem."""
 
     async def _impl() -> None:
         try:
             if dry_run:
-                preview = dry_run_preview("move", path=source, details={"dest": dest})
-                render_dry_run(preview)
+                render_dry_run(dry_run_preview("move", path=source, details={"dest": dest}))
                 return
-
-            from nexus.sync import move_file
-
-            nx = await get_filesystem(remote_url, remote_api_key, allow_local_default=True)
-
-            # Confirm unless --force
             if not force and not click.confirm(f"Move {source} to {dest}?"):
-                console.print("[nexus.warning]Cancelled[/nexus.warning]")
-                nx.close()
                 return
-
-            with console.status(
-                f"[nexus.warning]Moving {source} to {dest}...[/nexus.warning]", spinner="dots"
-            ):
-                success = await move_file(nx, source, dest, force=force)
-
-            nx.close()
-
-            if success:
-                console.print(
-                    f"[nexus.success]✓[/nexus.success] Moved [nexus.path]{source}[/nexus.path] → [nexus.path]{dest}[/nexus.path]"
-                )
-            else:
-                console.print(f"[nexus.error]Error:[/nexus.error] Failed to move {source}")
-                sys.exit(1)
-
-        except Exception as e:
-            handle_error(e)
+            async with open_filesystem(remote_url, remote_api_key, allow_local_default=True) as nx:
+                nx.sys_rename(source, dest)
+            console.print(f"Moved {source} to {dest}")
+        except Exception as exc:
+            handle_error(exc)
 
     asyncio.run(_impl())
 
@@ -1459,122 +1016,6 @@ def rm(
             console.print(
                 f"[nexus.success]✓[/nexus.success] Deleted [nexus.path]{path}[/nexus.path]"
             )
-        except Exception as e:
-            handle_error(e)
-
-    asyncio.run(_impl())
-
-
-@click.command()
-@click.argument("path", type=str)
-@click.argument("old_string", type=str)
-@click.argument("new_string", type=str)
-@click.option(
-    "--fuzzy",
-    type=float,
-    default=None,
-    help="Fuzzy matching threshold (0.0-1.0). Default: exact match only.",
-)
-@click.option(
-    "--if-match",
-    type=str,
-    default=None,
-    help="Only edit if current ETag matches (optimistic concurrency control).",
-)
-@click.option(
-    "--preview",
-    is_flag=True,
-    help="Show what would change without writing.",
-)
-@add_backend_options
-def edit(
-    path: str,
-    old_string: str,
-    new_string: str,
-    fuzzy: float | None,
-    if_match: str | None,
-    preview: bool,
-    remote_url: str | None,
-    remote_api_key: str | None,
-) -> None:
-    """Surgical search-and-replace edit on a file.
-
-    Finds OLD_STRING in the file and replaces it with NEW_STRING.
-    Creates a new version on success. Supports exact, whitespace-normalized,
-    and fuzzy matching.
-
-    Examples:
-        # Exact replacement
-        nexus edit /workspace/doc.md "old text" "new text"
-
-        # Fuzzy match (tolerates typos, threshold 0.0-1.0)
-        nexus edit /workspace/doc.md "aproximate" "approximate" --fuzzy 0.8
-
-        # Preview changes without writing
-        nexus edit /workspace/doc.md "old" "new" --preview
-
-        # OCC: only edit if no one else modified the file
-        nexus edit /workspace/doc.md "old" "new" --if-match abc123
-    """
-
-    async def _impl() -> None:
-        try:
-            nx = await get_filesystem(remote_url, remote_api_key, allow_local_default=True)
-
-            kwargs: dict[str, Any] = {
-                "edits": [(old_string, new_string)],
-                "preview": preview,
-            }
-            if fuzzy is not None:
-                kwargs["fuzzy_threshold"] = fuzzy
-            if if_match is not None:
-                kwargs["if_match"] = if_match
-
-            result = nx.edit(path, **kwargs)
-            nx.close()
-
-            success = result.get("success", False)
-            applied = result.get("applied_count", 0)
-            diff = result.get("diff", "")
-            matches = result.get("matches", [])
-            content_id = result.get("content_id", "")
-
-            if preview:
-                if success and applied > 0:
-                    console.print(
-                        f"[nexus.warning]Preview:[/nexus.warning] {applied} edit(s) would apply"
-                    )
-                    if diff:
-                        syntax = Syntax(diff, "diff", theme="monokai")
-                        console.print(syntax)
-                else:
-                    console.print("[nexus.warning]Preview:[/nexus.warning] No matches found")
-                return
-
-            if success and applied > 0:
-                console.print(
-                    f"[nexus.success]✓[/nexus.success] {applied} edit(s) applied to [nexus.path]{path}[/nexus.path]"
-                )
-                if content_id:
-                    console.print(f"  [nexus.muted]content_id: {content_id}[/nexus.muted]")
-                for m in matches:
-                    sim = m.get("similarity")
-                    method = m.get("method", "exact")
-                    if sim and sim < 1.0:
-                        console.print(
-                            f"  [nexus.muted]match: similarity={sim:.2f} ({method})[/nexus.muted]"
-                        )
-                if diff:
-                    syntax = Syntax(diff, "diff", theme="monokai")
-                    console.print(syntax)
-            else:
-                console.print(
-                    f"[nexus.warning]No matches found[/nexus.warning] for the search string in {path}"
-                )
-                if fuzzy is None:
-                    console.print(
-                        "[nexus.muted]Hint: use --fuzzy 0.8 for approximate matching[/nexus.muted]"
-                    )
         except Exception as e:
             handle_error(e)
 

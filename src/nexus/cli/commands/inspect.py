@@ -3,7 +3,6 @@
 Commands for viewing file information, version, and calculating sizes.
 """
 
-import sys
 from typing import Any, cast
 
 import click
@@ -16,10 +15,10 @@ from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import (
     add_backend_options,
     console,
-    get_filesystem,
     handle_error,
     open_filesystem,
 )
+from nexus.contracts.exceptions import NexusFileNotFoundError
 
 
 @click.command()
@@ -57,35 +56,22 @@ async def _async_info(
             with timing.phase("connect"):
                 pass  # connection already established by async with
 
-            # Check if file exists first
-            if not nx.access(path):
-                render_output(
-                    data=None,
-                    output_opts=output_opts,
-                    timing=timing,
-                    message=f"File not found: {path}",
-                )
-                sys.exit(1)
-
             with timing.phase("server"):
-                file_meta = cast(Any, nx).metadata.get(path)
+                file_meta = nx.sys_stat(path)
 
         if not file_meta:
-            render_output(
-                data=None, output_opts=output_opts, timing=timing, message=f"File not found: {path}"
-            )
-            sys.exit(1)
+            raise NexusFileNotFoundError(path)
 
-        created_str = format_timestamp(file_meta.created_at)
-        modified_str = format_timestamp(file_meta.modified_at)
+        created_str = format_timestamp(file_meta.get("created_at"))
+        modified_str = format_timestamp(file_meta.get("modified_at"))
 
         data = {
-            "path": file_meta.path,
-            "size": file_meta.size,
+            "path": file_meta.get("path", path),
+            "size": file_meta["size"],
             "created_at": created_str,
             "modified_at": modified_str,
-            "content_id": file_meta.content_id or None,
-            "mime_type": file_meta.mime_type or None,
+            "content_id": file_meta.get("content_id") or None,
+            "mime_type": file_meta.get("mime_type") or None,
         }
 
         def _print_human(d: dict[str, Any]) -> None:
@@ -156,21 +142,28 @@ async def _async_size(
     remote_api_key: str | None,
 ) -> None:
     try:
-        nx = await get_filesystem(remote_url, remote_api_key)
-
-        # Get all files with details
-        with console.status(
-            f"[nexus.warning]Calculating size of {path}...[/nexus.warning]", spinner="dots"
-        ):
-            files_raw = nx.sys_readdir(path, recursive=True, details=True)
-
-        nx.close()
+        async with open_filesystem(remote_url, remote_api_key) as nx:
+            with console.status(
+                f"[nexus.warning]Calculating size of {path}...[/nexus.warning]", spinner="dots"
+            ):
+                metadata = nx.sys_stat(path)
+                if metadata is None:
+                    raise NexusFileNotFoundError(path)
+                files_raw = (
+                    nx.sys_readdir(path, recursive=True, details=True)
+                    if metadata["is_directory"]
+                    else [metadata]
+                )
 
         if not files_raw:
             console.print(f"[nexus.warning]No files found in {path}[/nexus.warning]")
             return
 
-        files = cast(list[dict[str, Any]], files_raw)
+        files = [
+            item
+            for item in cast(list[dict[str, Any]], files_raw)
+            if not item.get("is_directory", False)
+        ]
 
         # Calculate total size
         total_size = sum(f["size"] for f in files)

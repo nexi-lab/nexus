@@ -6,8 +6,8 @@ Verifies that the auth brick:
 - Works with a mock session_factory (no real database needed)
 """
 
-import contextlib
-import importlib
+import os
+import subprocess
 import sys
 
 import pytest
@@ -32,85 +32,36 @@ def test_verify_imports_all_required() -> None:
         assert result.get(module) is True, f"Required module {module} is not importable"
 
 
+def _assert_isolated_imports(forbidden: tuple[str, ...]) -> None:
+    script = f"""
+import importlib
+import sys
+for module in {_REQUIRED_MODULES!r}:
+    importlib.import_module(module)
+forbidden = {forbidden!r}
+leaked = [name for name in sys.modules if any(name == prefix or name.startswith(prefix + '.') for prefix in forbidden)]
+assert not leaked, leaked
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        env={**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_auth_brick_imports_without_server() -> None:
-    """Auth brick can be imported without nexus.server.* dependencies.
-
-    This test checks that importing the auth brick's core modules
-    does NOT trigger imports from nexus.server or nexus.core.nexus_fs.
-    """
-    # Save current module state
-    modules_before = set(sys.modules.keys())
-
-    # Force fresh imports by removing cached modules
-    auth_modules = [k for k in sys.modules if k.startswith("nexus.bricks.auth")]
-    for mod in auth_modules:
-        del sys.modules[mod]
-
-    try:
-        # Import the auth brick
-        importlib.import_module("nexus.bricks.auth.types")
-        importlib.import_module("nexus.bricks.auth.constants")
-        importlib.import_module("nexus.bricks.auth.protocol")
-        importlib.import_module("nexus.bricks.auth.cache")
-
-        # Check that no server modules were pulled in
-        new_modules = set(sys.modules.keys()) - modules_before
-        server_imports = [m for m in new_modules if m.startswith("nexus.server")]
-        nexus_fs_imports = [m for m in new_modules if "nexus_fs" in m or "NexusFS" in m]
-
-        assert not server_imports, f"Auth brick pulled in server modules: {server_imports}"
-        assert not nexus_fs_imports, f"Auth brick pulled in NexusFS: {nexus_fs_imports}"
-    finally:
-        # Restore modules
-        for mod in auth_modules:
-            if mod not in sys.modules:
-                with contextlib.suppress(ImportError):
-                    importlib.import_module(mod)
+    _assert_isolated_imports(("nexus.server", "nexus.core.nexus_fs", "nexus_fs"))
 
 
 def test_auth_brick_no_rebac_import() -> None:
-    """Auth brick does not import from nexus.bricks.rebac."""
-    modules_before = set(sys.modules.keys())
-
-    auth_modules = [k for k in sys.modules if k.startswith("nexus.bricks.auth")]
-    for mod in auth_modules:
-        del sys.modules[mod]
-
-    try:
-        importlib.import_module("nexus.bricks.auth.types")
-        importlib.import_module("nexus.bricks.auth.constants")
-        importlib.import_module("nexus.bricks.auth.protocol")
-
-        new_modules = set(sys.modules.keys()) - modules_before
-        rebac_imports = [m for m in new_modules if m.startswith("nexus.bricks.rebac")]
-        assert not rebac_imports, f"Auth brick pulled in rebac modules: {rebac_imports}"
-    finally:
-        for mod in auth_modules:
-            if mod not in sys.modules:
-                with contextlib.suppress(ImportError):
-                    importlib.import_module(mod)
+    _assert_isolated_imports(("nexus.bricks.rebac",))
 
 
 def test_auth_brick_no_pay_import() -> None:
-    """Auth brick does not import from nexus.bricks.pay."""
-    modules_before = set(sys.modules.keys())
-
-    auth_modules = [k for k in sys.modules if k.startswith("nexus.bricks.auth")]
-    for mod in auth_modules:
-        del sys.modules[mod]
-
-    try:
-        importlib.import_module("nexus.bricks.auth.types")
-        importlib.import_module("nexus.bricks.auth.constants")
-
-        new_modules = set(sys.modules.keys()) - modules_before
-        pay_imports = [m for m in new_modules if m.startswith("nexus.bricks.pay")]
-        assert not pay_imports, f"Auth brick pulled in pay modules: {pay_imports}"
-    finally:
-        for mod in auth_modules:
-            if mod not in sys.modules:
-                with contextlib.suppress(ImportError):
-                    importlib.import_module(mod)
+    _assert_isolated_imports(("nexus.bricks.pay",))
 
 
 def test_auth_result_is_frozen() -> None:

@@ -3,15 +3,12 @@
 Presets:
   local   — embedded-only quickstart, no daemon, no Docker
   shared  — one shared node with Postgres, Dragonfly
-  demo    — shared node + demo-ready seed data settings
 
 Writes a project-local ``nexus.yaml`` with all defaults materialized.
 """
 
 from __future__ import annotations
 
-import asyncio
-import logging
 import os
 import shutil
 import subprocess
@@ -24,8 +21,7 @@ import yaml
 
 from nexus.cli.port_utils import DEFAULT_PORTS, derive_ports
 from nexus.cli.theme import console
-
-logger = logging.getLogger(__name__)
+from nexus.cli.utils import connect_local_workspace
 
 # ---------------------------------------------------------------------------
 # Default image registry / repo
@@ -37,7 +33,7 @@ DEFAULT_IMAGE_REGISTRY = "ghcr.io/nexi-lab/nexus"
 # Preset definitions (frozen dataclass — single source of truth per preset)
 # ---------------------------------------------------------------------------
 
-VALID_PRESETS = ("local", "shared", "demo")
+VALID_PRESETS = ("local", "shared")
 VALID_CHANNELS = ("stable", "edge")
 VALID_ACCELERATORS = ("cpu", "cuda")
 
@@ -64,12 +60,6 @@ PRESETS: dict[str, PresetConfig] = {
     "shared": PresetConfig(
         services=("nexus", "postgres", "dragonfly"),
         auth="static",
-        compose_profiles=("core", "cache"),
-        port_keys=("http", "grpc", "approvals", "postgres", "dragonfly"),
-    ),
-    "demo": PresetConfig(
-        services=("nexus", "postgres", "dragonfly"),
-        auth="database",
         compose_profiles=("core", "cache"),
         port_keys=("http", "grpc", "approvals", "postgres", "dragonfly"),
     ),
@@ -350,7 +340,7 @@ def _print_local_summary(config_path: Path, data_dir: Path) -> None:
 
 
 def _print_shared_summary(config: dict[str, Any], config_path: Path, data_dir: Path) -> None:
-    """Print summary for shared/demo presets."""
+    """Print the shared preset summary."""
     preset = config["preset"]
     services = ", ".join(config.get("services", []))
     ports = config.get("ports", {})
@@ -374,8 +364,6 @@ def _print_shared_summary(config: dict[str, Any], config_path: Path, data_dir: P
     console.print()
     console.print("[bold]Next steps:[/bold]")
     console.print("  nexus up")
-    if preset == "demo":
-        console.print("  nexus demo init")
 
 
 @click.command(name="init")
@@ -385,7 +373,7 @@ def _print_shared_summary(config: dict[str, Any], config_path: Path, data_dir: P
     type=click.Choice(VALID_PRESETS),
     default="local",
     show_default=True,
-    help="Initialization preset: local (embedded), shared (one node), demo (shared + seed data).",
+    help="Initialization preset: local (embedded), shared (one node).",
 )
 @click.option(
     "--data-dir",
@@ -476,7 +464,6 @@ def init(
         nexus init                                  # local embedded (default)
         nexus init --preset shared                  # one shared node
         nexus init --preset shared --tls            # secure shared node
-        nexus init --preset demo                    # demo-ready with seed settings
         nexus init --preset shared --with nats --with mcp
         nexus init --preset shared --channel edge   # pre-release image
         nexus init --preset shared --accelerator cuda
@@ -553,23 +540,15 @@ def init(
 
     # Initialize local Nexus workspace for 'local' preset
     if preset == "local":
-
-        async def _init_local_workspace() -> None:
-            import nexus
-
-            nx = nexus.connect(config={"data_dir": str(d_dir)})
-            nx.mkdir("/workspace", exist_ok=True)
-            nx.mkdir("/shared", exist_ok=True)
-            nx.close()
-
         try:
-            asyncio.run(_init_local_workspace())
-        except ImportError:
-            logger.debug("nexus package not available for local workspace init")
-        except FileExistsError:
-            pass  # Directories already created — expected on re-init
-        except Exception:
-            logger.warning("Failed to initialize local workspace", exc_info=True)
+            nx = connect_local_workspace(str(d_dir))
+            try:
+                nx.mkdir("/workspace", exist_ok=True)
+                nx.mkdir("/shared", exist_ok=True)
+            finally:
+                nx.close()
+        except Exception as exc:
+            raise click.ClickException(f"Could not initialize local workspace: {exc}") from exc
         _print_local_summary(cfg_path, d_dir)
     else:
         _print_shared_summary(config, cfg_path, d_dir)

@@ -53,44 +53,19 @@ def _has_adhoc_json(cmd: click.Command) -> bool:
 
 # Modules known to use add_output_options
 _UNIFIED_MODULES = [
-    ("nexus.cli.commands.directory", "ls_cmd"),
+    ("nexus.cli.commands.directory", "list_files"),
     ("nexus.cli.commands.directory", "tree"),
     ("nexus.cli.commands.file_ops", "cat"),
-    ("nexus.cli.commands.search", "glob_cmd"),
-    ("nexus.cli.commands.search", "grep_cmd"),
+    ("nexus.cli.commands.search", "glob"),
+    ("nexus.cli.commands.search", "grep"),
     ("nexus.cli.commands.inspect", "info"),
-    ("nexus.cli.commands.zone", "zone_list"),
+    ("nexus.cli.commands.zone", "list_zones_cmd"),
     ("nexus.cli.commands.status", "status"),
     ("nexus.cli.commands.doctor", "doctor"),
-    # Q1 sweep — newly migrated modules
-    ("nexus.cli.commands.sandbox", "list_sandboxes"),
-    ("nexus.cli.commands.mounts", "list_mounts"),
-    ("nexus.cli.commands.memory", "query"),
-    ("nexus.cli.commands.cache", "stats"),
-    ("nexus.cli.commands.admin", "list_users"),
-    ("nexus.cli.commands.snapshots", "snapshot_list"),
-    ("nexus.cli.commands.pay", "pay_balance"),
-    ("nexus.cli.commands.locks", "lock_list"),
-    ("nexus.cli.commands.governance_cli", "governance_status"),
-    ("nexus.cli.commands.events_cli", "events_replay"),
-    ("nexus.cli.commands.exchange", "exchange_list"),
-    ("nexus.cli.commands.audit", "audit_list"),
-    ("nexus.cli.commands.connectors", "list_connectors"),
+    ("nexus.cli.commands.admin", "list_keys"),
+    ("nexus.cli.commands.locks", "lock_release"),
     ("nexus.cli.commands.config_cmd", "show_cmd"),
-    # A4 — federation CLI
-    ("nexus.cli.commands.federation", "federation_status"),
-    ("nexus.cli.commands.federation", "federation_zones"),
-    ("nexus.cli.commands.federation", "federation_info"),
 ]
-
-
-def _load_command(module_path: str, cmd_name: str) -> click.Command | None:
-    """Try to load a Click command from a module."""
-    try:
-        mod = importlib.import_module(module_path)
-        return getattr(mod, cmd_name, None)
-    except (ImportError, AttributeError):
-        return None
 
 
 @pytest.mark.parametrize(
@@ -100,9 +75,8 @@ def _load_command(module_path: str, cmd_name: str) -> click.Command | None:
 )
 def test_unified_commands_have_output_params(module_path: str, cmd_name: str) -> None:
     """Commands using add_output_options must have --json, --verbose, --fields."""
-    cmd = _load_command(module_path, cmd_name)
-    if cmd is None:
-        pytest.skip(f"Could not load {module_path}.{cmd_name}")
+    cmd = getattr(importlib.import_module(module_path), cmd_name)
+    assert isinstance(cmd, click.Command)
 
     param_names = {p.name for p in cmd.params}
     assert "json_output" in param_names, f"{cmd_name} missing --json from add_output_options"

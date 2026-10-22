@@ -9,6 +9,12 @@ on:
   pull_request:
     paths:
       - "contracts/**"
+      - "src/nexus/storage/models/**"
+      - "alembic/versions/**"
+      - "tests/contracts/**"
+      - "tests/migrations/test_zone_v1_storage.py"
+      - "tests/migrations/test_zone_outbox_fixtures.py"
+      - "scripts/export_zone_outbox_fixtures.py"
       - "src/nexus/services/zones/**"
       - "src/nexus/remote/kernel_client.py"
       - "src/nexus/remote/rpc_transport.py"
@@ -16,10 +22,12 @@ on:
       - "src/nexus/server/api/v2/**zone*"
       - "src/nexus/server/api/v2/routers/sessions.py"
       - "src/nexus/server/lifespan/zone_control.py"
+      - "rust/services/zone-control/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "packages/nexus-api-client/**"
       - "tests/e2e/conftest.py"
+      - "tests/unit/e2e/test_zone_server_harness.py"
       - "tests/e2e/server/test_zone*.py"
       - "tests/e2e/server/test_session_runtime_p1a_e2e.py"
       - "tests/e2e/server/test_session_runtime_p1b_e2e.py"
@@ -29,6 +37,12 @@ on:
     branches: [develop]
     paths:
       - "contracts/**"
+      - "src/nexus/storage/models/**"
+      - "alembic/versions/**"
+      - "tests/contracts/**"
+      - "tests/migrations/test_zone_v1_storage.py"
+      - "tests/migrations/test_zone_outbox_fixtures.py"
+      - "scripts/export_zone_outbox_fixtures.py"
       - "src/nexus/services/zones/**"
       - "src/nexus/remote/kernel_client.py"
       - "src/nexus/remote/rpc_transport.py"
@@ -36,10 +50,12 @@ on:
       - "src/nexus/server/api/v2/**zone*"
       - "src/nexus/server/api/v2/routers/sessions.py"
       - "src/nexus/server/lifespan/zone_control.py"
+      - "rust/services/zone-control/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "packages/nexus-api-client/**"
       - "tests/e2e/conftest.py"
+      - "tests/unit/e2e/test_zone_server_harness.py"
       - "tests/e2e/server/test_zone*.py"
       - "tests/e2e/server/test_session_runtime_p1a_e2e.py"
       - "tests/e2e/server/test_session_runtime_p1b_e2e.py"
@@ -76,7 +92,7 @@ jobs:
       - name: Python contract, storage, and service tests
         env:
           NEXUS_E2E_DATABASE_URL: postgresql+psycopg2://postgres:nexus@127.0.0.1:5432/nexus_zone_test
-        run: uv run pytest -n 0 tests/contracts tests/migrations/test_zone_v1_storage.py tests/unit/services/test_zone_service.py tests/unit/server/test_zone_v2_api.py tests/unit/remote/test_zone_runtime_client.py
+        run: uv run pytest -n 0 tests/contracts tests/migrations/test_zone_v1_storage.py tests/migrations/test_zone_outbox_fixtures.py tests/unit/services/test_zone_service.py tests/unit/server/test_zone_v2_api.py tests/unit/remote/test_zone_runtime_client.py tests/unit/e2e/test_zone_server_harness.py
       - name: Build kernel from the pinned nexus-vfs rev
         shell: bash
         run: |
@@ -84,9 +100,7 @@ jobs:
           git clone --quiet https://github.com/nexi-lab/nexus-vfs "${RUNNER_TEMP}/nexus-vfs"
           git -C "${RUNNER_TEMP}/nexus-vfs" checkout --quiet "${REV}"
           cargo build --manifest-path "${RUNNER_TEMP}/nexus-vfs/rust/profiles/cluster/Cargo.toml"
-          # The ServerHarness suites resolve the kernel via PATH (which) or
-          # repo target/, not the env var; export the clone's target dir so
-          # both resolution paths work (.exe auto-matches under Git Bash).
+          # Keep command-line subprocesses on the same pinned daemon.
           echo "${RUNNER_TEMP}/nexus-vfs/target/debug" >> "$GITHUB_PATH"
       - name: Full-profile Zone HTTP E2E
         env:
@@ -113,9 +127,7 @@ jobs:
           git clone --quiet https://github.com/nexi-lab/nexus-vfs "${RUNNER_TEMP}/nexus-vfs"
           git -C "${RUNNER_TEMP}/nexus-vfs" checkout --quiet "${REV}"
           cargo build --manifest-path "${RUNNER_TEMP}/nexus-vfs/rust/profiles/cluster/Cargo.toml"
-          # The ServerHarness suites resolve the kernel via PATH (which) or
-          # repo target/, not the env var; export the clone's target dir so
-          # both resolution paths work (.exe auto-matches under Git Bash).
+          # Keep command-line subprocesses on the same pinned daemon.
           echo "${RUNNER_TEMP}/nexus-vfs/target/debug" >> "$GITHUB_PATH"
       - name: Windows-only Zone E2E suites
         env:
@@ -140,12 +152,29 @@ jobs:
 
   rust-production-profile:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: nexus
+          POSTGRES_DB: nexus_zone_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d nexus_zone_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - run: cargo fmt --all --check
+      - name: Rust contracts and SQLite/PostgreSQL outbox process recovery
+        env:
+          NEXUS_ZONE_CONTROL_TEST_DATABASE_URL: postgresql://postgres:nexus@127.0.0.1:5432/nexus_zone_test
+        run: cargo test --locked -p nexus-zone-control
       - name: Clippy the workspace members this repo owns
         # The kernel build below covers the pinned external nexus-vfs repo;
         # this step covers THIS repository's own Rust members, which had no
@@ -158,7 +187,5 @@ jobs:
           git clone --quiet https://github.com/nexi-lab/nexus-vfs "${RUNNER_TEMP}/nexus-vfs"
           git -C "${RUNNER_TEMP}/nexus-vfs" checkout --quiet "${REV}"
           cargo build --manifest-path "${RUNNER_TEMP}/nexus-vfs/rust/profiles/cluster/Cargo.toml"
-          # The ServerHarness suites resolve the kernel via PATH (which) or
-          # repo target/, not the env var; export the clone's target dir so
-          # both resolution paths work (.exe auto-matches under Git Bash).
+          # Keep command-line subprocesses on the same pinned daemon.
           echo "${RUNNER_TEMP}/nexus-vfs/target/debug" >> "$GITHUB_PATH"

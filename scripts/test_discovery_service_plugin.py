@@ -15,6 +15,7 @@ import grpc
 import httpx
 
 from nexus.bricks.search.search_service import SearchService
+from nexus.contracts.exceptions import AuthenticationError
 from nexus.contracts.types import OperationContext
 from nexus.grpc.search.v1 import search_pb2
 from nexus.lib.request_credentials import request_api_key
@@ -51,10 +52,13 @@ async def main() -> None:
             value = value.replace(secret, "[redacted]")
         return value
 
-    async def rejects(call, *args, **kwargs):
+    async def rejects(call, *args, empty_credential=False, **kwargs):
         try:
             await asyncio.to_thread(call, *args, **kwargs)
+        except AuthenticationError:
+            assert empty_credential, "Nonempty credentials must be checked by the owning daemon"
         except grpc.RpcError as error:
+            assert not empty_credential, "Empty credentials must be rejected before the RPC"
             assert error.code() == grpc.StatusCode.UNAUTHENTICATED
         else:
             raise AssertionError("Invalid caller used the node certificate identity")
@@ -246,8 +250,15 @@ async def main() -> None:
             for invalid in ("sk-never-minted", ""):
                 caller = request_api_key.set(invalid)
                 try:
-                    await rejects(search.grep, needle, path="/docs", files=[])
-                    await rejects(search.semantic_search, query=needle, search_mode="keyword")
+                    await rejects(
+                        search.grep, needle, path="/docs", files=[], empty_credential=invalid == ""
+                    )
+                    await rejects(
+                        search.semantic_search,
+                        query=needle,
+                        search_mode="keyword",
+                        empty_credential=invalid == "",
+                    )
                 finally:
                     request_api_key.reset(caller)
                 await rejects(
@@ -255,10 +266,13 @@ async def main() -> None:
                     "grep",
                     {"pattern": needle, "path": "/docs", "files": []},
                     auth_token=invalid,
+                    empty_credential=invalid == "",
                 )
             explicit_empty = RPCTransport(target, auth_token="", tls_config=tls)
             try:
-                await rejects(explicit_empty.call_rpc, "semantic_search_stats")
+                await rejects(
+                    explicit_empty.call_rpc, "semantic_search_stats", empty_credential=True
+                )
             finally:
                 explicit_empty.close()
             print(

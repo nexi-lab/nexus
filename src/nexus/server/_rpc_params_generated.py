@@ -514,7 +514,7 @@ class HasMountParams:
 
 @dataclass
 class ListParams:
-    """Parameters for list(): List files in a directory."""
+    """Parameters for list(): List through the filesystem's directory enumeration contract."""
 
     path: str = "/"
     recursive: bool = True

@@ -41,7 +41,8 @@ class WatchMixin:
 
         # Rust kernel path: blocking wait via Condvar (or stub returning None)
         if self._kernel is not None:
-            return self._kernel.sys_watch(path, int(timeout * 1000))
+            event: dict[str, Any] | None = self._kernel.sys_watch(path, int(timeout * 1000))
+            return event
 
         # No kernel: return None (watch not available)
         return None

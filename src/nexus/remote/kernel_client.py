@@ -352,11 +352,13 @@ class KernelClient:
         # client must present the operator-provided key as well; otherwise the
         # kernel correctly starts fail-closed and every bootstrap RPC is
         # unauthenticated.  An explicit argument still wins.  The env fallback
-        # stays ``None`` when the variable is unset (NOT ``""``): the
+        # uses ``None`` when the variable is unset or empty: the
         # transport treats a connection-level empty string as an explicitly
         # rejected bearer, while ``None`` means "no credential" and is what
         # unauthenticated local kernels accept.
-        self._auth_token = auth_token if auth_token is not None else os.environ.get("NEXUS_API_KEY")
+        self._auth_token = (
+            auth_token if auth_token is not None else (os.environ.get("NEXUS_API_KEY") or None)
+        )
         self._spawn_local = not server_address
         self.requires_python_hooks = True
         self._hooks: dict[str, list[Any]] = {}

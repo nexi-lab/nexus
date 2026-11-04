@@ -88,7 +88,8 @@ def find_nexusd_cluster_binary() -> Path:
         return Path(found)
     raise FileNotFoundError(
         "nexusd-cluster binary not found.  Build with "
-        "`cargo build --release -p nexus-cluster` from the repo root, "
+        "`cargo build --release -p nexus-cluster --features "
+        "nexus-cluster/driver-cas-local` from the repo root, "
         "or add it to PATH."
     )
 

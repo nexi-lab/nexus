@@ -113,7 +113,7 @@ put `nexusd-cluster` / `nexus-cluster` on `PATH`; `NEXUS_KERNEL_BINARY` can poin
 at an explicit binary:
 
 ```bash
-cargo build --release -p nexus-cluster --bin nexusd-cluster
+cargo build --release -p nexus-cluster --bin nexusd-cluster --features nexus-cluster/driver-cas-local
 uv run pytest tests/surface_coverage/test_runtime_discovery.py tests/surface_coverage/test_inventory.py::test_runtime_discovery_matches_matrix -v
 ```
 

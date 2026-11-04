@@ -236,7 +236,7 @@ jobs:
           # `nexusd-cluster` binary owned by a different package (e.g.
           # the retired nexus-local `nexusd` assembly); cargo refuses to
           # overwrite across owners without it.
-          cargo install --locked --force --git https://github.com/nexi-lab/nexus-vfs --rev "$REV" --bin nexusd-cluster nexus-cluster
+          cargo install --locked --force --git https://github.com/nexi-lab/nexus-vfs --rev "$REV" --features driver-cas-local --bin nexusd-cluster nexus-cluster
 
       - name: Validate API/RPC surface matrix
         if: steps.surface-filter.outputs.surface == 'true'

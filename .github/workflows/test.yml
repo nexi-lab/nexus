@@ -165,7 +165,9 @@ jobs:
   e2e-self-contained:
     name: E2E Tests (Self-Contained)
     needs: [detect-changes]
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moved to 26.04, which the frontend's Playwright
+    # cannot install Chromium on. Move with the Playwright upgrade.
+    runs-on: ubuntu-24.04
     steps:
       - name: Skip notice (no code changes)
         if: needs.detect-changes.outputs.code_changed != 'true'
@@ -769,6 +771,7 @@ jobs:
           cargo install --locked --force \
             --git https://github.com/nexi-lab/nexus-vfs \
             --rev "${NEXUS_VFS_REV}" \
+            --features driver-cas-local \
             --bin nexusd-cluster \
             nexus-cluster
 

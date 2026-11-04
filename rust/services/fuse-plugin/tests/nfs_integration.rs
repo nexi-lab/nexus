@@ -519,8 +519,10 @@ async fn symlink_and_readlink_unsupported() {
     assert!(is_nfs_err(err, nfsstat3::NFS3ERR_NOENT));
 }
 
+/// Offsets are honoured as of plugin ABI v7: a write past the end extends the
+/// file and leaves the gap zero-filled instead of refusing.
 #[tokio::test]
-async fn write_at_nonzero_offset_returns_io() {
+async fn write_at_nonzero_offset_patches_in_place() {
     let (_mock, nfs) = make_nfs();
     let root = nfs.root_dir();
     let filename: nfsserve::nfs::filename3 = "offset.txt".as_bytes().into();
@@ -530,8 +532,10 @@ async fn write_at_nonzero_offset_returns_io() {
         .await
         .unwrap();
 
-    let err = nfs.write(fid, 10, b"data").await.unwrap_err();
-    assert!(is_nfs_err(err, nfsstat3::NFS3ERR_IO));
+    let attr = nfs.write(fid, 10, b"data").await.unwrap();
+    assert_eq!(attr.size, 14);
+    let (bytes, _eof) = nfs.read(fid, 0, 64).await.unwrap();
+    assert_eq!(bytes, [&[0u8; 10][..], b"data"].concat());
 }
 
 #[tokio::test]

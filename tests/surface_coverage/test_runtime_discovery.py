@@ -64,7 +64,10 @@ def _install_fake_kernel_syscalls(monkeypatch: pytest.MonkeyPatch, names: set[st
 
 
 def test_runtime_build_command_targets_cluster_binary() -> None:
-    assert RUNTIME_BUILD_COMMAND == "cargo build --release -p nexus-cluster --bin nexusd-cluster"
+    assert RUNTIME_BUILD_COMMAND == (
+        "cargo build --release -p nexus-cluster --bin nexusd-cluster "
+        "--features nexus-cluster/driver-cas-local"
+    )
 
 
 def test_resolve_runtime_kernel_binary_prefers_env(

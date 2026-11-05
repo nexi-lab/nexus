@@ -171,6 +171,7 @@ jobs:
           cargo install --locked --force \
             --git https://github.com/nexi-lab/nexus-vfs \
             --rev "$REV" \
+            --features driver-cas-local \
             --bin nexusd-cluster nexus-cluster
         # `cargo install` lands the binary in `$CARGO_HOME/bin` which
         # is already on $PATH for subsequent steps via setup-rust-

@@ -40,7 +40,7 @@ RUN pip install --no-cache-dir --no-deps --prefix=/install .
 # Build the same revision as the workspace and its lockfile.
 COPY Cargo.toml Cargo.lock scripts/nexus_vfs_revision.py /build/
 RUN NEXUS_VFS_REV="$(python3 /build/nexus_vfs_revision.py /build/Cargo.toml)" && \
-    cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --rev "${NEXUS_VFS_REV}" --features http-api --bin nexusd-cluster nexus-cluster
+    cargo install --locked --git https://github.com/nexi-lab/nexus-vfs --rev "${NEXUS_VFS_REV}" --features http-api,driver-cas-local --bin nexusd-cluster nexus-cluster
 
 # -- Runtime stage --
 FROM python:3.14-slim

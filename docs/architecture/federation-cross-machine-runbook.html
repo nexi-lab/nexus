@@ -343,7 +343,7 @@ On both machines, from a clone of **nexus-vfs**:
 
 ```bash
 git fetch origin main && git checkout main && git pull --ff-only
-cargo build --release -p nexus-cluster
+cargo build --release -p nexus-cluster --features nexus-cluster/driver-cas-local
 # binary: target/release/nexusd-cluster (or .exe on Windows)
 ```
 

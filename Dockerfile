@@ -83,7 +83,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
     cargo install --locked \
         --git https://github.com/nexi-lab/nexus-vfs \
         --rev "${NEXUS_VFS_REV}" \
-        --features http-api --bin nexusd-cluster \
+        --features http-api,driver-cas-local --bin nexusd-cluster \
         nexus-cluster && \
     cp /root/.cargo/bin/nexusd-cluster /build/nexusd-cluster
 

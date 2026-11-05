@@ -60,7 +60,7 @@ ENV CARGO_TARGET_DIR=/build/target
 RUN cargo install \
     --locked \
     --path /build/nexus-vfs/rust/profiles/cluster \
-    --features http-api --bin nexusd-cluster
+    --features http-api,driver-cas-local --bin nexusd-cluster
 
 FROM builder AS witness-builder
 

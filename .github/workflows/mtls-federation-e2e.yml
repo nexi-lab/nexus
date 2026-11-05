@@ -94,10 +94,15 @@ jobs:
           echo "--- founder cert SANs ---"
           openssl x509 -in "${GITHUB_WORKSPACE}/dockerfiles/mtls-certs/founder/tls/node.pem" \
             -noout -ext subjectAltName
+          # The keys are written owner-only, so hand the bundles to the
+          # image's daemon user; the entrypoint copies them as that user.
+          daemon_uid=$(docker run --rm --entrypoint id nexusd-cluster:latest -u)
+          sudo chown -R "${daemon_uid}" "${GITHUB_WORKSPACE}/dockerfiles/mtls-certs"
 
       - name: Start the mTLS federation
         run: |
-          docker compose -f dockerfiles/docker-compose.mtls-federation-test.yml up -d
+          docker compose -f dockerfiles/docker-compose.mtls-federation-test.yml up -d \
+            || { docker compose -f dockerfiles/docker-compose.mtls-federation-test.yml logs; exit 1; }
           docker compose -f dockerfiles/docker-compose.mtls-federation-test.yml ps
 
       - name: Assert membership converged over mTLS

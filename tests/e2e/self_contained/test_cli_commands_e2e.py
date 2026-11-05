@@ -7,7 +7,7 @@ Each CLI command is invoked via subprocess and validates:
 - Graceful error handling for missing services / auth
 
 NOTE: Requires Rust PyO3 extensions for the daemon to start.
-Build with: cargo build --release -p nexus-cluster
+Build with: cargo build --release -p nexus-cluster --features nexus-cluster/driver-cas-local
 Tests are auto-skipped if the daemon fails to start (e.g. no Rust build).
 """
 

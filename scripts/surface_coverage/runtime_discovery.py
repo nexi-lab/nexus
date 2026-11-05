@@ -11,7 +11,10 @@ from pathlib import Path
 from scripts.surface_coverage.schema import ProfileStatus, SurfaceCoverage
 from scripts.surface_coverage.validate import ValidationFinding
 
-RUNTIME_BUILD_COMMAND = "cargo build --release -p nexus-cluster --bin nexusd-cluster"
+RUNTIME_BUILD_COMMAND = (
+    "cargo build --release -p nexus-cluster --bin nexusd-cluster "
+    "--features nexus-cluster/driver-cas-local"
+)
 _KERNEL_BINARY_ENV = "NEXUS_KERNEL_BINARY"
 _KERNEL_BINARY_NAMES = ("nexusd-cluster", "nexus-cluster")
 _TARGET_PROFILES = ("release", "debug")

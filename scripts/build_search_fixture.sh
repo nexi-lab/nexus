@@ -17,7 +17,7 @@ git -C "$fixture_source" checkout --detach FETCH_HEAD
 uv run --no-project --with grpcio-tools==1.80.0 python \
   scripts/gen_search_proto.py --vfs-checkout "$fixture_source" --check
 cargo build --locked --release --manifest-path "$fixture_source/Cargo.toml" \
-  -p nexus-cluster -p nexus-search-plugin --features nexus-cluster/http-api
+  -p nexus-cluster -p nexus-search-plugin --features nexus-cluster/http-api,nexus-cluster/driver-cas-local
 test -x "$CARGO_TARGET_DIR/release/nexusd-cluster"
 test -f "$CARGO_TARGET_DIR/release/libnexus_search_plugin.so"
 echo "NEXUS_KERNEL_BINARY=$CARGO_TARGET_DIR/release/nexusd-cluster" >> "$GITHUB_ENV"

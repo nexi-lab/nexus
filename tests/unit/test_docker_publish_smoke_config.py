@@ -56,7 +56,9 @@ def test_search_plugin_sidecar_has_embedder_wiring() -> None:
     ]
 
     # Provisioning covers both halves of the local-ONNX contract.
-    assert "onnxruntime-linux-x64" in provision_step
+    assert "--require-hashes" in provision_step
+    assert "--platform manylinux_2_28_x86_64" in provision_step
+    assert "onnxruntime/capi/libonnxruntime.so." in provision_step
     for model_file in (
         "model.onnx",
         "tokenizer.json",

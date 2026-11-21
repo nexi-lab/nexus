@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import (
+    BackendError,
     ConflictError,
     NexusFileNotFoundError,
 )
@@ -35,6 +36,13 @@ if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
+
+
+def require_completed_write(path: str, result: Any) -> Any:
+    """Accept a completed empty write and reject an unhandled kernel write."""
+    if not result.hit:
+        raise BackendError("Kernel did not handle the write", path=path)
+    return result
 
 
 def emit_op_completed(
@@ -653,13 +661,12 @@ class ContentMixin:
             else (context.get("is_admin", False) if isinstance(context, dict) else False)
         )
         _rust_ctx = self._build_rust_ctx(context, _is_admin)
-        result = self._kernel.sys_write(path, _rust_ctx, buf, offset)
-        if result.hit:
-            io_metrics.record_write_backend_rpc()
+        result = require_completed_write(path, self._kernel.sys_write(path, _rust_ctx, buf, offset))
+        io_metrics.record_write_backend_rpc()
 
         # POST-INTERCEPT hooks (Rust handles backend write + metadata + OBSERVE)
         _projection_seq: int | None = None
-        if result.hit and result.post_hook_needed:
+        if result.post_hook_needed:
             # Rust wrote to backend (CAS or PAS) + built metadata + updated dcache.
             # old_metadata fields come from Rust (dcache/metastore snapshot taken
             # before the write) — no Python metadata.get() round-trip needed.
@@ -706,17 +713,16 @@ class ContentMixin:
             _projection_seq = _post_ctx.extra.get("projection_seq")
 
         _write_latency_ms = int((time.perf_counter() - _start) * 1000)
-        if result.hit:
-            _, _write_agent_id, _ = self._get_context_identity(context)
-            emit_op_completed(
-                agent_id=_write_agent_id,
-                op="write",
-                path=path,
-                bytes_count=len(buf),
-                latency_ms=_write_latency_ms,
-            )
+        _, _write_agent_id, _ = self._get_context_identity(context)
+        emit_op_completed(
+            agent_id=_write_agent_id,
+            op="write",
+            path=path,
+            bytes_count=len(buf),
+            latency_ms=_write_latency_ms,
+        )
         # Issue #4737: revision token (``<path>@<gen>``) a reader can fence
-        # on; None when the kernel reported no gen (e.g. a miss).
+        # on when the kernel supplies a generation.
         # #4738: projection sequence of the committed audit/version row.
         return {
             "path": path,
@@ -931,15 +937,9 @@ class ContentMixin:
 
         _rust_ctx = self._build_rust_ctx(context, _is_admin)
 
-        # Tier 1 sys_write: Rust handles create-on-write (implicit create
-        # when offset==0 and entry absent), backend I/O, metadata build+put,
-        # dcache update, and OBSERVE dispatch.  Matches develop — Tier 2
-        # write() wraps sys_write with a redundant create-on-miss fallback
-        # that is never exercised under implicit-create and adds PyO3
-        # dispatch overhead on macOS CI (5× slower).
-        result = self._kernel.sys_write(path, _rust_ctx, buf, offset)
-        if result.hit:
-            io_metrics.record_write_backend_rpc()
+        # The kernel creates an absent regular file on a full write.
+        result = require_completed_write(path, self._kernel.sys_write(path, _rust_ctx, buf, offset))
+        io_metrics.record_write_backend_rpc()
 
         # Reconstruct old_metadata from Rust result (atomic snapshot taken
         # during write — no TOCTOU gap, no extra PyO3 round-trip).
@@ -986,17 +986,13 @@ class ContentMixin:
         )
         self._kernel.dispatch_post_hooks("write", _post_ctx)
 
-        # Issue #4081: emit OP event for self-observability. Only on hit
-        # (mirrors the io_metrics gate for sys_write — a miss is not a
-        # completed write).
-        if result.hit:
-            emit_op_completed(
-                agent_id=agent_id,
-                op="write",
-                path=path,
-                bytes_count=len(buf),
-                latency_ms=int((time.perf_counter() - _write_locked_start) * 1000),
-            )
+        emit_op_completed(
+            agent_id=agent_id,
+            op="write",
+            path=path,
+            bytes_count=len(buf),
+            latency_ms=int((time.perf_counter() - _write_locked_start) * 1000),
+        )
 
         return {
             "content_id": _cid,
@@ -1574,7 +1570,7 @@ class ContentMixin:
 
         # ── KERNEL: Rust Tier 2 write_batch (create-or-overwrite per item) ──
         # Tier 2 write_batch composes Tier 2 write() per-item, which handles
-        # create-on-miss + OBSERVE dispatch automatically. No Python fallback needed.
+        # implicit creation and OBSERVE dispatch.
         rust_results = self._kernel.write_batch(validated_files, _rust_ctx)
 
         now = datetime.now(UTC)
@@ -1583,6 +1579,9 @@ class ContentMixin:
 
         for i, (path, _content) in enumerate(validated_files):
             r = rust_results[i]
+            # The RPC adapter raises for failed items. Embedded results carry a dispatch flag.
+            if hasattr(r, "hit"):
+                require_completed_write(path, r)
             io_metrics.record_write_backend_rpc()
             results.append(
                 {

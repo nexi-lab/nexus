@@ -767,6 +767,13 @@ jobs:
           NEXUS_VFS_REV=$(python3 scripts/nexus_vfs_revision.py)
           echo "rev=${NEXUS_VFS_REV}" >> "$GITHUB_OUTPUT"
           echo "Installing nexusd-cluster from nexus-vfs @ ${NEXUS_VFS_REV}"
+          # Build with the compiler used to measure the pinned VFS release.
+          curl --fail --silent --show-error --retry 3 \
+            "https://raw.githubusercontent.com/nexi-lab/nexus-vfs/${NEXUS_VFS_REV}/rust-toolchain.toml" \
+            --output "$RUNNER_TEMP/vfs-toolchain.toml"
+          RUSTUP_TOOLCHAIN=$(python3 -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["toolchain"]["channel"])' "$RUNNER_TEMP/vfs-toolchain.toml")
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+          export RUSTUP_TOOLCHAIN
           # Reinstall so cached binaries cannot bypass the current revision.
           cargo install --locked --force \
             --git https://github.com/nexi-lab/nexus-vfs \

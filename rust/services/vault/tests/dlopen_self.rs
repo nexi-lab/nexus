@@ -30,48 +30,45 @@ const PLUGIN_FILE: &str = "libnexus_vault.dylib";
 #[cfg(target_os = "windows")]
 const PLUGIN_FILE: &str = "nexus_vault.dll";
 
-fn plugin_path() -> PathBuf {
-    // `current_exe()` returns the test binary path:
-    //   target/{debug,release}/deps/dlopen_self-<hash>(.exe)
-    // The cdylib lives next to the profile dir:
-    //   target/{debug,release}/<PLUGIN_FILE>
-    let exe = std::env::current_exe().expect("current_exe");
-    let target_profile_dir = exe
-        .parent()
-        .and_then(|p| p.parent())
-        .unwrap_or_else(|| panic!("unexpected test binary layout: {}", exe.display()));
-    target_profile_dir.join(PLUGIN_FILE)
-}
-
-/// `cargo test` builds the test binary against the rlib variant of the
-/// crate, but does not necessarily emit the cdylib output. Workspace-
-/// wide runs (`cargo test --workspace`) therefore land here without
-/// the cdylib on disk. Triggering an explicit `cargo build -p
-/// nexus-vault` keeps the test self-contained in every context —
-/// `vault-plugin-build.yml` (cdylib already built by a prior step,
-/// instant) and the broader workspace gate alike.
-fn ensure_cdylib_built(plugin: &std::path::Path) {
-    if plugin.exists() {
-        return;
-    }
+fn build_plugin() -> PathBuf {
     let mut cmd = Command::new(env!("CARGO"));
-    cmd.args(["build", "-p", "nexus-vault"]);
+    cmd.args([
+        "build",
+        "--locked",
+        "-p",
+        "nexus-vault",
+        "--lib",
+        "--message-format=json",
+    ]);
     if !cfg!(debug_assertions) {
         cmd.arg("--release");
     }
-    let status = cmd.status().expect("invoke cargo");
-    assert!(status.success(), "cargo build -p nexus-vault failed");
+    let output = cmd.output().expect("build vault plugin");
     assert!(
-        plugin.exists(),
-        "cdylib still not at {} after cargo build — check [lib] crate-type includes \"cdylib\"",
-        plugin.display()
+        output.status.success(),
+        "cargo build failed: {}",
+        String::from_utf8_lossy(&output.stderr)
     );
+    for line in String::from_utf8(output.stdout)
+        .expect("Cargo JSON output")
+        .lines()
+    {
+        let event: serde_json::Value = serde_json::from_str(line).expect("Cargo build event");
+        if event["reason"] == "compiler-artifact" && event["target"]["name"] == "nexus_vault" {
+            for file in event["filenames"].as_array().expect("artifact filenames") {
+                let path = PathBuf::from(file.as_str().expect("artifact path"));
+                if path.ends_with(PLUGIN_FILE) {
+                    return path;
+                }
+            }
+        }
+    }
+    panic!("cargo build did not report the vault cdylib");
 }
 
 #[test]
 fn vault_cdylib_dlopens_with_required_symbols() {
-    let plugin = plugin_path();
-    ensure_cdylib_built(&plugin);
+    let plugin = build_plugin();
 
     let lib = unsafe { libloading::Library::new(&plugin) }
         .unwrap_or_else(|e| panic!("dlopen({}) failed: {e}", plugin.display()));

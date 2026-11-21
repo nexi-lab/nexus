@@ -65,11 +65,11 @@ jobs:
             artifact_name: nexus-vault-linux-aarch64
             dylib: libnexus_vault.so
             max_size_bytes: 6291456  # 6 MiB
-          - os: macos-14
+          - os: macos-15
             artifact_name: nexus-vault-macos-arm64
             dylib: libnexus_vault.dylib
             max_size_bytes: 7864320  # 7.5 MiB
-          - os: macos-14
+          - os: macos-15
             artifact_name: nexus-vault-macos-x86_64
             dylib: libnexus_vault.dylib
             target: x86_64-apple-darwin

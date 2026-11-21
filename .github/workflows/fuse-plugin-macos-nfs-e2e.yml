@@ -32,20 +32,9 @@ jobs:
   fuse-plugin-macos-nfs-e2e:
     name: FUSE Plugin macOS NFS E2E
     runs-on: macos-latest
-    # 12-min budget is a safety net, not a gate.  Layers that catch
-    # wedges BEFORE this triggers:
-    #   * readiness poll below — bounded mount probe (wedge_probe.py
-    #     --readonly) on a 180s wall-clock deadline, so a mounted-but-
-    #     not-yet-serving backend can never block the poll;
-    #   * per-test pytest-timeout via `wedge_watchdog` marker
-    #     (tests/e2e/macos/conftest.py — 60s per test);
-    #   * pre-pytest wedge probe below — stat+readdir+mkdir+rmdir on the
-    #     mount with hard subprocess timeouts.
-    # In practice this workflow completes in <8min warm-cache and
-    # <15min cold.  If we approach 12min it means something below the
-    # test layer failed (build hung, cargo install hung, or the
-    # wedge-probe itself hung — all with in-workflow diagnostics).
-    timeout-minutes: 12
+    # A cold release build, NFS tests and cache upload share this job budget.
+    # Mount readiness and filesystem operations have their own shorter deadlines.
+    timeout-minutes: 20
 
     steps:
       - name: Checkout

@@ -388,13 +388,13 @@ jobs:
           mkdir -p "$ASSETS/ort" "$ASSETS/model"
 
           if [ ! -f "$ASSETS/ort/libonnxruntime.so" ]; then
-            curl -fL --retry 5 --retry-delay 2 \
-              -o /tmp/onnxruntime.tgz \
-              "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz"
-            tar -xzf /tmp/onnxruntime.tgz -C /tmp
-            # Copy the real versioned .so to a stable mount name.
-            cp "/tmp/onnxruntime-linux-x64-${ORT_VERSION}/lib/libonnxruntime.so.${ORT_VERSION}" \
-              "$ASSETS/ort/libonnxruntime.so"
+            # The official CPU wheel carries the standalone C library used by the sidecar.
+            printf 'onnxruntime==%s --hash=sha256:0a83bdb70d143cede762b677789bf2a7acca54b3fb82565601d5c30695aa933c\n' "$ORT_VERSION" > "$RUNNER_TEMP/ort-wheel.txt"
+            python3 -m pip download --require-hashes --only-binary=:all: --no-deps \
+              --platform manylinux_2_28_x86_64 --python-version 312 --abi cp312 --implementation cp \
+              -r "$RUNNER_TEMP/ort-wheel.txt" -d "$RUNNER_TEMP"
+            unzip -p "$RUNNER_TEMP"/onnxruntime-"${ORT_VERSION}"-*.whl \
+              "onnxruntime/capi/libonnxruntime.so.${ORT_VERSION}" > "$ASSETS/ort/libonnxruntime.so"
           fi
 
           # The model comes from our own COS mirror, never from

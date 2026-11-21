@@ -2424,6 +2424,7 @@ dependencies = [
  "libloading",
  "nexus-plugin-abi",
  "prost",
+ "serde_json",
  "services",
  "tempfile",
  "tokio",

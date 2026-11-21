@@ -522,11 +522,15 @@ Always be thorough but concise in your analysis.""",
                     if hasattr(part, "text") and part.text:
                         assistant_response.append(part.text)
                         print(f"\n[Assistant]: {part.text[:200]}...")
-                    elif hasattr(part, "function_call") and part.function_call:
-                        if hasattr(part.function_call, "name") and part.function_call.name:
-                            tool_name = part.function_call.name
-                            tool_calls.append(tool_name)
-                            print(f"\n[Tool Call]: {tool_name}")
+                    elif (
+                        hasattr(part, "function_call")
+                        and part.function_call
+                        and hasattr(part.function_call, "name")
+                        and part.function_call.name
+                    ):
+                        tool_name = part.function_call.name
+                        tool_calls.append(tool_name)
+                        print(f"\n[Tool Call]: {tool_name}")
 
             if hasattr(event, "tool_response") and event.tool_response:
                 print(f"[Tool Response]: {str(event.tool_response)[:100]}...")

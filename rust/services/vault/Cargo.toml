@@ -43,6 +43,7 @@ tracing-subscriber = { version = "0.3", features = ["fmt"] }
 clap = { version = "4", features = ["derive", "env"] }
 
 [dev-dependencies]
+serde_json = { workspace = true }
 tempfile = "3"
 # dlopen the just-built cdylib in tests/dlopen_self.rs — closes the
 # Linux/macOS/Windows plugin-load regression gap surfaced by SEV

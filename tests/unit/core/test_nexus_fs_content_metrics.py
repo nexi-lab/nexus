@@ -3,8 +3,10 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
 from prometheus_client import REGISTRY
 
+from nexus.contracts.exceptions import BackendError
 from nexus.core.nexus_fs_content import ContentMixin
 
 _OVERSIZED_BATCH_LENGTH = 100 * 1024 * 1024 + 1
@@ -349,6 +351,23 @@ def test_sys_read_records_error_tier_metrics() -> None:
 
     assert _sample("nexus_read_bytes_total", tier="error") == before_bytes
     assert _sample("nexus_read_latency_seconds_count", tier="error") == before_count + 1
+
+
+@pytest.mark.parametrize("method", ["sys_write", "_write_locked", "write_batch"])
+def test_unhandled_write_cannot_report_completion(
+    method: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    harness = _Harness()
+    missed = SimpleNamespace(hit=False)
+    monkeypatch.setattr(harness._kernel, "sys_write", lambda *args: missed)
+    monkeypatch.setattr(harness._kernel, "write_batch", lambda *args: [missed])
+    before = _sample("nexus_write_backend_rpc_total")
+    with pytest.raises(BackendError, match="Kernel did not handle"):
+        if method == "write_batch":
+            harness.write_batch([("/file.txt", b"")])
+        else:
+            getattr(harness, method)("/file.txt", b"")
+    assert _sample("nexus_write_backend_rpc_total") == before
 
 
 def test_sys_write_records_backend_rpc_when_kernel_hit() -> None:

@@ -19,7 +19,7 @@ from nexus.core.config import (
     ParseConfig,
     PermissionConfig,
 )
-from nexus.core.nexus_fs_content import ContentMixin
+from nexus.core.nexus_fs_content import ContentMixin, require_completed_write
 from nexus.core.nexus_fs_dispatch import DispatchMixin
 from nexus.core.nexus_fs_internal import InternalMixin
 from nexus.core.nexus_fs_metadata import MetadataMixin
@@ -863,8 +863,7 @@ class NexusFS(  # type: ignore[misc]
     def stream_write_nowait(self, path: str, data: bytes) -> int:
         """Non-blocking stream append via sys_write. Returns byte offset."""
         rust_ctx = self._build_rust_ctx(None, True)
-        result = self._kernel.sys_write(path, rust_ctx, data)
-        return result.size
+        return require_completed_write(path, self._kernel.sys_write(path, rust_ctx, data)).size
 
     def stream_read_at(self, path: str, offset: int) -> tuple[bytes, int] | None:
         """Non-blocking offset-based stream read via sys_read. Returns (chunk, next_offset) or None."""
@@ -903,9 +902,7 @@ class NexusFS(  # type: ignore[misc]
 
     def _stream_write(self, path: str, data: bytes) -> int:
         """Write to DT_STREAM via sys_write."""
-        rust_ctx = self._build_rust_ctx(None, True)
-        result = self._kernel.sys_write(path, rust_ctx, data)
-        return result.size
+        return self.stream_write_nowait(path, data)
 
     def _stream_destroy(self, path: str) -> dict[str, Any]:
         """Destroy DT_STREAM via sys_unlink."""

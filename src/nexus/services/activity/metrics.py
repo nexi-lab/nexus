@@ -147,8 +147,7 @@ def record_metrics(
     elif kind is EventKind.MCP_TOOL_CALL:
         tool = (subject_extra or {}).get("tool", "unknown")
         MCP_TOOL_CALLS.labels(tool=tool, status=result.value).inc()
-    elif kind in (EventKind.ZONE_ACCESS, EventKind.POLICY_BLOCK):
-        if result is Result.BLOCKED:
-            POLICY_BLOCKS.labels(kind=kind.value).inc()
+    elif kind in (EventKind.ZONE_ACCESS, EventKind.POLICY_BLOCK) and result is Result.BLOCKED:
+        POLICY_BLOCKS.labels(kind=kind.value).inc()
     # APPROVAL: gauge is reseeded from durable state by the producer.
     # FETCH currently has no metric in the catalog.

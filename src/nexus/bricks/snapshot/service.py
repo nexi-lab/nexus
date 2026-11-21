@@ -509,35 +509,38 @@ class TransactionalSnapshotService:
                             self._cas_store.release(entry.new_hash)
                     except Exception:
                         logger.warning("Failed to delete new file during rollback: %s", entry.path)
-                elif entry.operation == "delete" and entry.original_hash is not None:
+                elif (
+                    entry.operation == "delete"
+                    and entry.original_hash is not None
+                    and entry.original_metadata
+                ):
                     # File was deleted — restore from snapshot
-                    if entry.original_metadata:
-                        meta_dict = json.loads(entry.original_metadata)
-                        _created = (
-                            datetime.fromisoformat(meta_dict["created_at"])
-                            if meta_dict.get("created_at")
-                            else datetime.now(UTC)
-                        )
-                        _modified = (
-                            datetime.fromisoformat(meta_dict["modified_at"])
-                            if meta_dict.get("modified_at")
-                            else datetime.now(UTC)
-                        )
-                        self._kernel.sys_setattr(
-                            entry.path,
-                            entry_type=0,  # DT_REG upsert (re-create deleted entry)
-                            content_id=entry.original_hash,
-                            size=meta_dict.get("size", 0),
-                            version=meta_dict.get("version", 1),
-                            zone_id=meta_dict.get("zone_id", ROOT_ZONE_ID),
-                            modified_at_ms=int(_modified.timestamp() * 1000),
-                            created_at_ms=int(_created.timestamp() * 1000),
-                        )
-                        logger.debug(
-                            "Restored deleted file: path=%s hash=%s",
-                            entry.path,
-                            entry.original_hash,
-                        )
+                    meta_dict = json.loads(entry.original_metadata)
+                    _created = (
+                        datetime.fromisoformat(meta_dict["created_at"])
+                        if meta_dict.get("created_at")
+                        else datetime.now(UTC)
+                    )
+                    _modified = (
+                        datetime.fromisoformat(meta_dict["modified_at"])
+                        if meta_dict.get("modified_at")
+                        else datetime.now(UTC)
+                    )
+                    self._kernel.sys_setattr(
+                        entry.path,
+                        entry_type=0,  # DT_REG upsert (re-create deleted entry)
+                        content_id=entry.original_hash,
+                        size=meta_dict.get("size", 0),
+                        version=meta_dict.get("version", 1),
+                        zone_id=meta_dict.get("zone_id", ROOT_ZONE_ID),
+                        modified_at_ms=int(_modified.timestamp() * 1000),
+                        created_at_ms=int(_created.timestamp() * 1000),
+                    )
+                    logger.debug(
+                        "Restored deleted file: path=%s hash=%s",
+                        entry.path,
+                        entry.original_hash,
+                    )
             except Exception:
                 logger.exception(
                     "Failed to rollback entry: path=%s txn=%s", entry.path, transaction_id

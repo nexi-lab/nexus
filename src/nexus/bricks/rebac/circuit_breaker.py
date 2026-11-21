@@ -258,12 +258,14 @@ class AsyncCircuitBreaker:
                 self._half_open_successes = 0
                 self._last_state_change_time = now
 
-            elif current == CircuitState.CLOSED:
-                if len(self._failure_timestamps) >= self._config.failure_threshold:
-                    self._state = CircuitState.OPEN
-                    self._opened_at = now
-                    self._open_count += 1
-                    self._last_state_change_time = now
+            elif (
+                current == CircuitState.CLOSED
+                and len(self._failure_timestamps) >= self._config.failure_threshold
+            ):
+                self._state = CircuitState.OPEN
+                self._opened_at = now
+                self._open_count += 1
+                self._last_state_change_time = now
 
     async def _on_success(self, state_at_call_time: CircuitState) -> None:
         """Record a success and potentially close the circuit."""

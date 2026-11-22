@@ -12,6 +12,7 @@ Shared concerns:
 
 import base64
 import logging
+import re
 from typing import Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
@@ -21,12 +22,40 @@ from nexus.contracts.exceptions import (
     NexusError,
     NexusFileNotFoundError,
     NexusPermissionError,
+    RemoteMetadataVisibilityError,
     ValidationError,
 )
 from nexus.contracts.rpc_types import RPCErrorCode
 from nexus.remote.negative_cache import NegativeCache, create_negative_cache
 
 logger = logging.getLogger(__name__)
+
+
+def metadata_visibility_error(message: str, data: object) -> RemoteMetadataVisibilityError | None:
+    """Decode the same optional receipt from VFS error envelopes and gRPC trailers."""
+    if not isinstance(data, dict):
+        return None
+    reason = data.get("reason")
+    fields: tuple[str, ...]
+    if reason == "ReplicaBehind":
+        fields = ("required_index", "applied_index")
+    elif reason == "CommittedNotVisible":
+        fields = (
+            ("applied_index", "committed_index")
+            if "committed_index" in data
+            else ("applied_index",)
+        )
+    else:
+        return None
+    receipt = {"reason": reason}
+    for field in fields:
+        value = data.get(field)
+        if not isinstance(value, str) or not re.fullmatch(r"0|[1-9][0-9]{0,19}", value):
+            return None
+        if int(value) >= 1 << 64:
+            return None
+        receipt[field] = value
+    return RemoteMetadataVisibilityError(message, details=receipt)
 
 
 class BaseRemoteNexusFS:
@@ -177,6 +206,11 @@ class BaseRemoteNexusFS:
         code = error.get("code", -32603)
         message = error.get("message", "Unknown error")
         data = error.get("data")
+
+        if code == RPCErrorCode.INTERNAL_ERROR.value:
+            visibility = metadata_visibility_error(message, data)
+            if visibility is not None:
+                raise visibility
 
         # Map error codes to exceptions
         if code == RPCErrorCode.FILE_NOT_FOUND.value:

@@ -328,6 +328,15 @@ class RemoteConnectionError(RemoteFilesystemError):
     pass
 
 
+class RemoteMetadataVisibilityError(RemoteFilesystemError):
+    """Metadata visibility receipt for one step of a remote filesystem request.
+
+    `details` contains the authority's reason and decimal-string indices.
+    """
+
+    status_code = 503
+
+
 class RemoteTimeoutError(RemoteFilesystemError):
     """Timeout while communicating with remote server."""
 

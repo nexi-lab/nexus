@@ -18,6 +18,7 @@ Issue #1202: gRPC for REMOTE profile.
 
 from __future__ import annotations
 
+import json
 import logging
 import re as _re
 from contextlib import suppress
@@ -36,6 +37,7 @@ from nexus.contracts.exceptions import (
     AuthenticationError,
     BackendError,
     RemoteConnectionError,
+    RemoteMetadataVisibilityError,
     RemoteTimeoutError,
 )
 from nexus.grpc.defaults import build_channel_options
@@ -43,7 +45,7 @@ from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc, zone_runtime_pb2, zone_runtime
 from nexus.lib.request_credentials import request_api_key
 from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.lib.zone_revision import revision_fields as _revision_fields
-from nexus.remote.base_client import BaseRemoteNexusFS
+from nexus.remote.base_client import BaseRemoteNexusFS, metadata_visibility_error
 
 if TYPE_CHECKING:
     from nexus.security.tls.config import ZoneTlsConfig
@@ -686,7 +688,7 @@ class RPCTransport:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(RemoteConnectionError),
+        retry=retry_if_exception_type((RemoteConnectionError, RemoteMetadataVisibilityError)),
         reraise=True,
     )
     def batch_stat(
@@ -715,7 +717,7 @@ class RPCTransport:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(RemoteConnectionError),
+        retry=retry_if_exception_type((RemoteConnectionError, RemoteMetadataVisibilityError)),
         reraise=True,
     )
     def stat(self, path: str, zone_id: str = "", read_timeout: float | None = None) -> Any | None:
@@ -1230,10 +1232,17 @@ class RPCTransport:
     # ------------------------------------------------------------------
 
     def _raise_transport_error(self, exc: grpc.RpcError, timeout: float, method: str) -> None:
-        """Convert gRPC transport errors to RemoteConnectionError/RemoteTimeoutError."""
+        """Preserve application receipts and translate connection failures and deadlines."""
         code = exc.code()
         details = exc.details()
         if code == grpc.StatusCode.UNAVAILABLE:
+            if isinstance(exc, grpc.Call):
+                for key, value in exc.trailing_metadata() or ():
+                    if key == "nexus-visibility-bin" and isinstance(value, bytes):
+                        with suppress(ValueError):
+                            visibility = metadata_visibility_error(details, json.loads(value))
+                            if visibility is not None:
+                                raise visibility from exc
             raise RemoteConnectionError(
                 f"gRPC server unavailable: {details}",
                 details={"server_address": self.server_address},

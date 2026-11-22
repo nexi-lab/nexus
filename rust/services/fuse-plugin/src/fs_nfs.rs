@@ -38,9 +38,13 @@ use crate::path_index::{join_path, PathIndex};
 /// identically regardless of which adapter creates it.
 const NFS_ROOT_ID: fileid3 = 1;
 
-/// Plugin ABI error code for "path not found" — mirrors
-/// `PluginResult::NotFound` on the kernel side.
-const PLUGIN_RESULT_NOT_FOUND: i32 = -1;
+fn stat_error(rc: i32) -> nfsstat3 {
+    if rc == kernel_callbacks::STAT_NOT_FOUND {
+        nfsstat3::NFS3ERR_NOENT
+    } else {
+        nfsstat3::NFS3ERR_IO
+    }
+}
 
 /// NFS filesystem backed by Nexus kernel syscalls.
 pub struct NexusNfs {
@@ -141,7 +145,7 @@ impl NexusNfs {
     async fn stat_fattr_async(&self, id: fileid3, path: &str) -> Result<fattr3, nfsstat3> {
         let json = kernel_callbacks::sys_stat_async(&self.kernel, path)
             .await
-            .map_err(|_| nfsstat3::NFS3ERR_NOENT)?;
+            .map_err(stat_error)?;
         self.make_fattr(id, &json)
     }
 }
@@ -173,7 +177,7 @@ impl NFSFileSystem for NexusNfs {
         // Stat first — only allocate inode on positive hit.
         kernel_callbacks::sys_stat_async(&self.kernel, &path)
             .await
-            .map_err(|_| nfsstat3::NFS3ERR_NOENT)?;
+            .map_err(stat_error)?;
         Ok(self.inode_for(&path))
     }
 
@@ -181,7 +185,7 @@ impl NFSFileSystem for NexusNfs {
         let path = self.path_for(id).ok_or(nfsstat3::NFS3ERR_NOENT)?;
         match kernel_callbacks::sys_stat_async(&self.kernel, &path).await {
             Ok(json) => self.make_fattr(id, &json),
-            Err(PLUGIN_RESULT_NOT_FOUND) if id == NFS_ROOT_ID => {
+            Err(kernel_callbacks::STAT_NOT_FOUND) if id == NFS_ROOT_ID => {
                 // VFS root path not mounted yet (mount-driver loads
                 // after the fuse plugin).  Return a synthetic empty
                 // directory so the NFS MOUNT RPC succeeds; real
@@ -199,7 +203,7 @@ impl NFSFileSystem for NexusNfs {
                 }
                 Ok(self.synthetic_dir_attr(id))
             }
-            Err(_) => Err(nfsstat3::NFS3ERR_NOENT),
+            Err(rc) => Err(stat_error(rc)),
         }
     }
 
@@ -270,12 +274,10 @@ impl NFSFileSystem for NexusNfs {
         let parent = self.path_for(dirid).ok_or(nfsstat3::NFS3ERR_NOENT)?;
         let name = std::str::from_utf8(filename).map_err(|_| nfsstat3::NFS3ERR_INVAL)?;
         let path = join_path(&parent, name);
-        // Check existence first.
-        if kernel_callbacks::sys_stat_async(&self.kernel, &path)
-            .await
-            .is_ok()
-        {
-            return Err(nfsstat3::NFS3ERR_EXIST);
+        match kernel_callbacks::sys_stat_async(&self.kernel, &path).await {
+            Ok(_) => return Err(nfsstat3::NFS3ERR_EXIST),
+            Err(kernel_callbacks::STAT_NOT_FOUND) => {}
+            Err(rc) => return Err(stat_error(rc)),
         }
         kernel_callbacks::sys_write_async(&self.kernel, &path, &[], 0)
             .await
@@ -345,7 +347,7 @@ impl NFSFileSystem for NexusNfs {
         let parent_path = self.path_for(dirid).ok_or(nfsstat3::NFS3ERR_NOENT)?;
         let json = match kernel_callbacks::sys_readdir_async(&self.kernel, &parent_path).await {
             Ok(j) => j,
-            Err(PLUGIN_RESULT_NOT_FOUND) if dirid == NFS_ROOT_ID => {
+            Err(kernel_callbacks::STAT_NOT_FOUND) if dirid == NFS_ROOT_ID => {
                 // VFS root not mounted yet — return empty listing.
                 return Ok(ReadDirResult {
                     entries: vec![],

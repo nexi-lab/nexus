@@ -88,6 +88,13 @@ fn errno_io() -> Errno {
 fn errno_enoent() -> Errno {
     Errno::from_i32(libc::ENOENT)
 }
+fn stat_errno(rc: i32) -> Errno {
+    if rc == kernel_callbacks::STAT_NOT_FOUND {
+        errno_enoent()
+    } else {
+        errno_io()
+    }
+}
 fn errno_einval() -> Errno {
     Errno::from_i32(libc::EINVAL)
 }
@@ -170,7 +177,7 @@ impl NexusFs {
     /// success.  Centralises the path → callback → parse pipeline so
     /// lookup / getattr / readdir share one error mapping.
     fn stat_attr(&self, ino: INodeNo, path: &str) -> Result<FileAttr, Errno> {
-        let json = kernel_callbacks::sys_stat(&self.kernel, path).map_err(|_| errno_enoent())?;
+        let json = kernel_callbacks::sys_stat(&self.kernel, path).map_err(stat_errno)?;
         self.parse_stat(ino, &json).ok_or_else(errno_io)
     }
 }
@@ -257,7 +264,10 @@ impl Filesystem for NexusFs {
             // this name walks back through to `sys_stat` instead of
             // serving the stale "doesn't exist" answer that `mv`'s
             // pre-rename probe left behind.  See NEG_ENTRY_TTL.
-            Err(_) => reply.entry(&NEG_ENTRY_TTL, &negative_entry_attr(), Generation(0)),
+            Err(kernel_callbacks::STAT_NOT_FOUND) => {
+                reply.entry(&NEG_ENTRY_TTL, &negative_entry_attr(), Generation(0))
+            }
+            Err(rc) => reply.error(stat_errno(rc)),
         }
     }
 

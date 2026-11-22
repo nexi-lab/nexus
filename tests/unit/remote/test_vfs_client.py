@@ -67,3 +67,19 @@ def test_directory_denial_propagates_without_returning_a_partial_page():
     host.readdir = denied
     with pytest.raises(PermissionError, match="/a"):
         RemoteFilesystemClient(host).sys_readdir("/a", limit=2)
+
+
+def test_kernel_client_stat_propagates_failed_observation() -> None:
+    from unittest.mock import Mock
+
+    from nexus.remote.kernel_client import KernelClient
+
+    client = KernelClient(server_address="127.0.0.1:1")
+    transport = Mock()
+    client._transport = transport
+    transport.stat.side_effect = ConnectionError("replica unavailable")
+    with pytest.raises(ConnectionError, match="replica unavailable"):
+        client.sys_stat("/item")
+    transport.stat.side_effect = None
+    transport.stat.return_value = None
+    assert client.sys_stat("/item") is None

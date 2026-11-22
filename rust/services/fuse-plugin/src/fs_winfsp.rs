@@ -103,10 +103,6 @@ macro_rules! winfsp_diag {
 /// affordance; nothing in the on-wire surface ever sees this).
 const WINFSP_ROOT_INODE: u64 = 1;
 
-/// C-ABI rc the kernel returns for "no such file/directory" (matches
-/// fuser side's mapping convention).  Used only by [`errno_to_status`].
-const ERRNO_NOT_FOUND: i32 = -1;
-
 /// `FILE_DIRECTORY_FILE` from `winnt.h` — the create-option flag a
 /// CreateFile2 call sets when the caller wants a directory rather
 /// than a regular file.  Not re-exported by `windows-sys` 0.52 so
@@ -120,7 +116,7 @@ const FILE_DIRECTORY_FILE: u32 = 0x00000001;
 /// `STATUS_SUCCESS`.
 fn errno_to_status(rc: i32) -> NTSTATUS {
     match rc {
-        ERRNO_NOT_FOUND => STATUS_OBJECT_NAME_NOT_FOUND,
+        kernel_callbacks::STAT_NOT_FOUND => STATUS_OBJECT_NAME_NOT_FOUND,
         _ => STATUS_INVALID_DEVICE_REQUEST,
     }
 }
@@ -535,7 +531,7 @@ impl FileSystemContext for NexusWinFsp {
                 .map(|(name, _)| join_path(&context.path, name))
                 .collect();
             let sizes = kernel_callbacks::sys_stat_batch(&self.kernel, &child_paths)
-                .unwrap_or_else(|_| vec![None; raw.len()]);
+                .map_err(|e| FspError::NTSTATUS(errno_to_status(e)))?;
 
             let cached: Vec<(String, u64, u64)> = raw
                 .into_iter()

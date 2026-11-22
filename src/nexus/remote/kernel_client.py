@@ -627,12 +627,7 @@ class KernelClient:
         ISO-8601 `created_at` / `modified_at`), or None on not-found.
         """
         assert self._transport is not None
-        try:
-            resp = self._transport.stat(path, zone_id)
-        except Exception:
-            # Auth / transport errors translate to None — matching the
-            # prior Call-path behaviour (FileNotFound was an RPC error).
-            return None
+        resp = self._transport.stat(path, zone_id)
         if resp is None:
             return None
         return stat_response_to_dict(resp)

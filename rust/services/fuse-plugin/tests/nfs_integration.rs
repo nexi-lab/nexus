@@ -330,6 +330,37 @@ async fn lookup_nonexistent_returns_noent() {
 }
 
 #[tokio::test]
+async fn stat_failure_survives_nfs_lookup_getattr_and_exclusive_create() {
+    unsafe extern "C" fn unavailable(
+        _: *const c_void,
+        _: *const c_char,
+        _: *mut *mut u8,
+        _: *mut usize,
+    ) -> i32 {
+        nexus_plugin_abi::PluginResult::Internal as i32
+    }
+    let mock = MockKernel::new();
+    let mut handle = mock_kernel_handle(&mock);
+    handle.sys_stat = unavailable;
+    let nfs = NexusNfs::new(handle, "/".to_string());
+    let name: nfsserve::nfs::filename3 = b"unknown".as_slice().into();
+    let root = nfs.root_dir();
+    assert!(is_nfs_err(
+        nfs.lookup(root, &name).await.unwrap_err(),
+        nfsstat3::NFS3ERR_IO
+    ));
+    assert!(is_nfs_err(
+        nfs.getattr(root).await.unwrap_err(),
+        nfsstat3::NFS3ERR_IO
+    ));
+    assert!(is_nfs_err(
+        nfs.create_exclusive(root, &name).await.unwrap_err(),
+        nfsstat3::NFS3ERR_IO
+    ));
+    assert!(!mock.entries.lock().unwrap().contains_key("/unknown"));
+}
+
+#[tokio::test]
 async fn create_and_read_file() {
     let (_mock, nfs) = make_nfs();
     let root = nfs.root_dir();

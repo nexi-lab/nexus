@@ -33,7 +33,8 @@ use nexus_plugin_abi::{KernelHandle, NexusFreeFn};
 /// invoked at all (e.g. NUL in the path string).  Maps to
 /// `libc::EIO` / `STATUS_INVALID_DEVICE_REQUEST` at the adapter
 /// boundary — see the platform-specific `errno_to_*` functions.
-pub const ERRNO_IO_RAW: i32 = -3;
+pub const ERRNO_IO_RAW: i32 = nexus_plugin_abi::PluginResult::Internal as i32;
+pub const STAT_NOT_FOUND: i32 = nexus_plugin_abi::PluginResult::NotFound as i32;
 
 /// Wrapper around the C `sys_stat` callback.  Returns the JSON
 /// payload as a `String` on success.  The kernel's serializer shape
